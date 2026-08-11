@@ -5,13 +5,14 @@ import type { LibraryAlbumDetail, NativeTrackListItem } from '$lib/types';
 
 const h = vi.hoisted(() => ({
 	playQueue: vi.fn(),
-	goto: vi.fn()
+	goto: vi.fn(),
+	authStore: { isAdmin: false, isTrusted: false, user: { id: 'user-1' } }
 }));
 
 vi.mock('$app/state', () => ({ page: { params: { id: 'local-album-1' } } }));
 vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => h.goto(...args) }));
 vi.mock('$lib/stores/authStore.svelte', () => ({
-	authStore: { isAdmin: false, isTrusted: false, user: { id: 'user-1' } }
+	authStore: h.authStore
 }));
 vi.mock('$lib/stores/player.svelte', () => ({
 	playerStore: { playQueue: (...args: unknown[]) => h.playQueue(...args) }
@@ -102,6 +103,8 @@ import LocalAlbumPage from './LocalAlbumPage.svelte';
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	h.authStore.isAdmin = false;
+	h.authStore.isTrusted = false;
 });
 
 describe('local-only album page', () => {
@@ -136,5 +139,14 @@ describe('local-only album page', () => {
 			0,
 			false
 		);
+	});
+
+	it('offers album removal to admins', async () => {
+		h.authStore.isAdmin = true;
+		render(LocalAlbumPage, {
+			props: { albumId: album.id }
+		} as unknown as Parameters<typeof render>[1]);
+
+		await expect.element(page.getByRole('button', { name: 'Remove', exact: true })).toBeVisible();
 	});
 });

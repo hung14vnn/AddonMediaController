@@ -13,6 +13,7 @@
 	import TopSongsList from '$lib/components/TopSongsList.svelte';
 	import TopAlbumsList from '$lib/components/TopAlbumsList.svelte';
 	import LastFmEnrichment from '$lib/components/LastFmEnrichment.svelte';
+	import SpotifyArtistTracks from '$lib/components/SpotifyArtistTracks.svelte';
 	import LibraryAlbumsCarousel from '$lib/components/LibraryAlbumsCarousel.svelte';
 	import PageSectionToc from '$lib/components/PageSectionToc.svelte';
 	import { requestAlbum } from '$lib/utils/albumRequest';
@@ -353,6 +354,9 @@
 						}}
 					/>
 				</div>
+				{#if artist?.name}
+					<SpotifyArtistTracks artistId={data.artistId} artistName={artist.name} />
+				{/if}
 
 				<div class="flex flex-col md:flex-row gap-6 md:items-stretch">
 					<div class="flex-1 min-w-0">

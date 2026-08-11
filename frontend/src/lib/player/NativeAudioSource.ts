@@ -143,6 +143,11 @@ export class NativeAudioSource implements PlaybackSource {
 			});
 			this.registerListener('stalled', onStalled);
 
+			// The Vite dev server (:5173) and API (:8688) are different origins.
+			// Set this before ``src`` so Web Audio may consume the stream rather
+			// than producing a silent, CORS-tainted MediaElementAudioSource. The
+			// authenticated stream needs the httpOnly session cookie as well.
+			this.audio.crossOrigin = 'use-credentials';
 			this.audio.src = this.url;
 			this.audio.volume = this.pendingVolume / 100;
 			this.audio.load();

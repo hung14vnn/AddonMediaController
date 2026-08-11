@@ -53,6 +53,22 @@ class SpotifyClient:
         credentials = f"{self._client_id}:{self._client_secret}"
         return "Basic " + base64.b64encode(credentials.encode()).decode()
 
+    async def authenticate_client_credentials(self) -> None:
+        """Authenticate this client for public catalog endpoints only."""
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                _TOKEN_URL,
+                data={"grant_type": "client_credentials"},
+                headers={"Authorization": self._basic_auth_header()},
+                timeout=15,
+            )
+        resp.raise_for_status()
+        data = resp.json()
+        self._access_token = data["access_token"]
+        self._expires_at = (
+            _now_utc() + timedelta(seconds=data.get("expires_in", 3600))
+        ).isoformat()
+
     def _is_expired(self) -> bool:
         if not self._expires_at:
             return True
@@ -151,6 +167,10 @@ class SpotifyClient:
             params={"fields": "id,name,images,tracks.total"},
         )
 
+    async def get_track(self, track_id: str) -> dict:
+        """Return the full Spotify track, including external IDs such as ISRC."""
+        return await self._get(f"/tracks/{track_id}")
+
     async def get_playlist_tracks(self, playlist_id: str) -> list[dict]:
         # /items is the current endpoint (Spotify Web API, verified 2026-07). The older
         # /playlists/{id}/tracks is deprecated and 403s for development-mode apps after the
@@ -174,3 +194,23 @@ class SpotifyClient:
                 break
             params["offset"] += 100
         return tracks
+
+    async def search_tracks(self, query: str, limit: int = 10, offset: int = 0, market: str = "VN") -> tuple[list[dict], bool]:
+        data = await self._get(
+            "/search",
+            params={
+                "q": query,
+                "type": "track",
+                # Spotify Development Mode currently rejects search requests
+                # above 10 items. Pagination can be added with offset later.
+                "limit": min(limit, 10),
+                "offset": offset,
+                "market": market,
+            },
+        )
+        tracks = data.get("tracks", {})
+        return tracks.get("items", []) or [], bool(tracks.get("next"))
+
+    async def get_artist_top_tracks(self, artist_id: str, market: str = "VN") -> list[dict]:
+        data = await self._get(f"/artists/{artist_id}/top-tracks", params={"market": market})
+        return data.get("tracks", []) or []

@@ -15,6 +15,7 @@
 	import AlbumIdentificationPanel from '$lib/components/library/AlbumIdentificationPanel.svelte';
 	import AlbumOrganizationDialog from '$lib/components/library/AlbumOrganizationDialog.svelte';
 	import LocalAlbumTrackList from '$lib/components/library/LocalAlbumTrackList.svelte';
+	import DeleteAlbumModal from '$lib/components/DeleteAlbumModal.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
@@ -40,6 +41,7 @@
 	);
 	const editions = $derived(editionsQuery.data?.items ?? []);
 	const contributionMutation = createLibraryContributionMutation();
+	let showDeleteModal = $state(false);
 
 	const reviewLabel = $derived(
 		album?.identification_status === 'needs_review'
@@ -71,6 +73,11 @@
 			return;
 		}
 		contributionMutation.mutate(album.id);
+	}
+
+	function handleDeleted(): void {
+		showDeleteModal = false;
+		void goto('/library/albums');
 	}
 </script>
 
@@ -146,6 +153,14 @@
 						>
 							<FileUp class="h-4 w-4" />
 							{album.contribution_id ? 'Contribution in progress' : 'Contribute to MusicBrainz'}
+						</button>
+					{/if}
+					{#if authStore.isAdmin}
+						<button
+							class="btn btn-error btn-outline gap-2"
+							onclick={() => (showDeleteModal = true)}
+						>
+							Remove
 						</button>
 					{/if}
 					{#if authStore.isAdmin}<AlbumIdentificationPanel {album} /><AlbumOrganizationDialog
@@ -240,3 +255,15 @@
 		</section>
 	{/if}
 </main>
+
+{#if showDeleteModal && album}
+	<DeleteAlbumModal
+		albumTitle={album.title}
+		artistName={album.artist_name}
+		musicbrainzId={album.id}
+		ondeleted={handleDeleted}
+		onclose={() => {
+			showDeleteModal = false;
+		}}
+	/>
+{/if}

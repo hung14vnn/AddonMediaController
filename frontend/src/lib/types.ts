@@ -54,6 +54,18 @@ export type SuggestResult = {
 	score: number;
 };
 
+export type SpotifyTrackResult = {
+	type: 'track';
+	title: string;
+	artist: string;
+	album: string;
+	spotify_id: string;
+	spotify_url?: string | null;
+	preview_url?: string | null;
+	album_image_url?: string | null;
+	duration_ms?: number | null;
+};
+
 export type EnrichmentSource = 'listenbrainz' | 'lastfm' | 'none';
 
 export type ArtistEnrichment = {
@@ -2121,6 +2133,19 @@ export interface SabnzbdTestResult {
 	message: string;
 	categories: string[];
 	complete_dir?: string | null;
+}
+
+export interface SpotdlConnectionSettings {
+	enabled: boolean;
+	client_type: string;
+	downloads_mount: string;
+	format: 'mp3' | 'flac' | 'ogg' | 'opus' | 'm4a' | 'wav';
+}
+
+export interface SpotdlTestResult {
+	valid: boolean;
+	version?: string | null;
+	message: string;
 }
 
 export interface SourcePriority {

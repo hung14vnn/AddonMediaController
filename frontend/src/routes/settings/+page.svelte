@@ -23,6 +23,7 @@
 	import SettingsSecurity from '$lib/components/settings/SettingsSecurity.svelte';
 	import SettingsDownloadClient from '$lib/components/settings/SettingsDownloadClient.svelte';
 	import SettingsSabnzbd from '$lib/components/settings/SettingsSabnzbd.svelte';
+	import SettingsSpotdl from '$lib/components/settings/SettingsSpotdl.svelte';
 	import SettingsSourcePriority from '$lib/components/settings/SettingsSourcePriority.svelte';
 	import SettingsDownloadPolicy from '$lib/components/settings/SettingsDownloadPolicy.svelte';
 	import SettingsWanted from '$lib/components/settings/SettingsWanted.svelte';
@@ -290,7 +291,7 @@
 						<div>
 							<h2 class="text-xl font-bold">Download clients</h2>
 							<p class="text-sm text-base-content/60">
-								Soulseek and Usenet are two ways to acquire music. Configure either or both, set
+								Soulseek, Usenet, and spotDL are available download clients. Configure either or both, set
 								which is tried first, and tune the shared policy.
 							</p>
 						</div>
@@ -299,6 +300,7 @@
 						<SettingsSourcePriority />
 						<SettingsDownloadClient />
 						<SettingsSabnzbd />
+						<SettingsSpotdl />
 						<SettingsOnboardingChecklist />
 					</div>
 				{:else if activeTab === 'indexers' && authStore.isAdmin}

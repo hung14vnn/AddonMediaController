@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Any
 
 from infrastructure.queue.priority_queue import RequestPriority
@@ -65,6 +66,104 @@ class SpotifyImportService:
         if client is None:
             raise SpotifyNotLinkedError("Spotify account not linked")
         return client
+
+    async def resolve_track_for_download(
+        self, user_id: str, spotify_track_id: str
+    ) -> dict[str, Any]:
+        """Resolve a Spotify track to the canonical MusicBrainz IDs used by acquisition."""
+        client = await self._client_factory.resolve_spotify_catalog()
+        if client is None:
+            client = await self._get_client(user_id)
+        track = await client.get_track(spotify_track_id)
+        isrc = ((track.get("external_ids") or {}).get("isrc") or "").strip()
+        album = track.get("album") or {}
+        artists = track.get("artists") or []
+        artist_name = ", ".join(a.get("name", "") for a in artists if a.get("name"))
+        track_title = track.get("name") or ""
+        album_title = album.get("name") or ""
+
+        recording_ids: list[str] = []
+        if isrc:
+            try:
+                data = await mb_api_get(
+                    f"/isrc/{isrc}", priority=RequestPriority.USER_INITIATED
+                )
+                recordings = data.get("recordings") or []
+                if isinstance(recordings, dict):
+                    recordings = [recordings]
+                recording_ids = [r.get("id") for r in recordings if r.get("id")]
+            except Exception:  # noqa: BLE001 - continue with the local Spotify album
+                logger.warning("MusicBrainz ISRC lookup failed for Spotify track %s", spotify_track_id)
+
+        for recording_mbid in recording_ids:
+            release_group_mbid = await self._mb_repo.resolve_recording_to_release_group(
+                recording_mbid
+            )
+            if release_group_mbid:
+                return self._resolved_track(
+                    recording_mbid,
+                    release_group_mbid,
+                    artist_name,
+                    track_title,
+                    album_title,
+                    track.get("duration_ms"),
+                )
+
+        # ISRC coverage is incomplete in MusicBrainz. Fall back to a metadata search,
+        # but keep the same canonical recording + release-group requirement.
+        matches = await self._mb_repo.search_recordings(
+            artist_name, track_title, limit=8, priority=RequestPriority.USER_INITIATED
+        )
+        best: tuple[float, str, str] | None = None
+        for match in matches:
+            title_score = SequenceMatcher(
+                None, track_title.casefold(), match.title.casefold()
+            ).ratio()
+            if title_score < 0.72:
+                continue
+            for group in match.release_groups:
+                album_score = SequenceMatcher(
+                    None, album_title.casefold(), group.release_group_title.casefold()
+                ).ratio()
+                score = title_score * 0.65 + album_score * 0.35
+                candidate = (score, match.recording_mbid, group.release_group_mbid)
+                if best is None or candidate[0] > best[0]:
+                    best = candidate
+        if best is not None:
+            return self._resolved_track(
+                best[1], best[2], artist_name, track_title, album_title, track.get("duration_ms")
+            )
+
+        # Keep an unmatchable Spotify result useful: group it under its Spotify album
+        # instead of pretending its IDs are MusicBrainz IDs.
+        spotify_album_id = str(album.get("id") or spotify_track_id).strip()
+        return {
+            "recording_mbid": f"spotify:track:{spotify_track_id}",
+            "release_group_mbid": f"spotify:album:{spotify_album_id}",
+            "artist_name": artist_name,
+            "track_title": track_title,
+            "album_title": album_title or track_title,
+            "duration_seconds": round((track.get("duration_ms") or 0) / 1000) or None,
+            "is_spotify_local": True,
+        }
+
+    @staticmethod
+    def _resolved_track(
+        recording_mbid: str,
+        release_group_mbid: str,
+        artist_name: str,
+        track_title: str,
+        album_title: str,
+        duration_ms: int | None,
+    ) -> dict[str, Any]:
+        return {
+            "recording_mbid": recording_mbid,
+            "release_group_mbid": release_group_mbid,
+            "artist_name": artist_name,
+            "track_title": track_title,
+            "album_title": album_title,
+            "duration_seconds": round((duration_ms or 0) / 1000) or None,
+        }
 
     async def list_playlists(self, user_id: str) -> list[dict]:
         client = await self._get_client(user_id)

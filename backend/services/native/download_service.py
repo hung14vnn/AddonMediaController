@@ -59,6 +59,10 @@ ALREADY_IN_LIBRARY = "already_in_library"
 _LOSSLESS = {"flac", "alac", "wav", "ape", "wv"}
 
 
+def _is_spotify_local_identity(value: str | None) -> bool:
+    return bool(value and value.startswith("spotify:album:"))
+
+
 def check_downloads_mount(
     downloads_path: Path | str | None, library_paths: list[Path]
 ) -> DownloadsMountStatus:
@@ -644,6 +648,7 @@ class DownloadService:
             (year is None or artist_mbid is None)
             and release_group_mbid
             and self._mb is not None
+            and not _is_spotify_local_identity(release_group_mbid)
         ):
             try:
                 album_meta = await self._mb.get_release_group(release_group_mbid)
@@ -723,6 +728,7 @@ class DownloadService:
                 )
             artist_mbid = await self._ownership.optional_provider_artist_id(artist_mbid)
         self._ensure_enabled()
+        is_spotify_local = _is_spotify_local_identity(release_group_mbid)
         if recording_mbid:
             if origin == "upgrade":
                 # per-recording floor (D12): a track upgrade must beat the BEST held
@@ -753,7 +759,7 @@ class DownloadService:
         year: int | None = None
         if (
             not album_title or not artist_name or not artist_mbid
-        ) and self._mb is not None:
+        ) and self._mb is not None and not is_spotify_local:
             album_meta = await self._mb.get_release_group(release_group_mbid)
             if album_meta is not None:
                 album_title = album_title or album_meta.title

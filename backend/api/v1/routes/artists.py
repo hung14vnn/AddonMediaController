@@ -1,17 +1,20 @@
 import logging
+import unicodedata
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from core.exceptions import ClientDisconnectedError
 from api.v1.schemas.artist import ArtistInfo, ArtistExtendedInfo, ArtistReleases, LastFmArtistEnrichment, FollowRequest, AutoDownloadRequest, FollowStatusResponse
 from api.v1.schemas.discovery import SimilarArtistsResponse, TopSongsResponse, TopAlbumsResponse
+from api.v1.schemas.search import SpotifyTrackResult, SpotifyTracksResponse
 from api.v1.schemas.get_it import ArtistPurchaseOptionsResponse
-from core.dependencies import get_artist_service, get_artist_discovery_service, get_artist_enrichment_service, get_follow_service, get_get_it_service
+from core.dependencies import get_artist_service, get_artist_discovery_service, get_artist_enrichment_service, get_follow_service, get_get_it_service, get_per_user_client_factory
 from services.artist_service import ArtistService
 from services.follow_service import FollowService, FollowError
 from middleware import CurrentUserDep
 from services.artist_discovery_service import ArtistDiscoveryService
 from services.artist_enrichment_service import ArtistEnrichmentService
+from services.per_user_client_factory import PerUserClientFactory
 from infrastructure.validators import is_unknown_mbid, validate_mbid
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from infrastructure.degradation import try_get_degradation_context
@@ -172,6 +175,87 @@ async def get_artist_lastfm_enrichment(
     if result is None:
         return LastFmArtistEnrichment()
     return result
+
+
+@router.get("/{artist_id}/spotify-tracks", response_model=SpotifyTracksResponse)
+async def get_artist_spotify_tracks(
+    artist_id: str,
+    current_user: CurrentUserDep,
+    artist_name: str = Query(..., min_length=1),
+    offset: int = Query(0, ge=0),
+    client_factory: PerUserClientFactory = Depends(get_per_user_client_factory),
+) -> SpotifyTracksResponse:
+    """Supplement an artist page with Spotify's regional top tracks."""
+    logger.warning("Spotify artist endpoint entered: artist_name=%r", artist_name)
+    client = await client_factory.resolve_spotify_catalog()
+    if not client:
+        logger.warning("Spotify artist endpoint: catalog client unavailable")
+        client = await client_factory.resolve_spotify(current_user.id)
+    if not client:
+        logger.warning("Spotify artist endpoint: user Spotify client unavailable")
+        return SpotifyTracksResponse()
+    try:
+        matches, has_more = await client.search_tracks(
+            f'artist:"{artist_name}"', limit=10, offset=offset
+        )
+        # Spotify's field-filtered search can return only a handful of tracks
+        # for an artist despite a larger catalog. Supplement it with the
+        # general query and retain only exact artist matches below.
+        broad_matches, broad_has_more = await client.search_tracks(
+            artist_name, limit=10, offset=offset
+        )
+        matches.extend(broad_matches)
+        has_more = has_more or broad_has_more
+        logger.info("Spotify artist search %r returned %d tracks", artist_name, len(matches))
+        if not matches:
+            return SpotifyTracksResponse()
+        # Spotify removed /artists/{id}/top-tracks in February 2026. Use the
+        # supported catalog search endpoint instead and keep only tracks whose
+        # primary artist matches the requested artist.
+        def fold(value: str) -> str:
+            return "".join(
+                char for char in unicodedata.normalize("NFKD", value.casefold())
+                if not unicodedata.combining(char)
+            ).strip()
+
+        requested = fold(artist_name)
+        tracks = [
+            track for track in matches
+            if any(
+                fold(artist.get("name", "")) == requested
+                for artist in track.get("artists", [])
+            )
+        ] or matches
+        unique_tracks = []
+        seen: set[str] = set()
+        for track in tracks:
+            track_key = str(track.get("id") or "").strip()
+            if not track_key or track_key in seen:
+                continue
+            seen.add(track_key)
+            unique_tracks.append(track)
+        tracks = unique_tracks[:20]
+        results = [
+            SpotifyTrackResult(
+                title=t.get("name", ""),
+                artist=", ".join(a.get("name", "") for a in t.get("artists", [])),
+                album=(t.get("album") or {}).get("name", ""),
+                spotify_id=t.get("id", ""),
+                spotify_url=(t.get("external_urls") or {}).get("spotify"),
+                preview_url=t.get("preview_url"),
+                album_image_url=((t.get("album") or {}).get("images") or [{}])[0].get("url"),
+                duration_ms=t.get("duration_ms"),
+            )
+            for t in tracks if t.get("id")
+        ]
+        return SpotifyTracksResponse(
+            tracks=results,
+            next_offset=offset + 10 if has_more else None,
+            has_more=has_more,
+        )
+    except Exception:
+        logger.exception("Spotify artist tracks lookup failed")
+        return SpotifyTracksResponse()
 
 
 def _follow_response(state) -> FollowStatusResponse:

@@ -122,7 +122,12 @@ function createSyncStatusStore() {
 			eventSource = null;
 		}
 
-		eventSource = new EventSource(getApiUrl('/api/v1/cache/sync/stream'));
+		// Vite runs on :5173 while the API runs on :8688, so this is cross-origin
+		// in local development. Explicit credentials keep the httpOnly session cookie
+		// attached; otherwise the authenticated stream receives a 401 despite login.
+		eventSource = new EventSource(getApiUrl('/api/v1/cache/sync/stream'), {
+			withCredentials: true
+		});
 
 		eventSource.onopen = () => {
 			connectionMode = 'sse';

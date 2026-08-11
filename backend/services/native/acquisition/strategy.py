@@ -226,10 +226,12 @@ class SoulseekStrategy:
         # fallback keeps the gate ON but sets hold_on_wrong_track, so the closest match
         # is captured for human review rather than imported unverified (D9).
         is_single = task.download_type == "album" and task.track_count == 1
+        is_spotify_local = task.release_group_mbid.startswith("spotify:album:")
         use_canonical = (
             (task.download_type == "track" or is_single)
             and strict_track_duration
             and bool(task.track_duration_seconds)
+            and not is_spotify_local
         )
 
         files = [
@@ -259,6 +261,7 @@ class SoulseekStrategy:
             release_group_mbid=task.release_group_mbid,
             release_mbid=task.release_mbid,
             artist_mbid=task.artist_mbid,
+            external_track_id=task.recording_mbid if is_spotify_local else None,
             artist_name=task.artist_name,
             album_title=task.album_title,
             year=task.year,
@@ -287,7 +290,7 @@ class SoulseekStrategy:
                         title=task.track_title,
                     )
                 ]
-                if task.track_title and len(candidate.files) == 1
+                if task.track_title and len(candidate.files) == 1 and not is_spotify_local
                 else []
             ),
         )

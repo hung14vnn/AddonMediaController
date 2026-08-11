@@ -10,6 +10,7 @@ from api.v1.schemas.settings import (
     SABNZBD_API_KEY_MASK,
     DownloadPolicySettings,
     SabnzbdConnectionSettings,
+    SpotdlConnectionSettings,
     WantedWatcherSettings,
 )
 from core.dependencies import get_preferences_service
@@ -28,6 +29,10 @@ def _prefs():
     )
     prefs.get_download_policy.return_value = DownloadPolicySettings()
     prefs.save_sabnzbd_connection.return_value = None
+    prefs.get_spotdl_connection.return_value = SpotdlConnectionSettings(
+        enabled=True, downloads_mount="/spotdl-downloads", format="mp3"
+    )
+    prefs.save_spotdl_connection.return_value = None
     prefs.save_download_policy.return_value = None
     prefs.get_wanted_settings.return_value = WantedWatcherSettings()
     prefs.save_wanted_settings.return_value = None
@@ -57,6 +62,48 @@ def test_get_sabnzbd_non_admin_forbidden():
     app = _app()
     app.dependency_overrides[_get_current_admin] = _deny_admin
     assert build_test_client(app).get("/download-clients/sabnzbd").status_code == 403
+
+
+def test_get_spotdl_admin():
+    app = _app()
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    response = build_test_client(app).get("/download-clients/spotdl")
+    assert response.status_code == 200
+    assert response.json()["downloads_mount"] == "/spotdl-downloads"
+
+
+def test_put_spotdl_saves_settings():
+    prefs = _prefs()
+    app = _app(prefs)
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    response = build_test_client(app).put(
+        "/download-clients/spotdl",
+        json={"enabled": True, "downloads_mount": "/downloads/spotdl", "format": "flac"},
+    )
+    assert response.status_code == 200
+    saved = prefs.save_spotdl_connection.call_args.args[0]
+    assert saved.enabled is True
+    assert saved.downloads_mount == "/downloads/spotdl"
+    assert saved.format == "flac"
+
+
+def test_test_spotdl_reports_installed_version(monkeypatch):
+    class Process:
+        returncode = 0
+
+        async def communicate(self):
+            return b"spotDL 4.5.2\n", b""
+
+    async def fake_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        assert args == ("spotdl", "--version")
+        return Process()
+
+    monkeypatch.setattr(download_clients.asyncio, "create_subprocess_exec", fake_exec)
+    app = _app()
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    response = build_test_client(app).post("/download-clients/spotdl/test")
+    assert response.status_code == 200
+    assert response.json() == {"valid": True, "version": "4.5.2", "message": "spotDL is installed"}
 
 
 def test_get_policy_admin():

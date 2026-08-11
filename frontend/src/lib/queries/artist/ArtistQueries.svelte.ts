@@ -12,6 +12,7 @@ import type {
 	SimilarArtistsResponse,
 	TopAlbumsResponse,
 	TopSongsResponse
+	, SpotifyTrackResult
 } from '$lib/types';
 import type { MusicSource } from '$lib/stores/musicSource';
 import { setQueryDataWithPersister } from '../QueryClient';
@@ -152,3 +153,15 @@ export const updateArtistReleaseInCache = (
 		return { ...prevData, pages: updatedPages };
 	});
 };
+
+export const getArtistSpotifyTracksQuery = (getParams: Getter<{ artistId: string; artistName?: string }>) =>
+	createQuery(() => {
+		const params = getParams();
+		const { artistId, artistName } = params;
+		return {
+			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
+			queryKey: ['artist', artistId, 'spotify-tracks-v3', artistName],
+			queryFn: ({ signal }) => api.global.get<SpotifyTrackResult[]>(API.artist.spotifyTracks(artistId, artistName!), { signal }),
+			enabled: () => Boolean(getParams().artistName)
+		};
+	});

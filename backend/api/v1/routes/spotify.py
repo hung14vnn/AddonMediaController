@@ -7,12 +7,14 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 
 from core.dependencies import (
+    get_acquisition_dispatcher,
     get_jellyfin_library_service,
     get_local_files_service,
     get_navidrome_library_service,
     get_navidrome_folder_scope_service,
     get_plex_library_service,
     get_playlist_service,
+    get_quota_service,
     get_spotify_import_service,
     get_sse_publisher,
 )
@@ -22,6 +24,7 @@ from middleware import CurrentUserDep
 from services.spotify_import_service import SpotifyImportService, SpotifyNotLinkedError
 from services.local_files_service import LocalFilesService
 from services.playlist_service import PlaylistService
+from services.native.download_service import ALREADY_IN_LIBRARY
 
 _LINK_SOURCE_PRIORITY = ["local", "jellyfin", "navidrome", "plex"]
 
@@ -50,6 +53,15 @@ class SpotifyImportRequest(AppStruct):
 
 class SpotifyImportResponse(AppStruct):
     playlist_id: str
+
+
+class SpotifyTrackRequest(AppStruct):
+    spotify_id: str
+
+
+class SpotifyTrackRequestResponse(AppStruct):
+    status: str
+    task_id: str | None = None
 
 
 async def _background_import(
@@ -152,6 +164,38 @@ async def list_spotify_playlists(
             for p in playlists
         ]
     )
+
+
+@router.post("/tracks/request", response_model=SpotifyTrackRequestResponse)
+async def request_spotify_track(
+    body: SpotifyTrackRequest = MsgSpecBody(SpotifyTrackRequest),
+    current_user: CurrentUserDep = None,
+    svc: SpotifyImportService = Depends(get_spotify_import_service),
+    acquisition=Depends(get_acquisition_dispatcher),
+    quota=Depends(get_quota_service),
+) -> SpotifyTrackRequestResponse:
+    """Resolve a Spotify catalog result to MusicBrainz, then use native acquisition."""
+    await quota.check_request_quota(current_user.id, current_user.role)
+    try:
+        resolved = await svc.resolve_track_for_download(
+            current_user.id, body.spotify_id
+        )
+        task_id = await acquisition.request_track(
+            user_id=current_user.id,
+            recording_mbid=resolved["recording_mbid"],
+            release_group_mbid=resolved["release_group_mbid"],
+            artist_name=resolved["artist_name"],
+            track_title=resolved["track_title"],
+            album_title=resolved["album_title"],
+            duration_seconds=resolved["duration_seconds"],
+        )
+    except SpotifyNotLinkedError:
+        raise HTTPException(status_code=400, detail="Spotify account not linked")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if task_id == ALREADY_IN_LIBRARY:
+        return SpotifyTrackRequestResponse(status="already_in_library")
+    return SpotifyTrackRequestResponse(status="queued", task_id=task_id)
 
 
 @router.post(

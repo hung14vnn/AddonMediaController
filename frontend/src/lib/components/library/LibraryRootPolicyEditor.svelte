@@ -322,11 +322,12 @@
 						id="new-library-root-path"
 						class="input input-bordered w-full font-mono"
 						bind:value={newRootPath}
-						placeholder="/music"
+						placeholder="C:\\Music or /music"
 						aria-describedby="new-library-root-path-help"
 					/>
 					<span id="new-library-root-path-help" class="text-xs text-base-content/50">
-						Use the path as DroppedNeedle sees it inside the container.
+						Use an absolute path: for example, C:\\Music when running locally on Windows, or
+						/music in Docker/Linux.
 					</span>
 				</div>
 				<div class="grid gap-2">

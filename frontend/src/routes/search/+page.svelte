@@ -10,7 +10,7 @@
 	import ViewMoreArtistCard from '$lib/components/ViewMoreArtistCard.svelte';
 	import ArtistCardSkeleton from '$lib/components/ArtistCardSkeleton.svelte';
 	import AlbumCardSkeleton from '$lib/components/AlbumCardSkeleton.svelte';
-	import type { Artist, Album, EnrichmentSource } from '$lib/types';
+	import type { Artist, Album, EnrichmentSource, SpotifyTrackResult } from '$lib/types';
 	import { colors } from '$lib/colors';
 	import { searchStore } from '$lib/stores/search';
 	import {
@@ -22,6 +22,7 @@
 	import { api } from '$lib/api/client';
 	import { Check, ArrowRight } from 'lucide-svelte';
 	import SearchTopResult from '$lib/components/SearchTopResult.svelte';
+	import SpotifyTrackList from '$lib/components/SpotifyTrackList.svelte';
 
 	interface Props {
 		data: { query: string };
@@ -31,6 +32,7 @@
 
 	let artists: Artist[] = $state([]);
 	let albums: Album[] = $state([]);
+	let tracks: SpotifyTrackResult[] = $state([]);
 	let topArtist: Artist | null = $state(null);
 	let topAlbum: Album | null = $state(null);
 	let loadingArtists = $state(false);
@@ -42,7 +44,7 @@
 	let enrichmentSource: EnrichmentSource = $state('none');
 
 	let isSearching = $derived(loadingArtists || loadingAlbums);
-	let hasResults = $derived(artists.length > 0 || albums.length > 0);
+	let hasResults = $derived(artists.length > 0 || albums.length > 0 || tracks.length > 0);
 	let hasTopResult = $derived(topArtist != null || topAlbum != null);
 	let displayedArtists = $derived(
 		topArtist ? artists.filter((a) => a.musicbrainz_id !== topArtist?.musicbrainz_id) : artists
@@ -55,6 +57,10 @@
 		if (data.query) {
 			goto(`/search/${bucket}?q=${encodeURIComponent(data.query)}`);
 		}
+	}
+
+	function navigateToTracks() {
+		document.getElementById('spotify-tracks')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
 	function handleAlbumAdded() {
@@ -111,6 +117,7 @@
 			hasSearched = true;
 			artists = cached.artists;
 			albums = cached.albums;
+			tracks = cached.tracks ?? [];
 			topArtist = cached.topArtist ?? null;
 			topAlbum = cached.topAlbum ?? null;
 			enrichmentSource = cached.enrichmentSource;
@@ -145,6 +152,7 @@
 		if (!hasCachedResults) {
 			artists = [];
 			albums = [];
+			tracks = [];
 			enrichmentSource = 'none';
 		}
 		loadingArtists = true;
@@ -154,6 +162,7 @@
 			const responseData = await api.get<{
 				artists?: Artist[];
 				albums?: Album[];
+				tracks?: SpotifyTrackResult[];
 				top_artist?: Artist | null;
 				top_album?: Album | null;
 			}>(
@@ -162,6 +171,7 @@
 			);
 			artists = responseData.artists || [];
 			albums = responseData.albums || [];
+			tracks = responseData.tracks || [];
 			topArtist = responseData.top_artist ?? null;
 			topAlbum = responseData.top_album ?? null;
 		} catch (e) {
@@ -170,6 +180,7 @@
 			}
 			artists = [];
 			albums = [];
+			tracks = [];
 			topArtist = null;
 			topAlbum = null;
 		} finally {
@@ -177,7 +188,7 @@
 			loadingAlbums = false;
 		}
 
-		searchStore.setResults(normalizedQuery, artists, albums, enrichmentSource, topArtist, topAlbum);
+		searchStore.setResults(normalizedQuery, artists, albums, tracks, enrichmentSource, topArtist, topAlbum);
 
 		void fetchEnrichment();
 	}
@@ -191,6 +202,7 @@
 		} else if (browser && !data.query) {
 			artists = [];
 			albums = [];
+			tracks = [];
 			topArtist = null;
 			topAlbum = null;
 			hasSearched = false;
@@ -248,6 +260,13 @@
 				onclick={() => navigateToBucket('albums')}
 			>
 				Albums
+			</button>
+			<button
+				class="badge badge-lg cursor-pointer transition-colors"
+				style="background-color: {colors.secondary}; color: {colors.primary};"
+				onclick={navigateToTracks}
+			>
+				Tracks
 			</button>
 		</div>
 	</div>
@@ -361,6 +380,10 @@
 				<div class="p-8 bg-base-200 rounded-box text-center text-gray-500">No albums found</div>
 			{/if}
 		</div>
+	</section>
+
+	<section id="spotify-tracks" class="scroll-mt-20 px-8 pb-4">
+		<SpotifyTrackList {tracks} title="TRACKS" variant="grid" />
 	</section>
 {:else}
 	<p class="text-center mt-32 text-gray-400">Enter a search query to get started.</p>

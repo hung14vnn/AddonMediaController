@@ -1,5 +1,6 @@
 import { API } from '$lib/constants';
 import { api } from '$lib/api/client';
+import { getApiUrl } from '$lib/api/api-utils';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { NowPlayingSession } from '$lib/types';
 
@@ -94,7 +95,7 @@ function createNowPlayingStore() {
 		if (running) return;
 		running = true;
 		void hydrate();
-		source = new EventSource(API.nowPlaying.events());
+		source = new EventSource(getApiUrl(API.nowPlaying.events()), { withCredentials: true });
 		source.addEventListener('snapshot', onSnapshot as EventListener);
 		tickTimer = setInterval(tick, TICK_MS);
 	}

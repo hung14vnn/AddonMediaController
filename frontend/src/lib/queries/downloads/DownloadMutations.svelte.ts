@@ -92,6 +92,24 @@ export function requestTrack() {
 	}));
 }
 
+export function requestSpotifyTrack() {
+	return createMutation(() => ({
+		mutationFn: (spotifyId: string) =>
+			api.global.post<{ status: string; task_id?: string | null }>(API.me.spotifyTrackRequest(), {
+				spotify_id: spotifyId
+			}),
+		onSuccess: () => {
+			toastStore.show({
+				message: 'Track requested - matching MusicBrainz and searching Soulseek',
+				type: 'success'
+			});
+			void invalidateTasks();
+		},
+		onError: (err: unknown) =>
+			toastStore.show({ message: errorMessage(err, 'Spotify track request failed'), type: 'error' })
+	}));
+}
+
 export function cancelDownload() {
 	return createMutation(() => ({
 		mutationFn: (id: string) =>

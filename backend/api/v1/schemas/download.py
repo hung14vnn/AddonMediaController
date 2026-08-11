@@ -42,6 +42,14 @@ class SabnzbdTestResponse(AppStruct):
     complete_dir: str | None = None
 
 
+class SpotdlTestResponse(AppStruct):
+    """Result of checking the bundled spotDL command."""
+
+    valid: bool
+    version: str | None = None
+    message: str = ""
+
+
 class IndexerReorderRequest(AppStruct):
     ordered_ids: list[str]
 

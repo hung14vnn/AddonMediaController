@@ -85,6 +85,14 @@ _SUPPORTED_SERVICES = ("lastfm", "listenbrainz", "spotify", "navidrome", "jellyf
 _SPOTIFY_SCOPES = "playlist-read-private playlist-read-collaborative user-read-private"
 
 
+def _spotify_redirect_uri(request: Request) -> str:
+    """Use Spotify's permitted loopback literal for local HTTP development."""
+    base = str(request.base_url).rstrip("/")
+    if base.startswith("http://localhost:"):
+        base = base.replace("http://localhost:", "http://127.0.0.1:", 1)
+    return base + "/api/v1/me/connections/spotify/auth/callback"
+
+
 @router.get("/connections", response_model=ConnectionsResponse)
 async def list_connections(
     current_user: CurrentUserDep,
@@ -311,7 +319,7 @@ async def spotify_auth_url(
         raise HTTPException(status_code=400, detail="Spotify is not configured by the administrator")
     state = secrets.token_urlsafe(32)
     await auth_store.store_spotify_state(state, current_user.id)
-    redirect_uri = str(request.base_url).rstrip("/") + "/api/v1/me/connections/spotify/auth/callback"
+    redirect_uri = _spotify_redirect_uri(request)
     auth_url = "https://accounts.spotify.com/authorize?" + urlencode({
         "client_id": settings.client_id,
         "response_type": "code",
@@ -340,7 +348,7 @@ async def spotify_auth_callback(
         return fastapi_responses.RedirectResponse("/profile?spotify=error&reason=state")
 
     settings = preferences_service.get_spotify_settings_raw()
-    redirect_uri = str(request.base_url).rstrip("/") + "/api/v1/me/connections/spotify/auth/callback"
+    redirect_uri = _spotify_redirect_uri(request)
     basic = base64.b64encode(f"{settings.client_id}:{settings.client_secret}".encode()).decode()
 
     try:

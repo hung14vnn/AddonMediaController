@@ -5,6 +5,7 @@ const hoisted = vi.hoisted(() => {
 	const resumeAudioEngine = vi.fn(async () => undefined);
 	const audio = {
 		src: '',
+		crossOrigin: '',
 		volume: 1,
 		currentTime: 0,
 		duration: 180,
@@ -32,6 +33,7 @@ const hoisted = vi.hoisted(() => {
 	const reset = (): void => {
 		listeners.clear();
 		audio.src = '';
+		audio.crossOrigin = '';
 		audio.volume = 1;
 		audio.currentTime = 0;
 		audio.duration = 180;
@@ -75,6 +77,7 @@ describe('NativeAudioSource', () => {
 		const loadPromise = source.load();
 
 		expect(hoisted.audio.src).toBe('/audio.mp3');
+		expect(hoisted.audio.crossOrigin).toBe('use-credentials');
 		hoisted.dispatch('canplay');
 
 		await expect(loadPromise).resolves.toBeUndefined();

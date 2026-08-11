@@ -1,5 +1,5 @@
 import { writable, get } from 'svelte/store';
-import type { Artist, Album } from '$lib/types';
+import type { Artist, Album, SpotifyTrackResult } from '$lib/types';
 import type { EnrichmentSource } from '$lib/types';
 import { CACHE_KEYS, CACHE_TTL } from '$lib/constants';
 import { clearLocalStorageNamespace, createLocalStorageCache } from '$lib/utils/localStorageCache';
@@ -7,6 +7,7 @@ import { clearLocalStorageNamespace, createLocalStorageCache } from '$lib/utils/
 interface SearchCache {
 	query: string;
 	artists: Artist[];
+	tracks: SpotifyTrackResult[];
 	albums: Album[];
 	topArtist: Artist | null;
 	topAlbum: Album | null;
@@ -44,6 +45,7 @@ function hydratePersistentCache(query: string): SearchCache | null {
 	return {
 		query: stored.data.query,
 		artists: stored.data.artists,
+		tracks: stored.data.tracks ?? [],
 		albums: stored.data.albums,
 		topArtist: stored.data.topArtist ?? null,
 		topAlbum: stored.data.topAlbum ?? null,
@@ -57,6 +59,7 @@ function persistCache(cache: SearchCache): void {
 		{
 			query: cache.query,
 			artists: cache.artists,
+			tracks: cache.tracks,
 			albums: cache.albums,
 			topArtist: cache.topArtist,
 			topAlbum: cache.topAlbum,
@@ -80,6 +83,7 @@ function createSearchStore() {
 			query: string,
 			artists: Artist[],
 			albums: Album[],
+			tracks: SpotifyTrackResult[] = [],
 			enrichmentSource: EnrichmentSource = 'none',
 			topArtist: Artist | null = null,
 			topAlbum: Album | null = null
@@ -88,6 +92,7 @@ function createSearchStore() {
 			const cache: SearchCache = {
 				query: normalizedQuery,
 				artists,
+				tracks,
 				albums,
 				topArtist,
 				topAlbum,

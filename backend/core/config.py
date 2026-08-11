@@ -1,4 +1,6 @@
 from pathlib import Path
+import os
+import sys
 from pydantic import Field, TypeAdapter, ValidationError as PydanticValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Self
@@ -49,6 +51,14 @@ _PREFERENCES_OWNED_CONFIG_KEYS = frozenset(
 )
 
 
+def _default_slskd_downloads_path() -> Path:
+    """Use slskd's native default on Windows; retain the Docker default elsewhere."""
+    if sys.platform == "win32":
+        local_app_data = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
+        return local_app_data / "slskd" / "downloads"
+    return Path("/data/downloads/slskd")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -87,7 +97,7 @@ class Settings(BaseSettings):
         description="Comma-separated IPs/CIDRs trusted as reverse proxies for X-Forwarded-* headers. Configure the private proxy network in a reverse-proxy deployment; never use '*' on a directly reachable service.",
     )
     slskd_downloads_path: Path = Field(
-        default=Path("/data/downloads/slskd"),
+        default_factory=_default_slskd_downloads_path,
         description="Mounted slskd downloads directory (read-write, same filesystem as the library); import source for completed downloads.",
     )
     download_client_concurrent_searches: int = Field(

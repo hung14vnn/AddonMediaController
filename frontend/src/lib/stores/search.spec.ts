@@ -42,8 +42,8 @@ beforeEach(() => {
 
 describe('searchStore persistent cache', () => {
 	it('clears every saved query without removing other browser data', () => {
-		searchStore.setResults('Blue Train', [], []);
-		searchStore.setResults('Kind of Blue', [], []);
+		searchStore.setResults('Blue Train', [], [], []);
+		searchStore.setResults('Kind of Blue', [], [], []);
 		localStorage.setItem('unrelated', 'keep');
 		expect(
 			Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)).filter(

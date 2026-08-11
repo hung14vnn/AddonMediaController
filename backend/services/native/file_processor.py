@@ -1298,7 +1298,7 @@ class FileProcessor:
                 info,
                 release_group_mbid=manifest.release_group_mbid,
                 release_mbid=manifest.release_mbid,
-                recording_mbid=tag.musicbrainz_recording_id,
+                recording_mbid=manifest.external_track_id or tag.musicbrainz_recording_id,
                 confidence=_import_confidence(
                     tag=tag, info=info, expected_track=expected_track,
                     # expected.duration is the CANONICAL length only when the strict
@@ -1397,6 +1397,7 @@ class FileProcessor:
     def _build_target_tag(manifest: DownloadManifest, file_tag: AudioTag) -> AudioTag:
         """Merge the file's existing descriptive tags with the manifest's album
         identity (the authoritative MBIDs come from the request, not the audio)."""
+        is_spotify_local = manifest.release_group_mbid.startswith("spotify:album:")
         return AudioTag(
             title=file_tag.title,
             artist=file_tag.artist,
@@ -1406,11 +1407,13 @@ class FileProcessor:
             disc_number=file_tag.disc_number or 1,
             year=manifest.year,
             genre=file_tag.genre,
-            musicbrainz_release_group_id=manifest.release_group_mbid,
-            musicbrainz_release_id=manifest.release_mbid,
+            musicbrainz_release_group_id=(
+                None if is_spotify_local else manifest.release_group_mbid
+            ),
+            musicbrainz_release_id=None if is_spotify_local else manifest.release_mbid,
             musicbrainz_recording_id=file_tag.musicbrainz_recording_id,
             musicbrainz_artist_id=file_tag.musicbrainz_artist_id,
-            musicbrainz_album_artist_id=manifest.artist_mbid,
+            musicbrainz_album_artist_id=None if is_spotify_local else manifest.artist_mbid,
             acoustid_id=file_tag.acoustid_id,
             compilation=file_tag.compilation,
         )

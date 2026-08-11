@@ -69,6 +69,9 @@ class DownloadManifest(AppStruct):
     expected_tracks: list[ExpectedTrack] = []
     release_mbid: str | None = None
     artist_mbid: str | None = None
+    # An external track identity (currently Spotify) used for library dedup without
+    # writing a non-MusicBrainz value into the file's MusicBrainz tags.
+    external_track_id: str | None = None
     year: int | None = None
     # True when this is a single-track download whose ``duration`` is the canonical
     # track length (from MusicBrainz). A duration mismatch then means "wrong track for

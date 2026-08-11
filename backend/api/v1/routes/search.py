@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Query, Path, BackgroundTasks, Depends, Request
 from core.exceptions import ClientDisconnectedError
 from api.v1.schemas.search import (
@@ -15,14 +17,19 @@ import msgspec.structs
 from services.search_service import SearchService
 from services.search_enrichment_service import SearchEnrichmentService
 from repositories.coverart_repository import CoverArtRepository
+from middleware import CurrentUserDep
+from core.dependencies import get_per_user_client_factory
+from services.per_user_client_factory import PerUserClientFactory
 
 router = APIRouter(route_class=MsgSpecRoute, prefix="/search", tags=["search"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=SearchResponse)
 async def search(
     request: Request,
     background_tasks: BackgroundTasks,
+    current_user: CurrentUserDep,
     q: str = Query(..., min_length=1, description="Search term"),
     limit_per_bucket: int | None = Query(
         None, ge=1, le=100,
@@ -34,7 +41,8 @@ async def search(
         None, description="Comma-separated subset: artists,albums"
     ),
     search_service: SearchService = Depends(get_search_service),
-    coverart_repo: CoverArtRepository = Depends(get_coverart_repository)
+    coverart_repo: CoverArtRepository = Depends(get_coverart_repository),
+    client_factory: PerUserClientFactory = Depends(get_per_user_client_factory),
 ):
     if await request.is_disconnected():
         raise ClientDisconnectedError("Client disconnected")
@@ -63,6 +71,30 @@ async def search(
             "250"
         )
     
+    if current_user:
+        spotify = await client_factory.resolve_spotify_catalog()
+        if not spotify:
+            spotify = await client_factory.resolve_spotify(current_user.id)
+        if spotify:
+            try:
+                from api.v1.schemas.search import SpotifyTrackResult
+                spotify_tracks, _ = await spotify.search_tracks(q, limit=10)
+                seen_track_ids: set[str] = set()
+                result = msgspec.structs.replace(result, tracks=[
+                    SpotifyTrackResult(
+                        title=t.get("name", ""),
+                        artist=", ".join(a.get("name", "") for a in t.get("artists", [])),
+                        album=(t.get("album") or {}).get("name", ""),
+                        spotify_id=t.get("id", ""),
+                        spotify_url=(t.get("external_urls") or {}).get("spotify"),
+                        preview_url=t.get("preview_url"),
+                        album_image_url=((t.get("album") or {}).get("images") or [{}])[0].get("url"),
+                        duration_ms=t.get("duration_ms"),
+                    ) for t in spotify_tracks
+                    if t.get("id") and not (t.get("id") in seen_track_ids or seen_track_ids.add(t.get("id")))
+                ])
+            except Exception:
+                logger.exception("Spotify supplemental search failed")
     return result
 
 

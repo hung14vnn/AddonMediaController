@@ -26,6 +26,26 @@ router = APIRouter(
 )
 
 
+@router.get("", response_model=LibrarySettingsResponse)
+async def get_typed_library_settings_at_target_path(
+    service: LibraryPolicyServiceDep,
+) -> LibrarySettingsResponse:
+    """Compatibility endpoint for the current library-settings client."""
+    return service.get_settings()
+
+
+@router.put("", response_model=LibrarySettingsResponse)
+async def update_typed_library_settings_at_target_path(
+    service: LibraryPolicyServiceDep,
+    request: LibrarySettingsUpdateRequest = MsgSpecBody(LibrarySettingsUpdateRequest),
+) -> LibrarySettingsResponse:
+    """Keep local development on the typed policy contract, not legacy paths."""
+    return service.save_settings(
+        request.settings,
+        expected_policy_revision=request.expected_policy_revision,
+    )
+
+
 @router.get("/roots", response_model=LibrarySettingsResponse)
 async def get_typed_library_settings(
     service: LibraryPolicyServiceDep,

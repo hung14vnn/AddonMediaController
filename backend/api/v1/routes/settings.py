@@ -653,10 +653,10 @@ class SpotifyRedirectUriResponse(AppStruct):
     dependencies=[Depends(_admin_guard)],
 )
 async def get_spotify_redirect_uri(request: Request) -> SpotifyRedirectUriResponse:
-    redirect_uri = (
-        str(request.base_url).rstrip("/")
-        + "/api/v1/me/connections/spotify/auth/callback"
-    )
+    base = str(request.base_url).rstrip("/")
+    if base.startswith("http://localhost:"):
+        base = base.replace("http://localhost:", "http://127.0.0.1:", 1)
+    redirect_uri = base + "/api/v1/me/connections/spotify/auth/callback"
     return SpotifyRedirectUriResponse(redirect_uri=redirect_uri)
 
 

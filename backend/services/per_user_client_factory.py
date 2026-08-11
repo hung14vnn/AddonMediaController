@@ -15,7 +15,10 @@ personal list/detail/import flow and give each fresh repository a user cache sco
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import TYPE_CHECKING, Generic, Literal, NamedTuple, TypeVar
+
+logger = logging.getLogger(__name__)
 
 from core.config import Settings
 from core.exceptions import (
@@ -178,6 +181,32 @@ class PerUserClientFactory:
             connections_store=self._connections_store,
             spotify_user_id=data.get("spotify_user_id", ""),
         )
+
+    async def resolve_spotify_catalog(self) -> "SpotifyClient | None":
+        """Return a client-credentials client for public Spotify catalog data."""
+        settings = self._preferences_service.get_spotify_settings_raw()
+        if not settings.client_id or not settings.client_secret:
+            logger.warning(
+                "Spotify catalog unavailable: client credentials are not configured"
+            )
+            return None
+        from services.spotify_client import SpotifyClient
+
+        client = SpotifyClient(
+            client_id=settings.client_id,
+            client_secret=settings.client_secret,
+            access_token="",
+            refresh_token="",
+            expires_at="",
+            user_id="",
+            connections_store=self._connections_store,
+        )
+        try:
+            await client.authenticate_client_credentials()
+        except Exception:
+            logger.exception("Spotify catalog authentication failed")
+            return None
+        return client
 
     async def is_spotify_linked(self, user_id: str) -> bool:
         data = await self._connections_store.get(user_id, _SPOTIFY)

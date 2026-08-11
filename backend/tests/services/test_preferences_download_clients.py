@@ -12,6 +12,7 @@ from api.v1.schemas.settings import (
     DownloadPolicySettings,
     NewznabIndexerSettings,
     SabnzbdConnectionSettings,
+    SpotdlConnectionSettings,
 )
 from core.config import Settings
 from services.preferences_service import PreferencesService
@@ -135,14 +136,19 @@ def test_save_and_read_policy(prefs):
 
 
 def test_source_priority_defaults_soulseek_first(prefs):
-    assert prefs.get_source_priority() == ["soulseek", "usenet"]
+    assert prefs.get_source_priority() == ["soulseek", "usenet", "spotdl"]
 
 
 def test_source_priority_save_and_normalise(prefs):
-    prefs.save_source_priority(["usenet"])  # only one given -> the other is appended
-    assert prefs.get_source_priority() == ["usenet", "soulseek"]
+    prefs.save_source_priority(["usenet"])  # omitted sources are appended
+    assert prefs.get_source_priority() == ["usenet", "soulseek", "spotdl"]
     prefs.save_source_priority(["usenet", "bogus", "soulseek"])  # unknowns dropped
-    assert prefs.get_source_priority() == ["usenet", "soulseek"]
+    assert prefs.get_source_priority() == ["usenet", "soulseek", "spotdl"]
+
+
+def test_source_priority_keeps_spotdl_order(prefs):
+    prefs.save_source_priority(["spotdl", "usenet", "soulseek"])
+    assert prefs.get_source_priority() == ["spotdl", "usenet", "soulseek"]
 
 
 def test_sabnzbd_defaults_disabled(prefs):
@@ -150,6 +156,16 @@ def test_sabnzbd_defaults_disabled(prefs):
     assert sab.enabled is False
     assert sab.category == "*"
     assert sab.downloads_mount == "/sabnzbd-downloads"
+
+
+def test_spotdl_settings_round_trip_and_normalise_format(prefs):
+    prefs.save_spotdl_connection(
+        SpotdlConnectionSettings(enabled=True, downloads_mount=" /downloads/spotdl ", format="nope")
+    )
+    spotdl = prefs.get_spotdl_connection()
+    assert spotdl.enabled is True
+    assert spotdl.downloads_mount == "/downloads/spotdl"
+    assert spotdl.format == "mp3"
 
 
 def test_sabnzbd_key_masked_on_read_decrypted_raw(prefs):

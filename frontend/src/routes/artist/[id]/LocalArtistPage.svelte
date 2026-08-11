@@ -12,6 +12,7 @@
 		getLibraryArtistDetailQuery
 	} from '$lib/queries/library/LibraryQueries.svelte';
 	import { createLibraryContributionMutation } from '$lib/queries/libraryContributions/LibraryContributionMutations.svelte';
+	import SpotifyArtistTracks from '$lib/components/SpotifyArtistTracks.svelte';
 
 	interface Props {
 		artistId: string;
@@ -168,5 +169,8 @@
 					{#each albumsQuery.data.items as album (album.id)}<LibraryAlbumCard {album} />{/each}
 				</div>{/if}
 		</section>
+		{#if artist?.name}
+			<SpotifyArtistTracks artistId={artistId} artistName={artist.name} />
+		{/if}
 	{/if}
 </main>

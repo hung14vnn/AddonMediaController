@@ -89,7 +89,7 @@ const CACHE_TTL_GROUPS = {
 		ARTIST_DETAIL_BASIC: 5 * 60 * 1000,
 		ARTIST_DETAIL_EXTENDED: 30 * 60 * 1000,
 		ARTIST_DETAIL_LASTFM: 30 * 60 * 1000,
-		ARTIST_DISCOVERY: 5 * 60 * 1000
+		ARTIST_DISCOVERY: 60 * 60 * 1000
 	},
 	charts: {
 		TIME_RANGE_OVERVIEW: 2 * 60 * 1000,
@@ -152,6 +152,8 @@ export const API = {
 			const params = new URLSearchParams({ artist_name: artistName });
 			return `/api/v1/artists/${id}/lastfm?${params.toString()}`;
 		},
+		spotifyTracks: (id: string, artistName: string) =>
+			`/api/v1/artists/${id}/spotify-tracks?artist_name=${encodeURIComponent(artistName)}`,
 		follow: (id: string) => `/api/v1/artists/${id}/follow`,
 		autoDownload: (id: string) => `/api/v1/artists/${id}/auto-download`,
 		purchaseOptions: (id: string, artistName: string) => {
@@ -460,6 +462,7 @@ export const API = {
 		plexAuthPoll: (pinId: number) => `/api/v1/me/connections/plex/auth/poll?pin_id=${pinId}`,
 		spotifyAuthUrl: () => '/api/v1/me/connections/spotify/auth/url',
 		spotifyPlaylists: () => '/api/v1/me/spotify/playlists',
+		spotifyTrackRequest: () => '/api/v1/me/spotify/tracks/request',
 		spotifyImport: (playlistId: string) => `/api/v1/me/spotify/playlists/${playlistId}/import`,
 		personalMixRefresh: () => '/api/v1/me/personal-mix/refresh'
 	},
@@ -552,6 +555,8 @@ export const API = {
 		discard: (itemId: number) => `/api/v1/import/items/${itemId}/discard`
 	},
 	downloadClients: {
+		spotdl: () => '/api/v1/download-clients/spotdl',
+		spotdlTest: () => '/api/v1/download-clients/spotdl/test',
 		sabnzbd: () => '/api/v1/download-clients/sabnzbd',
 		sabnzbdTest: () => '/api/v1/download-clients/sabnzbd/test',
 		policy: () => '/api/v1/download-clients/policy',

@@ -6,15 +6,17 @@ delete) - masked on GET, preserved on PUT when the masked sentinel comes back. T
 reports SABnzbd's version + category list + completed dir (the mount hint).
 """
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends
 
-from api.v1.schemas.download import SabnzbdTestResponse, SourcePriority
+from api.v1.schemas.download import SabnzbdTestResponse, SourcePriority, SpotdlTestResponse
 from api.v1.schemas.settings import (
     SABNZBD_API_KEY_MASK,
     DownloadPolicySettings,
     SabnzbdConnectionSettings,
+    SpotdlConnectionSettings,
     WantedWatcherSettings,
 )
 from core.dependencies import build_sabnzbd_download_client, get_preferences_service
@@ -111,6 +113,41 @@ async def test_sabnzbd(
         categories=cats,
         complete_dir=complete_dir or None,
     )
+
+
+@router.get("/spotdl", response_model=SpotdlConnectionSettings)
+async def get_spotdl(_: CurrentAdminDep, preferences=Depends(get_preferences_service)):
+    return preferences.get_spotdl_connection()
+
+
+@router.put("/spotdl", response_model=SpotdlConnectionSettings)
+async def update_spotdl(
+    _: CurrentAdminDep,
+    settings: SpotdlConnectionSettings = MsgSpecBody(SpotdlConnectionSettings),
+    preferences=Depends(get_preferences_service),
+):
+    preferences.save_spotdl_connection(settings)
+    _clear_download_client_cache()
+    return preferences.get_spotdl_connection()
+
+
+@router.post("/spotdl/test", response_model=SpotdlTestResponse)
+async def test_spotdl(_: CurrentAdminDep):
+    """Confirm the bundled local CLI is runnable without attempting a download."""
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "spotdl", "--version", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
+    except FileNotFoundError:
+        return SpotdlTestResponse(valid=False, message="spotDL is not installed in this container")
+    except TimeoutError:
+        return SpotdlTestResponse(valid=False, message="spotDL did not respond within 10 seconds")
+    if process.returncode != 0:
+        message = (stderr or stdout).decode(errors="replace").strip()
+        return SpotdlTestResponse(valid=False, message=message or "spotDL could not start")
+    version = stdout.decode(errors="replace").strip().removeprefix("spotDL ")
+    return SpotdlTestResponse(valid=True, version=version or None, message="spotDL is installed")
 
 
 @router.get("/source-priority", response_model=SourcePriority)

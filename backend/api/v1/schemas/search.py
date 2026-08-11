@@ -6,11 +6,30 @@ from infrastructure.msgspec_fastapi import AppStruct
 EnrichmentSource = Literal["listenbrainz", "lastfm", "none"]
 
 
+class SpotifyTrackResult(AppStruct, kw_only=True):
+    type: str = "track"
+    title: str
+    artist: str
+    album: str
+    spotify_id: str
+    spotify_url: str | None = None
+    preview_url: str | None = None
+    album_image_url: str | None = None
+    duration_ms: int | None = None
+
+
+class SpotifyTracksResponse(AppStruct, kw_only=True):
+    tracks: list[SpotifyTrackResult] = []
+    next_offset: int | None = None
+    has_more: bool = False
+
+
 class SearchResponse(AppStruct):
     artists: list[SearchResult] = []
     albums: list[SearchResult] = []
     top_artist: SearchResult | None = None
     top_album: SearchResult | None = None
+    tracks: list["SpotifyTrackResult"] = []
     service_status: dict[str, str] | None = None
 
 

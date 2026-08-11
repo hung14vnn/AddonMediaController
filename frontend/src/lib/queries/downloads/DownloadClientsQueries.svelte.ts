@@ -8,6 +8,8 @@ import type {
 	DownloadPolicySettings,
 	SabnzbdConnectionSettings,
 	SabnzbdTestResult,
+	SpotdlConnectionSettings,
+	SpotdlTestResult,
 	SourcePriority,
 	WantedWatcherSettings
 } from '$lib/types';
@@ -45,6 +47,16 @@ const sabnzbdOptions = () =>
 
 export const getSabnzbdConfigQuery = () => createQuery(() => sabnzbdOptions());
 
+const spotdlOptions = () =>
+	queryOptions({
+		staleTime: CACHE_TTL.LIBRARY_NATIVE,
+		queryKey: DownloadQueryKeyFactory.spotdl(),
+		queryFn: ({ signal }) =>
+			api.global.get<SpotdlConnectionSettings>(API.downloadClients.spotdl(), { signal })
+	});
+
+export const getSpotdlConfigQuery = () => createQuery(() => spotdlOptions());
+
 const policyOptions = () =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
@@ -60,6 +72,7 @@ export const getDownloadPolicyQuery = (getEnabled: () => boolean = () => true) =
 
 async function invalidateClients() {
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sabnzbd() });
+	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.spotdl() });
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.clientStatus() });
 	await invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix });
 }
@@ -76,6 +89,20 @@ export function testSabnzbd() {
 	return createMutation(() => ({
 		mutationFn: (config: SabnzbdConnectionSettings) =>
 			api.global.post<SabnzbdTestResult>(API.downloadClients.sabnzbdTest(), config)
+	}));
+}
+
+export function saveSpotdlConfig() {
+	return createMutation(() => ({
+		mutationFn: (config: SpotdlConnectionSettings) =>
+			api.global.put<SpotdlConnectionSettings>(API.downloadClients.spotdl(), config),
+		onSuccess: invalidateClients
+	}));
+}
+
+export function testSpotdl() {
+	return createMutation(() => ({
+		mutationFn: () => api.global.post<SpotdlTestResult>(API.downloadClients.spotdlTest(), {})
 	}));
 }
 

@@ -294,7 +294,33 @@ async def test_zip_drop_imports_album_end_to_end(tmp_path):
     kwargs = library.upsert_file.await_args_list[0].kwargs
     assert kwargs["source"] == "drop"
     assert kwargs["release_group_mbid"] == "rg-1"
+    assert "source_path" not in kwargs
     assert tagger.stamped == ["Test Album", "Test Album"]
+
+
+def test_drop_move_cross_mount_removes_source(tmp_path, monkeypatch):
+    import errno
+    import os
+
+    tagger = FakeTagger({})
+    service, _, _, _ = _build_service(tmp_path, tagger)
+    source = tmp_path / "imports" / "source.flac"
+    target = tmp_path / "library" / "Artist" / "Album" / "track.flac"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"audio")
+
+    real_replace = os.replace
+
+    def fake_replace(src, dst):
+        if src == source:
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", fake_replace)
+    service._move_into_library(source, target, _tag("Song", 1))
+
+    assert target.exists()
+    assert not source.exists()
 
 
 @pytest.mark.asyncio

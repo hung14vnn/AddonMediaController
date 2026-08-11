@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 import uuid
 from pathlib import Path
@@ -11,6 +12,7 @@ from api.v1.schemas.settings import (
     LibrarySyncSettings,
     LibraryScanScheduleSettings,
     DownloadClientConnectionSettings,
+    SpotdlConnectionSettings,
     JellyfinConnectionSettings,
     ListenBrainzConnectionSettings,
     OIDCConnectionSettings,
@@ -315,21 +317,22 @@ class PreferencesService:
 
     def get_source_priority(self) -> list[str]:
         """The order acquisition sources are tried (D3). Defaults to Soulseek-first;
-        unknown/missing sources are appended so the list always covers both."""
+        unknown/missing sources are appended so the list always covers every
+        configured source type."""
         raw = self._load_config().get("source_priority")
         order = (
-            [s for s in raw if s in ("soulseek", "usenet")]
+            [s for s in raw if s in ("soulseek", "usenet", "spotdl")]
             if isinstance(raw, list)
             else []
         )
-        for source in ("soulseek", "usenet"):
+        for source in ("soulseek", "usenet", "spotdl"):
             if source not in order:
                 order.append(source)
         return order
 
     def save_source_priority(self, order: list[str]) -> None:
-        clean = [s for s in order if s in ("soulseek", "usenet")]
-        for source in ("soulseek", "usenet"):
+        clean = [s for s in order if s in ("soulseek", "usenet", "spotdl")]
+        for source in ("soulseek", "usenet", "spotdl"):
             if source not in clean:
                 clean.append(source)
         config = self._load_config().copy()
@@ -389,6 +392,29 @@ class PreferencesService:
         except Exception as e:  # noqa: BLE001
             logger.error("Failed to save SABnzbd settings: %s", e)
             raise ConfigurationError(f"Failed to save SABnzbd settings: {e}")
+
+    # --- spotDL local download client ------------------------------------------------
+
+    def get_spotdl_connection(self) -> SpotdlConnectionSettings:
+        data = self._load_config().get("download_clients", {}).get("spotdl", {})
+        return msgspec.convert(data, type=SpotdlConnectionSettings) if data else SpotdlConnectionSettings()
+
+    def save_spotdl_connection(self, settings: SpotdlConnectionSettings) -> None:
+        try:
+            config = self._load_config().copy()
+            clients = dict(config.get("download_clients", {}))
+            clients["spotdl"] = {
+                "enabled": settings.enabled,
+                "client_type": "spotdl",
+                "downloads_mount": settings.downloads_mount,
+                "format": settings.format,
+            }
+            config["download_clients"] = clients
+            self._save_config(config)
+            logger.info("Saved spotDL connection settings")
+        except Exception as e:  # noqa: BLE001
+            logger.error("Failed to save spotDL settings: %s", e)
+            raise ConfigurationError(f"Failed to save spotDL settings: {e}")
 
     # --- Lidarr import connection (LidarrImport D5) - read-only migration aid ------
 
@@ -1067,6 +1093,17 @@ class PreferencesService:
         data = config.get("library_settings") or {}
         if "library_roots" in data:
             try:
+                if os.name == "nt":
+                    data = dict(data)
+                    data["library_roots"] = [
+                        {
+                            **root,
+                            "path": str(Path.cwd() / "music")
+                            if root.get("path") == "/music"
+                            else root.get("path"),
+                        }
+                        for root in data["library_roots"]
+                    ]
                 settings = msgspec.convert(data, type=TypedLibrarySettings)
                 from services.native.library_policy_resolver import (
                     LibraryPolicyResolver,
@@ -1080,7 +1117,11 @@ class PreferencesService:
         legacy_paths = list(data.get("library_paths") or [])
         if not legacy_paths:
             legacy_root = config.get("_legacy_lidarr", {}).get("root_folder_path")
-            legacy_paths = [legacy_root] if legacy_root else ["/music"]
+            legacy_paths = (
+                [legacy_root]
+                if legacy_root
+                else [str(Path.cwd() / "music") if os.name == "nt" else "/music"]
+            )
 
         used_labels: set[str] = set()
         roots = [

@@ -270,6 +270,25 @@ class SabnzbdConnectionSettings(AppStruct):
         self.url = self.url.rstrip("/")
 
 
+class SpotdlConnectionSettings(AppStruct):
+    """Local spotDL configuration.
+
+    spotDL is launched inside the DroppedNeedle container rather than contacted
+    over HTTP. ``downloads_mount`` must therefore be a writable path visible to
+    this container and to the library importer.
+    """
+
+    enabled: bool = False
+    client_type: str = "spotdl"
+    downloads_mount: str = "/spotdl-downloads"
+    format: str = "mp3"
+
+    def __post_init__(self) -> None:
+        self.downloads_mount = self.downloads_mount.strip() or "/spotdl-downloads"
+        if self.format not in {"mp3", "flac", "ogg", "opus", "m4a", "wav"}:
+            self.format = "mp3"
+
+
 class NewznabIndexerSettings(AppStruct):
     """One configured Newznab indexer (D6). ``api_key`` is a Fernet-encrypted
     secret, masked on read and preserved on a masked save - **per array element**.

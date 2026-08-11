@@ -805,7 +805,6 @@ class DropImportService:
             recording_mbid=track.recording_mbid,
             confidence=confidence,
             source=_SOURCE,
-            source_path=str(entry.path),
         )
         return "upgraded" if upgrading else "imported"
 
@@ -835,7 +834,6 @@ class DropImportService:
             recording_mbid=None,
             confidence=_UNMAPPED_CONFIDENCE,
             source=_SOURCE,
-            source_path=str(entry.path),
         )
         return True
 
@@ -900,6 +898,11 @@ class DropImportService:
             else:
                 tmp.unlink(missing_ok=True)
             raise
+        if not consumed_source:
+            try:
+                source.unlink()
+            except OSError:
+                logger.warning("Could not remove dropped source %s", source)
 
     # -- post-import hooks --
 
