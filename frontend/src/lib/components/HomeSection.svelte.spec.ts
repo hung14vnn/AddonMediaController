@@ -4,7 +4,7 @@ import { render } from 'vitest-browser-svelte';
 import HomeSection from './HomeSection.svelte';
 
 describe('HomeSection.svelte', () => {
-	it('routes a local-only artist through its stable DroppedNeedle identity', async () => {
+	it('routes a local-only artist through its stable identity', async () => {
 		render(HomeSection, {
 			props: {
 				section: {

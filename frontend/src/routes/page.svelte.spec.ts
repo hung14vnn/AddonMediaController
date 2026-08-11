@@ -87,7 +87,7 @@ describe('/+page.svelte', () => {
 		const heading = page.getByRole('heading', { level: 1 });
 		await expect.element(heading).toBeInTheDocument();
 		// getGreeting() returns one of these depending on the time of day.
-		await expect.element(heading).toHaveTextContent(/Good (morning|afternoon|evening)/);
+		await expect.element(heading).toHaveTextContent(/(morning|afternoon|night)/);
 	});
 
 	it('renders the page subtitle', async () => {

@@ -12,7 +12,7 @@ export const DownloadQueryKeyFactory = {
 		[...DownloadQueryKeyFactory.all, 'tasks', 'held', mbid ?? 'all'] as const,
 	indexers: () => [...DownloadQueryKeyFactory.all, 'indexers'] as const,
 	sabnzbd: () => [...DownloadQueryKeyFactory.all, 'sabnzbd'] as const,
-	spotdl: () => [...DownloadQueryKeyFactory.all, 'spotdl'] as const,
+	spotiflac: () => [...DownloadQueryKeyFactory.all, 'spotiflac'] as const,
 	policy: () => [...DownloadQueryKeyFactory.all, 'policy'] as const,
 	wantedSettings: () => [...DownloadQueryKeyFactory.all, 'wanted-settings'] as const,
 	cutoffUnmet: () => [...DownloadQueryKeyFactory.all, 'cutoff-unmet'] as const

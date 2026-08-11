@@ -12,7 +12,7 @@ from api.v1.schemas.settings import (
     LibrarySyncSettings,
     LibraryScanScheduleSettings,
     DownloadClientConnectionSettings,
-    SpotdlConnectionSettings,
+    SpotiflacConnectionSettings,
     JellyfinConnectionSettings,
     ListenBrainzConnectionSettings,
     OIDCConnectionSettings,
@@ -321,18 +321,19 @@ class PreferencesService:
         configured source type."""
         raw = self._load_config().get("source_priority")
         order = (
-            [s for s in raw if s in ("soulseek", "usenet", "spotdl")]
+            ["spotiflac" if s == "spotdl" else s for s in raw if s in ("soulseek", "usenet", "spotdl", "spotiflac")]
             if isinstance(raw, list)
             else []
         )
-        for source in ("soulseek", "usenet", "spotdl"):
+        for source in ("soulseek", "usenet", "spotiflac"):
             if source not in order:
                 order.append(source)
         return order
 
     def save_source_priority(self, order: list[str]) -> None:
-        clean = [s for s in order if s in ("soulseek", "usenet", "spotdl")]
-        for source in ("soulseek", "usenet", "spotdl"):
+        clean = ["spotiflac" if s == "spotdl" else s for s in order if s in ("soulseek", "usenet", "spotdl", "spotiflac")]
+        clean = list(dict.fromkeys(clean))
+        for source in ("soulseek", "usenet", "spotiflac"):
             if source not in clean:
                 clean.append(source)
         config = self._load_config().copy()
@@ -393,28 +394,37 @@ class PreferencesService:
             logger.error("Failed to save SABnzbd settings: %s", e)
             raise ConfigurationError(f"Failed to save SABnzbd settings: {e}")
 
-    # --- spotDL local download client ------------------------------------------------
+    # --- SpotiFLAC local download client ---------------------------------------------
 
-    def get_spotdl_connection(self) -> SpotdlConnectionSettings:
-        data = self._load_config().get("download_clients", {}).get("spotdl", {})
-        return msgspec.convert(data, type=SpotdlConnectionSettings) if data else SpotdlConnectionSettings()
+    def get_spotiflac_connection(self) -> SpotiflacConnectionSettings:
+        clients = self._load_config().get("download_clients", {})
+        data = clients.get("spotiflac") or clients.get("spotdl", {})
+        if not data:
+            return SpotiflacConnectionSettings()
+        migrated = dict(data)
+        migrated["client_type"] = "spotiflac"
+        migrated["downloads_mount"] = migrated.get("downloads_mount") or "/spotiflac-downloads"
+        migrated["quality"] = "LOSSLESS" if migrated.get("format") == "flac" else migrated.get("quality", "LOSSLESS")
+        migrated.pop("format", None)
+        return msgspec.convert(migrated, type=SpotiflacConnectionSettings)
 
-    def save_spotdl_connection(self, settings: SpotdlConnectionSettings) -> None:
+    def save_spotiflac_connection(self, settings: SpotiflacConnectionSettings) -> None:
         try:
             config = self._load_config().copy()
             clients = dict(config.get("download_clients", {}))
-            clients["spotdl"] = {
+            clients["spotiflac"] = {
                 "enabled": settings.enabled,
-                "client_type": "spotdl",
+                "client_type": "spotiflac",
                 "downloads_mount": settings.downloads_mount,
-                "format": settings.format,
+                "quality": settings.quality,
             }
+            clients.pop("spotdl", None)
             config["download_clients"] = clients
             self._save_config(config)
-            logger.info("Saved spotDL connection settings")
+            logger.info("Saved SpotiFLAC connection settings")
         except Exception as e:  # noqa: BLE001
-            logger.error("Failed to save spotDL settings: %s", e)
-            raise ConfigurationError(f"Failed to save spotDL settings: {e}")
+            logger.error("Failed to save SpotiFLAC settings: %s", e)
+            raise ConfigurationError(f"Failed to save SpotiFLAC settings: {e}")
 
     # --- Lidarr import connection (LidarrImport D5) - read-only migration aid ------
 

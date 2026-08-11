@@ -13,6 +13,12 @@
 
 ---
 
+## AddonM fork credit
+
+This repository is **AddonM**, a fork of [DroppedNeedle](https://github.com/DroppedNeedle/DroppedNeedle). DroppedNeedle's original branding, upstream references, and AGPL-3.0 licence notices are intentionally retained.
+
+---
+
 DroppedNeedle is a self-hosted music request and discovery app with a **built-in native library and download engine** (no Lidarr required). Search the full MusicBrainz catalogue, request whole albums or single tracks, and let the engine scan, tag, and organise your library while it drives downloads through your own slskd or Usenet/SABnzbd. Stream from Jellyfin, Navidrome, Plex, or your local files, get recommendations from your listening history, and scrobble to ListenBrainz and Last.fm. Play your library in third-party apps like Symfonium and Finamp over the OpenSubsonic and Jellyfin APIs. It all runs as a single Docker container, configured from the web UI.
 
 ---

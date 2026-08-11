@@ -81,7 +81,7 @@
 </script>
 
 <svelte:head>
-	<title>Playlists - DroppedNeedle</title>
+	<title>Playlists</title>
 </svelte:head>
 
 <div class="space-y-6 px-4 sm:px-6 lg:px-8">

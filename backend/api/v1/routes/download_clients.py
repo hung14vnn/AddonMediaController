@@ -7,16 +7,19 @@ reports SABnzbd's version + category list + completed dir (the mount hint).
 """
 
 import asyncio
+import importlib.util
 import logging
+import subprocess
+from pathlib import Path
 
 from fastapi import APIRouter, Depends
 
-from api.v1.schemas.download import SabnzbdTestResponse, SourcePriority, SpotdlTestResponse
+from api.v1.schemas.download import SabnzbdTestResponse, SourcePriority, SpotiflacTestResponse
 from api.v1.schemas.settings import (
     SABNZBD_API_KEY_MASK,
     DownloadPolicySettings,
     SabnzbdConnectionSettings,
-    SpotdlConnectionSettings,
+    SpotiflacConnectionSettings,
     WantedWatcherSettings,
 )
 from core.dependencies import build_sabnzbd_download_client, get_preferences_service
@@ -67,6 +70,24 @@ def _clear_download_client_cache() -> None:
         provider.cache_clear()
 
 
+def _prepare_nodriver_for_spotiflac() -> None:
+    """Repair the malformed nodriver 0.50.3 generated CDP module before importing it.
+
+    That release declares no source encoding even though its generated ``network.py``
+    includes a Latin-1 plus/minus symbol. SpotiFLAC requires its newer event API, so
+    the older importable nodriver release is not an option. The patch is idempotent
+    and only touches the known invalid package file.
+    """
+    spec = importlib.util.find_spec("nodriver")
+    if spec is None or spec.origin is None:
+        return
+    network_module = Path(spec.origin).parent / "cdp" / "network.py"
+    source = network_module.read_bytes()
+    first_two_lines = source.splitlines()[:2]
+    if b"\xb1" in source and not any(b"coding" in line for line in first_two_lines):
+        network_module.write_bytes(b"# -*- coding: latin-1 -*-\n" + source)
+
+
 @router.get("/sabnzbd", response_model=SabnzbdConnectionSettings)
 async def get_sabnzbd(_: CurrentAdminDep, preferences=Depends(get_preferences_service)):
     return preferences.get_sabnzbd_connection()
@@ -115,39 +136,51 @@ async def test_sabnzbd(
     )
 
 
-@router.get("/spotdl", response_model=SpotdlConnectionSettings)
-async def get_spotdl(_: CurrentAdminDep, preferences=Depends(get_preferences_service)):
-    return preferences.get_spotdl_connection()
+@router.get("/spotiflac", response_model=SpotiflacConnectionSettings)
+async def get_spotiflac(_: CurrentAdminDep, preferences=Depends(get_preferences_service)):
+    return preferences.get_spotiflac_connection()
 
 
-@router.put("/spotdl", response_model=SpotdlConnectionSettings)
-async def update_spotdl(
+@router.put("/spotiflac", response_model=SpotiflacConnectionSettings)
+async def update_spotiflac(
     _: CurrentAdminDep,
-    settings: SpotdlConnectionSettings = MsgSpecBody(SpotdlConnectionSettings),
+    settings: SpotiflacConnectionSettings = MsgSpecBody(SpotiflacConnectionSettings),
     preferences=Depends(get_preferences_service),
 ):
-    preferences.save_spotdl_connection(settings)
+    preferences.save_spotiflac_connection(settings)
     _clear_download_client_cache()
-    return preferences.get_spotdl_connection()
+    return preferences.get_spotiflac_connection()
 
 
-@router.post("/spotdl/test", response_model=SpotdlTestResponse)
-async def test_spotdl(_: CurrentAdminDep):
+@router.post("/spotiflac/test", response_model=SpotiflacTestResponse)
+async def test_spotiflac(_: CurrentAdminDep):
     """Confirm the bundled local CLI is runnable without attempting a download."""
     try:
-        process = await asyncio.create_subprocess_exec(
-            "spotdl", "--version", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        _prepare_nodriver_for_spotiflac()
+        # Uvicorn's Windows reload loop can be a SelectorEventLoop, which deliberately
+        # does not implement asyncio subprocess transports. Run this short health check
+        # in a worker thread so local development behaves like production too.
+        process = await asyncio.to_thread(
+            subprocess.run,
+            ["spotiflac", "--version"],
+            capture_output=True,
+            timeout=10,
+            check=False,
         )
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
     except FileNotFoundError:
-        return SpotdlTestResponse(valid=False, message="spotDL is not installed in this container")
-    except TimeoutError:
-        return SpotdlTestResponse(valid=False, message="spotDL did not respond within 10 seconds")
+        return SpotiflacTestResponse(valid=False, message="SpotiFLAC is not installed in this container")
+    except subprocess.TimeoutExpired:
+        return SpotiflacTestResponse(valid=False, message="SpotiFLAC did not respond within 10 seconds")
     if process.returncode != 0:
-        message = (stderr or stdout).decode(errors="replace").strip()
-        return SpotdlTestResponse(valid=False, message=message or "spotDL could not start")
-    version = stdout.decode(errors="replace").strip().removeprefix("spotDL ")
-    return SpotdlTestResponse(valid=True, version=version or None, message="spotDL is installed")
+        message = (process.stderr or process.stdout).decode(errors="replace").strip()
+        if "Connection.process_event" in message or "Non-UTF-8 code" in message:
+            message = (
+                "SpotiFLAC cannot start because its current nodriver dependency is "
+                "incompatible on this Python installation."
+            )
+        return SpotiflacTestResponse(valid=False, message=message or "SpotiFLAC could not start")
+    version = process.stdout.decode(errors="replace").strip().removeprefix("SpotiFLAC ")
+    return SpotiflacTestResponse(valid=True, version=version or None, message="SpotiFLAC is installed")
 
 
 @router.get("/source-priority", response_model=SourcePriority)

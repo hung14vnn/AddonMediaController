@@ -327,7 +327,7 @@
 				<section class="space-y-2">
 					<h3 class="font-semibold">Automatic scanning</h3>
 					<p class="text-xs text-base-content/60">
-						How often DroppedNeedle scans your library for new and changed files.
+						How often we scan your library for new and changed files.
 					</p>
 					<LibraryScanScheduleControl />
 				</section>
@@ -408,7 +408,7 @@
 				committed catalog changes remain safe if the job is paused or stopped.
 			</p>
 			{#if applyPreview.data.content_will_become_unavailable}<div class="alert alert-warning mt-3">
-					<AlertTriangle class="h-4 w-4" /> Music under Excluded scopes will become unavailable to DroppedNeedle
+					<AlertTriangle class="h-4 w-4" /> Music under Excluded scopes will become unavailable to AddonM
 					and connected clients.
 				</div>{/if}{/if}
 		<div class="modal-action">

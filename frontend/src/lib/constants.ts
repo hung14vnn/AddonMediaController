@@ -130,7 +130,14 @@ export const STATUS_COLORS = {
 export const YOUTUBE_PLAYER_ELEMENT_ID = 'yt-player-embed';
 
 export const API = {
-	lyrics: (source: string, trackId: string, artist: string, title: string, album: string, duration?: number) => {
+	lyrics: (
+		source: string,
+		trackId: string,
+		artist: string,
+		title: string,
+		album: string,
+		duration?: number
+	) => {
 		const params = new URLSearchParams({ source, track_id: trackId, artist, title, album });
 		if (duration) params.set('duration', String(duration));
 		return `/api/v1/lyrics?${params}`;
@@ -560,8 +567,8 @@ export const API = {
 		discard: (itemId: number) => `/api/v1/import/items/${itemId}/discard`
 	},
 	downloadClients: {
-		spotdl: () => '/api/v1/download-clients/spotdl',
-		spotdlTest: () => '/api/v1/download-clients/spotdl/test',
+		spotiflac: () => '/api/v1/download-clients/spotiflac',
+		spotiflacTest: () => '/api/v1/download-clients/spotiflac/test',
 		sabnzbd: () => '/api/v1/download-clients/sabnzbd',
 		sabnzbdTest: () => '/api/v1/download-clients/sabnzbd/test',
 		policy: () => '/api/v1/download-clients/policy',

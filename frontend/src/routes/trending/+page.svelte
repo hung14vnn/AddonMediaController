@@ -27,7 +27,7 @@
 </script>
 
 <svelte:head>
-	<title>Trending Artists - DroppedNeedle</title>
+	<title>Trending Artists</title>
 </svelte:head>
 
 <div class="space-y-4 px-4 sm:px-6 lg:px-8">

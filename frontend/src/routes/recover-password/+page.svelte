@@ -80,14 +80,14 @@
 </script>
 
 <svelte:head>
-	<title>Recover account - DroppedNeedle</title>
+	<title>Recover account</title>
 </svelte:head>
 
 <div class="recovery-wrap grain min-h-screen flex items-center justify-center p-4 py-10">
 	<div class="w-full max-w-lg">
 		<div class="recovery-brand">
 			<img src="/logo_icon.png" alt="" aria-hidden="true" class="recovery-mark" />
-			<h1 class="recovery-wordmark">DroppedNeedle</h1>
+			<h1 class="recovery-wordmark">AddonM</h1>
 			<div class="recovery-rule" aria-hidden="true"></div>
 			<p class="recovery-kicker">Account recovery</p>
 		</div>
@@ -102,7 +102,7 @@
 					</div>
 					<h2 class="font-display text-2xl font-bold">Password changed</h2>
 					<p class="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-base-content/60">
-						All other DroppedNeedle browser sessions have been signed out. Sign in with your new
+						All other browser sessions have been signed out. Sign in with your new
 						password.
 					</p>
 					<p class="mx-auto mt-3 max-w-sm text-xs leading-relaxed text-base-content/45">
@@ -122,7 +122,7 @@
 						<div>
 							<h2 class="font-display text-xl font-bold">Recover your local account</h2>
 							<p class="mt-1 text-sm leading-relaxed text-base-content/60">
-								Enter the one-time code from your DroppedNeedle administrator.
+								Enter the one-time code from your administrator.
 							</p>
 						</div>
 					</div>
@@ -144,7 +144,7 @@
 							aria-label="Username"
 							autocomplete="username"
 							required
-							placeholder="Your DroppedNeedle username"
+							placeholder="Your username"
 						/>
 					</fieldset>
 
@@ -222,7 +222,7 @@
 				</summary>
 				<div class="border-t border-base-300 px-4 pb-4 pt-3">
 					<p class="text-xs leading-relaxed text-base-content/60">
-						If no other administrator can help, use the machine running DroppedNeedle to create a
+						If no other administrator can help, use the machine running AddonM to create a
 						recovery code. Only someone with host access can run this command.
 					</p>
 					<div class="mt-3 flex flex-wrap gap-1" role="tablist" aria-label="Installation method">

@@ -2,31 +2,31 @@
 	import { CircleCheck, CircleX, FolderDown, Youtube } from 'lucide-svelte';
 
 	import {
-		getSpotdlConfigQuery,
-		saveSpotdlConfig,
-		testSpotdl
+		getSpotiflacConfigQuery,
+		saveSpotiflacConfig,
+		testSpotiflac
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import type { SpotdlConnectionSettings, SpotdlTestResult } from '$lib/types';
+	import type { SpotiflacConnectionSettings, SpotiflacTestResult } from '$lib/types';
 
 	import DownloadClientCard from './DownloadClientCard.svelte';
 
-	const configQuery = getSpotdlConfigQuery();
-	const save = saveSpotdlConfig();
-	const test = testSpotdl();
+	const configQuery = getSpotiflacConfigQuery();
+	const save = saveSpotiflacConfig();
+	const test = testSpotiflac();
 
 	let enabled = $state(false);
-	let downloadsMount = $state('/spotdl-downloads');
-	let format = $state<SpotdlConnectionSettings['format']>('mp3');
+	let downloadsMount = $state('/spotiflac-downloads');
+	let quality = $state<SpotiflacConnectionSettings['quality']>('LOSSLESS');
 	let seeded = $state(false);
-	let testResult = $state<SpotdlTestResult | null>(null);
+	let testResult = $state<SpotiflacTestResult | null>(null);
 
 	$effect(() => {
 		const settings = configQuery.data;
 		if (settings && !seeded) {
 			enabled = settings.enabled;
-			downloadsMount = settings.downloads_mount || '/spotdl-downloads';
-			format = settings.format || 'mp3';
+			downloadsMount = settings.downloads_mount || '/spotiflac-downloads';
+			quality = settings.quality || 'LOSSLESS';
 			seeded = true;
 		}
 	});
@@ -40,26 +40,29 @@
 				: 'Disabled'
 	);
 
-	function current(): SpotdlConnectionSettings {
-		return { enabled, client_type: 'spotdl', downloads_mount: downloadsMount, format };
+	function current(): SpotiflacConnectionSettings {
+		return { enabled, client_type: 'spotiflac', downloads_mount: downloadsMount, quality };
 	}
 
 	async function onSave() {
 		try {
 			await save.mutateAsync(current());
-			toastStore.show({ message: 'spotDL settings saved', type: 'success' });
+			toastStore.show({ message: 'SpotiFLAC settings saved', type: 'success' });
 		} catch {
-			toastStore.show({ message: 'Could not save spotDL settings', type: 'error' });
+			toastStore.show({ message: 'Could not save SpotiFLAC settings', type: 'error' });
 		}
 	}
 
 	async function onToggle() {
 		try {
 			await save.mutateAsync(current());
-			toastStore.show({ message: `spotDL ${enabled ? 'enabled' : 'disabled'}`, type: 'success' });
+			toastStore.show({
+				message: `SpotiFLAC ${enabled ? 'enabled' : 'disabled'}`,
+				type: 'success'
+			});
 		} catch {
 			enabled = !enabled;
-			toastStore.show({ message: 'Could not update spotDL', type: 'error' });
+			toastStore.show({ message: 'Could not update SpotiFLAC', type: 'error' });
 		}
 	}
 
@@ -67,7 +70,7 @@
 		try {
 			testResult = await test.mutateAsync();
 		} catch {
-			testResult = { valid: false, message: "Couldn't run spotDL" };
+			testResult = { valid: false, message: "Couldn't run SpotiFLAC" };
 		}
 	}
 </script>
@@ -75,29 +78,36 @@
 {#if configQuery.isLoading}
 	<div class="skeleton h-28 w-full rounded-box"></div>
 {:else if configQuery.isError}
-	<div class="alert alert-error">Failed to load spotDL settings: {configQuery.error.message}</div>
+	<div class="alert alert-error">
+		Failed to load SpotiFLAC settings: {configQuery.error.message}
+	</div>
 {:else}
 	<DownloadClientCard
-		title="spotDL"
-		sourceLabel="Spotify → YouTube"
+		title="spotbye"
+		sourceLabel="SpotiFLAC"
 		icon={Youtube}
 		{connected}
 		{statusText}
 		bind:enabled
 		{onToggle}
-		enableAriaLabel="Enable spotDL download client"
+		enableAriaLabel="Enable SpotiFLAC download client"
 	>
 		<div class="alert alert-warning items-start text-sm">
 			<Youtube class="size-5 shrink-0" aria-hidden="true" />
 			<p>
-				spotDL finds audio on YouTube for Spotify metadata. Only download material you are authorised to
-				obtain, and expect source availability and quality to vary.
+				SpotiFLAC matches Spotify metadata against external audio providers. Only download material
+				you are authorised to obtain, and expect provider availability to vary.
 			</p>
 		</div>
 
 		<section class="space-y-3">
 			<div class="flex flex-wrap items-center gap-3">
-				<button type="button" class="btn btn-outline btn-sm" onclick={onTest} disabled={test.isPending}>
+				<button
+					type="button"
+					class="btn btn-outline btn-sm"
+					onclick={onTest}
+					disabled={test.isPending}
+				>
 					{#if test.isPending}<span class="loading loading-spinner loading-xs"></span>{/if}
 					Check installation
 				</button>
@@ -117,10 +127,12 @@
 			</div>
 
 			<div class="form-control">
-				<label class="label" for="spotdl-format"><span class="label-text">Output format</span></label>
-				<select id="spotdl-format" class="select select-bordered" bind:value={format}>
-					{#each ['mp3', 'flac', 'm4a', 'ogg', 'opus', 'wav'] as outputFormat (outputFormat)}
-						<option value={outputFormat}>{outputFormat.toUpperCase()}</option>
+				<label class="label" for="spotiflac-quality"
+					><span class="label-text">Requested quality</span></label
+				>
+				<select id="spotiflac-quality" class="select select-bordered" bind:value={quality}>
+					{#each ['LOW', 'HIGH', 'LOSSLESS', 'HI_RES_LOSSLESS'] as option (option)}
+						<option value={option}>{option.replaceAll('_', ' ')}</option>
 					{/each}
 				</select>
 			</div>
@@ -130,21 +142,22 @@
 					<FolderDown class="size-4 text-base-content/70" aria-hidden="true" /> Downloads mount
 				</div>
 				<p class="text-xs text-base-content/60">
-					A writable directory mounted into DroppedNeedle. spotDL output will be imported from here.
+					A writable directory mounted into AddonM. SpotiFLAC output will be imported from here.
 				</p>
 				<input
-					id="spotdl-mount"
+					id="spotiflac-mount"
 					type="text"
 					class="input input-sm input-bordered w-full font-mono"
 					bind:value={downloadsMount}
-					placeholder="/spotdl-downloads"
+					placeholder="/spotiflac-downloads"
 				/>
 			</div>
 		</section>
 
 		<p class="text-xs leading-relaxed text-base-content/60">
-			spotDL is bundled with the DroppedNeedle image. This client configuration prepares its local output
-			location and format; direct request routing will be enabled with the next acquisition-source update.
+			SpotiFLAC is bundled with the AddonM image. This client configuration prepares its local
+			output location and requested quality; direct request routing will be enabled with the next
+			acquisition-source update.
 		</p>
 
 		<div class="flex justify-end">

@@ -306,7 +306,7 @@
 					>
 				{:else if retryIsTransport}
 					<span
-						>DroppedNeedle could not reach the server, so the retry did not start. You can try again
+						>We could not reach the server, so the retry did not start. You can try again
 						without closing this dialog.</span
 					>
 				{:else}

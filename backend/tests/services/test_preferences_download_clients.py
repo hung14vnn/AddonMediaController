@@ -12,7 +12,7 @@ from api.v1.schemas.settings import (
     DownloadPolicySettings,
     NewznabIndexerSettings,
     SabnzbdConnectionSettings,
-    SpotdlConnectionSettings,
+    SpotiflacConnectionSettings,
 )
 from core.config import Settings
 from services.preferences_service import PreferencesService
@@ -146,19 +146,16 @@ def test_policy_preferred_quality_must_be_within_accepted_range():
 
 
 def test_source_priority_defaults_soulseek_first(prefs):
-    assert prefs.get_source_priority() == ["soulseek", "usenet", "spotdl"]
+    assert prefs.get_source_priority() == ["soulseek", "usenet", "spotiflac"]
 
 
 def test_source_priority_save_and_normalise(prefs):
     prefs.save_source_priority(["usenet"])  # omitted sources are appended
-    assert prefs.get_source_priority() == ["usenet", "soulseek", "spotdl"]
+    assert prefs.get_source_priority() == ["usenet", "soulseek", "spotiflac"]
     prefs.save_source_priority(["usenet", "bogus", "soulseek"])  # unknowns dropped
-    assert prefs.get_source_priority() == ["usenet", "soulseek", "spotdl"]
+    assert prefs.get_source_priority() == ["usenet", "soulseek", "spotiflac"]
 
 
-def test_source_priority_keeps_spotdl_order(prefs):
-    prefs.save_source_priority(["spotdl", "usenet", "soulseek"])
-    assert prefs.get_source_priority() == ["spotdl", "usenet", "soulseek"]
 
 
 def test_sabnzbd_defaults_disabled(prefs):
@@ -168,14 +165,14 @@ def test_sabnzbd_defaults_disabled(prefs):
     assert sab.downloads_mount == "/sabnzbd-downloads"
 
 
-def test_spotdl_settings_round_trip_and_normalise_format(prefs):
-    prefs.save_spotdl_connection(
-        SpotdlConnectionSettings(enabled=True, downloads_mount=" /downloads/spotdl ", format="nope")
+def test_spotiflac_settings_round_trip_and_normalise_quality(prefs):
+    prefs.save_spotiflac_connection(
+        SpotiflacConnectionSettings(enabled=True, downloads_mount=" /downloads/spotiflac ", quality="nope")
     )
-    spotdl = prefs.get_spotdl_connection()
-    assert spotdl.enabled is True
-    assert spotdl.downloads_mount == "/downloads/spotdl"
-    assert spotdl.format == "mp3"
+    spotiflac = prefs.get_spotiflac_connection()
+    assert spotiflac.enabled is True
+    assert spotiflac.downloads_mount == "/downloads/spotiflac"
+    assert spotiflac.quality == "LOSSLESS"
 
 
 def test_sabnzbd_key_masked_on_read_decrypted_raw(prefs):

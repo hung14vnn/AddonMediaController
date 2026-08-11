@@ -160,7 +160,7 @@
 			</p>
 			{#if options.disclosure}
 				<p class="text-[11px] text-base-content/40">
-					Some links earn DroppedNeedle a commission at no cost to you.
+					Some links earn us a commission at no cost to you.
 				</p>
 			{/if}
 		</div>

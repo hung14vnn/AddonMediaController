@@ -42,8 +42,8 @@ class SabnzbdTestResponse(AppStruct):
     complete_dir: str | None = None
 
 
-class SpotdlTestResponse(AppStruct):
-    """Result of checking the bundled spotDL command."""
+class SpotiflacTestResponse(AppStruct):
+    """Result of checking the bundled SpotiFLAC command."""
 
     valid: bool
     version: str | None = None

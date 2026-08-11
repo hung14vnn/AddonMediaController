@@ -277,23 +277,23 @@ class SabnzbdConnectionSettings(AppStruct):
         self.url = self.url.rstrip("/")
 
 
-class SpotdlConnectionSettings(AppStruct):
-    """Local spotDL configuration.
+class SpotiflacConnectionSettings(AppStruct):
+    """Local SpotiFLAC configuration.
 
-    spotDL is launched inside the DroppedNeedle container rather than contacted
+    SpotiFLAC is launched inside the DroppedNeedle container rather than contacted
     over HTTP. ``downloads_mount`` must therefore be a writable path visible to
     this container and to the library importer.
     """
 
     enabled: bool = False
-    client_type: str = "spotdl"
-    downloads_mount: str = "/spotdl-downloads"
-    format: str = "mp3"
+    client_type: str = "spotiflac"
+    downloads_mount: str = "/spotiflac-downloads"
+    quality: str = "LOSSLESS"
 
     def __post_init__(self) -> None:
-        self.downloads_mount = self.downloads_mount.strip() or "/spotdl-downloads"
-        if self.format not in {"mp3", "flac", "ogg", "opus", "m4a", "wav"}:
-            self.format = "mp3"
+        self.downloads_mount = self.downloads_mount.strip() or "/spotiflac-downloads"
+        if self.quality not in {"LOW", "HIGH", "LOSSLESS", "HI_RES_LOSSLESS"}:
+            self.quality = "LOSSLESS"
 
 
 class NewznabIndexerSettings(AppStruct):

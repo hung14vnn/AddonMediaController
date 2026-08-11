@@ -138,14 +138,14 @@
 </script>
 
 <svelte:head>
-	<title>Sign in - DroppedNeedle</title>
+	<title>Sign in</title>
 </svelte:head>
 
 <div class="login-wrap grain min-h-screen flex items-center justify-center p-4">
 	<div class="w-full max-w-md">
 		<div class="login-brand">
 			<img src="/logo_icon.png" alt="" aria-hidden="true" class="login-mark" />
-			<h1 class="login-wordmark">DroppedNeedle</h1>
+			<h1 class="login-wordmark">AddonM</h1>
 			<div class="login-rule" aria-hidden="true"></div>
 			<p class="login-sub">Sign in to continue</p>
 		</div>

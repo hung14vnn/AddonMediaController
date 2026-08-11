@@ -128,7 +128,7 @@ describe('WhereToBuy', () => {
 		render(WhereToBuy, { releaseGroupMbid: 'rg-1' });
 		await page.getByRole('button', { name: 'Details' }).click();
 		await expect
-			.element(page.getByText('Some links earn DroppedNeedle a commission at no cost to you.'))
+			.element(page.getByText('Some links earn us a commission at no cost to you.'))
 			.toBeVisible();
 	});
 });

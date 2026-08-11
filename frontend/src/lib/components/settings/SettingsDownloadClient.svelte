@@ -73,7 +73,7 @@
 	const slskdDownloadsDir = $derived(status?.slskd_downloads_dir);
 
 	const MOUNT_REASONS: Record<string, string> = {
-		not_set: 'No slskd downloads folder is mounted into DroppedNeedle.',
+		not_set: 'No slskd downloads folder is mounted into AddonM.',
 		missing: "The mounted downloads folder doesn't exist.",
 		not_writable:
 			'The downloads mount is read-only - imports must remove source files after they are placed.'
@@ -208,7 +208,7 @@
 		</section>
 
 		<p class="text-xs leading-relaxed text-base-content/60">
-			DroppedNeedle only orchestrates your own slskd instance over its local HTTP API; it never
+			We only orchestrate your own slskd instance over its local HTTP API; it never
 			joins or distributes on the Soulseek network. You supply, run, and are responsible for slskd
 			and its shared folders.
 		</p>
@@ -266,7 +266,7 @@
 					<Info class="size-5 shrink-0" aria-hidden="true" />
 					<div class="space-y-1">
 						<p>
-							Your downloads and library use separate container mount boundaries. DroppedNeedle will
+							Your downloads and library use separate container mount boundaries. We will
 							copy each file into the library and remove the source after the copy succeeds. This is
 							slower and temporarily needs room for both copies.
 						</p>
@@ -280,7 +280,7 @@
 				<div class="alert alert-info items-start text-sm">
 					<Info class="size-5 shrink-0" aria-hidden="true" />
 					<p>
-						The downloads path is writable, but DroppedNeedle couldn't determine whether a fast move
+						The downloads path is writable, but we couldn't determine whether a fast move
 						is available. Imports will try the move first and copy when needed.
 					</p>
 				</div>
@@ -288,7 +288,7 @@
 				<div class="alert alert-info items-start text-sm">
 					<Info class="size-5 shrink-0" aria-hidden="true" />
 					<p>
-						The downloads path is ready. Configure a library root before DroppedNeedle can check
+						The downloads path is ready. Configure a library root before we can check
 						whether fast moves are available.
 					</p>
 				</div>
@@ -297,14 +297,14 @@
 					<TriangleAlert class="size-5 shrink-0" aria-hidden="true" />
 					<div class="space-y-1">
 						<p>
-							DroppedNeedle can't reach slskd's downloads folder, so finished downloads won't
+							We can't reach slskd's downloads folder, so finished downloads won't
 							import.
 							{MOUNT_REASONS[mount.reason] ?? mount.reason}
 						</p>
 						<details class="text-xs">
 							<summary class="cursor-pointer font-semibold">How to set this up</summary>
 							<p class="mt-1 text-base-content/70">
-								Expose slskd's completed-downloads directory to DroppedNeedle
+								Expose slskd's completed-downloads directory to AddonM
 								<strong>read-write</strong>. For fast moves, keep it and the library inside one
 								common-parent container mount. See the slskd setup section in the README.
 							</p>

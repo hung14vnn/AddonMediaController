@@ -69,7 +69,7 @@
 						bind:checked={form.data.support_droppedneedle}
 					/>
 					<div>
-						<span class="label-text font-medium">Support DroppedNeedle</span>
+						<span class="label-text font-medium">Support DroppedNeedle (our original fork)</span>
 						<p class="text-xs text-base-content/50">
 							When on, store links carry DroppedNeedle's affiliate tags. Purchases earn the project
 							a small commission at no extra cost to the buyer, and a disclosure line appears under

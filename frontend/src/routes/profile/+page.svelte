@@ -365,7 +365,7 @@
 </script>
 
 <svelte:head>
-	<title>Profile - DroppedNeedle</title>
+	<title>Profile</title>
 </svelte:head>
 
 <div class="min-h-screen">

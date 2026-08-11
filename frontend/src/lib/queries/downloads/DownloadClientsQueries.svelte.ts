@@ -8,8 +8,8 @@ import type {
 	DownloadPolicySettings,
 	SabnzbdConnectionSettings,
 	SabnzbdTestResult,
-	SpotdlConnectionSettings,
-	SpotdlTestResult,
+	SpotiflacConnectionSettings,
+	SpotiflacTestResult,
 	SourcePriority,
 	WantedWatcherSettings
 } from '$lib/types';
@@ -47,15 +47,15 @@ const sabnzbdOptions = () =>
 
 export const getSabnzbdConfigQuery = () => createQuery(() => sabnzbdOptions());
 
-const spotdlOptions = () =>
+const spotiflacOptions = () =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
-		queryKey: DownloadQueryKeyFactory.spotdl(),
+		queryKey: DownloadQueryKeyFactory.spotiflac(),
 		queryFn: ({ signal }) =>
-			api.global.get<SpotdlConnectionSettings>(API.downloadClients.spotdl(), { signal })
+			api.global.get<SpotiflacConnectionSettings>(API.downloadClients.spotiflac(), { signal })
 	});
 
-export const getSpotdlConfigQuery = () => createQuery(() => spotdlOptions());
+export const getSpotiflacConfigQuery = () => createQuery(() => spotiflacOptions());
 
 const policyOptions = () =>
 	queryOptions({
@@ -72,7 +72,7 @@ export const getDownloadPolicyQuery = (getEnabled: () => boolean = () => true) =
 
 async function invalidateClients() {
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sabnzbd() });
-	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.spotdl() });
+	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.spotiflac() });
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.clientStatus() });
 	await invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix });
 }
@@ -92,17 +92,17 @@ export function testSabnzbd() {
 	}));
 }
 
-export function saveSpotdlConfig() {
+export function saveSpotiflacConfig() {
 	return createMutation(() => ({
-		mutationFn: (config: SpotdlConnectionSettings) =>
-			api.global.put<SpotdlConnectionSettings>(API.downloadClients.spotdl(), config),
+		mutationFn: (config: SpotiflacConnectionSettings) =>
+			api.global.put<SpotiflacConnectionSettings>(API.downloadClients.spotiflac(), config),
 		onSuccess: invalidateClients
 	}));
 }
 
-export function testSpotdl() {
+export function testSpotiflac() {
 	return createMutation(() => ({
-		mutationFn: () => api.global.post<SpotdlTestResult>(API.downloadClients.spotdlTest(), {})
+		mutationFn: () => api.global.post<SpotiflacTestResult>(API.downloadClients.spotiflacTest(), {})
 	}));
 }
 

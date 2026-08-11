@@ -1,5 +1,12 @@
 <script lang="ts">
-	import { ChevronDown, ChevronUp, GripVertical, HardDriveDownload, Rss, Youtube } from 'lucide-svelte';
+	import {
+		ChevronDown,
+		ChevronUp,
+		GripVertical,
+		HardDriveDownload,
+		Rss,
+		Youtube
+	} from 'lucide-svelte';
 
 	import {
 		getSourcePriorityQuery,
@@ -12,10 +19,10 @@
 	const META: Record<string, { label: string; sub: string; icon: typeof Rss }> = {
 		soulseek: { label: 'Soulseek', sub: 'slskd', icon: HardDriveDownload },
 		usenet: { label: 'Usenet', sub: 'SABnzbd', icon: Rss },
-		spotdl: { label: 'Spotify', sub: 'spotDL', icon: Youtube }
+		spotiflac: { label: 'Spotify', sub: 'SpotiFLAC', icon: Youtube }
 	};
 
-	const order = $derived(priorityQuery.data?.order ?? ['soulseek', 'usenet', 'spotdl']);
+	const order = $derived(priorityQuery.data?.order ?? ['soulseek', 'usenet', 'spotiflac']);
 	let dragSource = $state<string | null>(null);
 
 	function persist(next: string[]) {

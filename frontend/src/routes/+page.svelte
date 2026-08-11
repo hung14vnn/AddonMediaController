@@ -148,7 +148,7 @@
 </script>
 
 <svelte:head>
-	<title>Home - DroppedNeedle</title>
+	<title>Home</title>
 </svelte:head>
 
 <div class="min-h-[calc(100vh-200px)]">
@@ -159,8 +159,8 @@
 		{lastUpdated}
 	>
 		{#snippet title()}
-			<Music class="inline h-8 w-8 sm:h-10 sm:w-10 lg:h-12 lg:w-12 mr-2 align-text-bottom" />
-			{getGreeting()}
+			<Music class="inline h-8 w-8 sm:h-8 sm:w-8 lg:h-10 lg:w-10 mr-2 mb-1 align-text-bottom" />
+			<span class="text-xl sm:text-2xl lg:text-3xl">{getGreeting()}</span>
 		{/snippet}
 	</PageHeader>
 
@@ -200,7 +200,7 @@
 						<div class="card-body items-center text-center py-12 stagger-fade-in">
 							<Music class="h-16 w-16 mb-4 animate-float text-accent" />
 							<h2 class="card-title text-3xl sm:text-4xl lg:text-5xl font-bold mb-2">
-								Welcome to <span class="text-primary">DroppedNeedle</span>!
+								Welcome to <span class="text-primary">AddonM</span>!
 							</h2>
 							<p class="text-base-content/70 max-w-lg mb-6">
 								Get started by connecting a download client. You need it to request albums and
@@ -335,7 +335,7 @@
 					<div class="flex flex-col items-center justify-center py-12 sm:py-16">
 						<Music class="h-12 w-12 sm:h-16 sm:w-16 mb-4 sm:mb-6" />
 						<h2 class="mb-2 text-center text-3xl font-bold sm:text-4xl lg:text-5xl">
-							Welcome to <span class="text-primary">DroppedNeedle</span>
+							Welcome to <span class="text-primary">AddonM</span>
 						</h2>
 						{#if authStore.isAdmin}
 							<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">

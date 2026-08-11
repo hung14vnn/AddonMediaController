@@ -2150,14 +2150,14 @@ export interface SabnzbdTestResult {
 	complete_dir?: string | null;
 }
 
-export interface SpotdlConnectionSettings {
+export interface SpotiflacConnectionSettings {
 	enabled: boolean;
 	client_type: string;
 	downloads_mount: string;
-	format: 'mp3' | 'flac' | 'ogg' | 'opus' | 'm4a' | 'wav';
+	quality: 'LOW' | 'HIGH' | 'LOSSLESS' | 'HI_RES_LOSSLESS';
 }
 
-export interface SpotdlTestResult {
+export interface SpotiflacTestResult {
 	valid: boolean;
 	version?: string | null;
 	message: string;

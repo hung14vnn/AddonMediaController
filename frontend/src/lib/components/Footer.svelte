@@ -18,17 +18,17 @@
 <footer class="ms-footer grain" aria-label="Site footer">
 	<div class="ms-footer__inner">
 		<div class="ms-footer__brand">
-			<img src="/logo_wide_white.png" alt="DroppedNeedle" class="ms-footer__logo" />
+			<span class="ms-footer__name">AddonM</span>
 		</div>
 
 		<div class="ms-footer__rule" aria-hidden="true"></div>
 
 		<div class="ms-footer__meta">
-			<span class="ms-footer__tag">Your Music. Your Way.</span>
+			<span class="ms-footer__tag">Your Music. Your Way. A fork of DroppedNeedle</span>
 			<div class="ms-footer__links">
 				<a class="ms-footer__link" href={GITHUB_URL} target="_blank" rel="noopener noreferrer">
 					<Github class="h-4 w-4" />
-					<span>GitHub</span>
+					<span>Forked from DroppedNeedle</span>
 				</a>
 				{#if versionLabel}
 					<span class="ms-footer__ver">{versionLabel}</span>
@@ -74,6 +74,14 @@
 		height: clamp(2.25rem, 5vw, 2.75rem);
 		width: auto;
 		opacity: 0.9;
+	}
+
+	.ms-footer__name {
+		font-family: var(--font-display);
+		font-size: clamp(1.5rem, 3vw, 2rem);
+		font-weight: 700;
+		letter-spacing: -0.04em;
+		color: var(--color-primary);
 	}
 
 	.ms-footer__rule {

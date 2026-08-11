@@ -61,7 +61,7 @@ export function dismissReview() {
 			api.global.post<DismissReviewResponse>(API.downloads.dismissReview(jobId), {}),
 		onSuccess: (_data: DismissReviewResponse, jobId: string) => {
 			toastStore.show({
-				message: 'On the watchlist - DroppedNeedle will keep checking for it.',
+				message: 'On the watchlist - we will keep checking for it.',
 				type: 'success'
 			});
 			void invalidateQueriesWithPersister({
