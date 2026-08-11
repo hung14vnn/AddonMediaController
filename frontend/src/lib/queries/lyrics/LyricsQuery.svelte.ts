@@ -1,6 +1,6 @@
 import { api, ApiError } from '$lib/api/client';
 import { API, CACHE_TTL } from '$lib/constants';
-import type { LyricLine, JellyfinLyricsResponse, NavidromeLyricsResponse } from '$lib/types';
+import type { LyricLine, LyricsResponse } from '$lib/types';
 import type { NowPlaying } from '$lib/player/types';
 import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
@@ -10,27 +10,15 @@ export interface LyricsData {
 	text: string;
 	is_synced: boolean;
 	lines: LyricLine[];
+	source?: string;
 }
 
 export async function fetchLyrics(np: NowPlaying, signal: AbortSignal): Promise<LyricsData | null> {
 	try {
-		if (np.sourceType === 'navidrome') {
-			const url = API.navidromeLibrary.lyrics(np.trackSourceId!, np.artistName, np.trackName ?? '');
-			const data = await api.global.get<NavidromeLyricsResponse>(url, { signal });
-			return {
-				text: data.text ?? '',
-				is_synced: data.is_synced ?? false,
-				lines: data.lines ?? []
-			};
-		}
-		if (np.sourceType === 'jellyfin') {
-			const url = API.jellyfinLibrary.lyrics(np.trackSourceId!);
-			const data = await api.global.get<JellyfinLyricsResponse>(url, { signal });
-			return {
-				text: data.lyrics_text ?? '',
-				is_synced: data.is_synced ?? false,
-				lines: data.lines ?? []
-			};
+		if (np.sourceType === 'navidrome' || np.sourceType === 'jellyfin' || np.sourceType === 'local') {
+			const url = API.lyrics(np.sourceType, np.trackSourceId!, np.artistName, np.trackName ?? '', np.albumName, np.duration);
+			const data = await api.global.get<LyricsResponse>(url, { signal });
+			return { text: data.text ?? '', is_synced: data.is_synced ?? false, lines: data.lines ?? [], source: data.source ?? '' };
 		}
 		return null;
 	} catch (e) {
@@ -55,10 +43,12 @@ export const getLyricsQuery = (
 				np?.sourceType,
 				np?.trackSourceId,
 				np?.artistName,
-				np?.trackName
+				np?.trackName,
+				np?.albumName,
+				np?.duration
 			),
 			queryFn: ({ signal }: { signal: AbortSignal }) => fetchLyrics(np!, signal),
 			enabled:
-				!!np?.trackSourceId && (np.sourceType === 'navidrome' || np.sourceType === 'jellyfin')
+				!!np?.trackSourceId && (np.sourceType === 'navidrome' || np.sourceType === 'jellyfin' || np.sourceType === 'local')
 		};
 	});

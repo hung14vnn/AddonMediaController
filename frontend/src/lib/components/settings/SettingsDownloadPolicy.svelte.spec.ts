@@ -7,6 +7,7 @@ import type { DownloadPolicySettings } from '$lib/types';
 const basePolicy: DownloadPolicySettings = {
 	quality_min: 'mp3_320',
 	quality_max: 'lossless',
+	preferred_quality: '',
 	flac_mp3_only: true,
 	verify_downloads: true,
 	preflight_score_auto_accept: 0.7,
@@ -50,8 +51,14 @@ vi.mock('$lib/queries/downloads/DownloadClientsQueries.svelte', () => ({
 import SettingsDownloadPolicy from './SettingsDownloadPolicy.svelte';
 
 function cutoffSelect(container: HTMLElement): HTMLSelectElement {
-	const select = container.querySelector('select');
+	const select = container.querySelectorAll('select')[1];
 	if (!select) throw new Error('cutoff select not rendered');
+	return select;
+}
+
+function preferredSelect(container: HTMLElement): HTMLSelectElement {
+	const select = container.querySelectorAll('select')[0];
+	if (!select) throw new Error('preferred select not rendered');
 	return select;
 }
 
@@ -115,5 +122,15 @@ describe('SettingsDownloadPolicy upgrade controls', () => {
 		const saved = h.mutateAsync.mock.calls[0][0] as DownloadPolicySettings;
 		expect(saved.upgrade_allowed).toBe(true);
 		expect(saved.quality_cutoff).toBe('lossless');
+	});
+
+	it('seeds and saves the preferred quality', async () => {
+		h.policy = { ...basePolicy, preferred_quality: 'mp3_320' };
+		const { container } = render(SettingsDownloadPolicy);
+		expect(preferredSelect(container).value).toBe('mp3_320');
+
+		await page.getByRole('button', { name: 'Save' }).click();
+		const saved = h.mutateAsync.mock.calls[0][0] as DownloadPolicySettings;
+		expect(saved.preferred_quality).toBe('mp3_320');
 	});
 });

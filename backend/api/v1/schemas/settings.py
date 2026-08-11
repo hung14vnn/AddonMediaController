@@ -144,6 +144,9 @@ class DownloadPolicySettings(AppStruct):
 
     quality_min: str = "mp3_320"
     quality_max: str = "lossless"
+    # An optional exact tier to favour within the accepted range. Empty retains the
+    # historical behaviour of preferring the highest available tier.
+    preferred_quality: str = ""
     flac_mp3_only: bool = True
     verify_downloads: bool = True
     preflight_score_auto_accept: float = 0.70
@@ -223,6 +226,10 @@ class DownloadPolicySettings(AppStruct):
             self.quality_max = "lossless"
         if _rank[self.quality_min] > _rank[self.quality_max]:
             self.quality_min = self.quality_max
+        if self.preferred_quality not in _rank or not (
+            _rank[self.quality_min] <= _rank.get(self.preferred_quality, -1) <= _rank[self.quality_max]
+        ):
+            self.preferred_quality = ""
         # Cutoff sits within [min, max]: don't upgrade past what the user accepts, nor stop
         # below the floor. Clamp rather than reject so a stale config can't brick the policy.
         if self.quality_cutoff not in _rank:

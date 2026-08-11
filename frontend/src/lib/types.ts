@@ -1476,6 +1476,13 @@ export type LyricLine = {
 	start_seconds: number | null;
 };
 
+export type LyricsResponse = {
+	text: string;
+	is_synced: boolean;
+	lines: LyricLine[];
+	source: string;
+};
+
 export type NavidromeLyricsResponse = {
 	text: string;
 	is_synced: boolean;
@@ -1542,7 +1549,15 @@ export interface TargetNativeTrack {
 	below_cutoff: boolean;
 }
 
-export type NativeTrackListItem = TargetNativeTrack;
+/** The legacy flat `/library/tracks` endpoint uses `track_file_id`; target
+ * catalog routes expose the otherwise equivalent `id` shape. */
+export type NativeTrackListItem = TargetNativeTrack & {
+	track_file_id?: string;
+	album_name?: string;
+	album_mbid?: string | null;
+	cover_url?: string | null;
+	artist_mbid?: string | null;
+};
 
 export type NativeTrackPage = {
 	items: NativeTrackListItem[];
@@ -2155,6 +2170,7 @@ export interface SourcePriority {
 export interface DownloadPolicySettings {
 	quality_min: string;
 	quality_max: string;
+	preferred_quality: string;
 	flac_mp3_only: boolean;
 	verify_downloads: boolean;
 	preflight_score_auto_accept: number;

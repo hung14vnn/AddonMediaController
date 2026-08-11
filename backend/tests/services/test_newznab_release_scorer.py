@@ -122,6 +122,18 @@ async def test_normal_sized_lossy_release_is_kept():
 
 
 @pytest.mark.asyncio
+async def test_preferred_320_beats_lossless_within_same_score_band():
+    lossless = _release("Radiohead - In Rainbows [FLAC]", [3040], guid="flac")
+    mp3 = _release("Radiohead - In Rainbows [MP3-320]", [3010], size=100_000_000, guid="mp3")
+    scorer = _scorer(policy=SpecPolicy(preferred_quality="mp3_320"))
+
+    ranked = await scorer.rank(_TARGET, [lossless, mp3])
+
+    assert ranked[0].usenet_release is not None
+    assert ranked[0].usenet_release.guid == "mp3"
+
+
+@pytest.mark.asyncio
 async def test_live_release_rejected_for_a_studio_album():
     # The Led Zeppelin case: a Live EP must not match the requested studio album.
     target = TargetAlbum(artist_name="Led Zeppelin", album_title="Led Zeppelin", year=1969, track_count=9)

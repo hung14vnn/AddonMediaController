@@ -130,6 +130,11 @@ export const STATUS_COLORS = {
 export const YOUTUBE_PLAYER_ELEMENT_ID = 'yt-player-embed';
 
 export const API = {
+	lyrics: (source: string, trackId: string, artist: string, title: string, album: string, duration?: number) => {
+		const params = new URLSearchParams({ source, track_id: trackId, artist, title, album });
+		if (duration) params.set('duration', String(duration));
+		return `/api/v1/lyrics?${params}`;
+	},
 	auth: {
 		setupStatus: () => '/api/v1/auth/setup/status',
 		me: () => '/api/v1/auth/me',

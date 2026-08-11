@@ -369,6 +369,20 @@ describe('buildDiscoveryQueueFromLocal', () => {
 		expect(item.coverUrl).toBe('/cover/local-album-9');
 		expect(item.discNumber).toBe(1);
 	});
+
+	it('uses the legacy library endpoint stream identifier when supplied', () => {
+		const [item] = buildDiscoveryQueueFromLocal([
+			{
+				...nativeTrack,
+				track_file_id: 'library-file-42',
+				album_name: 'Library Album',
+				album_mbid: 'library-album-42'
+			}
+		]);
+		expect(item.trackSourceId).toBe('library-file-42');
+		expect(item.streamUrl).toBe('/api/v1/stream/local/library-file-42');
+		expect(item.albumName).toBe('Library Album');
+	});
 });
 
 describe('playlistTrackToQueueItem', () => {

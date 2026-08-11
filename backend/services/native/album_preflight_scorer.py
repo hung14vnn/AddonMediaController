@@ -151,11 +151,15 @@ def _availability_key(candidate: ScoredCandidate) -> tuple[int, int, int, int]:
     )
 
 
-def _candidate_rank_key(candidate: ScoredCandidate) -> tuple[int | float, ...]:
+def _candidate_rank_key(
+    candidate: ScoredCandidate, preferred_quality: str = ""
+) -> tuple[int | float, ...]:
+    candidate_quality = candidate_tier(candidate.files)
     return (
         _ACCEPTANCE_RANK.get(candidate.tier, 0),
+        int(bool(preferred_quality) and candidate_quality == preferred_quality),
         int(candidate.final_score * 20 + 1e-9),
-        tier_rank(candidate_tier(candidate.files)),
+        tier_rank(candidate_quality),
         *folder_hires_key(candidate.files),
         *_availability_key(candidate),
         candidate.final_score,
@@ -463,7 +467,12 @@ class AlbumPreflightScorer:
         # comes before format, so Review starts with genuine matches rather than a
         # weak 24-bit folder. Quality and hi-res preferences remain within that band;
         # peer free-slot, shortest queue and real (unsaturated) speed then break ties.
-        scored.sort(key=_candidate_rank_key, reverse=True)
+        scored.sort(
+            key=lambda candidate: _candidate_rank_key(
+                candidate, policy.preferred_quality
+            ),
+            reverse=True,
+        )
         ranked = scored[:50]
         logger.info(
             "preflight.ranked",

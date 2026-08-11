@@ -66,6 +66,7 @@ export function buildNowPlayingMetadata(item: QueueItem): NowPlaying {
 		artistId: item.artistId,
 		streamUrl: item.streamUrl,
 		format: item.format,
-		playlistTrackId: item.playlistTrackId
+		playlistTrackId: item.playlistTrackId,
+		duration: item.duration
 	};
 }

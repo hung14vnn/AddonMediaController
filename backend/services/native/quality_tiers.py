@@ -5,8 +5,8 @@ bitrate bands. The bands are CODEC-AGNOSTIC - MP3, AAC/M4A, OGG and Opus are all
 classified by bitrate - because cross-codec bitrate isn't apples-to-apples but is
 good enough at this granularity. The download-client quality range
 (``quality_min``..``quality_max``) accepts a contiguous band; the scorer/matcher
-then prefer the highest available tier ABSOLUTELY. ``flac_mp3_only`` (default on)
-restricts acceptable formats to FLAC + MP3.
+then prefer the highest available tier, unless an in-range ``preferred_quality`` is
+set. ``flac_mp3_only`` (default on) restricts acceptable formats to FLAC + MP3.
 
 NOTE: ``TIER_KEYS`` is mirrored in ``DownloadClientConnectionSettings.__post_init__``
 (api/v1/schemas/settings.py) for validation - keep them in sync.
@@ -92,6 +92,11 @@ def is_audio(file: DownloadSearchResult) -> bool:
 
 def in_range(tier_key: str, quality_min: str, quality_max: str) -> bool:
     return tier_rank(quality_min) <= tier_rank(tier_key) <= tier_rank(quality_max)
+
+
+def is_preferred(tier_key: str, preferred_quality: str) -> bool:
+    """Whether a candidate exactly matches the optional user-preferred tier."""
+    return bool(preferred_quality) and tier_key == preferred_quality
 
 
 def should_acquire(held_tier: str | None, quality_cutoff: str, upgrade_allowed: bool) -> bool:

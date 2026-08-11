@@ -52,6 +52,7 @@ export interface NowPlaying {
 	streamUrl?: string;
 	format?: string;
 	playlistTrackId?: string;
+	duration?: number;
 	/** 30s preview stream (radio preview tier): never scrobbled/reported, fades out. */
 	isPreview?: boolean;
 }

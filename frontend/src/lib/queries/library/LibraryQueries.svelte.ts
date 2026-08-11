@@ -28,6 +28,74 @@ import type {
 import { authStore } from '$lib/stores/authStore.svelte';
 import { setQueryDataWithPersister } from '../QueryClient';
 
+type NativeAlbumWire = {
+	release_group_mbid: string;
+	album_title: string;
+	album_artist_name?: string | null;
+	track_count?: number;
+	total_size_bytes?: number;
+	quality_format?: string | null;
+	year?: number | null;
+	is_compilation?: boolean;
+	cover_url?: string | null;
+	last_imported_at?: number | null;
+	album_artist_mbid?: string | null;
+	album_sort_name?: string | null;
+	original_release_date?: string | null;
+};
+
+type NativeArtistWire = {
+	artist_name: string;
+	artist_mbid?: string | null;
+	album_count?: number;
+	track_count?: number;
+	date_added?: number | null;
+};
+
+function normaliseAlbums(response: { items?: NativeAlbumWire[]; total?: number }): NativeAlbumsResponse {
+	return {
+		total: response.total ?? 0,
+		items: (response.items ?? []).map((album) => ({
+			id: album.release_group_mbid,
+			title: album.album_title,
+			artist_name: album.album_artist_name ?? '',
+			artist_id: album.album_artist_mbid ?? '',
+			musicbrainz_release_group_id: album.release_group_mbid,
+			musicbrainz_release_id: null,
+			musicbrainz_artist_id: album.album_artist_mbid ?? null,
+			album_identity_state: album.release_group_mbid ? 'release_group_linked' : 'local_only',
+			track_count: album.track_count ?? 0,
+			total_duration_seconds: 0,
+			total_size_bytes: album.total_size_bytes ?? 0,
+			format: album.quality_format ?? null,
+			year: album.year ?? null,
+			is_compilation: album.is_compilation ?? false,
+			cover_available: Boolean(album.cover_url),
+			date_added: album.last_imported_at ?? null,
+			sort_name: album.album_sort_name ?? null,
+			original_release_date: album.original_release_date ?? null,
+			contribution_id: null,
+			contribution_state: null
+		}))
+	};
+}
+
+function normaliseArtists(response: { items?: NativeArtistWire[]; total?: number }): NativeArtistsResponse {
+	return {
+		total: response.total ?? 0,
+		items: (response.items ?? []).map((artist) => ({
+			id: artist.artist_mbid ?? `local-${encodeURIComponent(artist.artist_name)}`,
+			name: artist.artist_name,
+			musicbrainz_artist_id: artist.artist_mbid ?? null,
+			artist_identity_state: artist.artist_mbid ? 'musicbrainz_linked' : 'local_only',
+			album_count: artist.album_count ?? 0,
+			track_count: artist.track_count ?? 0,
+			date_added: artist.date_added ?? null,
+			row_revision: 1
+		}))
+	};
+}
+
 export interface LibraryAlbumsParams {
 	page: number;
 	sort: AlbumSort;
@@ -74,11 +142,11 @@ export const getLibraryAlbumsQueryOptions = ({ page, sort, q, format }: LibraryA
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: LibraryQueryKeyFactory.albums(page, sort, q, format),
-		queryFn: ({ signal }) =>
-			api.global.get<NativeAlbumsResponse>(
+		queryFn: async ({ signal }) =>
+			normaliseAlbums(await api.global.get<{ items?: NativeAlbumWire[]; total?: number }>(
 				API.library.albums(page, sort, q || undefined, format || undefined),
 				{ signal }
-			)
+			))
 	});
 
 export const getLibraryAlbumsQuery = (getParams: Getter<LibraryAlbumsParams>) =>
@@ -99,11 +167,11 @@ export const getLibraryArtistsInfiniteQuery = (getParams: Getter<LibraryArtistsP
 			staleTime: CACHE_TTL.LIBRARY_NATIVE,
 			queryKey: LibraryQueryKeyFactory.artists(sortBy, sortOrder, q),
 			initialPageParam: 0,
-			queryFn: ({ pageParam = 0, signal }) =>
-				api.global.get<NativeArtistsResponse>(
+			queryFn: async ({ pageParam = 0, signal }) =>
+				normaliseArtists(await api.global.get<{ items?: NativeArtistWire[]; total?: number }>(
 					API.library.artists(ARTISTS_PAGE_SIZE, pageParam, sortBy, sortOrder, q || undefined),
 					{ signal }
-				),
+				)),
 			getNextPageParam: (lastPage: NativeArtistsResponse, allPages: NativeArtistsResponse[]) => {
 				const loaded = allPages.reduce((n, p) => n + p.items.length, 0);
 				return loaded < lastPage.total ? loaded : undefined;
@@ -118,11 +186,11 @@ export const getLibraryArtistThumbsQuery = () =>
 	createQuery(() => ({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: LibraryQueryKeyFactory.artistThumbs(),
-		queryFn: ({ signal }) =>
-			api.global.get<NativeArtistsResponse>(
+		queryFn: async ({ signal }) =>
+			normaliseArtists(await api.global.get<{ items?: NativeArtistWire[]; total?: number }>(
 				API.library.artists(ARTIST_THUMBS_LIMIT, 0, 'album_count', 'desc'),
 				{ signal }
-			)
+			))
 	}));
 
 export const getLibraryStatsQueryOptions = () =>

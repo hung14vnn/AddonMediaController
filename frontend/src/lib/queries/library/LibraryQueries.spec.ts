@@ -94,6 +94,15 @@ describe('library query endpoints', () => {
 		expect(url).not.toContain('format=');
 	});
 
+	it('normalizes native album fields for album cards', async () => {
+		mockGet.mockResolvedValueOnce({
+			items: [{ release_group_mbid: 'rg-1', album_title: 'Album', album_artist_name: 'Artist', quality_format: 'mp3' }],
+			total: 1
+		});
+		const result = await callQueryFn(getLibraryAlbumsQueryOptions({ page: 1, sort: 'recent', q: '', format: '' }));
+		expect(result).toMatchObject({ items: [{ id: 'rg-1', title: 'Album', artist_name: 'Artist', format: 'mp3' }], total: 1 });
+	});
+
 	it('stats query hits /library/stats', async () => {
 		await callQueryFn(getLibraryStatsQueryOptions());
 		expect(mockGet.mock.calls[0][0]).toBe('/api/v1/library/stats');

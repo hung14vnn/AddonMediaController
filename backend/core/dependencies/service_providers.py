@@ -1970,6 +1970,7 @@ def _build_spec_policy(policy):
     return SpecPolicy(
         quality_min=policy.quality_min,
         quality_max=policy.quality_max,
+        preferred_quality=policy.preferred_quality,
         max_size_mb=policy.max_size_mb,
         ignored_terms=tuple(policy.ignored_terms),
         required_terms=tuple(policy.required_terms),
@@ -2002,6 +2003,7 @@ def get_track_matcher() -> "TrackMatcher":
         get_download_store(),
         quality_min=policy.quality_min,
         quality_max=policy.quality_max,
+        preferred_quality=policy.preferred_quality,
         flac_mp3_only=policy.flac_mp3_only,
     )
 

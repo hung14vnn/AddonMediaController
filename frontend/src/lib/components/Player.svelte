@@ -123,20 +123,28 @@
 		>
 			<div class="flex min-w-0 flex-1 items-center gap-2 sm:gap-3 lg:w-1/4 lg:flex-none">
 				{#if nowPlayingCoverUrl && !coverImgError}
-					<img
-						src={nowPlayingCoverUrl}
-						alt={playerStore.nowPlaying.albumName}
-						class="w-12 h-12 sm:w-15 sm:h-15 rounded-lg shadow-lg ring-1 ring-base-content/10 object-cover shrink-0"
-						onerror={() => {
-							coverImgError = true;
-						}}
-					/>
+					<a
+						href="/library/local"
+						class="shrink-0 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+						aria-label="Open the Listening Room"
+					>
+						<img
+							src={nowPlayingCoverUrl}
+							alt={playerStore.nowPlaying.albumName}
+							class="w-12 h-12 sm:w-15 sm:h-15 rounded-lg shadow-lg ring-1 ring-base-content/10 object-cover"
+							onerror={() => {
+								coverImgError = true;
+							}}
+						/>
+					</a>
 				{:else}
-					<div
-						class="w-12 h-12 sm:w-15 sm:h-15 rounded-lg shadow-lg bg-base-200 flex items-center justify-center shrink-0"
+					<a
+						href="/library/local"
+						class="w-12 h-12 sm:w-15 sm:h-15 rounded-lg shadow-lg bg-base-200 flex items-center justify-center shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+						aria-label="Open the Listening Room"
 					>
 						<Disc3 class="h-6 w-6 text-base-content/20" />
-					</div>
+					</a>
 				{/if}
 				{#if playerStore.isPlaying}
 					<div class="hidden sm:block">
@@ -407,6 +415,14 @@
 		lyricsText={lyricsQuery.data?.text ?? ''}
 		lines={lyricsQuery.data?.lines ?? []}
 		isSynced={lyricsQuery.data?.is_synced ?? false}
+		source={lyricsQuery.data?.source ?? ''}
+		onseek={(seconds) => playerStore.seekTo(seconds)}
+		isPlaying={playerStore.isPlaying}
+		hasPrevious={playerStore.hasPrevious}
+		hasNext={playerStore.hasNext}
+		ontoggleplay={() => playerStore.togglePlay()}
+		onprevious={() => playerStore.previousTrack()}
+		onnext={() => playerStore.nextTrack()}
 		isLoading={lyricsQuery.isFetching}
 		hasError={lyricsQuery.isError}
 		currentTime={playerStore.progress}

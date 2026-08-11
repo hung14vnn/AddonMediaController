@@ -175,7 +175,7 @@
 		</a>
 	</div>
 
-	<div class="mb-10 px-4 sm:mb-12 sm:px-6 lg:px-8">
+	<div class="px-4 sm:px-6 lg:px-8">
 		<HomeEntryCards />
 	</div>
 

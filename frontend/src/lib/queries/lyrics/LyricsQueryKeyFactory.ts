@@ -8,7 +8,9 @@ export const LyricsQueryKeyFactory = {
 		sourceType: SourceType | undefined,
 		trackSourceId: string | undefined,
 		artistName: string | undefined,
-		trackName: string | undefined
+		trackName: string | undefined,
+		albumName?: string,
+		duration?: number
 	) =>
 		[
 			...LyricsQueryKeyFactory.prefix,
@@ -17,6 +19,8 @@ export const LyricsQueryKeyFactory = {
 			sourceType,
 			trackSourceId,
 			artistName,
-			trackName
+			trackName,
+			albumName,
+			duration
 		] as const
 };

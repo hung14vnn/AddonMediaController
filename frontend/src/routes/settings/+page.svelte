@@ -192,7 +192,9 @@
 					<Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-base-content/40" />
 					<input
 						type="text"
+						name="settings-filter"
 						bind:value={filter}
+						autocomplete="one-time-code"
 						placeholder="Filter settings…"
 						class="input input-sm input-soft w-full pl-9"
 					/>
@@ -291,7 +293,7 @@
 						<div>
 							<h2 class="text-xl font-bold">Download clients</h2>
 							<p class="text-sm text-base-content/60">
-								Soulseek, Usenet, and spotDL are available download clients. Configure either or both, set
+								Soulseek, Usenet, and spotDL are available download clients. Configure either or all of them, set
 								which is tried first, and tune the shared policy.
 							</p>
 						</div>

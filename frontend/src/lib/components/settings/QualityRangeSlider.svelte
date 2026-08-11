@@ -1,13 +1,18 @@
 <script lang="ts">
 	import { QUALITY_TIERS as TIERS, tierIndex as idxOf } from './qualityTiers';
 
-	// accepted band is min..max; scorer prefers the highest tier absolutely.
+	// accepted band is min..max; an optional exact tier can be preferred within it.
 	// codec-agnostic lossy bands (MP3/AAC/OGG/Opus map in by bitrate)
 	interface Props {
 		minKey?: string;
 		maxKey?: string;
+		preferredKey?: string;
 	}
-	let { minKey = $bindable('mp3_320'), maxKey = $bindable('lossless') }: Props = $props();
+	let {
+		minKey = $bindable('mp3_320'),
+		maxKey = $bindable('lossless'),
+		preferredKey = $bindable('')
+	}: Props = $props();
 
 	const LAST = TIERS.length - 1;
 
@@ -61,6 +66,14 @@
 			? `${TIERS[minIdx].full} only · prefer the best available`
 			: `Accept ${TIERS[minIdx].full} → ${TIERS[maxIdx].full} · always take the best available`
 	);
+	const summaryText = $derived(
+		preferredKey ? `${summary} · prefer ${TIERS[idxOf(preferredKey)].full} when available` : summary
+	);
+	const displaySummary = $derived(
+		preferredKey
+			? `Accept ${TIERS[minIdx].full} to ${TIERS[maxIdx].full}; prefer ${TIERS[idxOf(preferredKey)].full} when available`
+			: summaryText
+	);
 </script>
 
 <div class="qr">
@@ -113,7 +126,16 @@
 			</button>
 		{/each}
 	</div>
-	<p class="qr-summary">{summary}</p>
+	<label class="qr-preference">
+		<span>Preferred quality</span>
+		<select bind:value={preferredKey}>
+			<option value="">Best available</option>
+			{#each TIERS as t, i (t.key)}
+				<option value={t.key} disabled={i < minIdx || i > maxIdx}>{t.full}</option>
+			{/each}
+		</select>
+	</label>
+	<p class="qr-summary">{displaySummary}</p>
 </div>
 
 <style>
@@ -192,5 +214,19 @@
 		margin-top: 0.6rem;
 		font-size: 0.8rem;
 		color: oklch(from var(--color-base-content) l c h / 0.6);
+	}
+	.qr-preference {
+		display: grid;
+		gap: 0.35rem;
+		max-width: 20rem;
+		margin-top: 0.85rem;
+		font-size: 0.875rem;
+	}
+	.qr-preference select {
+		min-height: 2rem;
+		padding: 0 0.6rem;
+		border: 1px solid oklch(from var(--color-base-300) l c h);
+		border-radius: var(--radius-field, 0.5rem);
+		background: var(--color-base-100);
 	}
 </style>

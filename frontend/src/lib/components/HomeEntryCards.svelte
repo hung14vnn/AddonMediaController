@@ -214,12 +214,6 @@
 	{#if canImport}
 		<div class="flex flex-col">
 			<DropImportZone className="flex-1 [&>button]:h-full" />
-			<a
-				href="/downloads?tab=import"
-				class="mt-2 self-end text-xs font-semibold text-primary hover:underline"
-			>
-				View import history
-			</a>
 		</div>
 	{/if}
 </div>

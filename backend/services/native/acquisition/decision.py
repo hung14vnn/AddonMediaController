@@ -108,6 +108,7 @@ class SpecPolicy(msgspec.Struct, frozen=True, kw_only=True):
 
     quality_min: str = "mp3_320"
     quality_max: str = "lossless"
+    preferred_quality: str = ""
     max_size_mb: int = 0
     ignored_terms: tuple[str, ...] = ()
     required_terms: tuple[str, ...] = ()

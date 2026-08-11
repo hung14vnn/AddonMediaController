@@ -31,6 +31,7 @@ from services.native.acquisition.decision import (
 from services.native.quality_tiers import (
     DEFAULT_QUALITY_MAX,
     DEFAULT_QUALITY_MIN,
+    is_preferred,
 )
 from services.native.title_match import fold
 
@@ -58,6 +59,7 @@ _QUALITY_SCORE = {
     "lossless": 1.0, "mp3_320": 0.8, "mp3_256": 0.65, "mp3_192": 0.5, "low": 0.3,
     "unknown": 0.5,
 }
+_ACCEPTANCE_RANK = {"auto": 2, "manual": 1, "rejected": 0}
 
 # Size-plausibility MIN (Lidarr's AcceptableSize, by runtime). A release far below the
 # album-at-nominal-bitrate is a single track / fragment. Nominal bitrates are the DECLARED
@@ -177,10 +179,17 @@ class NewznabReleaseScorer:
                 )
             )
 
-        # Best score first; hi-res breaks an exact tie (a 24/96 release over a 16/44 one of
-        # equal identity+quality+health) - H1, parallel to the Soulseek bit-depth/rate sort.
+        # Preserve the safety band first. Within it, an exact preferred tier wins;
+        # otherwise score and hi-res preserve the historical ordering (H1).
         scored.sort(
-            key=lambda c: (c.final_score, _hires_rank(c.usenet_release.title if c.usenet_release else "")),
+            key=lambda c: (
+                _ACCEPTANCE_RANK.get(c.tier, 0),
+                int(is_preferred(self._release_tier(c.usenet_release, tracks), policy.preferred_quality))
+                if c.usenet_release else 0,
+                int(c.final_score * 20 + 1e-9),
+                c.final_score,
+                _hires_rank(c.usenet_release.title if c.usenet_release else ""),
+            ),
             reverse=True,
         )
         if dropped_video or dropped_size or pipeline_drops:

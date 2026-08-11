@@ -101,6 +101,7 @@ from api.v1.routes import me_connections as me_connections_routes
 from api.v1.routes import system as system_routes
 from api.v1.routes import spotify as spotify_routes
 from api.v1.routes import now_playing as now_playing_routes
+from api.v1.routes import lyrics as lyrics_routes
 from api.v1.routes import plex_library as plex_library_routes
 from api.v1.routes import plex_auth as plex_auth_routes
 from api.v1.routes import version as version_routes
@@ -857,6 +858,7 @@ v1_router.include_router(me_connections_routes.router)
 v1_router.include_router(system_routes.router)
 v1_router.include_router(spotify_routes.router)
 v1_router.include_router(now_playing_routes.router)
+v1_router.include_router(lyrics_routes.router)
 v1_router.include_router(profile.router)
 v1_router.include_router(playlists.router)
 v1_router.include_router(version_routes.router)

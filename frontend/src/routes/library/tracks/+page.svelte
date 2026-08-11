@@ -130,7 +130,7 @@
 	function isTrackPlaying(track: NativeTrackListItem): boolean {
 		return (
 			playerStore.isPlaying &&
-			playerStore.currentQueueItem?.trackSourceId === track.id &&
+			playerStore.currentQueueItem?.trackSourceId === (track.track_file_id ?? track.id) &&
 			playerStore.currentQueueItem?.sourceType === 'local'
 		);
 	}

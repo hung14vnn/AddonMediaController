@@ -135,6 +135,16 @@ def test_save_and_read_policy(prefs):
     assert prefs.get_download_policy().usenet_min_release_age_minutes == 45
 
 
+def test_policy_preferred_quality_must_be_within_accepted_range():
+    policy = DownloadPolicySettings(preferred_quality="mp3_320")
+    assert policy.preferred_quality == "mp3_320"
+
+    policy = DownloadPolicySettings(
+        quality_min="mp3_320", quality_max="lossless", preferred_quality="mp3_256"
+    )
+    assert policy.preferred_quality == ""
+
+
 def test_source_priority_defaults_soulseek_first(prefs):
     assert prefs.get_source_priority() == ["soulseek", "usenet", "spotdl"]
 

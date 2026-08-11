@@ -16,6 +16,7 @@
 
 	let qualityMin = $state('mp3_320');
 	let qualityMax = $state('lossless');
+	let preferredQuality = $state('');
 	let qualityCutoff = $state('lossless');
 	let upgradeAllowed = $state(false);
 	let backgroundScan = $state(false);
@@ -35,6 +36,7 @@
 		if (d && !seeded) {
 			qualityMin = d.quality_min;
 			qualityMax = d.quality_max;
+			preferredQuality = d.preferred_quality;
 			qualityCutoff = d.quality_cutoff;
 			upgradeAllowed = d.upgrade_allowed;
 			backgroundScan = d.background_upgrade_scan_enabled;
@@ -60,6 +62,8 @@
 		const cutIdx = tierIndex(untrack(() => qualityCutoff));
 		if (cutIdx < minIdx) qualityCutoff = qualityMin;
 		else if (cutIdx > maxIdx) qualityCutoff = qualityMax;
+		const preferredIdx = tierIndex(untrack(() => preferredQuality));
+		if (preferredQuality && (preferredIdx < minIdx || preferredIdx > maxIdx)) preferredQuality = '';
 	});
 
 	async function onSave() {
@@ -69,6 +73,7 @@
 			...d,
 			quality_min: qualityMin,
 			quality_max: qualityMax,
+			preferred_quality: preferredQuality,
 			quality_cutoff: qualityCutoff,
 			upgrade_allowed: upgradeAllowed,
 			background_upgrade_scan_enabled: backgroundScan,
@@ -102,7 +107,11 @@
 
 		<div class="form-control">
 			<span class="label-text mb-2">Accepted quality range</span>
-			<QualityRangeSlider bind:minKey={qualityMin} bind:maxKey={qualityMax} />
+			<QualityRangeSlider
+				bind:minKey={qualityMin}
+				bind:maxKey={qualityMax}
+				bind:preferredKey={preferredQuality}
+			/>
 		</div>
 
 		<div class="rounded-box flex flex-col gap-2 border border-base-300 bg-base-200/40 p-3">

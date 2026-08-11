@@ -90,6 +90,23 @@ async def test_match_prefers_flac_over_better_matched_mp3():
 
 
 @pytest.mark.asyncio
+async def test_match_preferred_320_beats_lossless_within_same_match_band():
+    mp3 = _file(
+        "Radiohead - OK Computer/Airbag.mp3", "Radiohead - OK Computer",
+        ext="mp3", bitrate=320, username="mp3-peer",
+    )
+    flac = _file(
+        "Radiohead - OK Computer/Airbag.flac", "Radiohead - OK Computer",
+        ext="flac", username="flac-peer",
+    )
+    candidate = await TrackMatcher(_store(), preferred_quality="mp3_320").match(
+        _TARGET, [flac, mp3]
+    )
+    assert candidate is not None
+    assert candidate.files[0].username == "mp3-peer"
+
+
+@pytest.mark.asyncio
 async def test_rank_held_tier_floor_keeps_only_strictly_better():
     """Per-track upgrade floor (D12): with held_tier set, only files STRICTLY above
     the recording's held tier survive - an equal-tier copy is never a wasted grab."""
