@@ -3,43 +3,45 @@ services:
     image: slskd/slskd:latest
     container_name: slskd
     restart: unless-stopped
-    networks:
-      - music
+    networks: [music]
     ports:
       - "5030:5030"
     environment:
+      SLSKD_USERNAME: admin
+      SLSKD_PASSWORD: ${SLSKD_PASSWORD:?Set SLSKD_PASSWORD in Portainer}
       SLSKD_REMOTE_CONFIGURATION: "true"
     volumes:
-      - ./slskd:/app
-      - ./downloads:/slskd-downloads
-      - ./music:/music
+      - ${MEDIA_ROOT:?Set MEDIA_ROOT in Portainer}/slskd:/app
+      - ${MEDIA_ROOT}/downloads:/slskd-downloads
+      - ${MEDIA_ROOT}/music:/music
 
   addonify:
     build:
       context: .
       dockerfile: Dockerfile
     image: addonify:local
+    pull_policy: build
     container_name: addonify
     restart: unless-stopped
-    depends_on:
-      - slskd
-    networks:
-      - music
+    depends_on: [slskd]
+    networks: [music]
     ports:
-      - "8688:8688"
+      - "8689:8688"
     environment:
       TZ: Asia/Ho_Chi_Minh
       PORT: "8688"
       PUID: "1000"
       PGID: "1000"
-      SLSKD_DOWNLOADS_PATH: /slskd-downloads
+      SLSKD_DOWNLOADS_PATH: /data/downloads
     volumes:
-      - config:/app/config
-      - cache:/app/cache
-      - plugins:/app/plugins   # installed plugins; without this they vanish on recreate
-      - imports:/app/imports   # drop-importer staging
-      - ./music:/music         # final managed music library
-      - ./spotiflac-downloads:/spotiflac-downloads  # SpotiFLAC output; persists on the host
+      - ${MEDIA_ROOT}/addonify/config:/app/config
+      - ${MEDIA_ROOT}/addonify/cache:/app/cache
+      - ${MEDIA_ROOT}/addonify/plugins:/app/plugins
+      - ${MEDIA_ROOT}/addonify/imports:/app/imports
+      # One shared media mount enables atomic imports from downloads to music.
+      - ${MEDIA_ROOT}:/data
+      - ${MEDIA_ROOT}/spotiflac-downloads:/spotiflac-downloads
+
 networks:
   music:
     name: music
