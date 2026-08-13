@@ -38,8 +38,9 @@ services:
       - cache:/app/cache
       - plugins:/app/plugins   # installed plugins; without this they vanish on recreate
       - imports:/app/imports   # drop-importer staging
+      - ./downloads:/slskd-downloads:rw
       - ./music:/music         # final managed music library
-      - ./spotiflac-downloads:/spotiflac-downloads  # SpotiFLAC output; persists on the host
+      - ./spotiflac-downloads:/spotiflac-downloads:rw  # SpotiFLAC output; persists on the host
 
 volumes:
   config:
