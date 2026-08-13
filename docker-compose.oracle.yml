@@ -40,6 +40,13 @@ services:
       - imports:/app/imports   # drop-importer staging
       - ./music:/music         # final managed music library
       - ./spotiflac-downloads:/spotiflac-downloads  # SpotiFLAC output; persists on the host
+
+volumes:
+  config:
+  cache:
+  plugins:
+  imports:
+
 networks:
   music:
     name: music
