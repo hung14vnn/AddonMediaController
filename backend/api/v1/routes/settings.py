@@ -654,6 +654,8 @@ class SpotifyRedirectUriResponse(AppStruct):
 )
 async def get_spotify_redirect_uri(request: Request) -> SpotifyRedirectUriResponse:
     base = str(request.base_url).rstrip("/")
+    if "hungtp.ninja" in base and base.startswith("http://"):
+        base = base.replace("http://", "https://", 1)
     if base.startswith("http://localhost:"):
         base = base.replace("http://localhost:", "http://127.0.0.1:", 1)
     redirect_uri = base + "/api/v1/me/connections/spotify/auth/callback"
