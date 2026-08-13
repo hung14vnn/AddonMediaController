@@ -7,7 +7,7 @@ from core.exceptions import PermissionDeniedError, ResourceNotFoundError, Valida
 
 logger = logging.getLogger(__name__)
 
-_PROVIDER_FALLBACKS = ["tidal", "qobuz", "deezer", "amazon", "youtube", "apple"]
+_PROVIDER_FALLBACKS = ["tidal", "qobuz", "deezer", "amazon", "apple"]
 
 _AUDIO_EXTENSIONS = {
     ".flac",

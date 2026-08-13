@@ -396,12 +396,7 @@
 						style="color: rgb(var(--brand-localfiles))"
 					>
 						<Music class="h-5 w-5" />
-						<span class="text-sm font-medium"
-							>Local{#if playerStore.currentQueueItem?.format}<span
-									class="badge badge-xs badge-ghost ml-1 uppercase"
-									>{playerStore.currentQueueItem.format}</span
-								>{/if}</span
-						>
+						<span class="text-sm font-medium">Local</span>
 					</div>
 				{/if}
 			</div>
