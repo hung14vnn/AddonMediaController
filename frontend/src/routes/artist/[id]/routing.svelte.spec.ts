@@ -1,7 +1,11 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
-const h = vi.hoisted(() => ({ goto: vi.fn(), cache: vi.fn().mockResolvedValue(undefined) }));
+const h = vi.hoisted(() => ({
+	goto: vi.fn(),
+	cache: vi.fn().mockResolvedValue(undefined),
+	getEnabled: vi.fn()
+}));
 
 vi.mock('$app/navigation', () => ({
 	goto: (...args: unknown[]) => h.goto(...args)
@@ -21,13 +25,16 @@ vi.mock('./ProviderArtistPage.svelte', () => {
 
 vi.mock('$lib/queries/library/LibraryQueries.svelte', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/queries/library/LibraryQueries.svelte')>()),
-	getLibraryArtistDetailQuery: () => ({
-		data: {
-			id: 'local-artist-id',
-			musicbrainz_artist_id: 'provider-artist-id'
-		},
-		isLoading: false
-	}),
+	getLibraryArtistDetailQuery: (_getArtistId: () => string, getEnabled?: () => boolean) => {
+		h.getEnabled(getEnabled?.());
+		return {
+			data: {
+				id: 'local-artist-id',
+				musicbrainz_artist_id: 'provider-artist-id'
+			},
+			isLoading: false
+		};
+	},
 	cacheCanonicalLibraryArtistDetail: (...args: unknown[]) => h.cache(...args)
 }));
 
@@ -65,4 +72,19 @@ it('does not redirect an owned artist already using its local route', async () =
 	} as unknown as Parameters<typeof render>[1]);
 
 	await vi.waitFor(() => expect(h.goto).not.toHaveBeenCalled());
+});
+
+it('keeps a provider-search route on the provider artist page', async () => {
+	render(ArtistPage, {
+		props: {
+			data: {
+				artistId: 'provider-artist-id',
+				preferProvider: true,
+				primarySource: 'listenbrainz' as MusicSource
+			}
+		}
+	} as unknown as Parameters<typeof render>[1]);
+
+	await vi.waitFor(() => expect(h.getEnabled).toHaveBeenCalledWith(false));
+	expect(h.goto).not.toHaveBeenCalled();
 });

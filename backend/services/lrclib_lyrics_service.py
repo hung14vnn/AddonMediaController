@@ -18,6 +18,7 @@ _MAX_LYRICS_BYTES = 1_048_576
 _FOUND_TTL_SECONDS = 7 * 24 * 60 * 60
 _MISSING_TTL_SECONDS = 24 * 60 * 60
 _REQUEST_GAP_SECONDS = 0.3
+_REQUEST_FAILED = object()
 
 
 class LrclibLyricsService:
@@ -35,22 +36,30 @@ class LrclibLyricsService:
             self._cache.move_to_end(key)
             return cached[1]
         result = await self._fetch(artist, title, album, duration)
+        # A transient DNS, timeout, or rate-limit failure is not evidence that
+        # lyrics are absent. Do not turn it into a 24-hour negative cache entry.
+        if result is _REQUEST_FAILED:
+            return None
         self._cache[key] = (time.monotonic() + (_FOUND_TTL_SECONDS if result else _MISSING_TTL_SECONDS), result)
         while len(self._cache) > 512:
             self._cache.popitem(last=False)
         return result
 
-    async def _fetch(self, artist: str, title: str, album: str, duration: float | None) -> dict | None:
+    async def _fetch(self, artist: str, title: str, album: str, duration: float | None) -> dict | None | object:
         async with self._request_lock:
             payload = None
             if album.strip() and duration and duration > 0:
                 payload = await self._request("/get", {"artist_name": artist, "track_name": title, "album_name": album, "duration": round(duration)})
+                if payload is _REQUEST_FAILED:
+                    return _REQUEST_FAILED
             if payload is None:
                 matches = await self._request("/search", {"artist_name": artist, "track_name": title})
+                if matches is _REQUEST_FAILED:
+                    return _REQUEST_FAILED
                 payload = self._select_match(matches, artist, title, album, duration)
         return self._normalise(payload)
 
-    async def _request(self, path: str, params: dict) -> dict | list | None:
+    async def _request(self, path: str, params: dict) -> dict | list | None | object:
         wait = self._next_request_at - time.monotonic()
         if wait > 0:
             await asyncio.sleep(wait)
@@ -59,6 +68,7 @@ class LrclibLyricsService:
             response = await client.get(f"https://lrclib.net/api{path}", params=params)
             self._next_request_at = time.monotonic() + _REQUEST_GAP_SECONDS
             if response.status_code == 404:
+                logger.info("LRCLIB returned no result for %s", path)
                 return None
             if response.status_code == 429:
                 try:
@@ -69,8 +79,8 @@ class LrclibLyricsService:
             response.raise_for_status()
             return response.json()
         except (httpx.HTTPError, ValueError):
-            logger.warning("LRCLIB lyrics lookup failed")
-            return None
+            logger.warning("LRCLIB lyrics lookup failed for %s", path, exc_info=True)
+            return _REQUEST_FAILED
 
     @staticmethod
     def _select_match(matches: dict | list | None, artist: str, title: str, album: str, duration: float | None) -> dict | None:

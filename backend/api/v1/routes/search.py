@@ -103,11 +103,43 @@ async def suggest(
     q: str = Query(..., min_length=2, description="Search query"),
     limit: int = Query(5, ge=1, le=10, description="Max results"),
     search_service: SearchService = Depends(get_search_service),
+    client_factory: PerUserClientFactory = Depends(get_per_user_client_factory),
 ) -> SuggestResponse:
     stripped = q.strip()
     if len(stripped) < 2:
         return SuggestResponse()
-    return await search_service.suggest(query=stripped, limit=limit)
+    result = await search_service.suggest(query=stripped, limit=limit)
+    spotify = await client_factory.resolve_spotify_catalog()
+    if spotify is None:
+        return result
+    try:
+        from api.v1.schemas.search import SpotifyTrackResult
+
+        tracks, _ = await spotify.search_tracks(stripped, limit=limit)
+        seen_track_ids: set[str] = set()
+        spotify_results = [
+            SpotifyTrackResult(
+                title=track.get("name", ""),
+                artist=", ".join(
+                    artist.get("name", "") for artist in track.get("artists", [])
+                ),
+                album=(track.get("album") or {}).get("name", ""),
+                spotify_id=track_id,
+                spotify_url=(track.get("external_urls") or {}).get("spotify"),
+                preview_url=track.get("preview_url"),
+                album_image_url=((track.get("album") or {}).get("images") or [{}])[0].get(
+                    "url"
+                ),
+                duration_ms=track.get("duration_ms"),
+            )
+            for track in tracks
+            if (track_id := track.get("id"))
+            and not (track_id in seen_track_ids or seen_track_ids.add(track_id))
+        ]
+        return msgspec.structs.replace(result, tracks=spotify_results)
+    except Exception:  # noqa: BLE001 - MusicBrainz suggestions remain useful
+        logger.exception("Spotify supplemental suggest failed")
+        return result
 
 
 @router.get("/{bucket}", response_model=SearchBucketResponse)

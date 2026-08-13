@@ -94,14 +94,17 @@ class TargetCatalogWriterService:
         if row is None or row["availability"] != "indexed":
             raise ResourceNotFoundError("Library track not found.")
         if delete_file:
-            path = await self._validated_path(track_id)
             try:
+                path = await self._validated_path(track_id)
                 await asyncio.to_thread(path.unlink)
-            except FileNotFoundError:
+            except (FileNotFoundError, ResourceNotFoundError):
+                # An external delete leaves a stale indexed row. Treat this as a
+                # successful delete so the catalog row is marked missing below.
                 pass
             except OSError as error:
                 raise ExternalServiceError("Could not remove this file.") from error
-            await asyncio.to_thread(self._prune_empty_parent_directories, path)
+            else:
+                await asyncio.to_thread(self._prune_empty_parent_directories, path)
         return await self._store.mark_target_tracks_missing(
             [track_id],
             actor_user_id=actor_user_id,
@@ -130,7 +133,10 @@ class TargetCatalogWriterService:
                 try:
                     path = await self._validated_path(track_id)
                     await asyncio.to_thread(path.unlink)
-                except FileNotFoundError:
+                except (FileNotFoundError, ResourceNotFoundError):
+                    # The catalog can be stale when media was removed outside the
+                    # application. Deletion is idempotent: mark the track missing
+                    # instead of returning a 404 and retaining the album record.
                     pass
                 except (OSError, ValidationError):
                     failures += 1

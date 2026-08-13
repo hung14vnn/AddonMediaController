@@ -7,7 +7,7 @@ import time
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, call
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 import pytest_asyncio
@@ -1440,6 +1440,51 @@ async def test_target_tag_and_removal_writers_audit_without_deleting_stable_rows
         ("update_track_tags", "EXPLICIT_TAG_EDIT"),
         ("remove_track", "FILE_DELETED"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_target_album_removal_marks_missing_files_out_of_catalog() -> None:
+    """A file deleted outside the app must not block catalog removal from the UI."""
+    store = AsyncMock()
+    store.get_target_album_tracks.return_value = [{"id": "missing-track"}]
+    store.mark_target_tracks_missing.return_value = ["missing-track"]
+    writer = TargetCatalogWriterService(store, MagicMock(), MagicMock())
+    writer._validated_path = AsyncMock(  # type: ignore[method-assign]
+        side_effect=ResourceNotFoundError("File not found: deleted.flac")
+    )
+
+    removed = await writer.remove_album(
+        "album-1", actor_user_id="admin-1", delete_files=True
+    )
+
+    assert removed == ["missing-track"]
+    store.mark_target_tracks_missing.assert_awaited_once_with(
+        ["missing-track"],
+        actor_user_id="admin-1",
+        reason_code="ALBUM_FILES_DELETED",
+        missing_at=pytest.approx(time.time()),
+    )
+
+
+@pytest.mark.asyncio
+async def test_target_track_removal_marks_an_externally_deleted_file_missing() -> None:
+    store = AsyncMock()
+    store.get_target_track.return_value = {"id": "missing-track", "availability": "indexed"}
+    store.mark_target_tracks_missing.return_value = ["missing-track"]
+    writer = TargetCatalogWriterService(store, MagicMock(), MagicMock())
+    writer._validated_path = AsyncMock(  # type: ignore[method-assign]
+        side_effect=ResourceNotFoundError("File not found: deleted.flac")
+    )
+
+    removed = await writer.remove_track("missing-track", actor_user_id="admin-1")
+
+    assert removed == ["missing-track"]
+    store.mark_target_tracks_missing.assert_awaited_once_with(
+        ["missing-track"],
+        actor_user_id="admin-1",
+        reason_code="FILE_DELETED",
+        missing_at=pytest.approx(time.time()),
+    )
 
 
 @pytest.mark.asyncio

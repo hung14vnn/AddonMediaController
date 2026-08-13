@@ -134,6 +134,7 @@ def test_isolated_target_application_mounts_target_catalog_and_compat_routes() -
     assert "api.v1.routes.library_target" in route_modules
     assert "api.v1.routes.library_scan_target" in route_modules
     assert "api.v1.routes.library_operations_target" in route_modules
+    assert "api.v1.routes.lyrics" in route_modules
     assert "api.v1.routes.library" not in route_modules
     assert "api.v1.routes.library_scan" not in route_modules
     assert "api.compat.subsonic.router" in route_modules
@@ -304,6 +305,7 @@ def test_offline_replacement_entrypoint_is_complete_and_single_worker() -> None:
         "api.v1.routes.library_target",
         "api.v1.routes.library_scan_target",
         "api.v1.routes.library_operations_target",
+        "api.v1.routes.lyrics",
         "api.compat.subsonic.router",
         "api.compat.jellyfin.router",
     }.issubset(route_modules)

@@ -9,6 +9,11 @@ export function artistHref(id: string): string {
 	return resolve('/artist/[id]', { id });
 }
 
+/** Opens the provider profile even when this artist is also in the local library. */
+export function providerArtistHref(id: string): string {
+	return `${artistHref(id)}?source=provider`;
+}
+
 export function localAlbumHref(id: string): string {
 	return albumHref(id);
 }

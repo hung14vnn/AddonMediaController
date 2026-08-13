@@ -1,12 +1,19 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from api.v1.schemas.search import SuggestResponse, SuggestResult, SearchResponse, SearchResult
 from api.v1.routes.search import router
-from core.dependencies import get_search_service, get_coverart_repository, get_search_enrichment_service
+from middleware import _get_current_user
+from core.dependencies import (
+    get_coverart_repository,
+    get_per_user_client_factory,
+    get_search_enrichment_service,
+    get_search_service,
+)
 
 
 @pytest.fixture
@@ -21,6 +28,9 @@ def client(mock_search_service):
     test_app = FastAPI()
     test_app.include_router(router)
     test_app.dependency_overrides[get_search_service] = lambda: mock_search_service
+    spotify_factory = AsyncMock()
+    spotify_factory.resolve_spotify_catalog.return_value = None
+    test_app.dependency_overrides[get_per_user_client_factory] = lambda: spotify_factory
     return TestClient(test_app)
 
 
@@ -49,7 +59,7 @@ def test_suggest_accepts_two_char_query(client, mock_search_service):
     response = client.get("/search/suggest?q=ab")
 
     assert response.status_code == 200
-    assert response.json() == {"results": []}
+    assert response.json() == {"results": [], "tracks": []}
 
 
 def test_suggest_limit_lower_bound(client, mock_search_service):
@@ -83,7 +93,7 @@ def test_suggest_whitespace_padded_short_input_returns_empty(client, mock_search
     response = client.get("/search/suggest?q=%20%20a%20%20")
 
     assert response.status_code == 200
-    assert response.json() == {"results": []}
+    assert response.json() == {"results": [], "tracks": []}
     mock_search_service.suggest.assert_not_called()
 
 
@@ -93,6 +103,44 @@ def test_suggest_whitespace_padded_valid_input_strips(client, mock_search_servic
 
     assert response.status_code == 200
     mock_search_service.suggest.assert_called_once_with(query="ab", limit=5)
+
+
+def test_suggest_includes_spotify_tracks_when_catalog_is_configured(client):
+    spotify = AsyncMock()
+    spotify.search_tracks.return_value = (
+        [
+            {
+                "id": "spotify-track-1",
+                "name": "Come My Way",
+                "artists": [{"name": "Artist"}],
+                "album": {"name": "Album", "images": [{"url": "https://image"}]},
+                "external_urls": {"spotify": "https://open.spotify.com/track/1"},
+                "duration_ms": 180000,
+            }
+        ],
+        False,
+    )
+    factory = AsyncMock()
+    factory.resolve_spotify_catalog.return_value = spotify
+    client.app.dependency_overrides[get_per_user_client_factory] = lambda: factory
+
+    response = client.get("/search/suggest?q=come")
+
+    assert response.status_code == 200
+    assert response.json()["tracks"] == [
+        {
+            "type": "track",
+            "title": "Come My Way",
+            "artist": "Artist",
+            "album": "Album",
+            "spotify_id": "spotify-track-1",
+            "spotify_url": "https://open.spotify.com/track/1",
+            "preview_url": None,
+            "album_image_url": "https://image",
+            "duration_ms": 180000,
+        }
+    ]
+    spotify.search_tracks.assert_awaited_once_with("come", limit=5)
 
 
 def test_search_response_tolerates_additive_score_field():
@@ -122,6 +170,12 @@ def test_search_response_tolerates_additive_score_field():
     test_app.dependency_overrides[get_search_service] = lambda: mock_search_service
     test_app.dependency_overrides[get_coverart_repository] = lambda: mock_coverart
     test_app.dependency_overrides[get_search_enrichment_service] = lambda: mock_enrichment
+    test_app.dependency_overrides[get_per_user_client_factory] = lambda: AsyncMock(
+        resolve_spotify_catalog=AsyncMock(return_value=None)
+    )
+    test_app.dependency_overrides[_get_current_user] = lambda: SimpleNamespace(
+        id="user-1"
+    )
     search_client = TestClient(test_app)
 
     response = search_client.get("/search?q=muse")

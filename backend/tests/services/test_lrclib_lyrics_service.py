@@ -1,6 +1,7 @@
 import pytest
+from unittest.mock import AsyncMock
 
-from services.lrclib_lyrics_service import LrclibLyricsService
+from services.lrclib_lyrics_service import LrclibLyricsService, _REQUEST_FAILED
 
 
 def test_parse_lrc_supports_multiple_timestamps_and_milliseconds():
@@ -10,6 +11,21 @@ def test_parse_lrc_supports_multiple_timestamps_and_milliseconds():
         {"text": "Hello", "start_seconds": 2.5},
         {"text": "World", "start_seconds": 63.04},
     ]
+
+
+@pytest.mark.asyncio
+async def test_transient_lookup_failure_is_not_negative_cached():
+    service = LrclibLyricsService()
+    service._fetch = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[_REQUEST_FAILED, {"text": "lyrics", "is_synced": False, "lines": []}]
+    )
+
+    first = await service.get(artist="Artist", title="Track", album="Album", duration=180)
+    second = await service.get(artist="Artist", title="Track", album="Album", duration=180)
+
+    assert first is None
+    assert second == {"text": "lyrics", "is_synced": False, "lines": []}
+    assert service._fetch.await_count == 2
 
 
 @pytest.mark.asyncio

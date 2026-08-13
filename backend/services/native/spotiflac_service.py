@@ -1,20 +1,32 @@
-"""SpotiFLAC-backed acquisition with the normal drop-import handoff."""
-
 import asyncio
 import logging
 import shutil
-import uuid
 from pathlib import Path
 
 from core.exceptions import PermissionDeniedError, ResourceNotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
 
-_PROVIDER_FALLBACKS = ["tidal", "qobuz", "deezer", "amazon"]
+_PROVIDER_FALLBACKS = ["apple", "tidal", "qobuz", "deezer", "amazon"]
+_LOW_QUALITY_PROVIDERS = ["youtube"]
+
+
+def spotiflac_client_options(output_dir: str, quality: str) -> dict[str, object]:
+    """Build options supported by the pinned SpotiFLAC client."""
+    options: dict[str, object] = {
+        "output_dir": output_dir,
+        "quality": quality,
+        "services": _LOW_QUALITY_PROVIDERS if quality == "LOW" else _PROVIDER_FALLBACKS,
+    }
+    if quality == "LOW":
+        options.update(allow_fallback=False, use_extensions_fallback=False)
+    return options
 
 
 class SpotiflacService:
-    def __init__(self, *, drop_import, preferences_service, download_store, event_bus) -> None:  # noqa: ANN001
+    def __init__(
+        self, *, drop_import, preferences_service, download_store, event_bus
+    ) -> None:  # noqa: ANN001
         self._drop_import = drop_import
         self._prefs = preferences_service
         self._store = download_store
@@ -25,7 +37,9 @@ class SpotiflacService:
         path = Path(settings.downloads_mount)
         return settings.enabled and path.is_dir() and path.exists()
 
-    async def request_album(self, *, user_id: str, artist_name: str, album_title: str, release_group_mbid: str, **kwargs) -> str:  # noqa: ANN003
+    async def request_album(
+        self, *, user_id: str, artist_name: str, album_title: str, release_group_mbid: str, **kwargs
+    ) -> str:  # noqa: ANN003
         return await self._start(
             user_id,
             f"{artist_name} {album_title}",
@@ -39,7 +53,9 @@ class SpotiflacService:
             retry_count=kwargs.get("retry_count", 0),
         )
 
-    async def request_track(self, *, user_id: str, artist_name: str, track_title: str, recording_mbid: str, **kwargs) -> str:  # noqa: ANN003
+    async def request_track(
+        self, *, user_id: str, artist_name: str, track_title: str, recording_mbid: str, **kwargs
+    ) -> str:  # noqa: ANN003
         return await self._start(
             user_id,
             f"{artist_name} {track_title}",
@@ -97,16 +113,16 @@ class SpotiflacService:
             retried += 1
         return retried
 
-    async def _start(self, user_id: str, query: str, result_kind: str, **task_fields) -> str:  # noqa: ANN003
+    async def _start(
+        self, user_id: str, query: str, result_kind: str, **task_fields
+    ) -> str:  # noqa: ANN003
         if not self.is_ready():
             raise ValidationError("SpotiFLAC is not enabled or its downloads mount is unavailable")
         from SpotiFLAC.client import AsyncSpotiFLAC
 
         settings = self._prefs.get_spotiflac_connection()
         async with AsyncSpotiFLAC(
-            output_dir=settings.downloads_mount,
-            quality=settings.quality,
-            services=_PROVIDER_FALLBACKS,
+            **spotiflac_client_options(settings.downloads_mount, settings.quality)
         ) as client:
             results = await client.search(query, limit=5)
         match = next(iter(results.get(result_kind) or []), None)
@@ -115,28 +131,32 @@ class SpotiflacService:
         url = match.external_url if result_kind == "tracks" else match.get("external_url")
         if not url:
             raise ValidationError("SpotiFLAC returned a result without a Spotify URL")
-        task = await self._store.create_task(user_id=user_id, source="spotiflac", download_client="spotiflac", status="downloading", **task_fields)
-        await self._bus.publish(
-            f"download:{task.id}", "status", {"status": "downloading"}
+        task = await self._store.create_task(
+            user_id=user_id,
+            source="spotiflac",
+            download_client="spotiflac",
+            status="downloading",
+            **task_fields,
         )
-        asyncio.create_task(self._download(task.id, user_id, url, settings.quality, Path(settings.downloads_mount)))
+        await self._bus.publish(f"download:{task.id}", "status", {"status": "downloading"})
+        asyncio.create_task(
+            self._download(task.id, user_id, url, settings.quality, Path(settings.downloads_mount))
+        )
         return task.id
 
-    async def _download(self, task_id: str, user_id: str, url: str, quality: str, output: Path) -> None:
+    async def _download(
+        self, task_id: str, user_id: str, url: str, quality: str, output: Path
+    ) -> None:
         from SpotiFLAC.client import AsyncSpotiFLAC
 
         staging = output / f".droppedneedle-{task_id}"
         try:
             staging.mkdir(parents=True, exist_ok=True)
-            async with AsyncSpotiFLAC(
-                output_dir=str(staging), quality=quality, services=_PROVIDER_FALLBACKS
-            ) as client:
+            async with AsyncSpotiFLAC(**spotiflac_client_options(str(staging), quality)) as client:
                 await client.download_track(url)
             files = [path for path in staging.rglob("*") if path.is_file()]
             if not files:
-                raise RuntimeError(
-                    "No configured SpotiFLAC provider produced an audio file"
-                )
+                raise RuntimeError("No configured SpotiFLAC provider produced an audio file")
             task = await self._store.get_task(task_id)
             await self._drop_import.create_job(
                 user_id=user_id,
@@ -148,12 +168,20 @@ class SpotiflacService:
                 requested_artist_mbid=task.artist_mbid if task else None,
                 requested_album_title=task.album_title if task else None,
             )
-            await self._store.update_status(task_id, "completed", files_total=len(files), files_completed=len(files), progress_percent=100)
+            await self._store.update_status(
+                task_id,
+                "completed",
+                files_total=len(files),
+                files_completed=len(files),
+                progress_percent=100,
+            )
             await self._bus.publish(f"download:{task_id}", "complete", {"status": "completed"})
         except Exception as e:
             logger.exception("SpotiFLAC task %s failed", task_id)
             err_msg = str(e) or "SpotiFLAC task failed"
             await self._store.update_status(task_id, "failed", error_message=err_msg)
-            await self._bus.publish(f"download:{task_id}", "complete", {"status": "failed", "error": err_msg})
+            await self._bus.publish(
+                f"download:{task_id}", "complete", {"status": "failed", "error": err_msg}
+            )
         finally:
             await asyncio.to_thread(shutil.rmtree, staging, True)

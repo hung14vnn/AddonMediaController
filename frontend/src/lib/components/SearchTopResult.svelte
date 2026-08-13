@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Artist, Album } from '$lib/types';
-	import { artistHref, albumHref } from '$lib/utils/entityRoutes';
+	import { providerArtistHref, albumHref } from '$lib/utils/entityRoutes';
 	import HeroBackdrop from './HeroBackdrop.svelte';
 	import ArtistImage from './ArtistImage.svelte';
 	import { ArrowRight, Disc3 } from 'lucide-svelte';
@@ -23,7 +23,7 @@
 	});
 
 	let href = $derived.by(() => {
-		if (artist) return artistHref(artist.musicbrainz_id);
+		if (artist) return providerArtistHref(artist.musicbrainz_id);
 		if (album) return albumHref(album.musicbrainz_id);
 		return '#';
 	});

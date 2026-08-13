@@ -286,11 +286,14 @@ export const getLibraryAlbumTracksQuery = (getAlbumId: Getter<string>) =>
 		};
 	});
 
-export const getLibraryArtistDetailQuery = (getArtistId: Getter<string>) =>
+export const getLibraryArtistDetailQuery = (
+	getArtistId: Getter<string>,
+	getEnabled: Getter<boolean> = () => true
+) =>
 	createQuery(() => {
 		const artistId = getArtistId();
 		return {
-			enabled: !!artistId,
+			enabled: getEnabled() && !!artistId,
 			staleTime: CACHE_TTL.LIBRARY_NATIVE,
 			queryKey: LibraryQueryKeyFactory.artistDetail(artistId),
 			queryFn: ({ signal }) =>

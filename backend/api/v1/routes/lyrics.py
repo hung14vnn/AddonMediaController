@@ -1,7 +1,9 @@
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from core.exceptions import ResourceNotFoundError
 from core.dependencies import (
     CurrentUserDep, get_jellyfin_library_service, get_navidrome_library_service,
     get_native_lyrics_service,
@@ -14,6 +16,7 @@ from services.navidrome_library_service import NavidromeLibraryService
 
 router = APIRouter(route_class=MsgSpecRoute, prefix="/lyrics", tags=["lyrics"])
 _lrclib = LrclibLyricsService()
+logger = logging.getLogger(__name__)
 
 class LyricsLine(AppStruct):
     text: str = ""
@@ -44,7 +47,10 @@ async def get_lyrics(
         if result and (result.text.strip() or result.lines):
             return LyricsResponse(text=result.text, is_synced=result.is_synced, lines=[LyricsLine(text=x.text, start_seconds=x.start_seconds) for x in result.lines], source=source)
     else:
-        result = await native.get(track_id)
+        try:
+            result = await native.get(track_id)
+        except ResourceNotFoundError:
+            result = None
         if result:
             return LyricsResponse(text="\n".join(x.value for x in result.lines), is_synced=result.synced, lines=[LyricsLine(text=x.value, start_seconds=x.start_ms / 1000 if x.start_ms is not None else None) for x in result.lines], source=source)
     fallback = await _lrclib.get(artist=artist, title=title, album=album, duration=duration)

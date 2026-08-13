@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Artist, EnrichmentSource } from '$lib/types';
-	import { artistHref } from '$lib/utils/entityRoutes';
+	import { providerArtistHref } from '$lib/utils/entityRoutes';
 	import { formatListenCount } from '$lib/utils/formatting';
 	import { getListenTitle } from '$lib/utils/enrichment';
 	import { Music2 } from 'lucide-svelte';
@@ -18,7 +18,7 @@
 </script>
 
 <a
-	href={artistHref(artist.musicbrainz_id)}
+	href={providerArtistHref(artist.musicbrainz_id)}
 	class="card bg-base-100 w-full shadow-sm shrink-0 cursor-pointer transition-all hover:scale-105 hover:glow-primary group relative"
 >
 	<ArtistCardDownloadButton artistName={artist.title} artistMbid={artist.musicbrainz_id} />

@@ -10,13 +10,16 @@
 	import ProviderArtistPage from './ProviderArtistPage.svelte';
 
 	interface Props {
-		data: { artistId: string; primarySource: MusicSource };
+		data: { artistId: string; preferProvider?: boolean; primarySource: MusicSource };
 	}
 
 	let { data }: Props = $props();
-	const localQuery = getLibraryArtistDetailQuery(() => data.artistId);
+	const localQuery = getLibraryArtistDetailQuery(
+		() => data.artistId,
+		() => !data.preferProvider
+	);
 	const localArtist = $derived(localQuery.data);
-	const canonicalLocalId = $derived(localArtist?.id ?? null);
+	const canonicalLocalId = $derived(data.preferProvider ? null : (localArtist?.id ?? null));
 	const shouldRedirect = $derived(canonicalLocalId !== null && canonicalLocalId !== data.artistId);
 
 	$effect(() => {
@@ -37,7 +40,7 @@
 			</div>
 		</div>
 	</div>
-{:else if localArtist}
+{:else if localArtist && !data.preferProvider}
 	<LocalArtistPage artistId={localArtist.id} />
 {:else}
 	<ProviderArtistPage {data} />

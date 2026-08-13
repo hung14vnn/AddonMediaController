@@ -50,6 +50,7 @@ import {
 	buildNowPlayingMetadata
 } from './playerSourceResolver';
 import { resumeAudioEngine } from '$lib/player/audioElement';
+import { setMediaSessionActionHandler, updateMediaSessionMetadata } from '$lib/player/mediaSession';
 import {
 	persistSession as doPersistSession,
 	restoreSessionData,
@@ -191,6 +192,9 @@ function createPlayerStore() {
 		currentSource?.destroy();
 		currentSource = null;
 		nowPlaying = null;
+		updateMediaSessionMetadata(null);
+		setMediaSessionActionHandler('nexttrack', null);
+		setMediaSessionActionHandler('previoustrack', null);
 		playbackState = 'idle';
 		isSeekable = true;
 		isPlayerVisible = false;
@@ -268,6 +272,7 @@ function createPlayerStore() {
 		const prevProgress = progress,
 			prevItem = currentSource ? (queue[currentIndex] ?? null) : null;
 		currentIndex = index;
+		updateMediaSessionControls();
 		playbackState = 'loading';
 		progress = 0;
 		duration = 0;
@@ -291,6 +296,7 @@ function createPlayerStore() {
 		}
 		currentSource = source;
 		nowPlaying = buildNowPlayingMetadata(queue[index] ?? item);
+		updateMediaSessionMetadata(nowPlaying);
 		persist();
 		subscribeToSource(source, gen);
 		source.setVolume(volume);
@@ -345,6 +351,37 @@ function createPlayerStore() {
 		if (!nextItem) return;
 		const url = buildPrefetchUrl(nextItem);
 		if (url) void api.global.head(url).catch(() => {});
+	}
+
+	function updateMediaSessionControls(): void {
+		setMediaSessionActionHandler('nexttrack', getNextIndex() === null ? null : nextTrack);
+		setMediaSessionActionHandler(
+			'previoustrack',
+			getPreviousIndex() === null ? null : previousTrack
+		);
+	}
+
+	function nextTrack(): void {
+		const idx = getNextIndex();
+		if (idx !== null)
+			void loadQueueItem(idx).then(() => {
+				const c = performCleanup(
+					queue,
+					currentIndex,
+					shuffleEnabled,
+					shuffleOrder,
+					MAX_HISTORY_LENGTH
+				);
+				queue = c.newQueue;
+				currentIndex = c.newIndex;
+				shuffleOrder = c.newShuffleOrder;
+				persist();
+			});
+	}
+
+	function previousTrack(): void {
+		const idx = getPreviousIndex();
+		if (idx !== null) void loadQueueItem(idx);
 	}
 
 	function subscribeToSource(source: PlaybackSource, gen: number): void {
@@ -497,6 +534,7 @@ function createPlayerStore() {
 			const gen = ++loadGeneration;
 			currentSource = source;
 			nowPlaying = metadata;
+			updateMediaSessionMetadata(nowPlaying);
 			playbackState = 'loading';
 			isSeekable = true;
 			isPlayerVisible = true;
@@ -524,28 +562,9 @@ function createPlayerStore() {
 			void loadQueueItem(s.startIndex);
 		},
 
-		nextTrack(): void {
-			const idx = getNextIndex();
-			if (idx !== null)
-				void loadQueueItem(idx).then(() => {
-					const c = performCleanup(
-						queue,
-						currentIndex,
-						shuffleEnabled,
-						shuffleOrder,
-						MAX_HISTORY_LENGTH
-					);
-					queue = c.newQueue;
-					currentIndex = c.newIndex;
-					shuffleOrder = c.newShuffleOrder;
-					persist();
-				});
-		},
+		nextTrack,
 
-		previousTrack(): void {
-			const idx = getPreviousIndex();
-			if (idx !== null) void loadQueueItem(idx);
-		},
+		previousTrack,
 
 		nextAlbum(): void {
 			if (!hasNextAlbum) return;
@@ -846,6 +865,7 @@ function createPlayerStore() {
 					if (gen !== loadGeneration) return;
 					currentSource = source;
 					nowPlaying = resume.nowPlaying;
+					updateMediaSessionMetadata(nowPlaying);
 					subscribeToSource(source, gen);
 					source.setVolume(volume);
 					if (resume.currentItem.sourceType === 'jellyfin') {

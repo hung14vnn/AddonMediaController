@@ -89,3 +89,4 @@ class SuggestResult(AppStruct):
 
 class SuggestResponse(AppStruct):
     results: list[SuggestResult] = []
+    tracks: list[SpotifyTrackResult] = []

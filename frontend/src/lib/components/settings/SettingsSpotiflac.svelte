@@ -128,13 +128,17 @@
 
 			<div class="form-control">
 				<label class="label" for="spotiflac-quality"
-					><span class="label-text">Requested quality</span></label
+					><span class="label-text">Maximum downloaded quality</span></label
 				>
 				<select id="spotiflac-quality" class="select select-bordered" bind:value={quality}>
 					{#each ['LOW', 'HIGH', 'LOSSLESS', 'HI_RES_LOSSLESS'] as option (option)}
 						<option value={option}>{option.replaceAll('_', ' ')}</option>
 					{/each}
 				</select>
+				<p class="mt-1 text-xs text-base-content/60">
+					LOW uses YouTube for lossy output. HIGH, LOSSLESS, and HI-RES LOSSLESS use the
+					available provider output.
+				</p>
 			</div>
 
 			<div class="space-y-1.5 rounded-box border border-base-content/10 bg-base-200/40 p-3">

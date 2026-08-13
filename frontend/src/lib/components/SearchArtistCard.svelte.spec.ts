@@ -30,6 +30,13 @@ describe('SearchArtistCard.svelte', () => {
 		await expect.element(page.getByText('Radiohead')).toBeInTheDocument();
 	});
 
+	it('opens the provider artist page', async () => {
+		renderComponent();
+		await expect
+			.element(page.getByRole('link', { name: /Radiohead/ }))
+			.toHaveAttribute('href', '/artist/a74b1b7f-71a5-4011-9441-d0b5e4122711?source=provider');
+	});
+
 	it('should display release count badge', async () => {
 		renderComponent();
 		await expect.element(page.getByText('9 releases')).toBeInTheDocument();

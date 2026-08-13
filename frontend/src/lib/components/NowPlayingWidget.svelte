@@ -40,9 +40,6 @@
 			<h2 class="text-lg font-semibold text-base-content sm:text-xl">Now Playing</h2>
 		</div>
 
-		<!-- auto-fit collapses empty tracks so one card fills the row, two share it, etc.;
-		     the (100% - gaps)/4 floor caps it at four across before wrapping.
-		     2.25rem = 3 * gap-3 (0.75rem); keep in sync if the gap changes. -->
 		<div
 			class="grid gap-3"
 			style="grid-template-columns: repeat(auto-fit, minmax(max(17rem, calc((100% - 2.25rem) / 4)), 1fr));"
