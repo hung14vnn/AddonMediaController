@@ -562,6 +562,8 @@ export const API = {
 	dropImport: {
 		uploads: () => '/api/v1/import/uploads',
 		jobs: (all: boolean = false) => `/api/v1/import/jobs${all ? '?all=true' : ''}`,
+		clearDiscarded: () => '/api/v1/import/items/discarded',
+		clearFinished: () => '/api/v1/import/jobs/finished',
 		job: (jobId: string) => `/api/v1/import/jobs/${jobId}`,
 		match: (itemId: number) => `/api/v1/import/items/${itemId}/match`,
 		discard: (itemId: number) => `/api/v1/import/items/${itemId}/discard`

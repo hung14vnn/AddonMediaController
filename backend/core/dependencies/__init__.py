@@ -206,6 +206,8 @@ from .service_providers import (  # noqa: F401
     get_target_download_orchestrator,
     get_download_service,
     get_target_download_service,
+    get_spotiflac_service,
+    get_target_spotiflac_service,
     get_target_import_library_service,
     get_target_file_processor,
     get_acquisition_dispatcher,

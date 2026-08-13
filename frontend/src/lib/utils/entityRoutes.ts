@@ -1,6 +1,7 @@
 import { resolve } from '$app/paths';
 
 export function albumHref(id: string): string {
+	if (!id) return '#';
 	return resolve('/album/[id]', { id });
 }
 

@@ -408,7 +408,7 @@
 				committed catalog changes remain safe if the job is paused or stopped.
 			</p>
 			{#if applyPreview.data.content_will_become_unavailable}<div class="alert alert-warning mt-3">
-					<AlertTriangle class="h-4 w-4" /> Music under Excluded scopes will become unavailable to AddonM
+					<AlertTriangle class="h-4 w-4" /> Music under Excluded scopes will become unavailable to Addonify
 					and connected clients.
 				</div>{/if}{/if}
 		<div class="modal-action">

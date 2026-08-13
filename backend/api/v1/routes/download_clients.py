@@ -7,6 +7,7 @@ reports SABnzbd's version + category list + completed dir (the mount hint).
 """
 
 import asyncio
+import importlib.metadata
 import importlib.util
 import logging
 import subprocess
@@ -82,10 +83,17 @@ def _prepare_nodriver_for_spotiflac() -> None:
     if spec is None or spec.origin is None:
         return
     network_module = Path(spec.origin).parent / "cdp" / "network.py"
-    source = network_module.read_bytes()
+    try:
+        source = network_module.read_bytes()
+    except OSError as exc:
+        logger.warning("Could not inspect nodriver encoding for SpotiFLAC: %s", exc)
+        return
     first_two_lines = source.splitlines()[:2]
     if b"\xb1" in source and not any(b"coding" in line for line in first_two_lines):
-        network_module.write_bytes(b"# -*- coding: latin-1 -*-\n" + source)
+        try:
+            network_module.write_bytes(b"# -*- coding: latin-1 -*-\n" + source)
+        except OSError as exc:
+            logger.warning("Could not repair nodriver encoding for SpotiFLAC: %s", exc)
 
 
 @router.get("/sabnzbd", response_model=SabnzbdConnectionSettings)
@@ -162,7 +170,7 @@ async def test_spotiflac(_: CurrentAdminDep):
         # in a worker thread so local development behaves like production too.
         process = await asyncio.to_thread(
             subprocess.run,
-            ["spotiflac", "--version"],
+            ["spotiflac", "--help"],
             capture_output=True,
             timeout=10,
             check=False,
@@ -179,7 +187,10 @@ async def test_spotiflac(_: CurrentAdminDep):
                 "incompatible on this Python installation."
             )
         return SpotiflacTestResponse(valid=False, message=message or "SpotiFLAC could not start")
-    version = process.stdout.decode(errors="replace").strip().removeprefix("SpotiFLAC ")
+    try:
+        version = importlib.metadata.version("SpotiFLAC")
+    except importlib.metadata.PackageNotFoundError:
+        version = None
     return SpotiflacTestResponse(valid=True, version=version or None, message="SpotiFLAC is installed")
 
 

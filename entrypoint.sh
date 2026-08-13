@@ -30,7 +30,7 @@ check_writable() {
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "[init] Running as uid=$(id -u) gid=$(id -g) (non-root); skipping user/group setup."
-    for dir in /app/cache /app/config; do
+    for dir in /app/cache /app/config /app/imports; do
         mkdir -p "$dir" 2>/dev/null || true
         if ! check_writable "$dir"; then
             echo "[init] FATAL: $dir is not writable by uid=$(id -u)."
@@ -67,7 +67,7 @@ if [ "$TARGET_GID" != "$PGID" ]; then
     echo "[init] WARNING: Requested PGID=$PGID but running as gid=$TARGET_GID (groupmod may have failed)."
 fi
 
-for dir in /app/cache /app/config; do
+for dir in /app/cache /app/config /app/imports; do
     mkdir -p "$dir" 2>/dev/null || true
 
     if check_writable "$dir" "$TARGET_UID:$TARGET_GID"; then

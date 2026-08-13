@@ -101,6 +101,7 @@ class TargetCatalogWriterService:
                 pass
             except OSError as error:
                 raise ExternalServiceError("Could not remove this file.") from error
+            await asyncio.to_thread(self._prune_empty_parent_directories, path)
         return await self._store.mark_target_tracks_missing(
             [track_id],
             actor_user_id=actor_user_id,
@@ -201,3 +202,37 @@ class TargetCatalogWriterService:
             raise ValidationError(
                 "The audio file is no longer present on disk."
             ) from error
+
+    def _prune_empty_parent_directories(self, deleted_file: Path) -> None:
+        """Remove empty album/artist directories, never a configured library root.
+
+        ``deleted_file`` has already passed ``LocalFilesService``'s within-library
+        validation.  Resolve the configured roots again here to find the closest
+        owning root, which is the hard boundary for this best-effort cleanup.
+        """
+        try:
+            deleted_path = deleted_file.resolve()
+            roots = [
+                root.resolve()
+                for root in self._local_files._get_library_roots()
+                if root.exists() and root.is_dir()
+            ]
+        except OSError:
+            return
+
+        containing_roots = [
+            root for root in roots if deleted_path.is_relative_to(root)
+        ]
+        if not containing_roots:
+            return
+        root = max(containing_roots, key=lambda candidate: len(candidate.parts))
+
+        directory = deleted_path.parent
+        while directory != root:
+            try:
+                directory.rmdir()
+            except OSError:
+                # Non-empty, unavailable, or already removed: no higher parent can
+                # be removed safely, so stop at this point.
+                return
+            directory = directory.parent

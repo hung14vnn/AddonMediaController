@@ -29,8 +29,25 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { setQueryDataWithPersister } from '../QueryClient';
 
 type NativeAlbumWire = {
-	release_group_mbid: string;
-	album_title: string;
+	// Canonical library response fields.
+	id?: string;
+	title?: string | null;
+	artist_name?: string | null;
+	artist_id?: string | null;
+	musicbrainz_release_group_id?: string | null;
+	musicbrainz_release_id?: string | null;
+	musicbrainz_artist_id?: string | null;
+	album_identity_state?: 'local_only' | 'release_linked' | 'release_group_linked' | null;
+	total_duration_seconds?: number | null;
+	format?: string | null;
+	cover_available?: boolean;
+	date_added?: number | null;
+	sort_name?: string | null;
+	original_release_date?: string | null;
+
+	// Legacy native response aliases.
+	release_group_mbid?: string | null;
+	album_title?: string | null;
 	album_artist_name?: string | null;
 	track_count?: number;
 	total_size_bytes?: number;
@@ -45,8 +62,13 @@ type NativeAlbumWire = {
 };
 
 type NativeArtistWire = {
-	artist_name: string;
+	// The native endpoint now returns the canonical library artist shape. Keep
+	// the legacy aliases while old server versions are still supported.
+	name?: string | null;
+	musicbrainz_artist_id?: string | null;
+	artist_name?: string | null;
 	artist_mbid?: string | null;
+	id?: string;
 	album_count?: number;
 	track_count?: number;
 	date_added?: number | null;
@@ -55,44 +77,53 @@ type NativeArtistWire = {
 function normaliseAlbums(response: { items?: NativeAlbumWire[]; total?: number }): NativeAlbumsResponse {
 	return {
 		total: response.total ?? 0,
-		items: (response.items ?? []).map((album) => ({
-			id: album.release_group_mbid,
-			title: album.album_title,
-			artist_name: album.album_artist_name ?? '',
-			artist_id: album.album_artist_mbid ?? '',
-			musicbrainz_release_group_id: album.release_group_mbid,
-			musicbrainz_release_id: null,
-			musicbrainz_artist_id: album.album_artist_mbid ?? null,
-			album_identity_state: album.release_group_mbid ? 'release_group_linked' : 'local_only',
-			track_count: album.track_count ?? 0,
-			total_duration_seconds: 0,
-			total_size_bytes: album.total_size_bytes ?? 0,
-			format: album.quality_format ?? null,
-			year: album.year ?? null,
-			is_compilation: album.is_compilation ?? false,
-			cover_available: Boolean(album.cover_url),
-			date_added: album.last_imported_at ?? null,
-			sort_name: album.album_sort_name ?? null,
-			original_release_date: album.original_release_date ?? null,
-			contribution_id: null,
-			contribution_state: null
-		}))
+		items: (response.items ?? []).map((album) => {
+			const releaseGroupId = album.musicbrainz_release_group_id ?? album.release_group_mbid ?? '';
+			const artistId = album.musicbrainz_artist_id ?? album.album_artist_mbid ?? null;
+			return {
+				id: album.id ?? releaseGroupId,
+				title: album.title ?? album.album_title ?? '',
+				artist_name: album.artist_name ?? album.album_artist_name ?? '',
+				artist_id: album.artist_id ?? artistId ?? '',
+				musicbrainz_release_group_id: releaseGroupId,
+				musicbrainz_release_id: album.musicbrainz_release_id ?? null,
+				musicbrainz_artist_id: artistId,
+				album_identity_state:
+					album.album_identity_state ?? (releaseGroupId ? 'release_group_linked' : 'local_only'),
+				track_count: album.track_count ?? 0,
+				total_duration_seconds: album.total_duration_seconds ?? 0,
+				total_size_bytes: album.total_size_bytes ?? 0,
+				format: album.format ?? album.quality_format ?? null,
+				year: album.year ?? null,
+				is_compilation: album.is_compilation ?? false,
+				cover_available: album.cover_available ?? Boolean(album.cover_url),
+				date_added: album.date_added ?? album.last_imported_at ?? null,
+				sort_name: album.sort_name ?? album.album_sort_name ?? null,
+				original_release_date: album.original_release_date ?? null,
+				contribution_id: null,
+				contribution_state: null
+			};
+		})
 	};
 }
 
 function normaliseArtists(response: { items?: NativeArtistWire[]; total?: number }): NativeArtistsResponse {
 	return {
 		total: response.total ?? 0,
-		items: (response.items ?? []).map((artist) => ({
-			id: artist.artist_mbid ?? `local-${encodeURIComponent(artist.artist_name)}`,
-			name: artist.artist_name,
-			musicbrainz_artist_id: artist.artist_mbid ?? null,
-			artist_identity_state: artist.artist_mbid ? 'musicbrainz_linked' : 'local_only',
-			album_count: artist.album_count ?? 0,
-			track_count: artist.track_count ?? 0,
-			date_added: artist.date_added ?? null,
-			row_revision: 1
-		}))
+		items: (response.items ?? []).map((artist) => {
+			const name = artist.name ?? artist.artist_name ?? '';
+			const musicbrainzArtistId = artist.musicbrainz_artist_id ?? artist.artist_mbid ?? null;
+			return {
+				id: artist.id ?? musicbrainzArtistId ?? `local-${encodeURIComponent(name)}`,
+				name,
+				musicbrainz_artist_id: musicbrainzArtistId,
+				artist_identity_state: musicbrainzArtistId ? 'musicbrainz_linked' : 'local_only',
+				album_count: artist.album_count ?? 0,
+				track_count: artist.track_count ?? 0,
+				date_added: artist.date_added ?? null,
+				row_revision: 1
+			};
+		})
 	};
 }
 

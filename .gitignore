@@ -56,3 +56,7 @@ Docs/
 
 # Local dev app directory
 backend/app-dev/
+.repowise/centrality_cache.pkl
+.repowise/parse_cache.pkl
+.repowise/wiki.db
+.repowise/episodes/episodes.db

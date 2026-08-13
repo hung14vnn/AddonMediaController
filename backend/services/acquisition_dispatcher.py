@@ -33,6 +33,7 @@ class AcquisitionDispatcher:
         *,
         get_download_service: "Callable[[], DownloadService]",
         get_free_music_service: "Callable[[], FreeMusicService]",
+        get_spotiflac_service=None,  # Callable[[], SpotiflacService] | None
         preferences_service: "PreferencesService",
         ownership_service: "LibraryOwnershipService | None" = None,
     ) -> None:
@@ -40,6 +41,7 @@ class AcquisitionDispatcher:
         # singleton, and Free Music reads its own settings per request
         self._get_download_service = get_download_service
         self._get_free_music_service = get_free_music_service
+        self._get_spotiflac_service = get_spotiflac_service
         self._prefs = preferences_service
         self._ownership = ownership_service
 
@@ -47,6 +49,15 @@ class AcquisitionDispatcher:
         if self._prefs.is_builtin_download_ready():
             return False
         return self._get_free_music_service().is_ready()
+
+    def _use_spotiflac(self) -> bool:
+        # Once explicitly enabled, SpotiFLAC owns the request.  Do not silently
+        # fall back to the native client merely because its mount is unavailable:
+        # the SpotiFLAC service can then return the actionable configuration error.
+        return (
+            self._get_spotiflac_service is not None
+            and self._prefs.get_spotiflac_connection().enabled
+        )
 
     async def request_album(
         self,
@@ -72,6 +83,15 @@ class AcquisitionDispatcher:
                 recording_mbid = await self._ownership.provider_track_id(recording_mbid)
             if artist_mbid is not None:
                 artist_mbid = await self._ownership.provider_artist_id(artist_mbid)
+        if self._use_spotiflac():
+            return await self._get_spotiflac_service().request_album(
+                user_id=user_id,
+                release_group_mbid=release_group_mbid,
+                artist_name=artist_name,
+                album_title=album_title,
+                artist_mbid=artist_mbid,
+                origin=origin,
+            )
         if self._use_free_music():
             return await self._get_free_music_service().request_album(
                 user_id=user_id,
@@ -117,6 +137,15 @@ class AcquisitionDispatcher:
                 )
             if artist_mbid is not None:
                 artist_mbid = await self._ownership.provider_artist_id(artist_mbid)
+        if self._use_spotiflac():
+            return await self._get_spotiflac_service().request_track(
+                user_id=user_id,
+                recording_mbid=recording_mbid,
+                artist_name=artist_name,
+                track_title=track_title,
+                album_title=album_title,
+                artist_mbid=artist_mbid,
+            )
         if self._use_free_music():
             return await self._get_free_music_service().request_track(
                 user_id=user_id,

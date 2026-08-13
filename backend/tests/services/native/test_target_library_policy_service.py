@@ -87,7 +87,7 @@ async def test_policy_pending_state_survives_refresh_and_clears_only_after_apply
     reconciliation.commit_boundary.side_effect = commit_boundary
     reconciliation.preview_apply.return_value = {
         "policy_revision": "policy-2",
-        "scope_ids": ["root"],
+        "scope_ids": ["root", "deleted-root"],
         "estimated_file_count": 12,
         "scopes": [scope],
     }
@@ -105,7 +105,7 @@ async def test_policy_pending_state_survives_refresh_and_clears_only_after_apply
     refreshed = await service.get_settings()
     preview = await service.preview_apply(
         LibraryPolicyApplyRequest(
-            scope_ids=["root"], expected_policy_revision="policy-2"
+            scope_ids=["root", "deleted-root"], expected_policy_revision="policy-2"
         )
     )
     assert response.reconciliation_state == "awaiting_reconciliation"
@@ -117,6 +117,7 @@ async def test_policy_pending_state_survives_refresh_and_clears_only_after_apply
     assert refreshed.reconciliation_required is True
     assert refreshed.pending_policy_revision == "policy-2"
     assert preview.estimated_file_count == 12
+    assert preview.scope_ids == ["root"]
     assert preview.content_will_become_unavailable is True
     assert preview.queued_work_was_cancelled_on_save is True
     on_settings_saved.assert_called_once_with()

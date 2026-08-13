@@ -149,6 +149,32 @@ def test_match_and_discard_forward_to_service(tmp_path):
     service.discard_item.assert_awaited_once()
 
 
+def test_clear_discarded_forwards_to_service(tmp_path):
+    client, service = _client(tmp_path)
+    service.clear_discarded_items.return_value = 2
+
+    response = client.delete("/api/v1/import/items/discarded")
+
+    assert response.status_code == 200
+    assert response.json() == {"cleared": 2}
+    service.clear_discarded_items.assert_awaited_once_with(
+        user_id="test-user-id", is_admin=False, include_all=False
+    )
+
+
+def test_clear_finished_forwards_to_service(tmp_path):
+    client, service = _client(tmp_path)
+    service.clear_finished_jobs.return_value = 2
+
+    response = client.delete("/api/v1/import/jobs/finished")
+
+    assert response.status_code == 200
+    assert response.json() == {"cleared": 2}
+    service.clear_finished_jobs.assert_awaited_once_with(
+        user_id="test-user-id", is_admin=False, include_all=False
+    )
+
+
 def test_unauthenticated_requests_are_rejected(tmp_path):
     client, _ = _client(tmp_path, role=None)
     assert client.get("/api/v1/import/jobs").status_code == 401

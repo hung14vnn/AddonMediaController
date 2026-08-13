@@ -71,3 +71,33 @@ export const discardDropItemMutation = () =>
 			toastStore.show({ message: error.message || 'Discard failed.', type: 'error' });
 		}
 	}));
+
+export const clearDiscardedDropItemsMutation = () =>
+	createMutation(() => ({
+		mutationFn: () => api.global.delete<{ cleared: number }>(API.dropImport.clearDiscarded()),
+		onSuccess: async ({ cleared }) => {
+			toastStore.show({
+				message: cleared ? `Cleared ${cleared} discarded record${cleared === 1 ? '' : 's'}.` : 'Nothing to clear.',
+				type: 'info'
+			});
+			await invalidateJobs();
+		},
+		onError: (error: Error) => {
+			toastStore.show({ message: error.message || 'Could not clear discarded records.', type: 'error' });
+		}
+	}));
+
+export const clearFinishedDropJobsMutation = () =>
+	createMutation(() => ({
+		mutationFn: () => api.global.delete<{ cleared: number }>(API.dropImport.clearFinished()),
+		onSuccess: async ({ cleared }) => {
+			toastStore.show({
+				message: cleared ? `Cleared ${cleared} finished import${cleared === 1 ? '' : 's'}.` : 'Nothing to clear.',
+				type: 'info'
+			});
+			await invalidateJobs();
+		},
+		onError: (error: Error) => {
+			toastStore.show({ message: error.message || 'Could not clear finished imports.', type: 'error' });
+		}
+	}));

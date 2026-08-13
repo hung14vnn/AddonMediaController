@@ -87,7 +87,7 @@
 	<div class="w-full max-w-lg">
 		<div class="recovery-brand">
 			<img src="/logo_icon.png" alt="" aria-hidden="true" class="recovery-mark" />
-			<h1 class="recovery-wordmark">AddonM</h1>
+			<h1 class="recovery-wordmark">Addonify</h1>
 			<div class="recovery-rule" aria-hidden="true"></div>
 			<p class="recovery-kicker">Account recovery</p>
 		</div>
@@ -222,7 +222,7 @@
 				</summary>
 				<div class="border-t border-base-300 px-4 pb-4 pt-3">
 					<p class="text-xs leading-relaxed text-base-content/60">
-						If no other administrator can help, use the machine running AddonM to create a
+						If no other administrator can help, use the machine running Addonify to create a
 						recovery code. Only someone with host access can run this command.
 					</p>
 					<div class="mt-3 flex flex-wrap gap-1" role="tablist" aria-label="Installation method">

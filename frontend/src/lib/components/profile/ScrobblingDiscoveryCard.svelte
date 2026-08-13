@@ -405,8 +405,8 @@
 						<div>
 							<span class="text-sm font-medium">Let Navidrome handle Last.fm and ListenBrainz</span>
 							<p class="text-xs text-base-content/40">
-								Keep this on while Navidrome sends plays to those accounts. To use AddonM's scrobbling
-								instead, first disable external scrobbles for the AddonM player in Navidrome.
+								Keep this on while Navidrome sends plays to those accounts. To use Addonify's scrobbling
+								instead, first disable external scrobbles for the Addonify player in Navidrome.
 								Listening history is recorded either way.
 							</p>
 						</div>

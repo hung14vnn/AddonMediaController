@@ -41,6 +41,21 @@ def _best_image_url(images: list[dict], min_size: int = 250) -> str | None:
     return sorted_imgs[-1].get("url")
 
 
+def _recording_artist_mbid(recording: dict[str, Any]) -> str | None:
+    """Return the primary MusicBrainz artist from a resolved recording.
+
+    The ISRC endpoint includes recording artist credits.  Keeping the first
+    credited artist matches Spotify's primary-artist ordering and avoids
+    replacing it with the release-level Various Artists credit.
+    """
+    for credit in recording.get("artist-credit") or []:
+        artist = credit.get("artist") if isinstance(credit, dict) else None
+        artist_id = artist.get("id") if isinstance(artist, dict) else None
+        if isinstance(artist_id, str) and artist_id.strip():
+            return artist_id.strip()
+    return None
+
+
 class SpotifyImportService:
     def __init__(
         self,
@@ -82,7 +97,7 @@ class SpotifyImportService:
         track_title = track.get("name") or ""
         album_title = album.get("name") or ""
 
-        recording_ids: list[str] = []
+        recording_ids: list[tuple[str, str | None]] = []
         if isrc:
             try:
                 data = await mb_api_get(
@@ -91,11 +106,17 @@ class SpotifyImportService:
                 recordings = data.get("recordings") or []
                 if isinstance(recordings, dict):
                     recordings = [recordings]
-                recording_ids = [r.get("id") for r in recordings if r.get("id")]
+                recording_ids = [
+                    (recording_id, _recording_artist_mbid(recording))
+                    for recording in recordings
+                    if isinstance(recording, dict)
+                    and isinstance(recording_id := recording.get("id"), str)
+                    and recording_id
+                ]
             except Exception:  # noqa: BLE001 - continue with the local Spotify album
                 logger.warning("MusicBrainz ISRC lookup failed for Spotify track %s", spotify_track_id)
 
-        for recording_mbid in recording_ids:
+        for recording_mbid, artist_mbid in recording_ids:
             release_group_mbid = await self._mb_repo.resolve_recording_to_release_group(
                 recording_mbid
             )
@@ -107,6 +128,7 @@ class SpotifyImportService:
                     track_title,
                     album_title,
                     track.get("duration_ms"),
+                    artist_mbid=artist_mbid,
                 )
 
         # ISRC coverage is incomplete in MusicBrainz. Fall back to a metadata search,
@@ -155,11 +177,14 @@ class SpotifyImportService:
         track_title: str,
         album_title: str,
         duration_ms: int | None,
+        *,
+        artist_mbid: str | None = None,
     ) -> dict[str, Any]:
         return {
             "recording_mbid": recording_mbid,
             "release_group_mbid": release_group_mbid,
             "artist_name": artist_name,
+            "artist_mbid": artist_mbid,
             "track_title": track_title,
             "album_title": album_title,
             "duration_seconds": round((duration_ms or 0) / 1000) or None,

@@ -35,7 +35,7 @@ import msgspec
 
 from core.exceptions import ResourceNotFoundError, ValidationError
 from models.drop_import import DropImportItem, DropImportJob, ItemStatus, JobStatus
-from services.native.album_matcher import LocalTrack, MBTrack, score_release
+from services.native.album_matcher import AlbumMatch, LocalTrack, MBTrack, score_release
 from services.native.file_processor import row_covers_track
 from services.native.library_manager import _AUDIO_SUFFIXES
 from services.native.naming import NamingTemplateEngine
@@ -148,7 +148,16 @@ class DropImportService:
         return path
 
     async def create_job(
-        self, *, user_id: str, user_name: str, uploads: list[tuple[str, Path]]
+        self,
+        *,
+        user_id: str,
+        user_name: str,
+        uploads: list[tuple[str, Path]],
+        release_group_mbid: str | None = None,
+        recording_mbid: str | None = None,
+        requested_artist_name: str | None = None,
+        requested_artist_mbid: str | None = None,
+        requested_album_title: str | None = None,
     ) -> DropImportJob:
         """Register an upload as a job and start processing it in the background.
         ``uploads`` are (original filename, temp path) pairs the route already
@@ -177,7 +186,16 @@ class DropImportService:
         await self._store.create_job(
             job_id, user_id, user_name, upload_name, str(staging_dir)
         )
-        task = asyncio.create_task(self._run_job(job_id))
+        task = asyncio.create_task(
+            self._run_job(
+                job_id,
+                release_group_mbid,
+                recording_mbid,
+                requested_artist_name,
+                requested_artist_mbid,
+                requested_album_title,
+            )
+        )
         self._tasks[job_id] = task
         task.add_done_callback(lambda t, jid=job_id: self._on_task_done(jid, t))
         job = await self._store.get_job(job_id)
@@ -236,8 +254,8 @@ class DropImportService:
         self, item_id: int, *, user_id: str, is_admin: bool
     ) -> DropImportItem:
         item, job = await self._owned_item(item_id, user_id, is_admin)
-        if item.status != ItemStatus.NEEDS_REVIEW:
-            raise ValidationError("Only items awaiting review can be discarded")
+        if item.status not in (ItemStatus.NEEDS_REVIEW, ItemStatus.FAILED):
+            raise ValidationError("Only failed or review-needed items can be discarded")
 
         def _remove() -> None:
             for raw in item.staging_paths:
@@ -254,6 +272,34 @@ class DropImportService:
         refreshed = await self._store.get_item(item.id)
         assert refreshed is not None
         return refreshed
+
+    async def clear_discarded_items(
+        self, *, user_id: str, is_admin: bool, include_all: bool = False
+    ) -> int:
+        return await self._store.clear_discarded_items(
+            user_id=user_id, include_all=include_all and is_admin
+        )
+
+    async def clear_finished_jobs(
+        self, *, user_id: str, is_admin: bool, include_all: bool = False
+    ) -> int:
+        dirs = await self._store.clear_finished_jobs(
+            user_id=user_id, include_all=include_all and is_admin
+        )
+
+        def _remove_staging() -> None:
+            root = self._staging_root.resolve()
+            for raw in dirs:
+                try:
+                    Path(raw).resolve().relative_to(root)
+                except ValueError:
+                    logger.warning("Refusing to remove import staging directory outside root: %s", raw)
+                    continue
+                shutil.rmtree(raw, ignore_errors=True)
+
+        if dirs:
+            await asyncio.to_thread(_remove_staging)
+        return len(dirs)
 
     async def sweep_stale(self) -> None:
         """Startup housekeeping: jobs whose task died with the process are
@@ -288,9 +334,24 @@ class DropImportService:
         if exc is not None:
             logger.error("Drop import job %s crashed", job_id, exc_info=exc)
 
-    async def _run_job(self, job_id: str) -> None:
+    async def _run_job(
+        self,
+        job_id: str,
+        release_group_mbid: str | None = None,
+        recording_mbid: str | None = None,
+        requested_artist_name: str | None = None,
+        requested_artist_mbid: str | None = None,
+        requested_album_title: str | None = None,
+    ) -> None:
         try:
-            await self._process_job(job_id)
+            await self._process_job(
+                job_id,
+                release_group_mbid,
+                recording_mbid,
+                requested_artist_name,
+                requested_artist_mbid,
+                requested_album_title,
+            )
         except Exception:
             logger.exception("Drop import job %s failed", job_id)
             try:
@@ -305,7 +366,15 @@ class DropImportService:
             except Exception:  # noqa: BLE001 - the failure path must not raise again
                 logger.warning("Could not record failure for drop job %s", job_id)
 
-    async def _process_job(self, job_id: str) -> None:
+    async def _process_job(
+        self,
+        job_id: str,
+        release_group_mbid: str | None = None,
+        recording_mbid: str | None = None,
+        requested_artist_name: str | None = None,
+        requested_artist_mbid: str | None = None,
+        requested_album_title: str | None = None,
+    ) -> None:
         job = await self._store.get_job(job_id)
         if job is None:
             return
@@ -332,7 +401,16 @@ class DropImportService:
 
         for item_id, _folder_name, paths in item_ids:
             try:
-                await self._process_item(job, item_id, paths)
+                await self._process_item(
+                    job,
+                    item_id,
+                    paths,
+                    release_group_mbid=release_group_mbid,
+                    recording_mbid=recording_mbid,
+                    requested_artist_name=requested_artist_name,
+                    requested_artist_mbid=requested_artist_mbid,
+                    requested_album_title=requested_album_title,
+                )
             except Exception:
                 logger.exception("Drop import item %s failed", item_id)
                 await self._store.update_item(
@@ -459,7 +537,16 @@ class DropImportService:
             pass
 
     async def _process_item(
-        self, job: DropImportJob, item_id: int, paths: list[Path]
+        self,
+        job: DropImportJob,
+        item_id: int,
+        paths: list[Path],
+        *,
+        release_group_mbid: str | None = None,
+        recording_mbid: str | None = None,
+        requested_artist_name: str | None = None,
+        requested_artist_mbid: str | None = None,
+        requested_album_title: str | None = None,
     ) -> None:
         entries, unreadable = await self._read_entries(paths)
         if not entries:
@@ -481,7 +568,14 @@ class DropImportService:
             )
             return
 
-        ident = await self._identify(entries)
+        ident = await self._identify_known_download(
+            entries,
+            release_group_mbid=release_group_mbid,
+            recording_mbid=recording_mbid,
+            requested_artist_name=requested_artist_name,
+            requested_artist_mbid=requested_artist_mbid,
+            requested_album_title=requested_album_title,
+        ) or await self._identify(entries)
         if ident is None:
             detail = "Couldn't work out which album this is. Match it manually."
             if unreadable:
@@ -631,6 +725,77 @@ class DropImportService:
             return None
         locals_ = [msgspec.structs.replace(locals_[0], recording_mbid=fp.recording_id)]
         return await self._score_against(rg, locals_)
+
+    async def _identify_known_download(
+        self,
+        entries: list[_Entry],
+        *,
+        release_group_mbid: str | None,
+        recording_mbid: str | None,
+        requested_artist_name: str | None = None,
+        requested_artist_mbid: str | None = None,
+        requested_album_title: str | None = None,
+    ) -> _Identified | None:
+        """Trust the canonical IDs already attached to an app-created download.
+
+        Manual uploads still use the normal identification tiers. This avoids
+        treating a completed provider download as an anonymous loose file just
+        because the provider chose an opaque filename.
+        """
+        if not release_group_mbid and recording_mbid:
+            release_group_mbid = await self._mb_matcher.resolve_recording_to_release_group(
+                recording_mbid
+            )
+        if not release_group_mbid:
+            return None
+        picked = await self._identifier.release_tracks(release_group_mbid, len(entries))
+        if picked is None:
+            return None
+        meta, tracks = picked
+        # App-created requests carry an explicit artist selection. Preserve its
+        # verified MBID instead of losing it to release-level Various Artists
+        # metadata. A single-track request also owns its selected album title.
+        artist = (requested_artist_name or "").strip()
+        album = (requested_album_title or "").strip()
+        if requested_artist_mbid:
+            meta = msgspec.structs.replace(
+                meta,
+                artist=artist or meta.artist,
+                album_title=(album if recording_mbid and len(entries) == 1 else meta.album_title),
+                is_various=False,
+                artist_mbid=requested_artist_mbid,
+            )
+        elif recording_mbid and len(entries) == 1 and (artist or album):
+            meta = msgspec.structs.replace(
+                meta,
+                artist=artist or meta.artist,
+                album_title=album or meta.album_title,
+                is_various=False if artist else meta.is_various,
+                artist_mbid=None if artist else meta.artist_mbid,
+            )
+        assignments: dict[str, str] = {}
+        if recording_mbid:
+            if not any(track.recording_mbid == recording_mbid for track in tracks):
+                return None
+            # A SpotiFLAC track task represents exactly one requested recording.
+            if len(entries) == 1:
+                assignments[str(entries[0].path)] = recording_mbid
+        else:
+            scored = score_release([self._to_local(entry) for entry in entries], tracks, meta)
+            assignments = scored.assignments
+        return _Identified(
+            meta=meta,
+            tracks=tracks,
+            match=AlbumMatch(
+                accepted=True,
+                distance=0.0,
+                release_group_mbid=meta.release_group_mbid,
+                release_mbid=meta.release_mbid,
+                assignments=assignments,
+                artist_mbid=meta.artist_mbid,
+                artist_name=meta.artist,
+            ),
+        )
 
     async def _try_identify(
         self, locals_: list[LocalTrack], seeds: list[str] | None = None
@@ -848,7 +1013,13 @@ class DropImportService:
         album_artist = "Various Artists" if meta.is_various else (meta.artist or None)
         return AudioTag(
             title=(track.title if track else None) or file_tag.title or "",
-            artist=file_tag.artist or meta.artist or "",
+            # A matched non-compilation release has a canonical artist. Keep a
+            # compilation's per-track artist instead, since that is the useful
+            # distinction between its tracks.
+            artist=(meta.artist if not meta.is_various else file_tag.artist)
+            or file_tag.artist
+            or meta.artist
+            or "",
             album=meta.album_title,
             album_artist=album_artist,
             track_number=track.position if track else (file_tag.track_number or 0),
@@ -873,7 +1044,12 @@ class DropImportService:
         copy; stamp album identity on the staged copy, never the original; and
         publish with an atomic ``os.replace``. A failure restores the source."""
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target_path.parent / f".{target_path.stem}.{uuid.uuid4().hex[:8]}.part"
+        # Keep the real extension on the unpublished file. AudioTagger/Mutagen
+        # uses it to select the container handler; a bare ``.part`` makes a
+        # perfectly valid FLAC look like an unreadable MP4.
+        tmp = target_path.parent / (
+            f".{target_path.stem}.{uuid.uuid4().hex[:8]}.part{target_path.suffix}"
+        )
         consumed_source = False
         try:
             try:

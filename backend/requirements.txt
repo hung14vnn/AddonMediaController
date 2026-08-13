@@ -13,6 +13,7 @@ pydantic-settings==2.3.0
 python-dotenv>=1.2.2
 python-multipart==0.0.20
 rapidfuzz>=3.14,<4
+requests>=2.31,<3
 starlette==0.48.0
 SpotiFLAC==1.5.2
 nodriver==0.50.3

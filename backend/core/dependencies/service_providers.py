@@ -626,6 +626,20 @@ def get_target_free_music_service() -> "FreeMusicService":
 
 
 @singleton
+def get_spotiflac_service():
+    from services.native.spotiflac_service import SpotiflacService
+    from .repo_providers import get_download_store
+    return SpotiflacService(drop_import=get_drop_import_service(), preferences_service=get_preferences_service(), download_store=get_download_store(), event_bus=get_sse_publisher())
+
+
+@singleton
+def get_target_spotiflac_service():
+    from services.native.spotiflac_service import SpotiflacService
+    from .repo_providers import get_download_store
+    return SpotiflacService(drop_import=get_target_drop_import_service(), preferences_service=get_preferences_service(), download_store=get_download_store(), event_bus=get_sse_publisher())
+
+
+@singleton
 def get_acquisition_dispatcher() -> "AcquisitionDispatcher":
     from services.acquisition_dispatcher import AcquisitionDispatcher
 
@@ -635,6 +649,7 @@ def get_acquisition_dispatcher() -> "AcquisitionDispatcher":
     return AcquisitionDispatcher(
         get_download_service=get_download_service,
         get_free_music_service=get_free_music_service,
+        get_spotiflac_service=get_spotiflac_service,
         preferences_service=get_preferences_service(),
     )
 
@@ -646,6 +661,7 @@ def get_target_acquisition_dispatcher() -> "AcquisitionDispatcher":
     return AcquisitionDispatcher(
         get_download_service=get_target_download_service,
         get_free_music_service=get_target_free_music_service,
+        get_spotiflac_service=get_target_spotiflac_service,
         preferences_service=get_preferences_service(),
         ownership_service=get_target_library_ownership_service(),
     )

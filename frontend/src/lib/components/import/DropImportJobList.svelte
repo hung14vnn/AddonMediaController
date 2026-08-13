@@ -9,7 +9,11 @@
 	} from 'lucide-svelte';
 	import DropImportMatchModal from './DropImportMatchModal.svelte';
 	import { getDropImportJobsQuery } from '$lib/queries/import/DropImportQueries.svelte';
-	import { discardDropItemMutation } from '$lib/queries/import/DropImportMutations.svelte';
+	import {
+		clearDiscardedDropItemsMutation,
+		clearFinishedDropJobsMutation,
+		discardDropItemMutation
+	} from '$lib/queries/import/DropImportMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { formatLastUpdated } from '$lib/utils/formatting';
 	import type { DropImportItem, DropImportItemStatus } from '$lib/queries/import/types';
@@ -24,7 +28,19 @@
 		() => showAll && authStore.isAdmin
 	);
 	const discard = discardDropItemMutation();
+	const clearDiscarded = clearDiscardedDropItemsMutation();
+	const clearFinished = clearFinishedDropJobsMutation();
 	const jobs = $derived(jobsQuery.data?.jobs ?? []);
+	const discardedCount = $derived(
+		jobs.reduce((count, job) => count + job.items.filter((item) => item.status === 'discarded').length, 0)
+	);
+	const finishedCount = $derived(
+		jobs.filter(
+			(job) =>
+				job.status === 'completed' &&
+				job.items.every((item) => ['imported', 'skipped', 'discarded'].includes(item.status))
+		).length
+	);
 
 	let matching = $state<DropImportItem | null>(null);
 
@@ -49,6 +65,29 @@
 	</p>
 {:else}
 	<div class="space-y-3">
+		{#if discardedCount || finishedCount}
+			<div class="flex flex-wrap justify-end gap-2">
+				<button
+					class="btn btn-ghost btn-xs"
+					onclick={() => clearDiscarded.mutate()}
+					disabled={clearDiscarded.isPending}
+				>
+					<Trash2 class="h-3.5 w-3.5" aria-hidden="true" />
+					Clear discarded ({discardedCount})
+				</button>
+				{#if finishedCount}
+					<button
+						class="btn btn-ghost btn-xs"
+						onclick={() => clearFinished.mutate()}
+						disabled={clearFinished.isPending}
+						title="Remove finished import history. Files already in your library are kept."
+					>
+						<Trash2 class="h-3.5 w-3.5" aria-hidden="true" />
+						Clear finished ({finishedCount})
+					</button>
+				{/if}
+			</div>
+		{/if}
 		{#each jobs as job (job.id)}
 			<div class="rounded-2xl border border-base-content/10 bg-base-200/40 p-4">
 				<div class="flex flex-wrap items-center justify-between gap-2">
@@ -118,11 +157,13 @@
 										</p>
 									{/if}
 								</div>
-								{#if item.status === 'needs_review'}
+								{#if item.status === 'needs_review' || item.status === 'failed'}
 									<div class="flex shrink-0 items-center gap-1">
-										<button class="btn btn-primary btn-xs" onclick={() => (matching = item)}>
+										{#if item.status === 'needs_review'}
+											<button class="btn btn-primary btn-xs" onclick={() => (matching = item)}>
 											Match…
-										</button>
+											</button>
+										{/if}
 										<button
 											class="btn btn-ghost btn-xs"
 											onclick={() => discard.mutate(item.id)}

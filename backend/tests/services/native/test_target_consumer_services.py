@@ -1357,7 +1357,8 @@ async def test_target_tag_and_removal_writers_audit_without_deleting_stable_rows
     track_id = "20000000-0000-4000-8000-000000000099"
     album_id = "10000000-0000-4000-8000-000000000099"
     artist_id = "30000000-0000-4000-8000-000000000099"
-    path = root / "real-local.flac"
+    path = root / "Local Artist" / "Local Album" / "real-local.flac"
+    path.parent.mkdir(parents=True)
     shutil.copy2(Path(__file__).parents[2] / "fixtures/library/flac_no_tags.flac", path)
     stat = path.stat()
     _tag, info = AudioTagger().read_tags(path)
@@ -1369,7 +1370,7 @@ async def test_target_tag_and_removal_writers_audit_without_deleting_stable_rows
         title="Editable",
     )
     membership.tracks[0].file_path = str(path)
-    membership.tracks[0].relative_path = path.name
+    membership.tracks[0].relative_path = str(path.relative_to(root))
     membership.tracks[0].file_size_bytes = stat.st_size
     membership.tracks[0].file_mtime_ns = stat.st_mtime_ns
     membership.tracks[0].stat_revision = f"{stat.st_size}:{stat.st_mtime_ns}"
@@ -1423,6 +1424,9 @@ async def test_target_tag_and_removal_writers_audit_without_deleting_stable_rows
 
     assert removed == [track_id]
     assert not path.exists()
+    assert not path.parent.exists()
+    assert not path.parent.parent.exists()
+    assert root.exists()
     retained = await store.get_target_track(track_id)
     assert retained is not None
     assert retained["availability"] == "missing"

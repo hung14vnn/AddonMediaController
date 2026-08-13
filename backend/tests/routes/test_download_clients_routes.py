@@ -88,14 +88,15 @@ def test_put_spotiflac_saves_settings():
 
 
 def test_test_spotiflac_reports_installed_version(monkeypatch):
-    process = MagicMock(returncode=0, stdout=b"SpotiFLAC 1.4.9\n", stderr=b"")
+    process = MagicMock(returncode=0, stdout=b"usage: spotiflac ...\n", stderr=b"")
 
     def fake_run(args, **kwargs):  # noqa: ANN001, ANN003
-        assert args == ["spotiflac", "--version"]
+        assert args == ["spotiflac", "--help"]
         assert kwargs["timeout"] == 10
         return process
 
     monkeypatch.setattr(download_clients.subprocess, "run", fake_run)
+    monkeypatch.setattr(download_clients.importlib.metadata, "version", lambda _: "1.4.9")
     app = _app()
     app.dependency_overrides[_get_current_admin] = mock_admin_user
     response = build_test_client(app).post("/download-clients/spotiflac/test")

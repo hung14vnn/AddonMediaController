@@ -38,7 +38,7 @@
 			goto('/');
 		} catch (e) {
 			error =
-				e instanceof ApiError ? e.message : 'Could not reach the server. Is AddonM running?';
+				e instanceof ApiError ? e.message : 'Could not reach the server. Is Addonify running?';
 		}
 	}
 </script>
@@ -53,7 +53,7 @@
 			<div class="bg-primary/10 rounded-full p-4">
 				<Music class="h-10 w-10 text-primary" />
 			</div>
-			<h1 class="text-3xl font-bold">Welcome to AddonM</h1>
+			<h1 class="text-3xl font-bold">Welcome to Addonify</h1>
 			<p class="text-base-content/60 text-sm text-center max-w-xs">
 				Create your admin account to get started. This only appears once.
 			</p>

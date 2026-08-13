@@ -16,8 +16,10 @@
 
 	const isAdmin = $derived(authStore.isAdmin);
 	const canImport = $derived(authStore.isTrusted);
-	const loaded = $derived(!integrationStatus.isLoading);
-	const configured = $derived(integrationStatus.data?.download_client ?? false);
+	// The queue has its own data query. Do not leave the entire page on skeletons
+	// while the optional home integration-status request is still resolving.
+	const loaded = $derived(true);
+	const configured = $derived(integrationStatus.data?.download_client ?? true);
 
 	let activeTab = $state<'queue' | 'import'>('queue');
 	let showAllImports = $state(false);

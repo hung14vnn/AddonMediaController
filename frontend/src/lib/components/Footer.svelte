@@ -18,13 +18,13 @@
 <footer class="ms-footer grain" aria-label="Site footer">
 	<div class="ms-footer__inner">
 		<div class="ms-footer__brand">
-			<span class="ms-footer__name">AddonM</span>
+			<span class="ms-footer__name">Addonify</span>
 		</div>
 
 		<div class="ms-footer__rule" aria-hidden="true"></div>
 
 		<div class="ms-footer__meta">
-			<span class="ms-footer__tag">Your Music. Your Way. A fork of DroppedNeedle</span>
+			<span class="ms-footer__tag">Your Music. Your Way</span>
 			<div class="ms-footer__links">
 				<a class="ms-footer__link" href={GITHUB_URL} target="_blank" rel="noopener noreferrer">
 					<Github class="h-4 w-4" />
@@ -68,12 +68,6 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-	}
-
-	.ms-footer__logo {
-		height: clamp(2.25rem, 5vw, 2.75rem);
-		width: auto;
-		opacity: 0.9;
 	}
 
 	.ms-footer__name {

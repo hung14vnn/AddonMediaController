@@ -1170,7 +1170,9 @@ class DownloadService:
             stopped += 1
         return stopped
 
-    async def retry_all_failed(self, user_id: str, user_role: str) -> int:
+    async def retry_all_failed(
+        self, user_id: str, user_role: str, *, exclude_sources: set[str] | None = None
+    ) -> int:
         """Re-dispatch every terminally-failed task the user has that will NOT auto-retry
         (the "Retry all failed" bulk action): ``status == failed`` AND no pending
         ``next_retry_at`` (auto-retry off, or attempts exhausted). Tasks still scheduled
@@ -1181,6 +1183,8 @@ class DownloadService:
         )
         retried = 0
         for task in tasks:
+            if exclude_sources and task.source in exclude_sources:
+                continue
             if self.next_retry_at(task) is not None:
                 continue
             await self.retry_task(task.id, user_id, user_role)

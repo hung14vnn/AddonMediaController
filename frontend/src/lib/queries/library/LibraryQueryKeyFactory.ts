@@ -42,9 +42,9 @@ export const LibraryQueryKeyFactory = {
 			cursor ?? 'first'
 		] as const,
 	albums: (page: number, sort: AlbumSort, q: string, format: string) =>
-		[...LibraryQueryKeyFactory.all, 'albums', { page, sort, q, format }] as const,
+		[...LibraryQueryKeyFactory.all, 'albums-v2', { page, sort, q, format }] as const,
 	artists: (sortBy: ArtistSort, sortOrder: string, q: string) =>
-		[...LibraryQueryKeyFactory.all, 'artists', { sortBy, sortOrder, q }] as const,
+		[...LibraryQueryKeyFactory.all, 'artists-v2', { sortBy, sortOrder, q }] as const,
 	album: (mbid: string) => [...LibraryQueryKeyFactory.all, 'album', mbid] as const,
 	albumDetail: (albumId: string) =>
 		[...LibraryQueryKeyFactory.all, 'album-detail', albumId] as const,
@@ -60,5 +60,5 @@ export const LibraryQueryKeyFactory = {
 	albumSearch: (q: string) => [...LibraryQueryKeyFactory.all, 'album-search', q] as const,
 	albumTracks: (mbid: string) => [...LibraryQueryKeyFactory.all, 'album-tracks', mbid] as const,
 	search: (q: string) => [...LibraryQueryKeyFactory.all, 'search', q] as const,
-	artistThumbs: () => [...LibraryQueryKeyFactory.all, 'artist-thumbs'] as const
+	artistThumbs: () => [...LibraryQueryKeyFactory.all, 'artist-thumbs-v2'] as const
 };

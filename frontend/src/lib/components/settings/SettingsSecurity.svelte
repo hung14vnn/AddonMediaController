@@ -456,7 +456,7 @@
 							placeholder="https://droppedneedle.example.com/api/v1/auth/oidc/callback"
 						/>
 						<p class="text-xs text-base-content/50 mt-1.5 ml-1">
-							This must point to the AddonM <strong>backend API</strong> (it ends in
+							This must point to the Addonify <strong>backend API</strong> (it ends in
 							<code class="text-xs">/api/v1/auth/oidc/callback</code>), not the web app page.
 							Register this exact URL as a redirect/callback URI with your provider.
 						</p>
@@ -506,7 +506,7 @@
 									{:else if !oidcForm.testResult?.valid && !oidcForm.wasAlreadyEnabled}
 										Test and get a valid connection to enable
 									{:else}
-										Let users sign in to AddonM with this SSO provider
+										Let users sign in to Addonify with this SSO provider
 									{/if}
 								</p>
 							</div>

@@ -35,7 +35,10 @@ export const getLyricsQuery = (
 	createQuery(() => {
 		const np = getNowPlaying();
 		return {
-			staleTime: CACHE_TTL.LYRICS,
+			// Cache actual lyric data for an hour, but never cache a miss as fresh.
+			// A later play can then discover newly available provider lyrics or a
+			// sidecar added after import.
+			staleTime: (query) => (query.state.data === null ? 0 : CACHE_TTL.LYRICS),
 			gcTime: CACHE_TTL.LYRICS,
 			queryKey: LyricsQueryKeyFactory.lyrics(
 				getUserId(),
@@ -49,6 +52,7 @@ export const getLyricsQuery = (
 			),
 			queryFn: ({ signal }: { signal: AbortSignal }) => fetchLyrics(np!, signal),
 			enabled:
-				!!np?.trackSourceId && (np.sourceType === 'navidrome' || np.sourceType === 'jellyfin' || np.sourceType === 'local')
+				!!np?.trackSourceId &&
+				(np.sourceType === 'navidrome' || np.sourceType === 'jellyfin' || np.sourceType === 'local')
 		};
 	});

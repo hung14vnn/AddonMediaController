@@ -96,7 +96,7 @@ describe('PlaylistImportBanner.svelte', () => {
 		});
 
 		await expect
-			.element(page.getByText('Bring your 2 Jellyfin playlists to AddonM'))
+			.element(page.getByText('Bring your 2 Jellyfin playlists to Addonify'))
 			.toBeVisible();
 		await expect.element(page.getByText('1 of 2 imported so far.')).toBeVisible();
 	});
@@ -119,7 +119,7 @@ describe('PlaylistImportBanner.svelte', () => {
 
 		await expect.element(page.getByText('All 1 Jellyfin playlist imported')).toBeVisible();
 		await expect
-			.element(page.getByText('Your Jellyfin playlists are now private copies in AddonM.'))
+			.element(page.getByText('Your Jellyfin playlists are now private copies in Addonify.'))
 			.toBeVisible();
 	});
 });

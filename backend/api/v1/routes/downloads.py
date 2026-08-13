@@ -19,7 +19,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse, StreamingResponse
 
-from core.exceptions import ResourceNotFoundError
+from core.exceptions import ConfigurationError, ResourceNotFoundError
 
 from api.v1.schemas.download import (
     CancelDownloadResponse,
@@ -41,7 +41,12 @@ from api.v1.schemas.download import (
     UpgradeRequestResponse,
     UpgradeTrackRequestBody,
 )
-from core.dependencies import get_download_service, get_sse_publisher
+from core.dependencies import (
+    get_acquisition_dispatcher,
+    get_download_service,
+    get_sse_publisher,
+    get_spotiflac_service,
+)
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from middleware import CurrentAdminDep, CurrentCuratorDep, CurrentUserDep
 from services.native.download_service import ALREADY_IN_LIBRARY
@@ -188,9 +193,60 @@ async def cancel_download(
 
 @router.post("/{task_id}/retry", response_model=RetryDownloadResponse)
 async def retry_download(
-    task_id: str, current_user: CurrentUserDep, service=Depends(get_download_service)
+    task_id: str,
+    current_user: CurrentUserDep,
+    service=Depends(get_download_service),
+    spotiflac_service=Depends(get_spotiflac_service),
+    acquisition=Depends(get_acquisition_dispatcher),
 ):
-    new_task_id = await service.retry_task(task_id, current_user.id, current_user.role)
+    # SpotiFLAC tasks do not have a native download-client job to retry.  Route
+    # them back through their own service instead of requiring slskd/Usenet.
+    task = await service.get_task(task_id, current_user.id, current_user.role)
+    is_spotiflac_task = any(
+        isinstance(value, str) and value.casefold() == "spotiflac"
+        for value in (task.source, task.download_client)
+    )
+    if is_spotiflac_task:
+        new_task_id = await spotiflac_service.retry_task(
+            task_id, current_user.id, current_user.role
+        )
+    else:
+        try:
+            new_task_id = await service.retry_task(
+                task_id, current_user.id, current_user.role
+            )
+        except ConfigurationError:
+            # This can be a legacy Soulseek/Usenet task after its client has
+            # been disabled. Re-dispatch it through the user's current source
+            # selection (for example, newly enabled SpotiFLAC).
+            if task.download_type == "track":
+                new_task_id = await acquisition.request_track(
+                    user_id=current_user.id,
+                    recording_mbid=task.recording_mbid or "",
+                    artist_name=task.artist_name,
+                    track_title=task.track_title or task.album_title,
+                    album_title=task.album_title,
+                    release_group_mbid=task.release_group_mbid or None,
+                    artist_mbid=task.artist_mbid,
+                    origin="retry",
+                    release_mbid=task.release_mbid,
+                )
+            else:
+                new_task_id = await acquisition.request_album(
+                    user_id=current_user.id,
+                    release_group_mbid=task.release_group_mbid,
+                    artist_name=task.artist_name,
+                    album_title=task.album_title,
+                    year=task.year,
+                    track_count=task.track_count,
+                    recording_mbid=task.recording_mbid,
+                    track_title=task.track_title,
+                    track_duration_seconds=task.track_duration_seconds,
+                    download_type=task.download_type,
+                    artist_mbid=task.artist_mbid,
+                    origin="retry",
+                    release_mbid=task.release_mbid,
+                )
     return RetryDownloadResponse(success=True, task_id=new_task_id)
 
 
@@ -214,10 +270,17 @@ async def stop_all_retries(
 
 @router.post("/retry-all-failed", response_model=RetryAllResponse)
 async def retry_all_failed(
-    current_user: CurrentUserDep, service=Depends(get_download_service)
+    current_user: CurrentUserDep,
+    service=Depends(get_download_service),
+    spotiflac_service=Depends(get_spotiflac_service),
 ):
-    """Re-dispatch the user's exhausted/non-auto-retrying failures."""
-    retried = await service.retry_all_failed(current_user.id, current_user.role)
+    """Re-dispatch failures through the service that created each task."""
+    retried = await service.retry_all_failed(
+        current_user.id, current_user.role, exclude_sources={"spotiflac"}
+    )
+    retried += await spotiflac_service.retry_all_failed(
+        current_user.id, current_user.role
+    )
     return RetryAllResponse(retried=retried)
 
 

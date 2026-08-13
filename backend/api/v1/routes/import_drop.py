@@ -135,3 +135,31 @@ async def discard_item(
         is_admin=current_user.role == "admin",
     )
     return item_to_response(item)
+
+
+@router.delete("/items/discarded")
+async def clear_discarded_items(
+    current_user: CurrentCuratorDep,
+    all: bool = False,  # noqa: A002 - query-param name is the API surface
+    service=Depends(get_drop_import_service),
+):
+    cleared = await service.clear_discarded_items(
+        user_id=current_user.id,
+        is_admin=current_user.role == "admin",
+        include_all=all,
+    )
+    return {"cleared": cleared}
+
+
+@router.delete("/jobs/finished")
+async def clear_finished_jobs(
+    current_user: CurrentCuratorDep,
+    all: bool = False,  # noqa: A002 - query-param name is the API surface
+    service=Depends(get_drop_import_service),
+):
+    cleared = await service.clear_finished_jobs(
+        user_id=current_user.id,
+        is_admin=current_user.role == "admin",
+        include_all=all,
+    )
+    return {"cleared": cleared}

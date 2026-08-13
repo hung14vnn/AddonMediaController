@@ -115,12 +115,14 @@ export function saveLibraryScanSchedule() {
 // local-library lists (cross-domain: sizes and sidebars change with the file).
 export function removeLibraryTrack() {
 	return createMutation(() => ({
-		mutationFn: ({ fileId }: { fileId: string; albumMbid: string }) =>
+		mutationFn: ({ fileId }: { fileId: string; albumMbid?: string }) =>
 			api.global.delete<StatusMessageResponse>(API.library.removeTrack(fileId)),
 		onSuccess: async (_data, { albumMbid }) => {
-			await invalidateQueriesWithPersister({
-				queryKey: LibraryQueryKeyFactory.album(albumMbid)
-			});
+			if (albumMbid) {
+				await invalidateQueriesWithPersister({
+					queryKey: LibraryQueryKeyFactory.album(albumMbid)
+				});
+			}
 			await invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.stats() });
 			await invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root });
 		}

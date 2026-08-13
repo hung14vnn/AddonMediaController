@@ -6,8 +6,13 @@ from unittest.mock import AsyncMock
 from fastapi import FastAPI
 
 from api.v1.routes import downloads
-from core.dependencies import get_download_service
+from core.dependencies import (
+    get_acquisition_dispatcher,
+    get_download_service,
+    get_spotiflac_service,
+)
 from core.exceptions import (
+    ConfigurationError,
     PermissionDeniedError,
     ResourceNotFoundError,
     ValidationError,
@@ -137,12 +142,68 @@ def test_cancel_success():
 
 def test_retry_success_returns_new_task_id():
     service = AsyncMock()
+    service.get_task.return_value = _task("t1", source="soulseek")
     service.retry_task.return_value = "t2"
     response = build_test_client(_app(service)).post("/downloads/t1/retry")
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is True
     assert body["task_id"] == "t2"
+
+
+def test_retry_spotiflac_task_uses_spotiflac_service():
+    service = AsyncMock()
+    service.get_task.return_value = _task("t1", source="spotiflac")
+    spotiflac = AsyncMock()
+    spotiflac.retry_task.return_value = "spotiflac-t2"
+    app = _app(service)
+    app.dependency_overrides[get_spotiflac_service] = lambda: spotiflac
+
+    response = build_test_client(app).post("/downloads/t1/retry")
+
+    assert response.status_code == 200
+    assert response.json()["task_id"] == "spotiflac-t2"
+    spotiflac.retry_task.assert_awaited_once_with("t1", "u1", "user")
+    service.retry_task.assert_not_awaited()
+
+
+def test_retry_spotiflac_download_client_uses_spotiflac_service():
+    service = AsyncMock()
+    service.get_task.return_value = _task("t1", download_client="spotiflac")
+    spotiflac = AsyncMock()
+    spotiflac.retry_task.return_value = "spotiflac-t2"
+    app = _app(service)
+    app.dependency_overrides[get_spotiflac_service] = lambda: spotiflac
+
+    response = build_test_client(app).post("/downloads/t1/retry")
+
+    assert response.status_code == 200
+    spotiflac.retry_task.assert_awaited_once_with("t1", "u1", "user")
+
+
+def test_retry_legacy_task_uses_current_acquisition_when_native_is_disabled():
+    service = AsyncMock()
+    service.get_task.return_value = _task(
+        "t1",
+        source="soulseek",
+        download_client="slskd",
+        download_type="track",
+        recording_mbid="rec-1",
+        artist_name="Artist",
+        track_title="Track",
+        album_title="Album",
+    )
+    service.retry_task.side_effect = ConfigurationError("client disabled")
+    acquisition = AsyncMock()
+    acquisition.request_track.return_value = "spotiflac-t2"
+    app = _app(service)
+    app.dependency_overrides[get_acquisition_dispatcher] = lambda: acquisition
+
+    response = build_test_client(app).post("/downloads/t1/retry")
+
+    assert response.status_code == 200
+    assert response.json()["task_id"] == "spotiflac-t2"
+    acquisition.request_track.assert_awaited_once()
 
 
 def test_retry_non_owner_forbidden():
@@ -271,7 +332,9 @@ def test_retry_all_failed_returns_count():
     response = build_test_client(_app(service)).post("/downloads/retry-all-failed")
     assert response.status_code == 200
     assert response.json() == {"retried": 4}
-    service.retry_all_failed.assert_awaited_once_with("u1", "user")
+    service.retry_all_failed.assert_awaited_once_with(
+        "u1", "user", exclude_sources={"spotiflac"}
+    )
 
 
 def test_get_files_returns_file_list():

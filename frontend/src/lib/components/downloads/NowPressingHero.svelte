@@ -24,6 +24,7 @@
 	const progress = $derived(stream.state.progress);
 	const livePct = $derived(progress?.progress_percent ?? task.progress_percent);
 	const showBar = $derived(task.status === 'downloading' || task.status === 'processing');
+	const hasAlbumLink = $derived(Boolean(task.release_group_mbid));
 </script>
 
 <section
@@ -40,9 +41,13 @@
 		<VinylProgress percent={livePct} spinning indeterminate={isSearchingState} size={120} />
 		<div class="min-w-0 flex-1">
 			<h2 class="truncate text-xl font-black tracking-tight sm:text-2xl">
-				<a href={albumHref(task.release_group_mbid)} class="hover:text-primary transition-colors">
+				{#if hasAlbumLink}
+					<a href={albumHref(task.release_group_mbid)} class="hover:text-primary transition-colors">
+						{task.album_title}
+					</a>
+				{:else}
 					{task.album_title}
-				</a>
+				{/if}
 			</h2>
 			<p class="truncate text-sm text-base-content/60">
 				{#if task.artist_mbid}

@@ -45,6 +45,7 @@
 	const isLive = $derived(isSearchingState || isDownloading || isProcessing);
 	const showBar = $derived(isDownloading || isProcessing);
 	const isCompleted = $derived(task.status === 'completed' || task.status === 'partial');
+	const hasAlbumLink = $derived(Boolean(task.release_group_mbid));
 
 	// only stream live progress while the transfer is moving
 	$effect(() => {
@@ -94,9 +95,13 @@
 
 		<div class="min-w-0 flex-1">
 			<h3 class="truncate text-sm font-semibold sm:text-base">
-				<a href={albumHref(task.release_group_mbid)} class="hover:text-primary transition-colors">
+				{#if hasAlbumLink}
+					<a href={albumHref(task.release_group_mbid)} class="hover:text-primary transition-colors">
+						{task.album_title}
+					</a>
+				{:else}
 					{task.album_title}
-				</a>
+				{/if}
 			</h3>
 			<p class="truncate text-xs text-base-content/60">
 				{#if task.artist_mbid}
@@ -208,7 +213,7 @@
 					<TimerOff class="h-3.5 w-3.5" /> Stop retrying
 				</button>
 			{/if}
-			{#if isCompleted}
+			{#if isCompleted && hasAlbumLink}
 				<a
 					href={albumHref(task.release_group_mbid)}
 					class="btn btn-ghost btn-xs"

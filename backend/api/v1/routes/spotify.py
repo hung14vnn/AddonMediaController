@@ -188,6 +188,7 @@ async def request_spotify_track(
             track_title=resolved["track_title"],
             album_title=resolved["album_title"],
             duration_seconds=resolved["duration_seconds"],
+            artist_mbid=resolved.get("artist_mbid"),
         )
     except SpotifyNotLinkedError:
         raise HTTPException(status_code=400, detail="Spotify account not linked")

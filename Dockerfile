@@ -50,10 +50,17 @@ WORKDIR /app
 # pinned reproducibly via the pinned python:3.13.5-slim (bookworm) base; apt
 # version-pinning is avoided because Debian drops old versions from the mirror.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl tini gosu libchromaprint-tools ffmpeg \
+    && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs tini gosu libchromaprint-tools ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=python-deps /install /usr/local
+
+# nodriver 0.50.3 generates this module in Latin-1 without declaring its
+# encoding. Patch it while dependencies are still root-owned; the app itself
+# deliberately runs as the unprivileged droppedneedle user.
+RUN sed -i '1i# -*- coding: latin-1 -*-' /usr/local/lib/python3.13/site-packages/nodriver/cdp/network.py
 
 # Bake the user at the entrypoint's default PUID/PGID (1000) so the common
 # deployment needs no runtime usermod/groupmod remap (which can stall startup).
@@ -64,6 +71,8 @@ COPY backend/ .
 COPY --from=frontend-build /app/frontend/build ./static
 COPY entrypoint.sh /entrypoint.sh
 
+RUN sed -i 's/\r$//' /entrypoint.sh
+
 RUN find /app -type f -print0 \
       | sort -z \
       | xargs -0 sha256sum \
@@ -71,7 +80,7 @@ RUN find /app -type f -print0 \
       | cut -d' ' -f1 > /app/.droppedneedle-source-revision \
     && test -s /app/.droppedneedle-source-revision
 
-RUN mkdir -p /app/cache /app/config \
+RUN mkdir -p /app/cache /app/config /app/imports \
     && chown -R droppedneedle:droppedneedle /app \
     && chmod +x /entrypoint.sh
 

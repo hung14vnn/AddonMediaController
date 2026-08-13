@@ -31,7 +31,7 @@
 	}
 </script>
 
-<svelte:head><title>Library · AddonM</title></svelte:head>
+<svelte:head><title>Library · Addonify</title></svelte:head>
 
 <div class="min-h-[calc(100vh-200px)]">
 	<PageHeader subtitle="Your scanned music library">

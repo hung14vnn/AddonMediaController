@@ -208,7 +208,7 @@
 {/snippet}
 
 <div
-	class="discover-section-enter grid grid-cols-1 gap-4 sm:gap-5 {canImport ? 'lg:grid-cols-2' : ''}"
+	class="discover-section-enter grid grid-cols-1 gap-4 mb-8 sm:gap-5 {canImport ? 'lg:grid-cols-2' : ''}"
 >
 	{@render entryCard(musicCard)}
 	{#if canImport}

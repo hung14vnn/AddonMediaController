@@ -22,9 +22,11 @@
 		Loader2,
 		Music2,
 		Search,
+		Trash2,
 		X
 	} from 'lucide-svelte';
 	import type { NativeTrackListItem, NativeTrackPage, TrackSort } from '$lib/types';
+	import { removeLibraryTrack } from '$lib/queries/library/LibraryMutations.svelte';
 	import { untrack } from 'svelte';
 
 	const PAGE_SIZE = 48;
@@ -37,6 +39,7 @@
 	let searchTimeout: ReturnType<typeof setTimeout> | undefined;
 
 	const totalPages = $derived(Math.ceil(data.total / PAGE_SIZE));
+	const remove = removeLibraryTrack();
 
 	const loader = createLibraryTrackLoader<NativeTrackListItem>(
 		{
@@ -120,10 +123,37 @@
 		toastStore.show({ message: `"${track.title}" will play next`, type: 'info' });
 	}
 
+	function deleteTrack(track: NativeTrackListItem) {
+		if (
+			!confirm(
+				`Delete "${track.title}" from your library? This permanently removes the audio file and any empty parent folders.`
+			)
+		) {
+			return;
+		}
+		remove.mutate(
+			{ fileId: track.id },
+			{
+				onSuccess: () => {
+					toastStore.show({ message: `Deleted "${track.title}"`, type: 'success' });
+					void fetchTracks();
+				},
+				onError: () => toastStore.show({ message: "Couldn't delete this file", type: 'error' })
+			}
+		);
+	}
+
 	function getTrackMenuItems(track: NativeTrackListItem): MenuItem[] {
 		return [
 			{ label: 'Add to Queue', icon: ListPlus, onclick: () => addTrackToQueue(track) },
-			{ label: 'Play Next', icon: ListStart, onclick: () => playTrackNext(track) }
+			{ label: 'Play Next', icon: ListStart, onclick: () => playTrackNext(track) },
+			{
+				label: 'Delete from library',
+				icon: Trash2,
+				onclick: () => deleteTrack(track),
+				disabled: remove.isPending,
+				className: 'text-error'
+			}
 		];
 	}
 

@@ -20,7 +20,7 @@ from infrastructure.persistence.drop_import_store import DropImportStore
 from models.audio import AudioInfo, AudioTag
 from models.drop_import import ItemStatus, JobStatus
 from services.native.album_matcher import MBTrack, _ReleaseMeta
-from services.native.drop_import_service import DropImportService
+from services.native.drop_import_service import DropImportService, _Entry
 from services.native.naming import NamingTemplateEngine
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "library"
@@ -144,6 +144,46 @@ async def _wait_job(store, job_id: str):
             return job
         await asyncio.sleep(0)
     raise AssertionError("job never reached a terminal state")
+
+
+@pytest.mark.asyncio
+async def test_known_single_track_uses_the_requested_artist_and_album(tmp_path):
+    tagger = FakeTagger({})
+    identifier = AsyncMock()
+    identifier.release_tracks = AsyncMock(
+        return_value=(
+            _ReleaseMeta(
+                release_group_mbid="rg-1",
+                release_mbid="rel-1",
+                album_title="Compilation appearance",
+                artist="Various Artists",
+                is_various=True,
+                artist_mbid="va-id",
+                year=2026,
+            ),
+            _tracks(),
+        )
+    )
+    service, _, _, _ = _build_service(tmp_path, tagger, identifier=identifier)
+    source = tmp_path / "track.flac"
+    source.write_bytes(b"audio")
+
+    identified = await service._identify_known_download(
+        [_Entry(source, _tag("Song One", 1), _info())],
+        release_group_mbid="rg-1",
+        recording_mbid="rec-1",
+        requested_artist_name="Sơn Tùng M-TP",
+        requested_album_title="Come My Way",
+    )
+
+    assert identified is not None
+    assert identified.meta.artist == "Sơn Tùng M-TP"
+    assert identified.meta.album_title == "Come My Way"
+    assert identified.meta.is_various is False
+    assert identified.meta.artist_mbid is None
+    target_tag = service._target_tag(identified.meta, identified.tracks[0], _tag("Song One", 1))
+    assert target_tag.artist == "Sơn Tùng M-TP"
+    assert target_tag.album_artist == "Sơn Tùng M-TP"
 
 
 def _zip_album(path: Path, folder: str = "Test Artist - Test Album") -> Path:
@@ -542,6 +582,42 @@ async def test_discard_removes_staged_files(tmp_path):
     discarded = await service.discard_item(item.id, user_id="user-1", is_admin=False)
     assert discarded.status == ItemStatus.DISCARDED
     assert all(not p.exists() for p in staged)
+
+
+@pytest.mark.asyncio
+async def test_discard_removes_failed_item_files(tmp_path):
+    tagger = FakeTagger({})
+    service, store, _, _ = _build_service(tmp_path, tagger)
+    staging = tmp_path / "imports" / "failed-job"
+    staging.mkdir(parents=True)
+    failed_file = staging / "broken.flac"
+    failed_file.write_bytes(b"not audio")
+    await store.create_job("failed-job", "user-1", "Harvey", "broken.flac", str(staging))
+    item_id = await store.add_item("failed-job", "Loose tracks", [str(failed_file)], 1)
+    await store.update_item(item_id, status=ItemStatus.FAILED, detail="Couldn't import this folder.")
+
+    discarded = await service.discard_item(item_id, user_id="user-1", is_admin=False)
+
+    assert discarded.status == ItemStatus.DISCARDED
+    assert not failed_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_clear_discarded_removes_empty_job(tmp_path):
+    tagger = FakeTagger({})
+    service, store, _, _ = _build_service(tmp_path, tagger)
+    staging = tmp_path / "imports" / "discarded-job"
+    staging.mkdir(parents=True)
+    staged = staging / "discarded.flac"
+    staged.write_bytes(b"already deleted")
+    await store.create_job("discarded-job", "user-1", "Harvey", "discarded.flac", str(staging))
+    item_id = await store.add_item("discarded-job", "Loose tracks", [str(staged)], 1)
+    await store.update_item(item_id, status=ItemStatus.DISCARDED, staging_paths=[])
+
+    cleared = await service.clear_discarded_items(user_id="user-1", is_admin=False)
+
+    assert cleared == 1
+    assert await store.get_job("discarded-job") is None
 
 
 # -- single files and loose drops --

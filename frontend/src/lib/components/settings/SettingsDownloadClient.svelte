@@ -73,7 +73,7 @@
 	const slskdDownloadsDir = $derived(status?.slskd_downloads_dir);
 
 	const MOUNT_REASONS: Record<string, string> = {
-		not_set: 'No slskd downloads folder is mounted into AddonM.',
+		not_set: 'No slskd downloads folder is mounted into Addonify.',
 		missing: "The mounted downloads folder doesn't exist.",
 		not_writable:
 			'The downloads mount is read-only - imports must remove source files after they are placed.'
@@ -304,7 +304,7 @@
 						<details class="text-xs">
 							<summary class="cursor-pointer font-semibold">How to set this up</summary>
 							<p class="mt-1 text-base-content/70">
-								Expose slskd's completed-downloads directory to AddonM
+								Expose slskd's completed-downloads directory to Addonify
 								<strong>read-write</strong>. For fast moves, keep it and the library inside one
 								common-parent container mount. See the slskd setup section in the README.
 							</p>

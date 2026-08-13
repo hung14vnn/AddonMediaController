@@ -49,7 +49,7 @@ describe('LibraryQueryKeyFactory', () => {
 		const key = LibraryQueryKeyFactory.albums(2, 'title', 'foo', 'flac');
 		expect(key).toEqual([
 			'library',
-			'albums',
+			'albums-v2',
 			{ page: 2, sort: 'title', q: 'foo', format: 'flac' }
 		]);
 	});

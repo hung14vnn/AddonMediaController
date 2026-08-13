@@ -18,6 +18,8 @@ services:
       - cache:/app/cache
       - plugins:/app/plugins   # installed plugins; without this they vanish on recreate
       - imports:/app/imports   # drop-importer staging
+      - ./music:/music         # final managed music library
+      - ./spotiflac-downloads:/spotiflac-downloads  # SpotiFLAC output; persists on the host
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8688/health"]

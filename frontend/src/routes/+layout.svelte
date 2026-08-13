@@ -341,7 +341,7 @@
 							>
 								<span
 									><span class="text-primary">Addon</span><span class="text-base-content"
-										>M</span
+										>ify</span
 									></span
 								>
 							</a>

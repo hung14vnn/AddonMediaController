@@ -175,7 +175,7 @@
 								{#if !form.testResult?.success && !form.wasAlreadySecondaryEnabled}
 									Test and get a valid connection to enable
 								{:else}
-									Let users sign in to AddonM with their Jellyfin account
+									Let users sign in to Addonify with their Jellyfin account
 								{/if}
 							</p>
 						</div>

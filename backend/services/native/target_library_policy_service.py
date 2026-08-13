@@ -230,7 +230,14 @@ class TargetLibraryPolicyService:
         pending = await self._store.get_pending_policy()
         return LibraryPolicyApplyPreviewResponse(
             policy_revision=str(preview["policy_revision"]),
-            scope_ids=[str(value) for value in preview["scope_ids"]],
+            # ``preview["scope_ids"]`` echoes the user's request. A pending
+            # transition can still contain a root that was deleted in a later
+            # settings save; never send that stale ID to the scan endpoint.
+            scope_ids=[
+                str(scope.scope_id)
+                for scope in preview["scopes"]
+                if scope.scope_id is not None
+            ],
             estimated_file_count=int(preview["estimated_file_count"]),
             content_will_become_unavailable=any(
                 scope.effective_policy == "excluded" for scope in preview["scopes"]

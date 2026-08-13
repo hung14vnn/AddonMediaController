@@ -295,3 +295,77 @@ class DropImportStore(PersistenceBase):
             )
 
         await self._write(operation)
+
+    async def clear_discarded_items(self, *, user_id: str, include_all: bool) -> int:
+        """Permanently remove already-discarded item records.
+
+        Their staged files were deleted at discard time, so this only cleans the
+        queue history. Non-admin callers remain scoped to their own jobs.
+        """
+
+        def operation(conn: sqlite3.Connection) -> int:
+            if include_all:
+                affected_jobs = [
+                    row["job_id"]
+                    for row in conn.execute(
+                        "SELECT DISTINCT job_id FROM drop_import_items "
+                        "WHERE status = 'discarded'"
+                    )
+                ]
+                cursor = conn.execute(
+                    "DELETE FROM drop_import_items WHERE status = 'discarded'"
+                )
+            else:
+                affected_jobs = [
+                    row["job_id"]
+                    for row in conn.execute(
+                        "SELECT DISTINCT i.job_id FROM drop_import_items i "
+                        "JOIN drop_import_jobs j ON j.id = i.job_id "
+                        "WHERE i.status = 'discarded' AND j.user_id = ?",
+                        (user_id,),
+                    )
+                ]
+                cursor = conn.execute(
+                    "DELETE FROM drop_import_items WHERE status = 'discarded' "
+                    "AND job_id IN (SELECT id FROM drop_import_jobs WHERE user_id = ?)",
+                    (user_id,),
+                )
+            if affected_jobs:
+                placeholders = ",".join("?" for _ in affected_jobs)
+                conn.execute(
+                    "DELETE FROM drop_import_jobs "
+                    f"WHERE id IN ({placeholders}) AND NOT EXISTS "
+                    "(SELECT 1 FROM drop_import_items i "
+                    "WHERE i.job_id = drop_import_jobs.id)",
+                    affected_jobs,
+                )
+            return cursor.rowcount
+
+        return await self._write(operation)
+
+    async def clear_finished_jobs(
+        self, *, user_id: str, include_all: bool
+    ) -> list[str]:
+        """Remove completed import-history rows with no outstanding review work."""
+
+        def operation(conn: sqlite3.Connection) -> list[str]:
+            scope = "" if include_all else "AND j.user_id = ?"
+            params: tuple[str, ...] = () if include_all else (user_id,)
+            rows = conn.execute(
+                "SELECT j.id, j.staging_dir FROM drop_import_jobs j "
+                "WHERE j.status = 'completed' "
+                "AND NOT EXISTS (SELECT 1 FROM drop_import_items i "
+                "WHERE i.job_id = j.id AND i.status NOT IN ('imported','skipped','discarded')) "
+                f"{scope}",
+                params,
+            ).fetchall()
+            if not rows:
+                return []
+            ids = [str(row["id"]) for row in rows]
+            placeholders = ",".join("?" for _ in ids)
+            conn.execute(
+                f"DELETE FROM drop_import_jobs WHERE id IN ({placeholders})", ids
+            )
+            return [str(row["staging_dir"]) for row in rows]
+
+        return await self._write(operation)

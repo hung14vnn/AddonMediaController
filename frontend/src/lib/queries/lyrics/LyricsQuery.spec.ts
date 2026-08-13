@@ -68,11 +68,25 @@ describe('fetchLyrics', () => {
 		expect(mockGet).not.toHaveBeenCalled();
 	});
 
-	it('returns null for local source type', async () => {
+	it('looks up local lyrics through the unified lyrics endpoint', async () => {
+		mockGet.mockResolvedValueOnce({
+			text: 'Local lyrics',
+			is_synced: false,
+			lines: [],
+			source: 'lrclib'
+		});
 		const np = makeNowPlaying({ sourceType: 'local' });
 		const result = await fetchLyrics(np, signal);
-		expect(result).toBeNull();
-		expect(mockGet).not.toHaveBeenCalled();
+		expect(result).toEqual({
+			text: 'Local lyrics',
+			is_synced: false,
+			lines: [],
+			source: 'lrclib'
+		});
+		expect(mockGet).toHaveBeenCalledWith(
+			expect.stringContaining('/api/v1/lyrics?source=local'),
+			{ signal }
+		);
 	});
 
 	it('normalizes Navidrome response correctly', async () => {
@@ -216,6 +230,7 @@ describe('LyricsQueryKeyFactory', () => {
 		);
 		expect(key).toEqual([
 			'lyrics',
+			'v2',
 			'alice',
 			'selected-a',
 			'navidrome',
@@ -236,6 +251,7 @@ describe('LyricsQueryKeyFactory', () => {
 		);
 		expect(key).toEqual([
 			'lyrics',
+			'v2',
 			undefined,
 			undefined,
 			undefined,
@@ -246,7 +262,7 @@ describe('LyricsQueryKeyFactory', () => {
 	});
 
 	it('includes prefix', () => {
-		expect(LyricsQueryKeyFactory.prefix).toEqual(['lyrics']);
+		expect(LyricsQueryKeyFactory.prefix).toEqual(['lyrics', 'v2']);
 	});
 
 	it('generates different keys for different tracks', () => {

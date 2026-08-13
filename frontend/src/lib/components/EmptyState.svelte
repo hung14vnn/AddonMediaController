@@ -34,7 +34,7 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		max-width: 32rem;
+		/* max-width: 32rem; */
 		margin-inline: auto;
 		padding: 3.5rem 1.5rem;
 		text-align: center;

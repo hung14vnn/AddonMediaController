@@ -139,16 +139,18 @@
 	{:else}
 		<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
 			{#each artists as artist (artist.id)}
+				{@const artistName = artist.name?.trim() || 'Unknown artist'}
+				{@const artistRouteId = artist.musicbrainz_artist_id ?? artist.id}
 				<a
-					href={artistHref(artist.id)}
+					href={artistHref(artistRouteId)}
 					class="card group bg-base-100 shadow-sm transition-all hover:-translate-y-1 hover:shadow-lg focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
-					aria-label={`Open ${artist.name}`}
+					aria-label={`Open ${artistName}`}
 				>
 					<figure class="relative aspect-square overflow-hidden p-3">
 						<ArtistImage
-							mbid={artist.id}
+							mbid={artist.musicbrainz_artist_id ?? artist.id}
 							source="local"
-							alt={artist.name}
+							alt={artistName}
 							size="full"
 							className="h-full w-full transition-transform duration-300 group-hover:scale-105"
 						/>
@@ -162,7 +164,9 @@
 						{/if}
 					</figure>
 					<div class="card-body gap-1 p-3 pt-0 text-center">
-						<h2 class="truncate font-semibold">{artist.name}</h2>
+						<h2 class="min-h-5 truncate text-sm font-semibold text-base-content" title={artistName}>
+							{artistName}
+						</h2>
 						<p class="text-xs text-base-content/55">
 							{artist.album_count}
 							{artist.album_count === 1 ? 'album' : 'albums'} · {artist.track_count}

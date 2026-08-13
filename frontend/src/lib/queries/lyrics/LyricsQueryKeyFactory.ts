@@ -1,7 +1,9 @@
 import type { SourceType } from '$lib/player/types';
 
 export const LyricsQueryKeyFactory = {
-	prefix: ['lyrics'] as const,
+	// Version the key so old persisted "local has no lyrics" results cannot
+	// suppress the on-demand local lyrics lookup after an application upgrade.
+	prefix: ['lyrics', 'v2'] as const,
 	lyrics: (
 		userId: string | undefined,
 		navidromeScope: string | undefined,
