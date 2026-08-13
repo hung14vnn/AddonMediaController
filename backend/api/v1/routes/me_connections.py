@@ -86,11 +86,16 @@ _SPOTIFY_SCOPES = "playlist-read-private playlist-read-collaborative user-read-p
 
 
 def _spotify_redirect_uri(request: Request) -> str:
-    """Use Spotify's permitted loopback literal for local HTTP development."""
     base = str(request.base_url).rstrip("/")
+    
     if base.startswith("http://localhost:"):
         base = base.replace("http://localhost:", "http://127.0.0.1:", 1)
+    
+    elif base.startswith("http://") and "127.0.0.1" not in base:
+        base = base.replace("http://", "https://", 1)
+        
     return base + "/api/v1/me/connections/spotify/auth/callback"
+
 
 
 @router.get("/connections", response_model=ConnectionsResponse)
