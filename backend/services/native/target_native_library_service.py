@@ -323,6 +323,7 @@ class TargetNativeLibraryService:
                 or row.get("artwork_source")
                 or row.get("provider_release_group_mbid")
             ),
+            cover_url=row.get("cover_url"),
             date_added=row.get("last_imported_at"),
             sort_name=row.get("album_sort_name"),
             original_release_date=row.get("original_release_date"),
@@ -380,4 +381,5 @@ class TargetNativeLibraryService:
                 or row.get("artwork_source")
                 or row.get("provider_release_group_mbid")
             ),
+            cover_url=row.get("cover_url"),
         )

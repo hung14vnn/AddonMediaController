@@ -151,6 +151,7 @@ _TASK_COLUMNS = (
     "artist_mbid",
     "artist_name",
     "album_title",
+    "cover_url",
     "track_title",
     "track_number",
     "disc_number",
@@ -216,6 +217,7 @@ class DownloadStore(PersistenceBase):
                     artist_mbid TEXT,
                     artist_name TEXT NOT NULL,
                     album_title TEXT NOT NULL,
+                    cover_url TEXT,
                     track_title TEXT,
                     track_number INTEGER,
                     disc_number INTEGER,
@@ -291,6 +293,10 @@ class DownloadStore(PersistenceBase):
                 CREATE INDEX IF NOT EXISTS idx_search_jobs_rgmbid ON search_jobs(release_group_mbid);
                 """
             )
+            try:
+                conn.execute("ALTER TABLE download_tasks ADD COLUMN cover_url TEXT")
+            except sqlite3.OperationalError:
+                pass  # duplicate column - already present
             # Idempotent column adds for dev DBs created before the column existed
             # (try/except duplicate-column, per the plan's migration convention).
             for column, ddl in (
@@ -364,6 +370,7 @@ class DownloadStore(PersistenceBase):
         release_group_mbid: str = "",
         artist_name: str = "",
         album_title: str = "",
+        cover_url: str | None = None,
         release_mbid: str | None = None,
         recording_mbid: str | None = None,
         artist_mbid: str | None = None,
@@ -393,6 +400,7 @@ class DownloadStore(PersistenceBase):
             release_group_mbid=release_group_mbid,
             artist_name=artist_name,
             album_title=album_title,
+            cover_url=cover_url,
             release_mbid=release_mbid,
             recording_mbid=recording_mbid,
             artist_mbid=artist_mbid,
@@ -1151,6 +1159,27 @@ class DownloadStore(PersistenceBase):
             return 0
         clauses = [f"status IN ({_in_placeholders(statuses)})"]
         params: list[Any] = list(statuses)
+        if user_role != "admin":
+            if user_id is None:
+                return 0
+            clauses.append("user_id = ?")
+            params.append(user_id)
+        where = " AND ".join(clauses)
+
+        def operation(conn: sqlite3.Connection) -> int:
+            cur = conn.execute(f"DELETE FROM download_tasks WHERE {where}", tuple(params))
+            return cur.rowcount
+
+        return await self._write(operation)
+
+    async def delete_tasks_by_ids(
+        self, user_id: str | None, user_role: str | None, task_ids: list[str]
+    ) -> int:
+        """Hard-delete explicitly selected tasks with the standard ownership scope."""
+        if not task_ids:
+            return 0
+        clauses = [f"id IN ({_in_placeholders(task_ids)})"]
+        params: list[Any] = list(task_ids)
         if user_role != "admin":
             if user_id is None:
                 return 0

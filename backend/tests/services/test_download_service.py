@@ -579,15 +579,24 @@ async def test_cancel_album_retries_returns_count():
 
 
 @pytest.mark.asyncio
-async def test_clear_finished_deletes_completed_and_cancelled():
-    # The "Clear" bulk action hard-deletes the user's terminal completed+cancelled rows.
+async def test_clear_finished_deletes_all_terminal_history():
+    # The "Clear" bulk action must also dismiss exhausted failed downloads.
     service, store, *_ = _make_service()
     store.delete_tasks_by_status.return_value = 3
+    terminal = DownloadTask(id="failed", user_id="u1", status="failed", retry_count=6)
+    retrying = DownloadTask(id="retrying", user_id="u1", status="failed", retry_count=1)
+    store.list_tasks_by_status.return_value = [terminal, retrying]
+    service._orchestrator.next_retry_at.side_effect = lambda task: (
+        123.0 if task.id == "retrying" else None
+    )
+    store.delete_tasks_by_ids.return_value = 1
     cleared = await service.clear_finished("u1", "user")
-    assert cleared == 3
+    assert cleared == 4
     store.delete_tasks_by_status.assert_awaited_once_with(
         "u1", "user", ["completed", "cancelled"]
     )
+    store.list_tasks_by_status.assert_awaited_once_with("u1", "user", ["failed", "partial"])
+    store.delete_tasks_by_ids.assert_awaited_once_with("u1", "user", ["failed"])
 
 
 @pytest.mark.asyncio

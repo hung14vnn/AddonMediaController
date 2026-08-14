@@ -210,6 +210,7 @@
 							<figure class="aspect-square overflow-hidden relative">
 								<AlbumImage
 									mbid={item.mbid || ''}
+									source={item.local_id ? 'local' : 'provider'}
 									alt={item.name}
 									size="md"
 									rounded="none"

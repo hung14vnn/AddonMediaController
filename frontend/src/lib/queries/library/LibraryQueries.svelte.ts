@@ -97,6 +97,7 @@ function normaliseAlbums(response: { items?: NativeAlbumWire[]; total?: number }
 				year: album.year ?? null,
 				is_compilation: album.is_compilation ?? false,
 				cover_available: album.cover_available ?? Boolean(album.cover_url),
+				cover_url: album.cover_url ?? null,
 				date_added: album.date_added ?? album.last_imported_at ?? null,
 				sort_name: album.sort_name ?? album.album_sort_name ?? null,
 				original_release_date: album.original_release_date ?? null,

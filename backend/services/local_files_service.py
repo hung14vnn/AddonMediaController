@@ -420,8 +420,19 @@ class LocalFilesService:
 
     def _native_album_to_summary(self, album: Any) -> LocalAlbumSummary:
         """Map a native ``LibraryAlbumSummary`` onto the local-files DTO."""
+        # ``release_group_mbid`` is a target-local album id.  Only an explicit
+        # provider MusicBrainz id may be used to build a Cover Art Archive URL;
+        # local-only Spotify imports must retain their provider artwork URL.
         mbid = album.release_group_mbid
-        cover_url = prefer_release_group_cover_url(mbid, album.cover_url, size=500)
+        provider_mbid = getattr(album, "musicbrainz_release_group_id", None)
+        cover_mbid = (
+            provider_mbid
+            if getattr(album, "is_target_local_id", False)
+            else provider_mbid or mbid
+        )
+        cover_url = prefer_release_group_cover_url(
+            cover_mbid, album.cover_url, size=500
+        )
         return LocalAlbumSummary(
             musicbrainz_id=mbid,
             name=album.album_title or "Unknown",
@@ -474,8 +485,11 @@ class LocalFilesService:
         )
 
     def _row_to_crate_track(self, row: dict, reason: str) -> CrateTrack:
+        # See _native_album_to_summary: the local album id is not a MBID.
         mbid = row.get("release_group_mbid")
-        cover_url = prefer_release_group_cover_url(mbid, row.get("cover_url"), size=300)
+        cover_url = prefer_release_group_cover_url(
+            row.get("provider_release_group_mbid"), row.get("cover_url"), size=300
+        )
         return CrateTrack(
             track_file_id=str(row.get("id") or ""),
             title=row.get("track_title") or "Unknown",
@@ -484,6 +498,7 @@ class LocalFilesService:
             or row.get("artist_name")
             or "Unknown",
             album_mbid=mbid,
+            musicbrainz_release_group_id=row.get("provider_release_group_mbid"),
             cover_url=cover_url,
             format=row.get("file_format") or "",
             year=row.get("year"),

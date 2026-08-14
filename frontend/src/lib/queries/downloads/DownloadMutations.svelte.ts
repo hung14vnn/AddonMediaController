@@ -100,7 +100,7 @@ export function requestSpotifyTrack() {
 			}),
 		onSuccess: () => {
 			toastStore.show({
-				message: 'Track requested - matching MusicBrainz and searching Soulseek',
+				message: 'Track requested - checking catalog metadata and searching Soulseek',
 				type: 'success'
 			});
 			void invalidateTasks();

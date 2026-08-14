@@ -333,8 +333,10 @@ export function buildDiscoveryQueueFromLocal(tracks: NativeTrackListItem[]): Que
 		discNumber: normalizeDiscNumber(t.disc_number),
 		albumId: t.album_mbid ?? t.album_id,
 		albumName: t.album_name ?? t.album_title,
-		coverUrl: getCoverUrl(t.cover_url ?? null, t.album_mbid ?? t.album_id),
-		coverRemoteUrl: null,
+		// Local catalog UUIDs can look like MusicBrainz IDs. Preserve a stored
+		// provider cover instead of routing that UUID through Cover Art Archive.
+		coverUrl: t.cover_url ?? getCoverUrl(null, t.album_mbid ?? t.album_id),
+		coverRemoteUrl: t.cover_url ?? null,
 		sourceType: 'local' as const,
 		artistId: t.artist_mbid ?? undefined,
 		streamUrl: API.stream.local(t.track_file_id ?? t.id),

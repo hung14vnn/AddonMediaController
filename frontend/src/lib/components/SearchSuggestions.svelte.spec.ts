@@ -4,6 +4,16 @@ import { render } from 'vitest-browser-svelte';
 import SearchSuggestions from './SearchSuggestions.svelte';
 import type { SuggestResult } from '$lib/types';
 
+const mockTracks = [
+	{
+		type: 'track' as const,
+		title: 'MAKING MY WAY',
+		artist: 'Sơn Tùng M-TP',
+		album: 'MAKING MY WAY',
+		spotify_id: 'spotify-track-1'
+	}
+];
+
 const mockResults: SuggestResult[] = [
 	{
 		type: 'artist',
@@ -98,6 +108,36 @@ describe('SearchSuggestions.svelte', () => {
 
 		const options = page.getByRole('option');
 		await expect.element(options.first()).toBeInTheDocument();
+	});
+
+	it('should reopen suggestions when focusing an existing query', async () => {
+		globalThis.fetch = mockFetchSuccess();
+		renderComponent({ query: 'muse' });
+
+		const input = page.getByRole('searchbox');
+		await input.click();
+		await vi.advanceTimersByTimeAsync(700);
+
+		await expect.element(page.getByRole('listbox')).toBeInTheDocument();
+		await expect.element(page.getByText('Muse')).toBeInTheDocument();
+	});
+
+	it('should show Spotify tracks returned with suggestions', async () => {
+		globalThis.fetch = vi
+			.fn()
+			.mockImplementation(() => Promise.resolve(makeResponse({ results: mockResults, tracks: mockTracks })));
+
+		renderComponent();
+		const input = page.getByRole('searchbox');
+		await input.fill('making');
+		await vi.advanceTimersByTimeAsync(700);
+
+		await expect.element(page.getByText('MAKING MY WAY')).toBeInTheDocument();
+		await expect.element(page.getByText('Sơn Tùng M-TP · MAKING MY WAY')).toBeInTheDocument();
+		await expect.element(page.getByText('Track')).toBeInTheDocument();
+		await expect
+			.element(page.getByRole('button', { name: 'Request MAKING MY WAY' }))
+			.toBeInTheDocument();
 	});
 
 	it('should call onSelect when clicking a suggestion', async () => {

@@ -74,4 +74,28 @@ describe('HomeSection.svelte', () => {
 		await expect.element(link).toHaveAttribute('href', '/album/local-only-album-1');
 		await expect.element(link.getByRole('button')).not.toBeInTheDocument();
 	});
+
+	it('uses the local album identity for a Spotify-only import', async () => {
+		render(HomeSection, {
+			props: {
+				section: {
+					title: 'Your Albums',
+					type: 'albums',
+					items: [
+						{
+							name: 'Spotify-only Album',
+							artist_name: 'Artist',
+							mbid: 'spotify:album:3RMkiQXA4bC63DuMmU3BJb',
+							local_id: '55117ad0-dc94-5b6e-8332-58efd29155a2',
+							in_library: true
+						}
+					]
+				}
+			}
+		} as unknown as Parameters<typeof render<typeof HomeSection>>[1]);
+
+		await expect
+			.element(page.getByRole('link', { name: /Spotify-only Album/ }))
+			.toHaveAttribute('href', '/album/55117ad0-dc94-5b6e-8332-58efd29155a2');
+	});
 });

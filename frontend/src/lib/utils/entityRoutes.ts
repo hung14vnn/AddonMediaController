@@ -23,7 +23,9 @@ export function localArtistHref(id: string): string {
 }
 
 export function albumHrefOrNull(id: string | null | undefined): string | null {
-	return id ? albumHref(id) : null;
+	// Spotify fallback IDs are internal import metadata, not provider album IDs.
+	// A local catalog card must use its `local_id` UUID instead.
+	return id && !id.startsWith('spotify:album:') ? albumHref(id) : null;
 }
 
 export function artistHrefOrNull(id: string | null | undefined): string | null {

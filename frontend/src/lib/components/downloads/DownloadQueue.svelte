@@ -203,7 +203,7 @@
 								class="btn btn-ghost btn-xs text-base-content/60 hover:text-error"
 								onclick={() => clear.mutate()}
 								disabled={clear.isPending}
-								title="Remove completed and cancelled downloads from this list"
+								title="Remove completed, failed, partial, and cancelled downloads from this list"
 							>
 								<Trash2 class="h-3.5 w-3.5" /> Clear
 							</button>

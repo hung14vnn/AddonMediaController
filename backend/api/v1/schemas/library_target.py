@@ -32,6 +32,7 @@ class TargetNativeAlbum(AppStruct):
     year: int | None = None
     is_compilation: bool = False
     cover_available: bool = False
+    cover_url: str | None = None
     date_added: float | None = None
     sort_name: str | None = None
     original_release_date: str | None = None
@@ -79,6 +80,7 @@ class TargetNativeTrack(AppStruct):
     file_size_bytes: int = 0
     date_added: float | None = None
     cover_available: bool = False
+    cover_url: str | None = None
     current_tier: str | None = None
     below_cutoff: bool = False
 

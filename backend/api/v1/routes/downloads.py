@@ -254,7 +254,7 @@ async def retry_download(
 async def clear_downloads(
     current_user: CurrentUserDep, service=Depends(get_download_service)
 ):
-    """Permanently remove the user's terminal (completed + cancelled) tasks."""
+    """Permanently remove the user's terminal download history."""
     cleared = await service.clear_finished(current_user.id, current_user.role)
     return ClearDownloadsResponse(cleared=cleared)
 

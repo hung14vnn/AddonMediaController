@@ -571,6 +571,20 @@ class LibraryDB(PersistenceBase):
 
         await self._write(operation)
 
+    async def set_album_cover_url(self, release_group_mbid: str, cover_url: str) -> None:
+        """Set a trusted provider cover for a native-library album."""
+        if not release_group_mbid or not cover_url:
+            return
+
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "INSERT INTO library_album_meta (release_group_mbid, cover_url) VALUES (?, ?) "
+                "ON CONFLICT(release_group_mbid) DO UPDATE SET cover_url = excluded.cover_url",
+                (release_group_mbid, cover_url),
+            )
+
+        await self._write(operation)
+
     async def get_artists(self, limit: int | None = None) -> list[dict[str, Any]]:
         def operation(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             query = "SELECT raw_json FROM library_artists ORDER BY COALESCE(date_added, 0) DESC, name COLLATE NOCASE ASC"

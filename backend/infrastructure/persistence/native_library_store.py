@@ -124,7 +124,7 @@ SELECT
     a.is_compilation,
     COALESCE(ta.local_artist_id, a.album_artist_id) AS artist_mbid,
     te.recording_mbid,
-    ae.release_group_mbid AS provider_release_group_mbid,
+    COALESCE(ae.release_group_mbid, t.embedded_release_group_mbid) AS provider_release_group_mbid,
     ae.release_mbid AS provider_release_mbid,
     aae.provider_artist_id AS provider_album_artist_mbid,
     tae.provider_artist_id AS provider_artist_mbid,
@@ -1398,10 +1398,19 @@ class NativeLibraryStore(PersistenceBase):
 
         def operation(connection: sqlite3.Connection) -> str | None:
             rows = connection.execute(
-                "SELECT id FROM local_artists WHERE folded_name = ? "
-                "ORDER BY created_at, id LIMIT 2",
+                "SELECT artist.id, identity.provider_artist_id IS NOT NULL AS is_linked "
+                "FROM local_artists artist "
+                "LEFT JOIN local_artist_external_identities identity "
+                "ON identity.local_artist_id = artist.id AND identity.provider = 'musicbrainz' "
+                "WHERE artist.folded_name = ? "
+                "ORDER BY is_linked DESC, artist.created_at, artist.id LIMIT 2",
                 (folded,),
             ).fetchall()
+            # Exact same-name imports must join a known MusicBrainz artist rather
+            # than creating another local-only artist.  Ambiguous local-only names
+            # remain separate to avoid guessing between unrelated artists.
+            if rows and rows[0]["is_linked"]:
+                return str(rows[0]["id"])
             return str(rows[0]["id"]) if len(rows) == 1 else None
 
         return await self._read(operation)
@@ -5331,6 +5340,25 @@ class NativeLibraryStore(PersistenceBase):
             return album_revision, self._bump_catalog(connection)
 
         return await self._write(operation)
+
+    async def set_imported_album_artwork(
+        self, local_album_id: str, *, cover_url: str, updated_at: float
+    ) -> None:
+        """Persist trusted provider artwork captured during an import."""
+        def operation(connection: sqlite3.Connection) -> None:
+            connection.execute(
+                "INSERT INTO local_album_artwork "
+                "(local_album_id, cover_url, source, source_locator, version, updated_at, row_revision) "
+                "VALUES (?, ?, 'provider', 'spotify', 1, ?, 1) "
+                "ON CONFLICT(local_album_id) DO UPDATE SET "
+                "cover_url = excluded.cover_url, source = excluded.source, "
+                "source_locator = excluded.source_locator, version = local_album_artwork.version + 1, "
+                "updated_at = excluded.updated_at, row_revision = local_album_artwork.row_revision + 1",
+                (local_album_id, cover_url, updated_at),
+            )
+            self._bump_catalog(connection)
+
+        await self._write(operation)
 
     async def backfill_identified_provider_artwork(self, *, updated_at: float) -> int:
         """Create reproducible provider artwork associations missed by early imports."""

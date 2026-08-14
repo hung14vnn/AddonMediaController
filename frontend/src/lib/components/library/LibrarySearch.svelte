@@ -278,10 +278,11 @@
 							>
 								<div class="relative h-10 w-10 shrink-0 overflow-hidden rounded-md">
 									<AlbumImage
-										mbid={track.album_id}
-										source="local"
-										available={track.cover_available}
-										alt={track.album_title}
+								mbid={track.album_id}
+								source="local"
+								available={track.cover_available}
+								customUrl={track.cover_url}
+								alt={track.album_title}
 										size="xs"
 										rounded="none"
 										className="h-full w-full object-cover"

@@ -146,10 +146,23 @@ async def test_enabled_spotiflac_wins_even_when_its_mount_is_not_ready():
     )
 
     task_id = await dispatcher.request_track(
-        user_id="u1", recording_mbid="rec", artist_name="A", track_title="T"
+        user_id="u1",
+        recording_mbid="spotify:track:track-123",
+        release_group_mbid="spotify:album:album-123",
+        artist_name="A",
+        track_title="T",
+        cover_url="https://i.scdn.co/image/album-cover",
     )
 
     assert task_id == "spotiflac-track"
     spotiflac.request_track.assert_awaited_once()
+    assert (
+        spotiflac.request_track.await_args.kwargs["release_group_mbid"]
+        == "spotify:album:album-123"
+    )
+    assert (
+        spotiflac.request_track.await_args.kwargs["cover_url"]
+        == "https://i.scdn.co/image/album-cover"
+    )
     download.request_track.assert_not_awaited()
     free_music.request_track.assert_not_awaited()

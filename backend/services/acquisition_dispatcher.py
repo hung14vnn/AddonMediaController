@@ -72,6 +72,7 @@ class AcquisitionDispatcher:
         track_duration_seconds: float | None = None,
         download_type: str = "album",
         artist_mbid: str | None = None,
+        cover_url: str | None = None,
         origin: str = "user",
         release_mbid: str | None = None,
     ) -> str:
@@ -90,6 +91,7 @@ class AcquisitionDispatcher:
                 artist_name=artist_name,
                 album_title=album_title,
                 artist_mbid=artist_mbid,
+                cover_url=cover_url,
                 origin=origin,
             )
         if self._use_free_music():
@@ -126,6 +128,7 @@ class AcquisitionDispatcher:
         duration_seconds: int | None = None,
         release_group_mbid: str | None = None,
         artist_mbid: str | None = None,
+        cover_url: str | None = None,
         origin: str = "user",
         release_mbid: str | None = None,
     ) -> str:
@@ -144,7 +147,10 @@ class AcquisitionDispatcher:
                 artist_name=artist_name,
                 track_title=track_title,
                 album_title=album_title,
+                release_group_mbid=release_group_mbid,
                 artist_mbid=artist_mbid,
+                cover_url=cover_url,
+                origin=origin,
             )
         if self._use_free_music():
             return await self._get_free_music_service().request_track(

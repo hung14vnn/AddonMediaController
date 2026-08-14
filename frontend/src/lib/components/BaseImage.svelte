@@ -106,7 +106,7 @@
 	let resolvedRemoteUrl = $derived(remoteUrl ? appendAudioDBSizeSuffix(remoteUrl, size) : null);
 
 	let canonicalAlbumCoverUrl = $derived(
-		imageType === 'album' && isValidMbid(mbid)
+		imageType === 'album' && source !== 'local' && isValidMbid(mbid)
 			? getApiUrl(`/api/v1/covers/release-group/${mbid}?size=${apiSizes[size]}`)
 			: null
 	);

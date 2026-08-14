@@ -344,7 +344,7 @@ export type WeeklyExplorationTrack = {
 	recording_mbid: string | null;
 	artist_mbid: string | null;
 	release_group_mbid: string | null;
-	cover_url: string | null;
+	cover_url?: string | null;
 	duration_ms: number | null;
 };
 
@@ -1095,6 +1095,7 @@ export type CrateTrack = {
 	album_name: string;
 	artist_name: string;
 	album_mbid?: string | null;
+	musicbrainz_release_group_id?: string | null;
 	cover_url?: string | null;
 	format?: string;
 	year?: number | null;
@@ -1545,6 +1546,7 @@ export interface TargetNativeTrack {
 	file_size_bytes: number;
 	date_added: number | null;
 	cover_available: boolean;
+	cover_url?: string | null;
 	current_tier: string | null;
 	below_cutoff: boolean;
 }
@@ -1582,6 +1584,7 @@ export interface LibraryAlbumSummary {
 	year: number | null;
 	is_compilation: boolean;
 	cover_available: boolean;
+	cover_url: string | null;
 	date_added: number | null;
 	sort_name: string | null;
 	original_release_date: string | null;

@@ -211,7 +211,7 @@
 				<div class="pointer-events-none absolute inset-[27%] rounded-full border border-base-content/[0.08]"></div>
 				<div class="absolute inset-[33.5%] overflow-hidden rounded-full ring-1 ring-base-content/25 shadow-[0_0_0_2px_oklch(from_var(--color-base-100)_l_c_h_/_0.55),0_2px_8px_oklch(from_var(--color-base-100)_l_c_h_/_0.6)]">
 					{#if np}
-						<AlbumImage mbid={np.albumId} remoteUrl={np.coverRemoteUrl ?? null} customUrl={np.coverUrl} alt={np.albumName ?? 'Album'} size="full" lazy={false} rounded="none" className="h-full w-full object-cover" />
+						<AlbumImage mbid={np.albumId} source={np.sourceType === 'local' ? 'local' : 'provider'} remoteUrl={np.coverRemoteUrl ?? null} customUrl={np.coverUrl} alt={np.albumName ?? 'Album'} size="full" lazy={false} rounded="none" className="h-full w-full object-cover" />
 					{:else}
 						<div class="flex h-full w-full items-center justify-center bg-base-300"><Disc3 class="h-8 w-8 text-base-content/30" /></div>
 					{/if}

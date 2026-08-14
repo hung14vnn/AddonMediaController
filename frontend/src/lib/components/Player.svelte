@@ -11,6 +11,7 @@
 	import EqPanel from '$lib/components/EqPanel.svelte';
 	import LyricsPanel from '$lib/components/LyricsPanel.svelte';
 	import AudioQualityBadge from '$lib/components/AudioQualityBadge.svelte';
+	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { getLyricsQuery } from '$lib/queries/lyrics/LyricsQuery.svelte';
@@ -35,8 +36,6 @@
 		Music2
 	} from 'lucide-svelte';
 
-	let coverImgError = $state(false);
-	let lastCoverKey = '';
 	let eqPanelOpen = $state(false);
 	let queueDrawerOpen = $state(false);
 
@@ -92,17 +91,8 @@
 	const nowPlayingCoverUrl = $derived.by(() => {
 		const np = playerStore.nowPlaying;
 		if (!np) return null;
+		if (np.sourceType === 'local' && np.coverUrl) return np.coverUrl;
 		return getCoverUrl(np.coverUrl, np.albumId);
-	});
-
-	$effect(() => {
-		const np = playerStore.nowPlaying;
-		if (!np) return;
-		const key = `${np.albumId}:${np.coverUrl ?? ''}`;
-		if (key !== lastCoverKey) {
-			lastCoverKey = key;
-			coverImgError = false;
-		}
 	});
 </script>
 
@@ -122,19 +112,22 @@
 			class="droppedneedle-player-inner flex items-center gap-2 px-3 pr-9 sm:gap-4 sm:px-4 sm:pr-10 max-w-screen-2xl mx-auto"
 		>
 			<div class="flex min-w-0 flex-1 items-center gap-2 sm:gap-3 lg:w-1/4 lg:flex-none">
-				{#if nowPlayingCoverUrl && !coverImgError}
+				{#if nowPlayingCoverUrl}
 					<a
 						href="/library/local"
 						class="shrink-0 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
 						aria-label="Open the Listening Room"
 					>
-						<img
-							src={nowPlayingCoverUrl}
+						<AlbumImage
+							mbid={playerStore.nowPlaying.albumId}
+							source="local"
+							customUrl={nowPlayingCoverUrl}
+							available={true}
 							alt={playerStore.nowPlaying.albumName}
-							class="w-12 h-12 sm:w-15 sm:h-15 rounded-lg shadow-lg ring-1 ring-base-content/10 object-cover"
-							onerror={() => {
-								coverImgError = true;
-							}}
+							size="full"
+							lazy={false}
+							rounded="lg"
+							className="w-12 h-12 sm:w-15 sm:h-15 shadow-lg ring-1 ring-base-content/10"
 						/>
 					</a>
 				{:else}

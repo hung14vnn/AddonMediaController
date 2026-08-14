@@ -167,6 +167,7 @@ class SpotifyImportService:
             "album_title": album_title or track_title,
             "duration_seconds": round((track.get("duration_ms") or 0) / 1000) or None,
             "is_spotify_local": True,
+            "cover_url": _best_image_url(album.get("images") or []),
         }
 
     @staticmethod

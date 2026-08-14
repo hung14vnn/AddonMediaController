@@ -1138,14 +1138,30 @@ class DownloadService:
         )
 
     async def clear_finished(self, user_id: str, user_role: str) -> int:
-        """Hard-delete the user's terminal completed + cancelled tasks (the queue's
-        "Clear" bulk action). Active/failed/partial/queued rows are left untouched. A
-        pure status delete - no source needs configuring, so it skips ``_ensure_enabled``
-        like ``cancel_album_retries`` does. Admins clear across all users, mirroring the
-        list endpoint's ownership."""
+        """Hard-delete the user's terminal history (the queue's "Clear" action).
+
+        Completed, cancelled, exhausted failed, and terminal partial attempts are
+        all dismissible. Active and still-scheduled retry rows remain intact. A
+        pure status delete - no source needs configuring, so it skips
+        ``_ensure_enabled`` like ``cancel_album_retries`` does. Admins clear
+        across all users, mirroring the list endpoint's ownership.
+        """
         cleared = await self._store.delete_tasks_by_status(
-            user_id, user_role, [DownloadStatus.COMPLETED, DownloadStatus.CANCELLED]
+            user_id,
+            user_role,
+            [
+                DownloadStatus.COMPLETED,
+                DownloadStatus.CANCELLED,
+            ],
         )
+        retryable = await self._store.list_tasks_by_status(
+            user_id, user_role, [DownloadStatus.FAILED, DownloadStatus.PARTIAL]
+        )
+        terminal_ids = [task.id for task in retryable if self.next_retry_at(task) is None]
+        if terminal_ids:
+            cleared += await self._store.delete_tasks_by_ids(
+                user_id, user_role, terminal_ids
+            )
         if cleared:
             logger.info(
                 "download.cleared_finished",

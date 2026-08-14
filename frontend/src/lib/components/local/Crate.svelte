@@ -1,8 +1,8 @@
 <script lang="ts">
 	import type { CrateTrack, CrateReason, LocalAlbumSummary } from '$lib/types';
+	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { flip } from 'svelte/animate';
 	import { fly } from 'svelte/transition';
-	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import {
 		Sparkles,
 		RotateCcw,
@@ -268,18 +268,16 @@
 						<div
 							class="relative h-12 w-12 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10"
 						>
-							{#if t.cover_url}
-								<img
-									src={getCoverUrl(t.cover_url, t.album_mbid ?? '')}
-									alt={t.album_name}
-									class="h-full w-full object-cover"
-									loading="lazy"
-								/>
-							{:else}
-								<div class="flex h-full w-full items-center justify-center bg-base-300">
-									<Disc3 class="h-5 w-5 text-base-content/30" />
-								</div>
-							{/if}
+							<AlbumImage
+								mbid={t.musicbrainz_release_group_id ?? t.album_mbid ?? ''}
+								source={t.musicbrainz_release_group_id ? 'provider' : 'local'}
+								available={Boolean(t.cover_url || t.musicbrainz_release_group_id)}
+								customUrl={t.cover_url ?? null}
+								alt={t.album_name}
+								size="full"
+								rounded="none"
+								className="h-full w-full object-cover"
+							/>
 						</div>
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-semibold text-base-content">{t.title}</p>

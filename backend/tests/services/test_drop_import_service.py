@@ -186,6 +186,45 @@ async def test_known_single_track_uses_the_requested_artist_and_album(tmp_path):
     assert target_tag.album_artist == "Sơn Tùng M-TP"
 
 
+@pytest.mark.asyncio
+async def test_spotify_only_track_creates_a_local_album_without_musicbrainz(tmp_path):
+    tagger = FakeTagger({})
+    service, _, library, _ = _build_service(tmp_path, tagger)
+    source = tmp_path / "opaque.m4a"
+    source.write_bytes(b"audio")
+
+    identified = await service._identify_known_download(
+        [_Entry(source, _tag("Provider title", 1), _info("m4a"))],
+        release_group_mbid="spotify:album:album-123",
+        recording_mbid="spotify:track:track-456",
+        requested_artist_name="Spotify Artist",
+        requested_album_title="Spotify Album",
+        requested_track_title="Spotify Track",
+    )
+
+    assert identified is not None
+    assert identified.meta.release_group_mbid == "spotify:album:album-123"
+    assert identified.meta.album_title == "Spotify Album"
+    assert identified.tracks[0].title == "Spotify Track"
+    assert identified.match.assignments[str(source)] == "spotify:track:track-456"
+    target_tag = service._target_tag(
+        identified.meta, identified.tracks[0], _tag("Provider title", 1)
+    )
+    assert target_tag.musicbrainz_release_group_id is None
+    assert target_tag.musicbrainz_release_id is None
+    assert target_tag.musicbrainz_recording_id is None
+    assert target_tag.musicbrainz_album_artist_id is None
+
+    await service._after_import(
+        SimpleNamespace(user_id="user-1"),
+        identified,
+        cover_url="https://i.scdn.co/image/album-cover",
+    )
+    library.set_album_cover_url.assert_awaited_once_with(
+        "spotify:album:album-123", "https://i.scdn.co/image/album-cover"
+    )
+
+
 def _zip_album(path: Path, folder: str = "Test Artist - Test Album") -> Path:
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr(f"{folder}/01 Song One.flac", b"a" * 64)

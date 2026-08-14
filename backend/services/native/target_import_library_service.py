@@ -79,6 +79,7 @@ class TargetImportLibraryService:
         download_task_id: str | None = None,
         source_path: str | None = None,
         file_mtime: float | None = None,
+        cover_url: str | None = None,
     ) -> str:
         async with self._policy_transition_lock:
             for attempt in range(2):
@@ -97,6 +98,7 @@ class TargetImportLibraryService:
                         download_task_id=download_task_id,
                         source_path=source_path,
                         file_mtime=file_mtime,
+                        cover_url=cover_url,
                     )
                 except StaleRevisionError:
                     if attempt == 1:
@@ -118,6 +120,7 @@ class TargetImportLibraryService:
         download_task_id: str | None,
         source_path: str | None,
         file_mtime: float | None,
+        cover_url: str | None,
     ) -> str:
         del confidence
         root, relative_path = self._root_for(audio_path, resolver)
@@ -240,6 +243,10 @@ class TargetImportLibraryService:
             ),
             expected_policy_revision=resolver.policy_revision,
         )
+        if cover_url:
+            await self._store.set_imported_album_artwork(
+                album_id, cover_url=cover_url, updated_at=now
+            )
         embedded_identity = bool(
             release_group_mbid
             or release_mbid

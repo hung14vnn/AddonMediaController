@@ -63,6 +63,11 @@ class LibraryAlbumSummary(AppStruct):
     album_artist_mbid: str | None = None
     album_sort_name: str | None = None
     original_release_date: str | None = None
+    # The internal release_group_mbid is the local album id in the target
+    # catalog.  Keep the provider id separate so callers never mistake a
+    # Spotify/local id for a MusicBrainz release-group id.
+    musicbrainz_release_group_id: str | None = None
+    is_target_local_id: bool = False
 
 
 class LibraryTrack(AppStruct):
@@ -428,12 +433,14 @@ class LibraryManager(LibraryStub):
         download_task_id: str | None = None,
         source_path: str | None = None,
         file_mtime: float | None = None,
+        cover_url: str | None = None,
     ) -> str:
         """Insert or update one file's row, returning the row id. ``file_mtime`` lets
         a caller that already stat()'d the file (the scanner) skip a second blocking
         syscall on the event loop. ``source_path`` records the pre-organisation path
         so a crash-resumed import can re-correlate an already-moved file by its
         original name (see ``get_imported_file``)."""
+        del cover_url  # Provider artwork belongs to the target catalog implementation.
         if release_group_mbid is None and source != "manual_review":
             # matches the table CHECK: raise a clear contract error instead of a raw
             # IntegrityError. unmatched files go via queue_for_manual_review
@@ -649,6 +656,9 @@ class LibraryManager(LibraryStub):
         self, release_group_mbid: str, artist_mbid: str, artist_name: str
     ) -> int:
         return await self._db.set_album_artist(release_group_mbid, artist_mbid, artist_name)
+
+    async def set_album_cover_url(self, release_group_mbid: str, cover_url: str) -> None:
+        await self._db.set_album_cover_url(release_group_mbid, cover_url)
 
     def _build_row(
         self,

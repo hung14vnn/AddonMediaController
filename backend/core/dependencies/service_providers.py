@@ -10,6 +10,7 @@ from infrastructure.cache.cache_keys import (
     DISCOVER_RESPONSE_PREFIX,
     DAILY_MIX_PREFIX,
     TOP_PICKS_PREFIX,
+    LOCAL_FILES_PREFIX,
     ALBUM_INFO_PREFIX,
     ARTIST_INFO_PREFIX,
     LIBRARY_PREFIX,
@@ -1158,6 +1159,7 @@ def _build_scan_invalidation(memory_cache, disk_cache, snapshot_store=None):
             memory_cache.clear_prefix(HOME_RESPONSE_PREFIX),
             memory_cache.clear_prefix(DISCOVER_RESPONSE_PREFIX),
             memory_cache.clear_prefix(DAILY_MIX_PREFIX),
+            memory_cache.clear_prefix(LOCAL_FILES_PREFIX),
             memory_cache.clear_prefix(TOP_PICKS_PREFIX),
         ]
         await asyncio.gather(*per_album, *shared, return_exceptions=True)
@@ -1178,6 +1180,9 @@ def _build_target_import_invalidation(memory_cache, disk_cache):
             memory_cache.clear_prefix(f"{LIBRARY_PREFIX}library:"),
             memory_cache.delete(library_requested_mbids_key()),
             memory_cache.clear_prefix(HOME_RESPONSE_PREFIX),
+            memory_cache.clear_prefix(DISCOVER_RESPONSE_PREFIX),
+            memory_cache.clear_prefix(DAILY_MIX_PREFIX),
+            memory_cache.clear_prefix(LOCAL_FILES_PREFIX),
             memory_cache.delete(f"{ALBUM_INFO_PREFIX}{record.musicbrainz_id}"),
             memory_cache.delete(
                 f"{LIBRARY_ALBUM_DETAILS_PREFIX}{record.musicbrainz_id}"

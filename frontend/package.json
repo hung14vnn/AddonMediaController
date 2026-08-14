@@ -5,7 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev --open",
-		"build": "vite build",
+		"build": "svelte-kit sync && vite build",
 		"preview": "vite preview",
 		"tailwind": "tailwindcss -i ./src/app.css -o ./static/tailwind.css --watch",
 		"prepare": "svelte-kit sync || echo ''",

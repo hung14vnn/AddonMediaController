@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { CrateTrack, LocalAlbumSummary } from '$lib/types';
+	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { getLocalSearchQuery } from '$lib/queries/local/LocalQueries.svelte';
-	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { fly } from 'svelte/transition';
 	import { Search, X, Disc3, Music2, Play, ListPlus, GripVertical, Loader } from 'lucide-svelte';
 
@@ -146,12 +146,7 @@
 						<div
 							class="relative h-11 w-11 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10"
 						>
-							<img
-								src={getCoverUrl(a.cover_url, a.musicbrainz_id)}
-								alt={a.name}
-								class="h-full w-full object-cover"
-								loading="lazy"
-							/>
+							<AlbumImage mbid={a.musicbrainz_id} source="local" available={Boolean(a.cover_url)} customUrl={a.cover_url ?? null} alt={a.name} size="full" rounded="none" className="h-full w-full object-cover" />
 						</div>
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-semibold text-base-content">{a.name}</p>
@@ -206,18 +201,16 @@
 						<div
 							class="relative h-11 w-11 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10"
 						>
-							{#if t.cover_url}
-								<img
-									src={getCoverUrl(t.cover_url, t.album_mbid ?? '')}
-									alt={t.album_name}
-									class="h-full w-full object-cover"
-									loading="lazy"
-								/>
-							{:else}
-								<div class="flex h-full w-full items-center justify-center bg-base-300">
-									<Music2 class="h-4 w-4 text-base-content/30" />
-								</div>
-							{/if}
+							<AlbumImage
+								mbid={t.musicbrainz_release_group_id ?? t.album_mbid ?? ''}
+								source={t.musicbrainz_release_group_id ? 'provider' : 'local'}
+								available={Boolean(t.cover_url || t.musicbrainz_release_group_id)}
+								customUrl={t.cover_url ?? null}
+								alt={t.album_name}
+								size="full"
+								rounded="none"
+								className="h-full w-full object-cover"
+							/>
 						</div>
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-semibold text-base-content">{t.title}</p>

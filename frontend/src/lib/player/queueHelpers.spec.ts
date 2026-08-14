@@ -370,6 +370,13 @@ describe('buildDiscoveryQueueFromLocal', () => {
 		expect(item.discNumber).toBe(1);
 	});
 
+	it('preserves a stored local provider cover for the player surfaces', () => {
+		const spotifyCover = 'https://i.scdn.co/image/album-cover';
+		const [item] = buildDiscoveryQueueFromLocal([{ ...nativeTrack, cover_url: spotifyCover }]);
+		expect(item.coverUrl).toBe(spotifyCover);
+		expect(item.coverRemoteUrl).toBe(spotifyCover);
+	});
+
 	it('uses the legacy library endpoint stream identifier when supplied', () => {
 		const [item] = buildDiscoveryQueueFromLocal([
 			{

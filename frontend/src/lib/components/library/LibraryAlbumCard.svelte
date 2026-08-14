@@ -22,6 +22,7 @@
 				mbid={album.id}
 				source="local"
 				available={album.cover_available}
+				customUrl={album.cover_url}
 				alt={album.title}
 				size="full"
 				rounded="none"

@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { getApiUrl } from '$lib/api/api-utils';
-	import { Disc3, Search } from 'lucide-svelte';
-	import type { SuggestResult } from '$lib/types';
+	import { Disc3, Download, Search } from 'lucide-svelte';
+	import type { SpotifyTrackResult, SuggestResult } from '$lib/types';
 	import { API } from '$lib/constants';
 	import { isAbortError } from '$lib/utils/errorHandling';
 	import { api } from '$lib/api/client';
+	import { requestSpotifyTrack } from '$lib/queries/downloads/DownloadMutations.svelte';
 
 	interface Props {
 		query: string;
@@ -28,7 +29,9 @@
 
 	const listboxId = $derived(`${id}-listbox`);
 
-	let suggestions = $state<SuggestResult[]>([]);
+	type Suggestion = SuggestResult | SpotifyTrackResult;
+
+	let suggestions = $state<Suggestion[]>([]);
 	let imageErrors = $state<Record<string, boolean>>({});
 	let loading = $state(false);
 	let showDropdown = $state(false);
@@ -37,10 +40,20 @@
 	let abortController: AbortController | null = null;
 	let rootRef: HTMLDivElement;
 	let fetchGeneration = 0;
+	const download = requestSpotifyTrack();
+	let requestedTracks = $state<Set<string>>(new Set());
 
 	const activeDescendant = $derived(
 		activeIndex >= 0 && activeIndex < suggestions.length ? `${id}-option-${activeIndex}` : undefined
 	);
+
+	function isTrack(result: Suggestion): result is SpotifyTrackResult {
+		return result.type === 'track';
+	}
+
+	function suggestionKey(result: Suggestion): string {
+		return isTrack(result) ? `spotify:${result.spotify_id}` : result.musicbrainz_id;
+	}
 
 	function coverUrl(result: SuggestResult): string {
 		return result.type === 'artist'
@@ -69,14 +82,17 @@
 			const generation = ++fetchGeneration;
 
 			try {
-				const data = await api.get<{ results?: SuggestResult[] }>(
+				const data = await api.get<{
+					results?: SuggestResult[];
+					tracks?: SpotifyTrackResult[];
+				}>(
 					API.search.suggest(query.trim(), 5),
 					{
 						signal: abortController.signal
 					}
 				);
 				if (generation !== fetchGeneration) return;
-				suggestions = data.results ?? [];
+				suggestions = [...(data.results ?? []), ...(data.tracks ?? [])];
 				// Clear stale cover-fetch errors: a cold cover now returns 202 (not a decodable
 				// placeholder), so onerror fires and would otherwise pin the icon fallback for a
 				// result that has since warmed and reappears in a later search.
@@ -95,6 +111,13 @@
 		}, 600);
 	}
 
+	function handleFocus() {
+		// Reopen suggestions for an existing query without changing its value.
+		if (query.trim().length >= 2 && !showDropdown) {
+			handleInput();
+		}
+	}
+
 	function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
 		showDropdown = false;
@@ -102,11 +125,19 @@
 		onSearch();
 	}
 
-	function handleSelect(result: SuggestResult) {
+	function handleSelect(result: Suggestion) {
+		if (isTrack(result)) return;
 		showDropdown = false;
 		suggestions = [];
 		activeIndex = -1;
 		onSelect(result);
+	}
+
+	function requestTrack(track: SpotifyTrackResult, event: MouseEvent) {
+		event.stopPropagation();
+		download.mutate(track.spotify_id, {
+			onSuccess: () => (requestedTracks = new Set([...requestedTracks, track.spotify_id]))
+		});
 	}
 
 	function handleViewAll() {
@@ -203,6 +234,7 @@
 				{placeholder}
 				bind:value={query}
 				oninput={handleInput}
+				onfocus={handleFocus}
 				onkeydown={handleKeydown}
 				class="grow"
 				autocomplete="off"
@@ -221,18 +253,20 @@
 		<ul
 			role="listbox"
 			id={listboxId}
-			class="absolute top-full left-0 right-0 z-60 mt-1 rounded-box bg-base-200 shadow-xl"
+			class="suggestion-dropdown absolute top-full left-0 right-0 z-60 mt-1 rounded-box bg-base-200 shadow-xl"
 		>
-			{#each suggestions as result, i (result.musicbrainz_id)}
+			{#each suggestions as result, i (suggestionKey(result))}
 				<li
 					role="option"
 					id="{id}-option-{i}"
 					aria-selected={i === activeIndex}
-					class="flex items-center gap-3 p-3 cursor-pointer hover:bg-base-300 transition-colors {i ===
+					class="flex items-center gap-3 p-3 transition-colors {isTrack(result)
+						? 'cursor-default'
+						: 'cursor-pointer hover:bg-base-300'} {i ===
 					activeIndex
 						? 'bg-base-300'
 						: ''}"
-					onclick={() => handleSelect(result)}
+					onclick={() => !isTrack(result) && handleSelect(result)}
 					onkeydown={(e) => {
 						if (e.key === 'Enter' || e.key === ' ') handleSelect(result);
 					}}
@@ -240,7 +274,17 @@
 				>
 					<div class="avatar avatar-placeholder">
 						<div class="w-10 h-10 rounded bg-base-200 flex items-center justify-center">
-							{#if imageErrors[result.musicbrainz_id]}
+							{#if isTrack(result)}
+								{#if result.album_image_url}
+									<img
+										src={result.album_image_url}
+										alt={result.album}
+										class="w-full h-full object-cover rounded"
+									/>
+								{:else}
+									<Disc3 class="h-5 w-5 text-base-content/20" />
+								{/if}
+							{:else if imageErrors[result.musicbrainz_id]}
 								<Disc3 class="h-5 w-5 text-base-content/20" />
 							{:else}
 								<img
@@ -257,7 +301,9 @@
 					<div class="flex-1 min-w-0">
 						<div class="font-medium truncate">{result.title}</div>
 						<div class="text-sm opacity-70 truncate">
-							{#if result.type === 'album' && result.artist}
+							{#if isTrack(result)}
+								{result.artist}{result.album ? ` · ${result.album}` : ''}
+							{:else if result.type === 'album' && result.artist}
 								{result.artist}
 							{:else if result.type === 'artist'}
 								Artist
@@ -271,13 +317,38 @@
 						</div>
 					</div>
 					<div class="flex gap-1">
-						<span class="badge badge-sm badge-ghost">
-							{result.type === 'artist' ? 'Artist' : 'Album'}
-						</span>
-						{#if result.in_library}
+						{#if isTrack(result)}
+							<div class="group/track-badge relative h-5 min-w-12">
+								<span
+									class="badge badge-sm badge-ghost absolute inset-0 transition-all duration-150 group-hover/track-badge:translate-x-1 group-hover/track-badge:opacity-0"
+								>
+									Track
+								</span>
+								<button
+									class="btn btn-ghost btn-xs absolute left-1/2 top-1/2 size-5 min-h-0 -translate-x-1/2 -translate-y-1/2 p-0 opacity-0 transition-opacity duration-150 group-hover/track-badge:opacity-100 focus:opacity-100"
+									onclick={(event) => requestTrack(result, event)}
+									disabled={download.isPending || requestedTracks.has(result.spotify_id)}
+									aria-label="Request {result.title}"
+									title="Request this track"
+								>
+									{#if download.isPending}
+										<span class="loading loading-spinner loading-xs"></span>
+									{:else if requestedTracks.has(result.spotify_id)}
+										✓
+									{:else}
+										<Download class="h-3.5 w-3.5" aria-hidden="true" />
+									{/if}
+								</button>
+							</div>
+						{:else}
+							<span class="badge badge-sm badge-ghost">
+								{result.type === 'artist' ? 'Artist' : 'Album'}
+							</span>
+						{/if}
+						{#if !isTrack(result) && result.in_library}
 							<span class="badge badge-sm badge-success">In Library</span>
 						{/if}
-						{#if result.requested}
+						{#if !isTrack(result) && result.requested}
 							<span class="badge badge-sm badge-warning">Requested</span>
 						{/if}
 					</div>
@@ -300,3 +371,26 @@
 		</ul>
 	{/if}
 </div>
+
+<style>
+	.suggestion-dropdown {
+		animation: suggestion-slide-in 150ms ease-out;
+	}
+
+	@keyframes suggestion-slide-in {
+		from {
+			opacity: 0;
+			transform: translateY(-0.35rem);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.suggestion-dropdown {
+			animation: none;
+		}
+	}
+</style>

@@ -67,6 +67,7 @@ class CrateTrack(AppStruct):
     album_name: str
     artist_name: str
     album_mbid: str | None = None
+    musicbrainz_release_group_id: str | None = None
     cover_url: str | None = None
     format: str = ""
     year: int | None = None

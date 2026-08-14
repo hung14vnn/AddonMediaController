@@ -111,6 +111,7 @@ class DownloadTask(AppStruct):
     artist_mbid: str | None = None
     artist_name: str = ""
     album_title: str = ""
+    cover_url: str | None = None
     track_title: str | None = None
     track_number: int | None = None
     disc_number: int | None = None

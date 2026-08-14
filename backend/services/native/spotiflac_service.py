@@ -75,6 +75,7 @@ class SpotiflacService:
             artist_name=artist_name,
             artist_mbid=kwargs.get("artist_mbid"),
             album_title=album_title,
+            cover_url=kwargs.get("cover_url"),
             origin=kwargs.get("origin", "user"),
             retry_count=kwargs.get("retry_count", 0),
         )
@@ -94,9 +95,11 @@ class SpotiflacService:
             "tracks",
             download_type="track",
             recording_mbid=recording_mbid,
+            release_group_mbid=kwargs.get("release_group_mbid") or "",
             artist_name=artist_name,
             artist_mbid=kwargs.get("artist_mbid"),
             album_title=kwargs.get("album_title") or "",
+            cover_url=kwargs.get("cover_url"),
             track_title=track_title,
             origin=kwargs.get("origin", "user"),
             retry_count=kwargs.get("retry_count", 0),
@@ -137,7 +140,9 @@ class SpotiflacService:
                 artist_name=task.artist_name,
                 track_title=task.track_title or task.album_title,
                 album_title=task.album_title,
+                release_group_mbid=task.release_group_mbid,
                 artist_mbid=task.artist_mbid,
+                cover_url=task.cover_url,
                 **retry_fields,
             )
 
@@ -147,6 +152,7 @@ class SpotiflacService:
             artist_name=task.artist_name,
             album_title=task.album_title,
             artist_mbid=task.artist_mbid,
+            cover_url=task.cover_url,
             **retry_fields,
         )
 
@@ -384,6 +390,16 @@ class SpotiflacService:
                 ),
                 requested_album_title=(
                     task.album_title
+                    if task
+                    else None
+                ),
+                requested_track_title=(
+                    task.track_title
+                    if task
+                    else None
+                ),
+                requested_cover_url=(
+                    task.cover_url
                     if task
                     else None
                 ),

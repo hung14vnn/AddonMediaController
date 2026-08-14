@@ -110,6 +110,7 @@
 				mbid={album.id}
 				source="local"
 				available={album.cover_available}
+				customUrl={album.cover_url}
 				alt={`Cover for ${album.title}`}
 				size="full"
 				className="aspect-square w-full rounded-2xl shadow-xl"

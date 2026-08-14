@@ -25,6 +25,7 @@ function renderComponent(
 		remoteUrl: string | null;
 		customUrl: string | null;
 		imageType: 'album' | 'artist';
+		source: 'provider' | 'local';
 		size: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | 'hero' | 'full';
 		lazy: boolean;
 		alt: string;
@@ -36,6 +37,7 @@ function renderComponent(
 			remoteUrl: overrides.remoteUrl ?? null,
 			customUrl: overrides.customUrl ?? null,
 			imageType: overrides.imageType ?? 'album',
+			source: overrides.source ?? 'provider',
 			size: overrides.size ?? 'md',
 			lazy: overrides.lazy ?? false,
 			alt: overrides.alt ?? 'Test Image'
@@ -77,6 +79,13 @@ describe('BaseImage.svelte - remoteUrl', () => {
 		const img = page.getByAltText('Test Image');
 		await expect.element(img).toBeInTheDocument();
 		await expect.element(img).not.toHaveAttribute('referrerpolicy');
+	});
+
+	it('uses a local album custom URL instead of treating its UUID as a MusicBrainz ID', async () => {
+		const spotifyCover = 'https://i.scdn.co/image/album-cover';
+		renderComponent({ customUrl: spotifyCover, source: 'local' });
+
+		await expect.element(page.getByAltText('Test Image')).toHaveAttribute('src', spotifyCover);
 	});
 
 	it('renders proxy URL for artist when remoteUrl is null', async () => {

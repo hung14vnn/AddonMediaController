@@ -422,7 +422,7 @@
 	--color-youtube-hover: #cc0000;
 	--ms-safe-top: env(safe-area-inset-top, 0px);
 	--ms-safe-bottom: env(safe-area-inset-bottom, 0px);
-	--ms-bottom-nav-height: 4.75rem;
+	--ms-bottom-nav-height: 2.75rem;
 	--ms-bottom-nav-offset: calc(var(--ms-bottom-nav-height) + var(--ms-safe-bottom));
 	--ms-player-height: 5.75rem;
 	--ms-page-bottom-gap: 1rem;

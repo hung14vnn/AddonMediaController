@@ -74,6 +74,9 @@
 	let deckHeight = $state(0);
 
 	function crateToQueueItem(t: CrateTrack): QueueItem {
+		const providerCoverUrl = t.musicbrainz_release_group_id
+			? getCoverUrl(null, t.musicbrainz_release_group_id)
+			: null;
 		return {
 			trackSourceId: t.track_file_id,
 			trackName: t.title,
@@ -82,8 +85,10 @@
 			discNumber: 1,
 			albumId: t.album_mbid ?? '',
 			albumName: t.album_name,
-			coverUrl: getCoverUrl(t.cover_url, t.album_mbid ?? ''),
-			coverRemoteUrl: t.cover_url ?? null,
+			coverUrl: providerCoverUrl ?? t.cover_url ?? getCoverUrl(null, t.album_mbid ?? ''),
+			// Spotify CDN artwork is already the final image URL.  Do not put it
+			// through the AudioDB remote-image sizing path (which appends /small).
+			coverRemoteUrl: null,
 			sourceType: 'local',
 			streamUrl: API.stream.local(t.track_file_id),
 			format: (t.format ?? '').toLowerCase()
@@ -250,14 +255,14 @@
 
 	<section
 		bind:this={heroEl}
-		class="relative isolate flex min-h-[calc(100dvh-3.5rem)] snap-start flex-col px-4 pt-5 sm:px-6 lg:px-8"
+		class="relative isolate flex min-h-[calc(100dvh-4.5rem)] snap-start flex-col px-4 pt-5 sm:px-6 lg:px-8"
 	>
 		<DeckVisualiser {reducedMotion} />
 
 		<header class="mb-4 flex items-center gap-3">
 			<Headphones class="h-6 w-6 text-accent" />
 			<div>
-				<h1 class="text-xl font-black tracking-tight sm:text-2xl">The Listening Room</h1>
+				<h1 class="text-xl font-black tracking-tight sm:text-xl">The Listening Room</h1>
 				<p class="text-xs text-base-content/50">
 					{#if stats}{stats.total_tracks.toLocaleString()} tracks &middot; {stats.total_artists} artists
 						&middot; {stats.total_size_human}{:else}Your local music, ready to spin{/if}
@@ -352,7 +357,8 @@
 				>
 					<AlbumImage
 						mbid={album.musicbrainz_id}
-						remoteUrl={album.cover_url}
+						source="local"
+						customUrl={album.cover_url}
 						alt={album.name}
 						size="full"
 						rounded="none"
@@ -409,7 +415,7 @@
 						>
 							{#if face}
 								<img
-									src={getCoverUrl(face.cover_url, face.musicbrainz_id)}
+									src={face.cover_url ?? getCoverUrl(null, face.musicbrainz_id)}
 									alt=""
 									aria-hidden="true"
 									loading="lazy"

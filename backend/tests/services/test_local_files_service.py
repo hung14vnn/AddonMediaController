@@ -66,6 +66,55 @@ def _native_track(**overrides) -> SimpleNamespace:
     return SimpleNamespace(**base)
 
 
+def test_local_only_album_keeps_provider_artwork(service):
+    svc, *_ = service
+
+    album = svc._native_album_to_summary(
+        _native_album(
+            release_group_mbid="spotify:album:3RMkiQXA4bC63DuMmU3BJb",
+            cover_url="https://i.scdn.co/image/cover",
+            musicbrainz_release_group_id=None,
+            is_target_local_id=True,
+        )
+    )
+
+    assert album.cover_url == "https://i.scdn.co/image/cover"
+
+
+def test_legacy_musicbrainz_album_uses_cover_art_archive(service):
+    svc, *_ = service
+
+    album = svc._native_album_to_summary(
+        _native_album(
+            release_group_mbid="b8462d19-e4a4-3d8d-a0c0-ef1f5b3f9f40",
+            cover_url=None,
+        )
+    )
+
+    assert album.cover_url == (
+        "/api/v1/covers/release-group/b8462d19-e4a4-3d8d-a0c0-ef1f5b3f9f40?size=500"
+    )
+
+
+def test_crate_uses_provider_mbid_not_local_album_id_for_cover(service):
+    svc, *_ = service
+
+    track = svc._row_to_crate_track(
+        {
+            "id": "track-1",
+            "release_group_mbid": "spotify:album:3RMkiQXA4bC63DuMmU3BJb",
+            "provider_release_group_mbid": "b8462d19-e4a4-3d8d-a0c0-ef1f5b3f9f40",
+            "cover_url": "https://i.scdn.co/image/cover",
+        },
+        "recent",
+    )
+
+    assert track.cover_url == (
+        "/api/v1/covers/release-group/b8462d19-e4a4-3d8d-a0c0-ef1f5b3f9f40?size=300"
+    )
+    assert track.musicbrainz_release_group_id == "b8462d19-e4a4-3d8d-a0c0-ef1f5b3f9f40"
+
+
 @pytest.fixture
 def service(tmp_path):
     music_dir = tmp_path / "music"

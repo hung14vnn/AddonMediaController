@@ -305,6 +305,7 @@
 							mbid={track.album_id}
 							source="local"
 							available={track.cover_available}
+							customUrl={track.cover_url}
 							alt={track.album_title}
 							size="full"
 							rounded="md"

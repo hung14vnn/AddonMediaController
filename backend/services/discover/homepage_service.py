@@ -1626,7 +1626,7 @@ class DiscoverHomepageService:
                                 "artist_name", album.get("artist", "")
                             ),
                             artist_mbid=album.get("artist_mbid"),
-                            image_url=(
+                            image_url=album.get("cover_url") or (
                                 f"/api/v1/covers/release-group/{mbid}?size=500"
                                 if mbid
                                 else None
@@ -2201,7 +2201,7 @@ class DiscoverHomepageService:
                     local_id=local_id,
                     artist_name=album.get("artist_name"),
                     artist_mbid=album.get("artist_mbid"),
-                    image_url=(
+                    image_url=album.get("cover_url") or (
                         f"/api/v1/covers/release-group/{mbid}?size=500"
                         if mbid
                         else None

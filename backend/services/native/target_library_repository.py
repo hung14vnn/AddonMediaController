@@ -579,6 +579,8 @@ class TargetLibraryRepository:
             album_artist_mbid=str(row["album_artist_mbid"]),
             album_sort_name=row.get("album_sort_name"),
             original_release_date=row.get("original_release_date"),
+            musicbrainz_release_group_id=row.get("provider_release_group_mbid"),
+            is_target_local_id=True,
         )
 
     @staticmethod
