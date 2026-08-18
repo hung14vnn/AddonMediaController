@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from services.native.album_matcher import AlbumIdentifier, AlbumMatch
     from services.native.library_manager import LibraryManager
     from services.native.musicbrainz_matcher import MusicBrainzMatcher
+    from services.native.target_native_library_service import TargetNativeLibraryService
     from services.preferences_service import PreferencesService
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,7 @@ class DropImportService:
         sse_publisher: "SSEPublisher",
         on_import: OnImport,
         staging_root: Path,
+        native_library: "TargetNativeLibraryService | None" = None,
     ) -> None:
         self._store = store
         self._tagger = tagger
@@ -137,6 +139,7 @@ class DropImportService:
         self._sse = sse_publisher
         self._on_import = on_import
         self._staging_root = staging_root
+        self._native_library = native_library
         self._tasks: dict[str, asyncio.Task] = {}
 
     # -- public API --
@@ -221,7 +224,17 @@ class DropImportService:
         return job
 
     async def match_item(
-        self, item_id: int, release_group_mbid: str, *, user_id: str, is_admin: bool
+        self,
+        item_id: int,
+        release_group_mbid: str | None = None,
+        *,
+        library_album_id: str | None = None,
+        library_track_id: str | None = None,
+        artist_name: str | None = None,
+        album_title: str | None = None,
+        track_title: str | None = None,
+        user_id: str,
+        is_admin: bool,
     ) -> DropImportItem:
         """Force-import a ``needs_review`` item against a user-chosen release
         group. Track assignment is best-effort (``score_release`` without the
@@ -230,21 +243,28 @@ class DropImportService:
         if item.status != ItemStatus.NEEDS_REVIEW:
             raise ValidationError("Only items awaiting review can be matched")
         rg = (release_group_mbid or "").strip()
-        if not rg:
-            raise ValidationError("A release group is required")
-
         entries, unreadable = await self._read_entries(
             [Path(p) for p in item.staging_paths if Path(p).exists()]
         )
         if not entries:
             raise ValidationError("The staged files no longer exist on disk")
 
-        picked = await self._identifier.release_tracks(rg, len(entries))
-        if picked is None:
-            raise ValidationError("Could not load that release group from MusicBrainz")
-        meta, tracks = picked
-        match = score_release([self._to_local(e) for e in entries], tracks, meta)
-        ident = _Identified(meta=meta, tracks=tracks, match=match)
+        if rg:
+            picked = await self._identifier.release_tracks(rg, len(entries))
+            if picked is None:
+                raise ValidationError("Could not load that release group from MusicBrainz")
+            meta, tracks = picked
+            match = score_release([self._to_local(e) for e in entries], tracks, meta)
+            ident = _Identified(meta=meta, tracks=tracks, match=match)
+        else:
+            ident = await self._manual_identity(
+                entries,
+                library_album_id=library_album_id,
+                library_track_id=library_track_id,
+                artist_name=artist_name,
+                album_title=album_title,
+                track_title=track_title,
+            )
 
         # the user's explicit choice is authoritative: full confidence, so the
         # scanner's sticky-anchor guard protects it from later re-attribution
@@ -277,6 +297,126 @@ class DropImportService:
         refreshed = await self._store.get_item(item.id)
         assert refreshed is not None
         return refreshed
+
+    async def _manual_identity(
+        self,
+        entries: list[_Entry],
+        *,
+        library_album_id: str | None,
+        library_track_id: str | None,
+        artist_name: str | None,
+        album_title: str | None,
+        track_title: str | None,
+    ) -> _Identified:
+        """Build a local identity selected by the user during manual review."""
+        artist = (artist_name or "").strip()
+        album_name = (album_title or "").strip()
+        title = (track_title or "").strip()
+        album = None
+        selected_track = None
+        album_tracks = []
+
+        if library_album_id or library_track_id:
+            if self._native_library is None:
+                raise ValidationError("Local library matching is unavailable")
+            if library_track_id:
+                selected_track = await self._native_library.track(library_track_id)
+                if selected_track is None:
+                    raise ValidationError("The selected library track no longer exists")
+                if library_album_id and selected_track.album_id != library_album_id:
+                    raise ValidationError("The selected track does not belong to that album")
+                library_album_id = selected_track.album_id
+            if library_album_id:
+                album = await self._native_library.album(library_album_id)
+                if album is None:
+                    raise ValidationError("The selected library album no longer exists")
+                album_tracks = await self._native_library.album_tracks(album.id)
+
+        if album is not None:
+            # A selected local album is authoritative. Free-text overrides
+            # would create contradictory rows under the same local album ID.
+            artist = album.artist_name
+            album_name = album.title
+            group_id = album.id
+            release_id = album.musicbrainz_release_id or album.id
+            artist_mbid = album.musicbrainz_artist_id
+            year = album.year
+            is_various = album.is_compilation
+        else:
+            if not artist or not album_name or not title:
+                raise ValidationError("Track name, album, and artist are required")
+            group_id = f"manual:album:{uuid.uuid4().hex}"
+            release_id = group_id
+            artist_mbid = None
+            year = entries[0].tag.year
+            is_various = False
+
+        if selected_track is not None:
+            title = selected_track.title
+        if not title:
+            title = selected_track.title if selected_track else (entries[0].tag.title or "").strip()
+        if not title:
+            raise ValidationError("A track name is required")
+
+        if selected_track is None and album_tracks:
+            folded = " ".join(title.casefold().split())
+            selected_track = next(
+                (track for track in album_tracks if " ".join(track.title.casefold().split()) == folded),
+                None,
+            )
+
+        next_position = max((track.track_number for track in album_tracks), default=0) + 1
+        tracks: list[MBTrack] = []
+        assignments: dict[str, str] = {}
+        for index, entry in enumerate(entries):
+            existing = selected_track if index == 0 else None
+            position = existing.track_number if existing else next_position + index
+            disc = existing.disc_number if existing else 1
+            recording_id = (
+                existing.musicbrainz_recording_id
+                if existing and existing.musicbrainz_recording_id
+                else f"manual:track:{existing.id if existing else uuid.uuid4().hex}"
+            )
+            current_title = (title if index == 0 else None) or entry.tag.title or f"Track {position}"
+            tracks.append(
+                MBTrack(
+                    title=current_title,
+                    position=position,
+                    disc=disc,
+                    absolute_position=position,
+                    length_ms=(
+                        round(entry.info.duration_seconds * 1000)
+                        if entry.info.duration_seconds
+                        else None
+                    ),
+                    recording_mbid=recording_id,
+                )
+            )
+            assignments[str(entry.path)] = recording_id
+
+        meta = _ReleaseMeta(
+            release_group_mbid=group_id,
+            release_mbid=release_id,
+            album_title=album_name,
+            artist=artist,
+            is_various=is_various,
+            artist_mbid=artist_mbid,
+            year=year,
+            secondary_types=frozenset({"__manual_local__"}),
+        )
+        return _Identified(
+            meta=meta,
+            tracks=tracks,
+            match=AlbumMatch(
+                accepted=True,
+                distance=0.0,
+                release_group_mbid=group_id,
+                release_mbid=release_id,
+                assignments=assignments,
+                artist_mbid=artist_mbid,
+                artist_name=artist,
+            ),
+        )
 
     async def clear_discarded_items(
         self, *, user_id: str, is_admin: bool, include_all: bool = False
@@ -591,7 +731,9 @@ class DropImportService:
             requested_artist_mbid=requested_artist_mbid,
             requested_album_title=requested_album_title,
             requested_track_title=requested_track_title,
-        ) or await self._identify(entries)
+        )
+        if ident is None:
+            ident = await self._identify(entries)
         if ident is None:
             detail = "Couldn't work out which album this is. Match it manually."
             if unreadable:
@@ -785,7 +927,15 @@ class DropImportService:
             return None
         picked = await self._identifier.release_tracks(release_group_mbid, len(entries))
         if picked is None:
-            return None
+            return self._identify_known_track_download(
+                entries,
+                release_group_mbid=release_group_mbid,
+                recording_mbid=recording_mbid,
+                artist_name=requested_artist_name,
+                artist_mbid=requested_artist_mbid,
+                album_title=requested_album_title,
+                track_title=requested_track_title,
+            )
         meta, tracks = picked
         # App-created requests carry an explicit artist selection. Preserve its
         # verified MBID instead of losing it to release-level Various Artists
@@ -811,7 +961,15 @@ class DropImportService:
         assignments: dict[str, str] = {}
         if recording_mbid:
             if not any(track.recording_mbid == recording_mbid for track in tracks):
-                return None
+                return self._identify_known_track_download(
+                    entries,
+                    release_group_mbid=release_group_mbid,
+                    recording_mbid=recording_mbid,
+                    artist_name=requested_artist_name,
+                    artist_mbid=requested_artist_mbid,
+                    album_title=requested_album_title,
+                    track_title=requested_track_title,
+                )
             # A SpotiFLAC track task represents exactly one requested recording.
             if len(entries) == 1:
                 assignments[str(entries[0].path)] = recording_mbid
@@ -895,6 +1053,67 @@ class DropImportService:
                 release_group_mbid=release_group_mbid,
                 release_mbid=release_group_mbid,
                 assignments=assignments,
+                artist_name=artist,
+            ),
+        )
+
+    @staticmethod
+    def _identify_known_track_download(
+        entries: list[_Entry],
+        *,
+        release_group_mbid: str | None,
+        recording_mbid: str | None,
+        artist_name: str | None,
+        artist_mbid: str | None,
+        album_title: str | None,
+        track_title: str | None,
+    ) -> _Identified | None:
+        """Import a provider-confirmed track without an MB tracklist.
+
+        Only app-created downloads reach ``_identify_known_download``. Manual
+        uploads still use the normal identification path.
+        """
+        if len(entries) != 1 or not release_group_mbid or not recording_mbid:
+            return None
+        entry = entries[0]
+        artist = (artist_name or "").strip()
+        album = (album_title or "").strip()
+        title = (track_title or "").strip()
+        if not artist or not album or not title:
+            return None
+        position = entry.tag.track_number or 1
+        track = MBTrack(
+            title=title,
+            position=position,
+            disc=entry.tag.disc_number or 1,
+            absolute_position=position,
+            length_ms=(
+                round(entry.info.duration_seconds * 1000)
+                if entry.info.duration_seconds
+                else None
+            ),
+            recording_mbid=recording_mbid,
+        )
+        meta = _ReleaseMeta(
+            release_group_mbid=release_group_mbid,
+            release_mbid="",
+            album_title=album,
+            artist=artist,
+            is_various=False,
+            artist_mbid=artist_mbid,
+            year=entry.tag.year,
+            secondary_types=frozenset({"__known_track_fallback__"}),
+        )
+        return _Identified(
+            meta=meta,
+            tracks=[track],
+            match=AlbumMatch(
+                accepted=True,
+                distance=0.0,
+                release_group_mbid=release_group_mbid,
+                release_mbid="",
+                assignments={str(entry.path): recording_mbid},
+                artist_mbid=artist_mbid,
                 artist_name=artist,
             ),
         )
@@ -1118,7 +1337,12 @@ class DropImportService:
         from models.audio import AudioTag
 
         album_artist = "Various Artists" if meta.is_various else (meta.artist or None)
-        is_spotify_local = meta.release_group_mbid.startswith(_SPOTIFY_LOCAL_ALBUM_PREFIX)
+        is_spotify_local = meta.release_group_mbid.startswith(
+            _SPOTIFY_LOCAL_ALBUM_PREFIX
+        )
+        is_manual_local = "__manual_local__" in meta.secondary_types
+        is_known_track_fallback = "__known_track_fallback__" in meta.secondary_types
+        suppress_provider_ids = is_spotify_local or is_manual_local
         return AudioTag(
             title=(track.title if track else None) or file_tag.title or "",
             # A matched non-compilation release has a canonical artist. Keep a
@@ -1135,15 +1359,21 @@ class DropImportService:
             year=meta.year or file_tag.year,
             genre=file_tag.genre,
             musicbrainz_release_group_id=(
-                None if is_spotify_local else meta.release_group_mbid
+                None if suppress_provider_ids else meta.release_group_mbid
             ),
-            musicbrainz_release_id=None if is_spotify_local else meta.release_mbid,
-            musicbrainz_recording_id=None if is_spotify_local else (
+            musicbrainz_release_id=(
+                None
+                if suppress_provider_ids or is_known_track_fallback
+                else meta.release_mbid
+            ),
+            musicbrainz_recording_id=None if suppress_provider_ids else (
                 (track.recording_mbid if track else None)
                 or file_tag.musicbrainz_recording_id
             ),
             musicbrainz_artist_id=file_tag.musicbrainz_artist_id,
-            musicbrainz_album_artist_id=None if is_spotify_local else meta.artist_mbid,
+            musicbrainz_album_artist_id=(
+                None if suppress_provider_ids else meta.artist_mbid
+            ),
             acoustid_id=file_tag.acoustid_id,
             compilation=file_tag.compilation or meta.is_various,
         )
@@ -1200,6 +1430,16 @@ class DropImportService:
         if cover_url and rg.startswith(_SPOTIFY_LOCAL_ALBUM_PREFIX):
             try:
                 await self._library.set_album_cover_url(rg, cover_url)
+                # The native catalog powers the album page.  It has a separate
+                # artwork table, so keep its local album projection in sync with
+                # the legacy import index used by this pipeline.
+                if self._native_library is not None:
+                    await self._native_library.set_imported_local_album_artwork(
+                        artist_name=meta.artist,
+                        album_title=meta.album_title,
+                        year=meta.year,
+                        cover_url=cover_url,
+                    )
             except Exception:  # noqa: BLE001 - artwork must not undo an import
                 logger.warning("Could not save Spotify artwork for %s", rg)
         try:

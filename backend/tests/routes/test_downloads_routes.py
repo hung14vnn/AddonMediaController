@@ -333,7 +333,7 @@ def test_retry_all_failed_returns_count():
     assert response.status_code == 200
     assert response.json() == {"retried": 4}
     service.retry_all_failed.assert_awaited_once_with(
-        "u1", "user", exclude_sources={"spotiflac"}
+        "u1", "user", exclude_sources={"spotiflac", "youtube"}
     )
 
 

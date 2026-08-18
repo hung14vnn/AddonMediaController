@@ -88,4 +88,13 @@ for dir in /app/cache /app/config /app/imports; do
     fi
 done
 
+if [ -n "${SPOTIFLAC_REGISTRIES:-}" ]; then
+    echo "[init] Bootstrapping SpotiFLAC extensions."
+    if ! gosu droppedneedle:droppedneedle python -c \
+        'from SpotiFLAC.extensions.manager import ExtensionManager; ExtensionManager(auto_install_downloads=True)' \
+        >/dev/null 2>&1; then
+        echo "[init] WARNING: SpotiFLAC extension bootstrap failed; downloads may be unavailable."
+    fi
+fi
+
 exec gosu droppedneedle:droppedneedle "$@"

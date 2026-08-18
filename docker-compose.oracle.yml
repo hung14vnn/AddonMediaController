@@ -33,6 +33,8 @@ services:
       PUID: "1000"
       PGID: "1000"
       SLSKD_DOWNLOADS_PATH: /slskd-downloads
+      # Override in .env when using a private or additional registry.
+      SPOTIFLAC_REGISTRIES: ${SPOTIFLAC_REGISTRIES:-https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json}
     volumes:
       - config:/app/config
       - cache:/app/cache

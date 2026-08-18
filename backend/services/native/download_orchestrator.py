@@ -1672,6 +1672,11 @@ class DownloadOrchestrator:
 
         eligible = await self._store.list_retryable_tasks(self._auto_retry_max_attempts)
         for task in eligible:
+            # Direct YouTube tasks retain the submitted URL and have their own
+            # retry path.  Re-dispatching one through a configured download
+            # client would incorrectly turn it into a Soulseek/Usenet request.
+            if task.source == "youtube":
+                continue
             backoff = self._retry_backoff_seconds(task.retry_count)
             completed_at = task.completed_at or task.created_at or 0.0
             if now - completed_at < backoff:

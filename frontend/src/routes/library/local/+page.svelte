@@ -262,7 +262,7 @@
 		<header class="mb-4 flex items-center gap-3">
 			<Headphones class="h-6 w-6 text-accent" />
 			<div>
-				<h1 class="text-xl font-black tracking-tight sm:text-xl">The Listening Room</h1>
+				<h1 class="text-lg font-black tracking-tight sm:text-xl">The Listening Room</h1>
 				<p class="text-xs text-base-content/50">
 					{#if stats}{stats.total_tracks.toLocaleString()} tracks &middot; {stats.total_artists} artists
 						&middot; {stats.total_size_human}{:else}Your local music, ready to spin{/if}

@@ -96,7 +96,7 @@ class FakeTagger:
 
 
 def _build_service(
-    tmp_path, tagger, *, identifier=None, fingerprinter=None, prefs=None
+    tmp_path, tagger, *, identifier=None, fingerprinter=None, prefs=None, native_library=None
 ):
     store = DropImportStore(tmp_path / "library.db", threading.Lock())
     library_root = tmp_path / "library"
@@ -133,6 +133,7 @@ def _build_service(
         sse_publisher=AsyncMock(),
         on_import=AsyncMock(),
         staging_root=tmp_path / "imports",
+        native_library=native_library,
     )
     return service, store, library, library_root
 
@@ -223,6 +224,33 @@ async def test_spotify_only_track_creates_a_local_album_without_musicbrainz(tmp_
     library.set_album_cover_url.assert_awaited_once_with(
         "spotify:album:album-123", "https://i.scdn.co/image/album-cover"
     )
+
+
+@pytest.mark.asyncio
+async def test_known_track_imports_without_musicbrainz_release_tracklist(tmp_path):
+    identifier = AsyncMock()
+    identifier.release_tracks = AsyncMock(return_value=None)
+    service, _, _, _ = _build_service(tmp_path, FakeTagger({}), identifier=identifier)
+    source = tmp_path / "B0FKCQ4J4S.m4a"
+    source.write_bytes(b"audio")
+
+    identified = await service._identify_known_download(
+        [_Entry(source, _tag("Opaque filename", 0), _info("m4a"))],
+        release_group_mbid="8ab0dc8c-8de3-4573-bf8b-7a12f03962b7",
+        recording_mbid="1395e756-bb82-4ffd-ae62-d991e336de85",
+        requested_artist_name="Repiet, Julia Kleijn",
+        requested_artist_mbid="a354b0c5-13b3-4d4f-9f61-33969b53403b",
+        requested_album_title="On and On",
+        requested_track_title="On and On",
+    )
+
+    assert identified is not None
+    assert identified.meta.album_title == "On and On"
+    assert identified.match.assignments[str(source)] == "1395e756-bb82-4ffd-ae62-d991e336de85"
+    tag = service._target_tag(identified.meta, identified.tracks[0], _tag("Opaque", 0))
+    assert tag.musicbrainz_release_group_id == identified.meta.release_group_mbid
+    assert tag.musicbrainz_release_id is None
+    assert tag.musicbrainz_recording_id == identified.tracks[0].recording_mbid
 
 
 def _zip_album(path: Path, folder: str = "Test Artist - Test Album") -> Path:

@@ -7,7 +7,7 @@ from core.exceptions import PermissionDeniedError, ResourceNotFoundError, Valida
 
 logger = logging.getLogger(__name__)
 
-_PROVIDER_FALLBACKS = ["tidal", "qobuz", "deezer", "amazon", "apple"]
+_PROVIDER_FALLBACKS = ["ext:tidal-web", "ext:qobuz-web", "ext:deezer", "ext:amazon"]
 
 _AUDIO_EXTENSIONS = {
     ".flac",
@@ -26,12 +26,14 @@ def spotiflac_client_options(output_dir: str, quality: str) -> dict[str, object]
         "output_dir": output_dir,
         "quality": quality,
         "services": _PROVIDER_FALLBACKS,
+        "sync_extensions": False,
     }
 
     if quality == "LOW":
         options.update(
+            services=["ext:ytmusic-spotiflac"],
             allow_fallback=False,
-            use_extensions_fallback=False,
+            use_extensions_fallback=True,
         )
 
     return options

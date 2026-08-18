@@ -620,7 +620,9 @@ export const API = {
 		reimport: (taskId: string) => `/api/v1/downloads/${taskId}/reimport`,
 		cutoffUnmet: () => '/api/v1/downloads/cutoff-unmet',
 		upgradeAlbum: () => '/api/v1/downloads/upgrade/album',
-		upgradeTrack: () => '/api/v1/downloads/upgrade/track'
+		upgradeTrack: () => '/api/v1/downloads/upgrade/track',
+		youtubePreview: () => '/api/v1/downloads/youtube/preview',
+		youtube: () => '/api/v1/downloads/youtube'
 	},
 	requests: {
 		new: () => '/api/v1/requests/new',

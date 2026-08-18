@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 
-	import { Download, PackageOpen } from 'lucide-svelte';
+	import { Download, PackageOpen, Youtube } from 'lucide-svelte';
 
 	import DownloadQueue from '$lib/components/downloads/DownloadQueue.svelte';
 	import FreeMusicQueue from '$lib/components/downloads/FreeMusicQueue.svelte';
+	import YouTubeDownload from '$lib/components/downloads/YouTubeDownload.svelte';
 	import DiscoveryBatchList from '$lib/components/discover/DiscoveryBatchList.svelte';
 	import DropImportJobList from '$lib/components/import/DropImportJobList.svelte';
 	import DropImportZone from '$lib/components/import/DropImportZone.svelte';
@@ -21,12 +22,14 @@
 	const loaded = $derived(true);
 	const configured = $derived(integrationStatus.data?.download_client ?? true);
 
-	let activeTab = $state<'queue' | 'import'>('queue');
+	let activeTab = $state<'queue' | 'import' | 'youtube'>('queue');
 	let showAllImports = $state(false);
 
 	onMount(() => {
 		if (new URLSearchParams(window.location.search).get('tab') === 'import') {
 			activeTab = 'import';
+		} else if (new URLSearchParams(window.location.search).get('tab') === 'youtube') {
+			activeTab = 'youtube';
 		}
 	});
 </script>
@@ -64,10 +67,20 @@
 			>
 				<PackageOpen class="h-4 w-4" aria-hidden="true" /> Import
 			</button>
+			<button
+				role="tab"
+				class="tab gap-2 {activeTab === 'youtube' ? 'tab-active' : ''}"
+				aria-selected={activeTab === 'youtube'}
+				onclick={() => (activeTab = 'youtube')}
+			>
+				<Youtube class="h-4 w-4" aria-hidden="true" /> YouTube
+			</button>
 		</div>
 	{/if}
 
-	{#if activeTab === 'import' && canImport}
+	{#if activeTab === 'youtube' && canImport}
+		<YouTubeDownload />
+	{:else if activeTab === 'import' && canImport}
 		<DropImportZone className="mb-6" />
 		{#if isAdmin}
 			<label class="mb-3 flex items-center justify-end gap-2 text-xs text-base-content/60">

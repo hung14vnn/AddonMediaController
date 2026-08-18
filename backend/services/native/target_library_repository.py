@@ -134,6 +134,16 @@ class TargetLibraryRepository:
     async def get_artist_mbids(self) -> set[str]:
         return await self._store.target_provider_artist_ids()
 
+    async def get_artist_mbid_page(
+        self, *, after_mbid: str, limit: int
+    ) -> list[str]:
+        """Return the stable cursor page expected by the discovery warmer."""
+        cursor = after_mbid.casefold()
+        mbids = sorted(
+            mbid for mbid in await self.get_artist_mbids() if mbid.casefold() > cursor
+        )
+        return mbids[: max(1, limit)]
+
     async def existing_album_mbids(self, identifiers: list[str]) -> set[str]:
         normalized = {
             value.strip().casefold() for value in identifiers if value.strip()

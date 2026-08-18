@@ -1,9 +1,16 @@
 services:
+  youtube-pot:
+    image: brainicism/bgutil-ytdlp-pot-provider:1.3.1-node
+    container_name: droppedneedle-youtube-pot-dev
+    restart: unless-stopped
+
   droppedneedle:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: droppedneedle-dev
+    depends_on:
+      - youtube-pot
     environment:
       - PUID=1000            # User ID - run `id` on your host to find yours
       - PGID=1000            # Group ID - run `id` on your host to find yours
@@ -11,6 +18,9 @@ services:
       #                        If using Docker --user, PUID/PGID are ignored (user mapping is external).
       - PORT=8688            # Internal port (must match the right side of "ports" below)
       - TZ=Etc/UTC           # Timezone - e.g. America/New_York, Europe/London
+      - YOUTUBE_POT_PROVIDER_URL=http://youtube-pot:4416
+      # Override in .env when using a private or additional registry.
+      - SPOTIFLAC_REGISTRIES=${SPOTIFLAC_REGISTRIES:-https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json}
     ports:
       - "8689:8688"         # <host-port>:<container-port> - change the left side to remap
     volumes:

@@ -641,6 +641,17 @@ def get_target_spotiflac_service():
 
 
 @singleton
+def get_youtube_download_service():
+    from core.config import get_settings
+    from services.native.youtube_download_service import YouTubeDownloadService
+    from .repo_providers import get_download_store
+    return YouTubeDownloadService(
+        drop_import=get_drop_import_service(), download_store=get_download_store(),
+        event_bus=get_sse_publisher(), staging_root=get_settings().cache_dir / "youtube-downloads",
+    )
+
+
+@singleton
 def get_acquisition_dispatcher() -> "AcquisitionDispatcher":
     from services.acquisition_dispatcher import AcquisitionDispatcher
 
@@ -707,6 +718,7 @@ def _build_drop_import_service(library_manager, on_import) -> "DropImportService
         sse_publisher=get_sse_publisher(),
         on_import=on_import,
         staging_root=get_settings().root_app_dir / "imports",
+        native_library=get_target_native_library_service(),
     )
 
 

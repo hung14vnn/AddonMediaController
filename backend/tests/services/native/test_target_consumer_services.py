@@ -968,6 +968,11 @@ async def test_compilation_track_artist_is_browsable_across_target_projection(
     assert [item.rg_mbid for item in albums] == [COMPILATION_ALBUM_ID]
     assert provider_artist_ids == {ARTIST_MBID, TRACK_ARTIST_MBID}
     assert await repository.get_all_artist_mbids() == provider_artist_ids
+    ordered_ids = sorted(provider_artist_ids)
+    assert await repository.get_artist_mbid_page(after_mbid="", limit=1) == ordered_ids[:1]
+    assert await repository.get_artist_mbid_page(
+        after_mbid=ordered_ids[0], limit=10
+    ) == ordered_ids[1:]
     assert stats.total_artists == 4
 
     await store.mark_target_tracks_missing(

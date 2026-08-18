@@ -117,6 +117,11 @@ async def match_item(
     item = await service.match_item(
         item_id,
         body.release_group_mbid,
+        library_album_id=body.library_album_id,
+        library_track_id=body.library_track_id,
+        artist_name=body.artist_name,
+        album_title=body.album_title,
+        track_title=body.track_title,
         user_id=current_user.id,
         is_admin=current_user.role == "admin",
     )

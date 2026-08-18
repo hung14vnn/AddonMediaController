@@ -264,6 +264,22 @@ class RetryAllResponse(AppStruct):
     retried: int
 
 
+class YouTubeDownloadRequest(AppStruct):
+    url: str
+
+
+class YouTubePreviewResponse(AppStruct):
+    url: str
+    title: str
+    uploader: str
+    duration_seconds: float | None = None
+    thumbnail: str | None = None
+
+
+class YouTubeDownloadResponse(AppStruct):
+    task_id: str
+
+
 class ReimportDownloadResponse(AppStruct):
     success: bool
     status: str

@@ -39,6 +39,7 @@ LABEL org.opencontainers.image.title="DroppedNeedle" \
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     MALLOC_ARENA_MAX=2 \
+    CHROME_PATH=/usr/bin/chromium \
     PORT=8688 \
     COMMIT_TAG=${COMMIT_TAG} \
     BUILD_DATE=${BUILD_DATE} \
@@ -52,7 +53,11 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs tini gosu libchromaprint-tools ffmpeg \
+    && apt-get install -y --no-install-recommends nodejs tini gosu libchromaprint-tools ffmpeg unzip xvfb chromium \
+    # YouTube now serves part of its media challenge through JavaScript.  Give
+    # yt-dlp a supported runtime so it can derive the required request data.
+    && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
+    && deno --version \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=python-deps /install /usr/local

@@ -40,9 +40,30 @@ export const uploadDropMutation = () =>
 
 export const matchDropItemMutation = () =>
 	createMutation(() => ({
-		mutationFn: ({ itemId, releaseGroupMbid }: { itemId: number; releaseGroupMbid: string }) =>
+		mutationFn: ({
+			itemId,
+			releaseGroupMbid,
+			libraryAlbumId,
+			libraryTrackId,
+			artistName,
+			albumTitle,
+			trackTitle
+		}: {
+			itemId: number;
+			releaseGroupMbid?: string;
+			libraryAlbumId?: string;
+			libraryTrackId?: string;
+			artistName?: string;
+			albumTitle?: string;
+			trackTitle?: string;
+		}) =>
 			api.global.post<DropImportItem>(API.dropImport.match(itemId), {
-				release_group_mbid: releaseGroupMbid
+				release_group_mbid: releaseGroupMbid,
+				library_album_id: libraryAlbumId,
+				library_track_id: libraryTrackId,
+				artist_name: artistName,
+				album_title: albumTitle,
+				track_title: trackTitle
 			}),
 		onSuccess: async (item) => {
 			toastStore.show({
@@ -77,13 +98,18 @@ export const clearDiscardedDropItemsMutation = () =>
 		mutationFn: () => api.global.delete<{ cleared: number }>(API.dropImport.clearDiscarded()),
 		onSuccess: async ({ cleared }) => {
 			toastStore.show({
-				message: cleared ? `Cleared ${cleared} discarded record${cleared === 1 ? '' : 's'}.` : 'Nothing to clear.',
+				message: cleared
+					? `Cleared ${cleared} discarded record${cleared === 1 ? '' : 's'}.`
+					: 'Nothing to clear.',
 				type: 'info'
 			});
 			await invalidateJobs();
 		},
 		onError: (error: Error) => {
-			toastStore.show({ message: error.message || 'Could not clear discarded records.', type: 'error' });
+			toastStore.show({
+				message: error.message || 'Could not clear discarded records.',
+				type: 'error'
+			});
 		}
 	}));
 
@@ -92,12 +118,17 @@ export const clearFinishedDropJobsMutation = () =>
 		mutationFn: () => api.global.delete<{ cleared: number }>(API.dropImport.clearFinished()),
 		onSuccess: async ({ cleared }) => {
 			toastStore.show({
-				message: cleared ? `Cleared ${cleared} finished import${cleared === 1 ? '' : 's'}.` : 'Nothing to clear.',
+				message: cleared
+					? `Cleared ${cleared} finished import${cleared === 1 ? '' : 's'}.`
+					: 'Nothing to clear.',
 				type: 'info'
 			});
 			await invalidateJobs();
 		},
 		onError: (error: Error) => {
-			toastStore.show({ message: error.message || 'Could not clear finished imports.', type: 'error' });
+			toastStore.show({
+				message: error.message || 'Could not clear finished imports.',
+				type: 'error'
+			});
 		}
 	}));

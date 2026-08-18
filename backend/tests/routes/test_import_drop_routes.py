@@ -149,6 +149,26 @@ def test_match_and_discard_forward_to_service(tmp_path):
     service.discard_item.assert_awaited_once()
 
 
+def test_manual_match_fields_forward_to_service(tmp_path):
+    client, service = _client(tmp_path)
+    response = client.post(
+        "/api/v1/import/items/1/match",
+        json={
+            "library_album_id": "album-1",
+            "library_track_id": "track-1",
+            "artist_name": "Artist",
+            "album_title": "Album",
+            "track_title": "Track",
+        },
+    )
+
+    assert response.status_code == 200
+    assert service.match_item.await_args.args == (1, None)
+    assert service.match_item.await_args.kwargs["library_album_id"] == "album-1"
+    assert service.match_item.await_args.kwargs["library_track_id"] == "track-1"
+    assert service.match_item.await_args.kwargs["track_title"] == "Track"
+
+
 def test_clear_discarded_forwards_to_service(tmp_path):
     client, service = _client(tmp_path)
     service.clear_discarded_items.return_value = 2

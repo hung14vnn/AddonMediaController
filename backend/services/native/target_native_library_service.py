@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -110,6 +111,39 @@ class TargetNativeLibraryService:
             limit=1, offset=0, sort="name", album_ids=[canonical]
         )
         return self._album(rows[0]) if rows else None
+
+    async def set_imported_album_artwork(self, album_id: str, cover_url: str) -> bool:
+        """Store provider artwork against the native album rendered by the UI."""
+        canonical = await self.canonical_id("album", album_id)
+        if canonical is None or not cover_url:
+            return False
+        await self._store.set_imported_album_artwork(
+            canonical, cover_url=cover_url, updated_at=time.time()
+        )
+        return True
+
+    async def set_imported_local_album_artwork(
+        self, *, artist_name: str, album_title: str, year: int | None, cover_url: str
+    ) -> bool:
+        """Attach provider artwork to the newest matching local-only album."""
+        rows, _ = await self._store.list_target_albums(
+            limit=100, offset=0, sort="recent", search=album_title, file_format=None
+        )
+        title = album_title.casefold()
+        artist = artist_name.casefold()
+        matches = [
+            row for row in rows
+            if str(row.get("album_title") or "").casefold() == title
+            and str(row.get("album_artist_name") or "").casefold() == artist
+            and (year is None or row.get("year") == year)
+            and not row.get("provider_release_group_mbid")
+        ]
+        if not matches or not cover_url:
+            return False
+        await self._store.set_imported_album_artwork(
+            str(matches[0]["release_group_mbid"]), cover_url=cover_url, updated_at=time.time()
+        )
+        return True
 
     async def album_copies(self, album_id: str) -> list[TargetNativeAlbum]:
         rows, _ = await self._store.list_target_albums(

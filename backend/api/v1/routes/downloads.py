@@ -40,12 +40,16 @@ from api.v1.schemas.download import (
     UpgradeAlbumRequestBody,
     UpgradeRequestResponse,
     UpgradeTrackRequestBody,
+    YouTubeDownloadRequest,
+    YouTubeDownloadResponse,
+    YouTubePreviewResponse,
 )
 from core.dependencies import (
     get_acquisition_dispatcher,
     get_download_service,
     get_sse_publisher,
     get_spotiflac_service,
+    get_youtube_download_service,
 )
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from middleware import CurrentAdminDep, CurrentCuratorDep, CurrentUserDep
@@ -60,6 +64,25 @@ _SSE_HEADERS = {
     "Connection": "keep-alive",
     "X-Accel-Buffering": "no",
 }
+
+
+@router.post("/youtube/preview", response_model=YouTubePreviewResponse)
+async def preview_youtube_download(
+    _current_user: CurrentCuratorDep,
+    body: YouTubeDownloadRequest = MsgSpecBody(YouTubeDownloadRequest),
+    service=Depends(get_youtube_download_service),
+):
+    return YouTubePreviewResponse(**await service.preview(body.url))
+
+
+@router.post("/youtube", response_model=YouTubeDownloadResponse)
+async def download_youtube_audio(
+    current_user: CurrentCuratorDep,
+    body: YouTubeDownloadRequest = MsgSpecBody(YouTubeDownloadRequest),
+    service=Depends(get_youtube_download_service),
+):
+    task_id = await service.download(user_id=current_user.id, url=body.url)
+    return YouTubeDownloadResponse(task_id=task_id)
 
 
 def _to_response(  # noqa: ANN001 - DownloadTask
@@ -197,6 +220,7 @@ async def retry_download(
     current_user: CurrentUserDep,
     service=Depends(get_download_service),
     spotiflac_service=Depends(get_spotiflac_service),
+    youtube_service=Depends(get_youtube_download_service),
     acquisition=Depends(get_acquisition_dispatcher),
 ):
     # SpotiFLAC tasks do not have a native download-client job to retry.  Route
@@ -206,7 +230,9 @@ async def retry_download(
         isinstance(value, str) and value.casefold() == "spotiflac"
         for value in (task.source, task.download_client)
     )
-    if is_spotiflac_task:
+    if task.source == "youtube":
+        new_task_id = await youtube_service.retry_task(task)
+    elif is_spotiflac_task:
         new_task_id = await spotiflac_service.retry_task(
             task_id, current_user.id, current_user.role
         )
@@ -276,7 +302,7 @@ async def retry_all_failed(
 ):
     """Re-dispatch failures through the service that created each task."""
     retried = await service.retry_all_failed(
-        current_user.id, current_user.role, exclude_sources={"spotiflac"}
+        current_user.id, current_user.role, exclude_sources={"spotiflac", "youtube"}
     )
     retried += await spotiflac_service.retry_all_failed(
         current_user.id, current_user.role
