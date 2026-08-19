@@ -54,10 +54,6 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs tini gosu libchromaprint-tools ffmpeg unzip xvfb chromium \
-    # YouTube now serves part of its media challenge through JavaScript.  Give
-    # yt-dlp a supported runtime so it can derive the required request data.
-    && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
-    && deno --version \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=python-deps /install /usr/local
