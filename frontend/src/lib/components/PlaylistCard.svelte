@@ -50,7 +50,7 @@
 		`${playlist.track_count} track${playlist.track_count === 1 ? '' : 's'}${durationText ? ` - ${durationText}` : ''}${sourceLabel ? ` - from ${sourceLabel}` : ''}`
 	);
 
-	let hasPlayableTracks = $derived(playlist.track_count > 0);
+	let hasPlayableTracks = $derived(!sourceType && playlist.track_count > 0);
 
 	async function handlePlay(e: Event) {
 		e.preventDefault();
@@ -214,33 +214,35 @@
 	</a>
 
 	<div class="flex items-center gap-1 px-3 pb-2.5 pt-1.5">
-		<button
-			class="btn btn-circle btn-sm bg-success text-success-content border-none shadow-md hover:scale-110 active:scale-95 transition-transform duration-150"
-			onclick={handlePlay}
-			disabled={!hasPlayableTracks || playLoading}
-			aria-label="Play {playlist.name}"
-			title={hasPlayableTracks ? `Play ${playlist.name}` : 'No playable tracks'}
-		>
-			{#if playLoading}
-				<span class="loading loading-spinner loading-xs"></span>
-			{:else}
-				<Play class="h-4 w-4 fill-current" />
-			{/if}
-		</button>
+		{#if !sourceType}
+			<button
+				class="btn btn-circle btn-sm bg-success text-success-content border-none shadow-md hover:scale-110 active:scale-95 transition-transform duration-150"
+				onclick={handlePlay}
+				disabled={!hasPlayableTracks || playLoading}
+				aria-label="Play {playlist.name}"
+				title={hasPlayableTracks ? `Play ${playlist.name}` : 'No playable tracks'}
+			>
+				{#if playLoading}
+					<span class="loading loading-spinner loading-xs"></span>
+				{:else}
+					<Play class="h-4 w-4 fill-current" />
+				{/if}
+			</button>
 
-		<button
-			class="btn btn-circle btn-sm btn-ghost text-base-content/50 hover:text-base-content transition-colors duration-150"
-			onclick={handleShuffle}
-			disabled={!hasPlayableTracks || shuffleLoading}
-			aria-label="Shuffle {playlist.name}"
-			title={hasPlayableTracks ? `Shuffle ${playlist.name}` : 'No playable tracks'}
-		>
-			{#if shuffleLoading}
-				<span class="loading loading-spinner loading-xs"></span>
-			{:else}
-				<Shuffle class="h-3.5 w-3.5" />
-			{/if}
-		</button>
+			<button
+				class="btn btn-circle btn-sm btn-ghost text-base-content/50 hover:text-base-content transition-colors duration-150"
+				onclick={handleShuffle}
+				disabled={!hasPlayableTracks || shuffleLoading}
+				aria-label="Shuffle {playlist.name}"
+				title={hasPlayableTracks ? `Shuffle ${playlist.name}` : 'No playable tracks'}
+			>
+				{#if shuffleLoading}
+					<span class="loading loading-spinner loading-xs"></span>
+				{:else}
+					<Shuffle class="h-3.5 w-3.5" />
+				{/if}
+			</button>
+		{/if}
 
 		{#if canDelete}
 			<div class="ml-auto">

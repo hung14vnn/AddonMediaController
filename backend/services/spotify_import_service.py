@@ -83,7 +83,11 @@ class SpotifyImportService:
         return client
 
     async def resolve_track_for_download(
-        self, user_id: str, spotify_track_id: str
+        self,
+        user_id: str,
+        spotify_track_id: str,
+        *,
+        priority: RequestPriority = RequestPriority.USER_INITIATED,
     ) -> dict[str, Any]:
         """Resolve a Spotify track to the canonical MusicBrainz IDs used by acquisition."""
         client = await self._client_factory.resolve_spotify_catalog()
@@ -101,7 +105,7 @@ class SpotifyImportService:
         if isrc:
             try:
                 data = await mb_api_get(
-                    f"/isrc/{isrc}", priority=RequestPriority.USER_INITIATED
+                    f"/isrc/{isrc}", priority=priority
                 )
                 recordings = data.get("recordings") or []
                 if isinstance(recordings, dict):
@@ -134,7 +138,7 @@ class SpotifyImportService:
         # ISRC coverage is incomplete in MusicBrainz. Fall back to a metadata search,
         # but keep the same canonical recording + release-group requirement.
         matches = await self._mb_repo.search_recordings(
-            artist_name, track_title, limit=8, priority=RequestPriority.USER_INITIATED
+            artist_name, track_title, limit=8, priority=priority
         )
         best: tuple[float, str, str] | None = None
         for match in matches:
@@ -169,6 +173,50 @@ class SpotifyImportService:
             "is_spotify_local": True,
             "cover_url": _best_image_url(album.get("images") or []),
         }
+
+    async def resolve_playlist_tracks_for_download(
+        self,
+        user_id: str,
+        spotify_playlist_id: str,
+        playlist_tracks: list[Any],
+        *,
+        priority: RequestPriority = RequestPriority.BACKGROUND_SYNC,
+    ) -> dict[str, dict[str, Any]]:
+        """Resolve saved playlist rows through their original Spotify playlist."""
+        client = await self._get_client(user_id)
+        spotify_tracks = await client.get_playlist_tracks(spotify_playlist_id)
+        by_key: dict[tuple[str, str, str], list[dict]] = {}
+        for track in spotify_tracks:
+            album = track.get("album") or {}
+            artists = ", ".join(
+                artist.get("name", "")
+                for artist in track.get("artists") or []
+                if artist.get("name")
+            )
+            key = (
+                artists.casefold(),
+                (track.get("name") or "").casefold(),
+                (album.get("name") or "").casefold(),
+            )
+            by_key.setdefault(key, []).append(track)
+
+        resolved: dict[str, dict[str, Any]] = {}
+        for playlist_track in playlist_tracks:
+            key = (
+                (playlist_track.artist_name or "").casefold(),
+                (playlist_track.track_name or "").casefold(),
+                (playlist_track.album_name or "").casefold(),
+            )
+            matches = by_key.get(key)
+            if not matches:
+                continue
+            spotify_track = matches.pop(0)
+            spotify_track_id = str(spotify_track.get("id") or "")
+            if spotify_track_id:
+                resolved[playlist_track.id] = await self.resolve_track_for_download(
+                    user_id, spotify_track_id, priority=priority
+                )
+        return resolved
 
     @staticmethod
     def _resolved_track(
@@ -278,6 +326,7 @@ class SpotifyImportService:
                     "artist_name": artist_name,
                     "album_name": album.get("name") or "",
                     "album_id": mbid or "",
+                    "track_source_id": track.get("id") or None,
                     "source_type": "",
                     "track_number": track.get("track_number"),
                     "disc_number": track.get("disc_number"),

@@ -609,6 +609,7 @@ class PlaylistService:
         requesting: UserRecord | None = None,
         jf_service: object = None,
         local_service: object = None,
+        additional_local_service: object = None,
         nd_service: object = None,
         plex_service: object = None,
         navidrome_folder_ids: tuple[str, ...] | None = None,
@@ -680,6 +681,34 @@ class PlaylistService:
         # stream them (issue #181 - imported playlists showed empty in clients)
         file_links: dict[str, str] = {}
 
+        async def resolve_local_metadata_fallback(
+            track: PlaylistTrackRecord,
+        ) -> tuple[str, str] | None:
+            for service in (local_service, additional_local_service):
+                if service is None:
+                    continue
+                try:
+                    match = await service.match_track_by_metadata(
+                        title=track.track_name,
+                        artist_name=track.artist_name,
+                        album_title=track.album_name,
+                        track_number=track.track_number,
+                        disc_number=track.disc_number,
+                    )
+                    if (
+                        isinstance(match, tuple)
+                        and len(match) == 2
+                        and all(isinstance(value, str) and value for value in match)
+                    ):
+                        return match
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "Local metadata source resolution failed for %s",
+                        track.id,
+                        exc_info=True,
+                    )
+            return None
+
         for (_album_id, album_tracks), (
             jf_by_num,
             local_by_num,
@@ -703,6 +732,12 @@ class PlaylistService:
                     sources.add("local")
                     if not t.library_file_id and local_track[1]:
                         file_links[t.id] = local_track[1]
+                else:
+                    local_match = await resolve_local_metadata_fallback(t)
+                    if local_match:
+                        sources.add("local")
+                        if not t.library_file_id:
+                            file_links[t.id] = local_match[0]
 
                 nd_track = nd_by_num.get(disc_key)
                 if nd_track and _fuzzy_name_match(t.track_name, nd_track[0]):
@@ -715,14 +750,17 @@ class PlaylistService:
                 result[t.id] = sorted(sources)
 
         for t in no_album_tracks:
-            result[t.id] = (
-                [t.source_type]
-                if t.source_type
-                and not (
-                    t.source_type == "navidrome" and navidrome_folder_ids is not None
-                )
-                else []
-            )
+            sources = set()
+            if t.source_type and not (
+                t.source_type == "navidrome" and navidrome_folder_ids is not None
+            ):
+                sources.add(t.source_type)
+            local_match = await resolve_local_metadata_fallback(t)
+            if local_match:
+                sources.add("local")
+                if not t.library_file_id:
+                    file_links[t.id] = local_match[0]
+            result[t.id] = sorted(sources)
 
         persist_updates: dict[str, list[str]] = {}
         for t in tracks:
@@ -738,6 +776,21 @@ class PlaylistService:
             )
         if file_links:
             await self._repo.batch_link_library_files(playlist_id, file_links)
+            # A resolver-discovered local file is immediately usable. When an
+            # imported entry has no active source yet, promote it to local so
+            # the playlist stays in sync with the latest library scan.
+            for track in tracks:
+                file_id = file_links.get(track.id)
+                if not file_id or track.source_type:
+                    continue
+                await self._repo.update_track_source(
+                    playlist_id,
+                    track.id,
+                    source_type="local",
+                    available_sources=result.get(track.id, ["local"]),
+                    track_source_id=file_id,
+                    library_file_id=file_id,
+                )
 
         return result
 

@@ -1,20 +1,31 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { API } from '$lib/constants';
 	import { api } from '$lib/api/client';
+	import {
+		addTracksToPlaylist,
+		checkTrackMembership,
+		queueItemToTrackData
+	} from '$lib/api/playlists';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
+	import { authStore } from '$lib/stores/authStore.svelte';
+	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
+	import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
 	import { createLibraryTrackLoader } from '$lib/utils/libraryTrackLoader.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
+	import { openGlobalPlaylistModal } from '$lib/components/AddToPlaylistModal.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import { formatDurationSec } from '$lib/utils/formatting';
 	import { reveal } from '$lib/actions/reveal';
 	import {
 		ChevronLeft,
 		ChevronRight,
+		Check,
 		Play,
 		Shuffle,
 		ListPlus,
@@ -26,8 +37,12 @@
 		X
 	} from 'lucide-svelte';
 	import type { NativeTrackListItem, NativeTrackPage, TrackSort } from '$lib/types';
-	import { removeLibraryTrack } from '$lib/queries/library/LibraryMutations.svelte';
+	import {
+		removeLibraryTrack,
+		removeLibraryTracks
+	} from '$lib/queries/library/LibraryMutations.svelte';
 	import { untrack } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 
 	const PAGE_SIZE = 48;
 
@@ -37,9 +52,28 @@
 	let searchQuery = $state('');
 	let sort = $state<TrackSort>('recent');
 	let searchTimeout: ReturnType<typeof setTimeout> | undefined;
+	let selectionEnabled = $state(false);
+	let selectedIds = new SvelteSet<string>();
+	let bulkDeleting = $state(false);
+	let addingToPlaylist = $state(false);
+	let targetSelectionInitialized = false;
+	let targetMembershipGeneration = 0;
+	let existingTargetTrackIds = new SvelteSet<string>();
 
 	const totalPages = $derived(Math.ceil(data.total / PAGE_SIZE));
+	let targetPlaylistId = $derived(page.url.searchParams.get('playlist'));
+	let selectableTrackCount = $derived(
+		data.items.filter((track) => !existingTargetTrackIds.has(track.id)).length
+	);
 	const remove = removeLibraryTrack();
+	const removeMultiple = removeLibraryTracks();
+
+	$effect(() => {
+		if (targetPlaylistId && !targetSelectionInitialized) {
+			selectionEnabled = true;
+			targetSelectionInitialized = true;
+		}
+	});
 
 	const loader = createLibraryTrackLoader<NativeTrackListItem>(
 		{
@@ -60,20 +94,46 @@
 			data = await api.global.get<NativeTrackPage>(
 				API.library.tracks(PAGE_SIZE, currentPage * PAGE_SIZE, sort, searchQuery)
 			);
+			await refreshTargetMembership(data.items);
 		} catch {
 			data = { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
+			existingTargetTrackIds.clear();
 		} finally {
 			loading = false;
 		}
 	}
 
+	async function refreshTargetMembership(tracks: NativeTrackListItem[]) {
+		const generation = ++targetMembershipGeneration;
+		existingTargetTrackIds.clear();
+		if (!targetPlaylistId || tracks.length === 0) return;
+		try {
+			const membership = await checkTrackMembership(
+				tracks.map((track) => ({
+					track_name: track.title,
+					artist_name: track.artist_name,
+					album_name: track.album_title
+				}))
+			);
+			if (generation !== targetMembershipGeneration) return;
+			for (const index of membership[targetPlaylistId] ?? []) {
+				const track = tracks[index];
+				if (track) existingTargetTrackIds.add(track.id);
+			}
+		} catch {
+			if (generation === targetMembershipGeneration) existingTargetTrackIds.clear();
+		}
+	}
+
 	function goToPage(page: number) {
+		clearSelection();
 		currentPage = page;
 		fetchTracks();
 		window.scrollTo({ top: 0, behavior: 'smooth' });
 	}
 
 	function handleSearchInput() {
+		clearSelection();
 		clearTimeout(searchTimeout);
 		searchTimeout = setTimeout(() => {
 			currentPage = 0;
@@ -82,6 +142,7 @@
 	}
 
 	function clearSearch() {
+		clearSelection();
 		searchQuery = '';
 		clearTimeout(searchTimeout);
 		currentPage = 0;
@@ -89,6 +150,7 @@
 	}
 
 	function handleSortChange(e: Event) {
+		clearSelection();
 		sort = (e.target as HTMLSelectElement).value as TrackSort;
 		currentPage = 0;
 		fetchTracks();
@@ -123,6 +185,47 @@
 		toastStore.show({ message: `"${track.title}" will play next`, type: 'info' });
 	}
 
+	async function addTracksToLocalPlaylist(tracks: NativeTrackListItem[]) {
+		const items = buildDiscoveryQueueFromLocal(tracks);
+		if (items.length === 0) return;
+		if (!targetPlaylistId) {
+			openGlobalPlaylistModal(items);
+			return;
+		}
+
+		if (addingToPlaylist) return;
+		addingToPlaylist = true;
+		try {
+			const membership = await checkTrackMembership(
+				items.map((item) => ({
+					track_name: item.trackName,
+					artist_name: item.artistName,
+					album_name: item.albumName
+				}))
+			);
+			const existingIndices = new Set(membership[targetPlaylistId] ?? []);
+			const newItems = items.filter((_, index) => !existingIndices.has(index));
+			if (newItems.length > 0) {
+				await addTracksToPlaylist(targetPlaylistId, newItems.map(queueItemToTrackData));
+			}
+			await invalidateQueriesWithPersister({
+				queryKey: PlaylistQueryKeyFactory.detail(authStore.user?.id, targetPlaylistId)
+			});
+			toastStore.show({
+				message:
+					newItems.length > 0
+						? `Added ${newItems.length} track${newItems.length === 1 ? '' : 's'} to the playlist`
+						: 'Those tracks are already in the playlist',
+				type: newItems.length > 0 ? 'success' : 'info'
+			});
+			await goto(`/playlists/${targetPlaylistId}`);
+		} catch {
+			toastStore.show({ message: "Couldn't add those tracks to the playlist", type: 'error' });
+		} finally {
+			addingToPlaylist = false;
+		}
+	}
+
 	function deleteTrack(track: NativeTrackListItem) {
 		if (
 			!confirm(
@@ -143,8 +246,69 @@
 		);
 	}
 
+	function toggleSelectionEnabled() {
+		selectionEnabled = !selectionEnabled;
+		if (!selectionEnabled) clearSelection();
+	}
+
+	function clearSelection() {
+		selectedIds.clear();
+	}
+
+	function toggleTrackSelection(trackId: string) {
+		if (targetPlaylistId && existingTargetTrackIds.has(trackId)) return;
+		if (selectedIds.has(trackId)) selectedIds.delete(trackId);
+		else selectedIds.add(trackId);
+	}
+
+	function toggleSelectAll() {
+		const selectableTracks = data.items.filter((track) => !existingTargetTrackIds.has(track.id));
+		if (selectableTracks.length > 0 && selectedIds.size === selectableTracks.length)
+			clearSelection();
+		else selectableTracks.forEach((track) => selectedIds.add(track.id));
+	}
+
+	async function deleteSelectedTracks() {
+		if (bulkDeleting || selectedIds.size === 0) return;
+		const tracks = data.items.filter((track) => selectedIds.has(track.id));
+		const count = tracks.length;
+		if (
+			!confirm(
+				`Delete ${count} track${count === 1 ? '' : 's'} from your library? This permanently removes the audio files and any empty parent folders.`
+			)
+		) {
+			return;
+		}
+
+		bulkDeleting = true;
+		try {
+			await removeMultiple.mutateAsync({ fileIds: tracks.map((track) => track.id) });
+			toastStore.show({
+				message: `Deleted ${count} track${count === 1 ? '' : 's'}`,
+				type: 'success'
+			});
+			clearSelection();
+			await fetchTracks();
+		} catch {
+			toastStore.show({
+				message: "Couldn't delete the selected tracks",
+				type: 'error'
+			});
+			selectedIds.clear();
+			await fetchTracks();
+		} finally {
+			bulkDeleting = false;
+		}
+	}
+
 	function getTrackMenuItems(track: NativeTrackListItem): MenuItem[] {
 		return [
+			{
+				label: 'Add to local playlist',
+				icon: Music2,
+				onclick: () => void addTracksToLocalPlaylist([track]),
+				disabled: !!targetPlaylistId && existingTargetTrackIds.has(track.id)
+			},
 			{ label: 'Add to Queue', icon: ListPlus, onclick: () => addTrackToQueue(track) },
 			{ label: 'Play Next', icon: ListStart, onclick: () => playTrackNext(track) },
 			{
@@ -252,7 +416,7 @@
 			</p>
 		</div>
 	{:else}
-		<div class="mb-4 flex items-center gap-2">
+		<div class="mb-4 flex flex-wrap items-center gap-2">
 			{#if loader.loading}
 				<button
 					class="btn btn-sm btn-primary gap-1.5"
@@ -280,6 +444,30 @@
 					<Shuffle class="h-3.5 w-3.5" />
 					Shuffle
 				</button>
+				{#if targetPlaylistId}
+					<span class="badge badge-outline badge-sm">Choose tracks to add</span>
+				{:else}
+					<button
+						class="btn btn-sm gap-1.5 {selectionEnabled ? 'btn-secondary' : 'btn-ghost'}"
+						onclick={toggleSelectionEnabled}
+						aria-pressed={selectionEnabled}
+					>
+						{selectionEnabled ? 'Done selecting' : 'Select tracks'}
+					</button>
+				{/if}
+			{/if}
+			{#if selectionEnabled}
+				<label class="ml-auto flex cursor-pointer items-center gap-2 text-sm text-base-content/70">
+					<input
+						type="checkbox"
+						class="checkbox checkbox-sm"
+						checked={selectableTrackCount > 0 && selectedIds.size === selectableTrackCount}
+						indeterminate={selectedIds.size > 0 && selectedIds.size < selectableTrackCount}
+						onchange={toggleSelectAll}
+						disabled={selectableTrackCount === 0}
+					/>
+					Select available
+				</label>
 			{/if}
 		</div>
 
@@ -289,17 +477,41 @@
 		>
 			{#each data.items as track, i (track.id)}
 				{@const playing = isTrackPlaying(track)}
+				{@const alreadyInTarget = !!targetPlaylistId && existingTargetTrackIds.has(track.id)}
 				<div
-					class="group flex cursor-pointer items-center gap-3 px-3 py-2 transition-colors {playing
-						? 'bg-accent/10'
-						: 'hover:bg-base-200/50'}"
-					onclick={() => playTrack(i)}
+					class="group flex items-center gap-3 px-3 py-2 transition-colors {alreadyInTarget
+						? 'cursor-not-allowed bg-base-200/50 opacity-45'
+						: selectedIds.has(track.id)
+							? 'cursor-pointer bg-primary/10'
+							: playing
+								? 'cursor-pointer bg-accent/10'
+								: 'cursor-pointer hover:bg-base-200/50'}"
+					onclick={() =>
+						!alreadyInTarget && (selectionEnabled ? toggleTrackSelection(track.id) : playTrack(i))}
 					onkeydown={(e) =>
-						(e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), playTrack(i))}
-					tabindex="0"
+						(e.key === 'Enter' || e.key === ' ') &&
+						!alreadyInTarget &&
+						(e.preventDefault(), selectionEnabled ? toggleTrackSelection(track.id) : playTrack(i))}
+					tabindex={alreadyInTarget ? -1 : 0}
 					role="button"
-					aria-label="Play {track.title}"
+					aria-disabled={alreadyInTarget}
+					aria-label={alreadyInTarget
+						? `${track.title} is already in this playlist`
+						: selectionEnabled
+							? `Select ${track.title}`
+							: `Play ${track.title}`}
 				>
+					{#if selectionEnabled}
+						<input
+							type="checkbox"
+							class="checkbox checkbox-sm shrink-0"
+							checked={selectedIds.has(track.id)}
+							onclick={(e) => e.stopPropagation()}
+							onchange={() => toggleTrackSelection(track.id)}
+							aria-label="Select {track.title}"
+							disabled={alreadyInTarget}
+						/>
+					{/if}
 					<div class="relative h-12 w-12 shrink-0">
 						<AlbumImage
 							mbid={track.album_id}
@@ -312,11 +524,14 @@
 							className="h-12 w-12 ring-1 ring-base-content/10"
 						/>
 						<div
-							class="absolute inset-0 flex items-center justify-center rounded-md bg-black/45 opacity-0 transition-opacity {playing
+							class="absolute inset-0 flex items-center justify-center rounded-md bg-black/45 transition-opacity {alreadyInTarget ||
+							playing
 								? 'opacity-100'
-								: 'group-hover:opacity-100'}"
+								: 'opacity-0 group-hover:opacity-100'}"
 						>
-							{#if playing}
+							{#if alreadyInTarget}
+								<Check class="h-5 w-5 text-success" />
+							{:else if playing}
 								<NowPlayingIndicator />
 							{:else}
 								<Play class="h-5 w-5 fill-current text-white" />
@@ -336,6 +551,9 @@
 					</div>
 
 					<div class="flex shrink-0 items-center gap-2">
+						{#if alreadyInTarget}
+							<span class="badge badge-ghost badge-xs">In playlist</span>
+						{/if}
 						{#if track.format}
 							<span
 								class="hidden text-[10px] font-medium uppercase tracking-wide text-base-content/30 sm:inline"
@@ -350,18 +568,54 @@
 								{formatDurationSec(track.duration_seconds)}
 							</span>
 						{/if}
-						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<div
-							class="opacity-0 transition-opacity group-hover:opacity-100"
-							onclick={(e) => e.stopPropagation()}
-							onkeydown={(e) => e.stopPropagation()}
-						>
-							<ContextMenu items={getTrackMenuItems(track)} position="end" size="xs" />
-						</div>
+						{#if !alreadyInTarget}
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div
+								class="opacity-0 transition-opacity group-hover:opacity-100"
+								onclick={(e) => e.stopPropagation()}
+								onkeydown={(e) => e.stopPropagation()}
+							>
+								<ContextMenu items={getTrackMenuItems(track)} position="end" size="xs" />
+							</div>
+						{/if}
 					</div>
 				</div>
 			{/each}
 		</div>
+
+		{#if selectionEnabled && selectedIds.size > 0}
+			<div
+				class="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-box border border-base-content/10 bg-base-300 px-4 py-3 shadow-xl"
+			>
+				<span class="text-sm font-medium">{selectedIds.size} selected</span>
+				<button class="btn btn-ghost btn-sm" onclick={clearSelection}>Clear</button>
+				<button
+					class="btn btn-primary btn-sm gap-1.5"
+					onclick={() =>
+						void addTracksToLocalPlaylist(data.items.filter((track) => selectedIds.has(track.id)))}
+					disabled={addingToPlaylist}
+				>
+					{#if addingToPlaylist}
+						<span class="loading loading-spinner loading-xs"></span>
+					{:else}
+						<Music2 class="h-4 w-4" />
+					{/if}
+					Add to playlist
+				</button>
+				{#if !targetPlaylistId}
+					<button
+						class="btn btn-error btn-sm"
+						onclick={() => void deleteSelectedTracks()}
+						disabled={bulkDeleting}
+					>
+						{#if bulkDeleting}<span class="loading loading-spinner loading-xs"></span>{:else}<Trash2
+								class="h-4 w-4"
+							/>{/if}
+						Delete selected
+					</button>
+				{/if}
+			</div>
+		{/if}
 
 		{#if totalPages > 1}
 			<div class="mt-8 flex items-center justify-center gap-2">

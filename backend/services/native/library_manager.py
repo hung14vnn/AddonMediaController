@@ -396,6 +396,12 @@ class LibraryManager(LibraryStub):
         rows = await self._db.get_library_files_for_album(release_group_mbid)
         return [self._to_track(row) for row in rows]
 
+    async def find_unique_track_by_metadata(self, **metadata: object) -> dict | None:
+        return await self._db.find_unique_track_by_metadata(**metadata)
+
+    async def find_track_by_title_artist(self, **metadata: object) -> dict | None:
+        return await self._db.find_track_by_title_artist(**metadata)
+
     async def get_album_status(
         self,
         release_group_mbid: str,

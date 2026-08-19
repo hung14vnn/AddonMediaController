@@ -70,6 +70,10 @@ class TrackResolveRequest(AppStruct):
     items: list[TrackResolveItem] = []
 
 
+class RemoveLibraryTracksRequest(AppStruct):
+    file_ids: list[str] = []
+
+
 class ResolvedTrack(AppStruct):
     release_group_mbid: str | None = None
     disc_number: int | None = None

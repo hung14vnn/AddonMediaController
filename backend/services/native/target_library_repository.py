@@ -50,6 +50,12 @@ class TargetLibraryRepository:
         row["deleted_at"] = None if row["availability"] == "indexed" else 1
         return row
 
+    async def find_unique_track_by_metadata(self, **metadata: object) -> dict[str, Any] | None:
+        return await self._store.find_unique_target_track_by_metadata(**metadata)
+
+    async def find_track_by_title_artist(self, **metadata: object) -> dict[str, Any] | None:
+        return await self._store.find_target_track_by_title_artist(**metadata)
+
     async def get_library_file_by_id(self, file_id: str) -> dict[str, Any] | None:
         return await self.get_file_row_by_id(file_id)
 

@@ -27,9 +27,17 @@
 		onsourcechange?: () => void;
 		onplaytrack?: (index: number) => void;
 		readonly?: boolean;
+		playable?: boolean;
 	}
 
-	let { playlist, ontrackchange, onsourcechange, onplaytrack, readonly = false }: Props = $props();
+	let {
+		playlist,
+		ontrackchange,
+		onsourcechange,
+		onplaytrack,
+		readonly = false,
+		playable = true
+	}: Props = $props();
 
 	let dragIndex = $state<number | null>(null);
 	let dragOverIndex = $state<number | null>(null);
@@ -295,18 +303,20 @@
 	}
 
 	function getTrackMenuItems(track: PlaylistTrack): MenuItem[] {
-		const items: MenuItem[] = [
-			{
-				label: 'Add to Queue',
-				icon: ListPlus,
-				onclick: () => addTrackToQueue(track)
-			},
-			{
-				label: 'Play Next',
-				icon: ListStart,
-				onclick: () => playTrackNext(track)
-			}
-		];
+		const items: MenuItem[] = playable
+			? [
+					{
+						label: 'Add to Queue',
+						icon: ListPlus,
+						onclick: () => addTrackToQueue(track)
+					},
+					{
+						label: 'Play Next',
+						icon: ListStart,
+						onclick: () => playTrackNext(track)
+					}
+				]
+			: [];
 		// Non-owners (public read-only view) cannot mutate the playlist (D4).
 		if (!readonly) {
 			items.push({
@@ -339,7 +349,14 @@
 	<div class="flex flex-col items-center justify-center py-16 gap-3">
 		<Music class="h-12 w-12 text-base-content/20" />
 		<h2 class="text-base font-semibold text-base-content/60">This playlist is empty</h2>
-		<p class="text-sm text-base-content/40">Add tracks from album pages using the context menu</p>
+		{#if playable && !readonly}
+			<p class="text-sm text-base-content/40">Add downloaded tracks from your local library</p>
+			<a class="btn btn-primary btn-sm mt-1" href="/library/tracks?playlist={playlist.id}"
+				>Browse local tracks</a
+			>
+		{:else}
+			<p class="text-sm text-base-content/40">This imported playlist is kept for reference</p>
+		{/if}
 	</div>
 {:else}
 	<ul class="list bg-base-200 rounded-box overflow-visible">
@@ -411,11 +428,11 @@
 						/>
 					{/if}
 
-					{#if isCurrentlyPlaying}
+					{#if playable && isCurrentlyPlaying}
 						<div class="w-6 flex items-center justify-center shrink-0">
 							<NowPlayingIndicator />
 						</div>
-					{:else}
+					{:else if playable}
 						<span
 							class="text-base-content/40 text-sm w-6 text-center tabular-nums shrink-0 group-hover:hidden"
 							>{i + 1}</span
@@ -430,6 +447,10 @@
 						>
 							<Play class="h-4 w-4 fill-current text-primary" />
 						</button>
+					{:else}
+						<span class="text-base-content/40 text-sm w-6 text-center tabular-nums shrink-0"
+							>{i + 1}</span
+						>
 					{/if}
 
 					<div class="w-10 h-10 rounded-md overflow-hidden shrink-0 bg-base-300">
@@ -479,7 +500,7 @@
 						{formatDurationSec(track.duration)}
 					</span>
 
-					{#if !readonly}
+					{#if !readonly && playable}
 						<SourcePickerDropdown
 							currentSource={track.source_type}
 							availableSources={track.available_sources ?? [track.source_type]}
@@ -487,11 +508,13 @@
 						/>
 					{/if}
 
-					<div
-						class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shrink-0"
-					>
-						<ContextMenu items={getTrackMenuItems(track)} position="end" size="xs" />
-					</div>
+					{#if playable || !readonly}
+						<div
+							class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shrink-0"
+						>
+							<ContextMenu items={getTrackMenuItems(track)} position="end" size="xs" />
+						</div>
+					{/if}
 				</div>
 			</li>
 		{/each}

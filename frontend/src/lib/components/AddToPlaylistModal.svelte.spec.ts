@@ -99,6 +99,23 @@ describe('AddToPlaylistModal.svelte', () => {
 		expect(mockFetchPlaylists).toHaveBeenCalledOnce();
 	});
 
+	it('only lists local playlists as add targets', async () => {
+		mockFetchPlaylists.mockResolvedValue([
+			...makePlaylists(),
+			{
+				...makePlaylists()[0],
+				id: 'spotify-p1',
+				name: 'Imported from Spotify',
+				source_ref: 'spotify:37i9dQZF1DX'
+			}
+		]);
+		const result = renderModal();
+		(result.component as unknown as ModalRef).open([makeTrack()]);
+
+		await expect.element(page.getByText('My Playlist')).toBeVisible();
+		await expect.element(page.getByText('Imported from Spotify')).not.toBeInTheDocument();
+	});
+
 	it('shows loading skeletons while fetching', async () => {
 		let resolveFetch!: (value: unknown[]) => void;
 		mockFetchPlaylists.mockReturnValue(
@@ -121,7 +138,9 @@ describe('AddToPlaylistModal.svelte', () => {
 		const result = renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
-		await expect.element(page.getByText("You haven't created any playlists yet.")).toBeVisible();
+		await expect
+			.element(page.getByText("You haven't created any local playlists yet."))
+			.toBeVisible();
 	});
 
 	it('clicking add button calls addTracksToPlaylist with correct tracks', async () => {
@@ -184,7 +203,9 @@ describe('AddToPlaylistModal.svelte', () => {
 		const result = renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
-		await expect.element(page.getByText("You haven't created any playlists yet.")).toBeVisible();
+		await expect
+			.element(page.getByText("You haven't created any local playlists yet."))
+			.toBeVisible();
 
 		const input = page.getByPlaceholder('New playlist name');
 		await input.fill('Fresh');

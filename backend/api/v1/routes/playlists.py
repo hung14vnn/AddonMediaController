@@ -1,3 +1,6 @@
+import asyncio
+import logging
+from difflib import SequenceMatcher
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -25,22 +28,39 @@ from api.v1.schemas.playlists import (
     UpdateTrackRequest,
 )
 from api.v1.schemas.request import BatchRequestResponse
-from core.dependencies import JellyfinLibraryServiceDep, LocalFilesServiceDep, NavidromeLibraryServiceDep, PlexLibraryServiceDep, PlaylistServiceDep, get_navidrome_folder_scope_service, get_request_service
+from core.dependencies import (
+    JellyfinLibraryServiceDep,
+    LocalFilesServiceDep,
+    NavidromeLibraryServiceDep,
+    PlexLibraryServiceDep,
+    PlaylistServiceDep,
+    get_acquisition_dispatcher,
+    get_target_local_files_service,
+    get_musicbrainz_repository,
+    get_navidrome_folder_scope_service,
+    get_quota_service,
+    get_spotify_import_service,
+)
 from core.dependencies.type_aliases import CurrentUserDep
 from core.exceptions import PlaylistNotFoundError
+from core.task_registry import TaskRegistry
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
+from infrastructure.queue.priority_queue import RequestPriority
 from services.playlist_service import (
     PlaylistSummaryView,
     RedactedDetailView,
     RedactedSummaryView,
 )
 from services.navidrome_folder_scope_service import NavidromeFolderScopeService
+from services.native.download_service import ALREADY_IN_LIBRARY
 
 router = APIRouter(
     route_class=MsgSpecRoute,
     prefix="/playlists",
     tags=["playlists"],
 )
+
+logger = logging.getLogger(__name__)
 
 
 async def _get_user_navidrome_folder_ids(
@@ -60,7 +80,7 @@ UserNavidromeFolderIdsDep = Annotated[
 
 def _normalize_cover_url(url: str | None) -> str | None:
     if url and url.startswith("/api/covers/"):
-        return "/api/v1/covers/" + url[len("/api/covers/"):]
+        return "/api/v1/covers/" + url[len("/api/covers/") :]
     return url
 
 
@@ -107,7 +127,9 @@ def _summary_view_to_response(
 ) -> PlaylistSummaryResponse | RedactedPlaylist:
     if isinstance(view, RedactedSummaryView):
         return RedactedPlaylist(
-            id=view.id, track_count=view.track_count, owner_name=view.owner_name,
+            id=view.id,
+            track_count=view.track_count,
+            owner_name=view.owner_name,
         )
     s = view.record
     return PlaylistSummaryResponse(
@@ -115,7 +137,9 @@ def _summary_view_to_response(
         name=s.name,
         track_count=s.track_count,
         total_duration=s.total_duration,
-        cover_urls=[_normalize_cover_url(u) for u in s.cover_urls] if s.cover_urls else [],
+        cover_urls=[_normalize_cover_url(u) for u in s.cover_urls]
+        if s.cover_urls
+        else [],
         custom_cover_url=_custom_cover_url(s.id, s.cover_image_path),
         source_ref=s.source_ref,
         created_at=s.created_at,
@@ -127,10 +151,16 @@ def _summary_view_to_response(
 
 
 def _detail_to_response(
-    playlist, tracks, *, is_owner: bool, owner_name: str | None,
+    playlist,
+    tracks,
+    *,
+    is_owner: bool,
+    owner_name: str | None,
 ) -> PlaylistDetailResponse:
     track_responses = [_track_to_response(t) for t in tracks]
-    cover_urls = list(dict.fromkeys(_normalize_cover_url(t.cover_url) for t in tracks if t.cover_url))[:4]
+    cover_urls = list(
+        dict.fromkeys(_normalize_cover_url(t.cover_url) for t in tracks if t.cover_url)
+    )[:4]
     total_duration = sum(t.duration for t in tracks if t.duration)
     return PlaylistDetailResponse(
         id=playlist.id,
@@ -155,9 +185,7 @@ async def list_playlists(
     current_user: CurrentUserDep,
 ) -> PlaylistListResponse:
     views = await service.get_all_playlists(current_user)
-    return PlaylistListResponse(
-        playlists=[_summary_view_to_response(v) for v in views]
-    )
+    return PlaylistListResponse(playlists=[_summary_view_to_response(v) for v in views])
 
 
 @router.post("/check-tracks", response_model=CheckTrackMembershipResponse)
@@ -190,10 +218,15 @@ async def get_playlist(
     view = await service.get_playlist_with_tracks(playlist_id, current_user)
     if isinstance(view, RedactedDetailView):
         return RedactedPlaylist(
-            id=view.id, track_count=view.track_count, owner_name=view.owner_name,
+            id=view.id,
+            track_count=view.track_count,
+            owner_name=view.owner_name,
         )
     return _detail_to_response(
-        view.record, view.tracks, is_owner=view.is_owner, owner_name=view.owner_name,
+        view.record,
+        view.tracks,
+        is_owner=view.is_owner,
+        owner_name=view.owner_name,
     )
 
 
@@ -205,7 +238,9 @@ async def update_playlist(
     body: UpdatePlaylistRequest = MsgSpecBody(UpdatePlaylistRequest),
 ) -> PlaylistDetailResponse:
     playlist, tracks = await service.update_playlist_with_detail(
-        playlist_id, current_user, name=body.name,
+        playlist_id,
+        current_user,
+        name=body.name,
     )
     return _detail_to_response(playlist, tracks, is_owner=True, owner_name=None)
 
@@ -261,7 +296,9 @@ async def add_tracks(
         }
         for t in body.tracks
     ]
-    created = await service.add_tracks(playlist_id, current_user, track_dicts, body.position)
+    created = await service.add_tracks(
+        playlist_id, current_user, track_dicts, body.position
+    )
     return AddTracksResponse(tracks=[_track_to_response(t) for t in created])
 
 
@@ -306,7 +343,10 @@ async def reorder_track(
     body: ReorderTrackRequest = MsgSpecBody(ReorderTrackRequest),
 ) -> ReorderTrackResponse:
     actual_position = await service.reorder_track(
-        playlist_id, current_user, body.track_id, body.new_position,
+        playlist_id,
+        current_user,
+        body.track_id,
+        body.new_position,
     )
     return ReorderTrackResponse(
         status="ok",
@@ -332,7 +372,9 @@ async def update_track(
     body: UpdateTrackRequest = MsgSpecBody(UpdateTrackRequest),
 ) -> PlaylistTrackResponse:
     result = await service.update_track_source(
-        playlist_id, current_user, track_id,
+        playlist_id,
+        current_user,
+        track_id,
         source_type=body.source_type,
         available_sources=body.available_sources,
         jf_service=jf_service,
@@ -357,10 +399,16 @@ async def resolve_sources(
     local_service: LocalFilesServiceDep,
     nd_service: NavidromeLibraryServiceDep,
     plex_service: PlexLibraryServiceDep,
+    target_local_service=Depends(get_target_local_files_service),
 ) -> ResolveSourcesResponse:
     sources = await service.resolve_track_sources(
-        playlist_id, requesting=current_user, jf_service=jf_service, local_service=local_service,
-        nd_service=nd_service, plex_service=plex_service,
+        playlist_id,
+        requesting=current_user,
+        jf_service=jf_service,
+        local_service=local_service,
+        additional_local_service=target_local_service,
+        nd_service=nd_service,
+        plex_service=plex_service,
         navidrome_folder_ids=navidrome_folder_ids,
     )
     return ResolveSourcesResponse(sources=sources)
@@ -384,11 +432,15 @@ async def upload_cover(
         total += len(chunk)
         if total > max_size:
             from core.exceptions import InvalidPlaylistDataError
+
             raise InvalidPlaylistDataError("Image too large. Maximum size is 2 MB")
         chunks.append(chunk)
     data = b"".join(chunks)
     cover_url = await service.upload_cover(
-        playlist_id, current_user, data, cover_image.content_type or "",
+        playlist_id,
+        current_user,
+        data,
+        cover_image.content_type or "",
     )
     return CoverUploadResponse(cover_url=cover_url)
 
@@ -439,38 +491,206 @@ async def request_missing_tracks(
     playlist_id: str,
     service: PlaylistServiceDep,
     current_user: CurrentUserDep,
-    request_service=Depends(get_request_service),
+    acquisition=Depends(get_acquisition_dispatcher),
+    quota=Depends(get_quota_service),
+    musicbrainz=Depends(get_musicbrainz_repository),
+    spotify=Depends(get_spotify_import_service),
 ) -> BatchRequestResponse:
     result = await service.get_playlist_with_tracks(playlist_id, current_user)
     if isinstance(result, RedactedDetailView):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    seen: set[str] = set()
-    items: list[dict] = []
+    # Playlist rows hold a release-group MBID, not a recording MBID. Resolve the
+    # recording first and require it to belong to that exact release group, so this
+    # action can request only the playlist track without risking a same-name track
+    # from a different album.
+    candidates: list[tuple[object, str]] = []
+    seen_tracks: set[tuple[str, str, str]] = set()
     for track in result.tracks:
-        mbid = track.album_id
-        if not mbid or mbid in seen:
+        release_group_mbid = track.album_id
+        if not release_group_mbid:
             continue
         if track.available_sources and len(track.available_sources) > 0:
             continue
-        seen.add(mbid)
-        items.append(
-            {
-                "musicbrainz_id": mbid,
-                "artist_name": track.artist_name or "Unknown",
-                "album_title": track.album_name or "Unknown",
-            }
+        key = (
+            release_group_mbid.casefold(),
+            (track.artist_name or "").casefold(),
+            (track.track_name or "").casefold(),
         )
+        if key not in seen_tracks:
+            seen_tracks.add(key)
+            candidates.append((track, release_group_mbid))
 
-    if not items:
+    if not candidates:
         return BatchRequestResponse(
             success=True,
-            message="No missing albums found, all tracks already have a source",
+            message="No missing tracks found, all tracks already have a source",
         )
 
-    return await request_service.request_batch(
-        items=items,
-        user_id=current_user.id,
-        user_role=current_user.role,
-        requested_by_name=current_user.display_name,
+    # Reserve the maximum possible number of requests before starting the worker.
+    # The worker only submits matched recordings, so this can be conservative when
+    # playlist metadata is incomplete, but never allows a batch to bypass quota.
+    await quota.check_request_quota(current_user.id, current_user.role, len(candidates))
+
+    task_name = f"playlist-track-requests:{current_user.id}:{playlist_id}"
+    source_ref = result.record.source_ref or ""
+    spotify_playlist_id = (
+        source_ref.removeprefix("spotify:") if source_ref.startswith("spotify:") else None
     )
+    task = asyncio.create_task(
+        _queue_playlist_tracks(
+            candidates,
+            current_user.id,
+            acquisition,
+            musicbrainz,
+            spotify,
+            spotify_playlist_id,
+        )
+    )
+    try:
+        TaskRegistry.get_instance().register(task_name, task)
+    except RuntimeError:
+        task.cancel()
+        raise HTTPException(
+            status_code=409,
+            detail="Missing tracks for this playlist are already being queued",
+        )
+
+    return BatchRequestResponse(
+        success=True,
+        message=(
+            f"{len(candidates)} track{'s' if len(candidates) != 1 else ''} "
+            "are being queued"
+        ),
+        requested=len(candidates),
+    )
+
+
+async def _queue_playlist_tracks(
+    candidates: list[tuple[object, str]],
+    user_id: str,
+    acquisition,
+    musicbrainz,
+    spotify=None,
+    spotify_playlist_id: str | None = None,
+) -> None:
+    """Resolve and queue a playlist batch without tying up its HTTP request.
+
+    MusicBrainz lookups deliberately use the background lane. A large playlist
+    must never outrank page loads or keep the API request open for minutes.
+    """
+    spotify_resolutions: dict[str, dict] = {}
+    if spotify is not None and spotify_playlist_id:
+        try:
+            spotify_resolutions = await spotify.resolve_playlist_tracks_for_download(
+                user_id,
+                spotify_playlist_id,
+                [track for track, _release_group_mbid in candidates],
+                priority=RequestPriority.BACKGROUND_SYNC,
+            )
+        except Exception:  # noqa: BLE001 - MusicBrainz fallback remains available
+            logger.exception("Spotify playlist fallback could not be loaded")
+
+    resolved: list[tuple[object, str, str, dict | None]] = []
+    seen_recordings: set[str] = set()
+    for track, release_group_mbid in candidates:
+        matches = await musicbrainz.search_recordings(
+            track.artist_name or "",
+            track.track_name or "",
+            priority=RequestPriority.BACKGROUND_SYNC,
+        )
+        matching = [
+            match
+            for match in matches
+            if any(
+                group.release_group_mbid == release_group_mbid
+                for group in match.release_groups
+            )
+        ]
+        resolved_release_group_mbid = release_group_mbid
+        if matching:
+            recording_mbid = max(matching, key=lambda match: match.score).recording_mbid
+        else:
+            # Imported playlists sometimes store a Plex/Jellyfin/Spotify album ID
+            # rather than a MusicBrainz release group. Fall back to the album name,
+            # but require a strong match so a same-name recording is not filed under
+            # an unrelated album.
+            album_name = (track.album_name or "").casefold().strip()
+            album_matches = [
+                (match, group)
+                for match in matches
+                for group in match.release_groups
+                if album_name
+                and SequenceMatcher(
+                    None,
+                    album_name,
+                    (group.release_group_title or "").casefold().strip(),
+                ).ratio()
+                >= 0.78
+            ]
+            if not album_matches:
+                spotify_resolution = spotify_resolutions.get(track.id)
+                if not spotify_resolution:
+                    continue
+                recording_mbid = spotify_resolution["recording_mbid"]
+                resolved_release_group_mbid = spotify_resolution["release_group_mbid"]
+                resolved.append(
+                    (
+                        track,
+                        resolved_release_group_mbid,
+                        recording_mbid,
+                        spotify_resolution,
+                    )
+                )
+                continue
+            match, group = max(
+                album_matches,
+                key=lambda item: item[0].score
+                + SequenceMatcher(
+                    None,
+                    album_name,
+                    (item[1].release_group_title or "").casefold().strip(),
+                ).ratio()
+                * 100,
+            )
+            recording_mbid = match.recording_mbid
+            resolved_release_group_mbid = group.release_group_mbid
+        if recording_mbid.casefold() in seen_recordings:
+            continue
+        seen_recordings.add(recording_mbid.casefold())
+        resolved.append((track, resolved_release_group_mbid, recording_mbid, None))
+
+    if not resolved:
+        logger.info("No playlist tracks could be matched for background queue")
+        return
+
+    queued = 0
+    for track, release_group_mbid, recording_mbid, spotify_resolution in resolved:
+        try:
+            task_id = await acquisition.request_track(
+                user_id=user_id,
+                recording_mbid=recording_mbid,
+                release_group_mbid=release_group_mbid,
+                artist_name=(spotify_resolution or {}).get("artist_name")
+                or track.artist_name
+                or "Unknown Artist",
+                track_title=(spotify_resolution or {}).get("track_title")
+                or track.track_name
+                or "Unknown Track",
+                album_title=(spotify_resolution or {}).get("album_title")
+                or track.album_name
+                or None,
+                duration_seconds=(spotify_resolution or {}).get("duration_seconds")
+                or track.duration,
+                artist_mbid=(spotify_resolution or {}).get("artist_mbid")
+                or track.artist_id,
+            )
+        except Exception:  # noqa: BLE001 - one bad track must not sink the batch
+            logger.exception("Playlist track request failed for %s", recording_mbid)
+            continue
+        if task_id == ALREADY_IN_LIBRARY:
+            continue
+        else:
+            queued += 1
+
+    logger.info("Queued %d playlist track requests", queued)

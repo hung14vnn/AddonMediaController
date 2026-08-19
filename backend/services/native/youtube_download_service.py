@@ -20,6 +20,14 @@ _AUDIO_SUFFIXES = {".flac", ".wav", ".m4a", ".mp3", ".aac", ".ogg", ".opus"}
 _METADATA_TIMEOUT_SECONDS = 30
 _PYTUBEFIX_CLIENT = "WEB"
 _POT_PENDING_RETRY_SECONDS = 2
+_YOUTUBE_USE_OAUTH = os.environ.get("YOUTUBE_USE_OAUTH", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+_YOUTUBE_OAUTH_TOKEN_FILE = os.environ.get(
+    "YOUTUBE_OAUTH_TOKEN_FILE", "/app/cache/pytubefix-youtube-oauth.json"
+)
 
 
 def _validate_url(value: str) -> str:
@@ -219,6 +227,12 @@ def _new_video(url: str, *, on_progress_callback=None):  # noqa: ANN001
     options = {"client": _PYTUBEFIX_CLIENT}
     if on_progress_callback is not None:
         options["on_progress_callback"] = on_progress_callback
+    if _YOUTUBE_USE_OAUTH:
+        options.update(
+            use_oauth=True,
+            allow_oauth_cache=True,
+            token_file=_YOUTUBE_OAUTH_TOKEN_FILE,
+        )
     return YouTube(url, **options)
 
 

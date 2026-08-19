@@ -158,6 +158,32 @@ class SpotiflacService:
             **retry_fields,
         )
 
+    async def retry_from_task(self, task) -> str:  # noqa: ANN001 - DownloadTask
+        """Continue a failed non-SpotiFLAC task through SpotiFLAC."""
+        if task.download_type == "track":
+            return await self.request_track(
+                user_id=task.user_id,
+                recording_mbid=task.recording_mbid or "",
+                artist_name=task.artist_name,
+                track_title=task.track_title or task.album_title,
+                album_title=task.album_title,
+                release_group_mbid=task.release_group_mbid,
+                artist_mbid=task.artist_mbid,
+                cover_url=task.cover_url,
+                origin="retry",
+                retry_count=task.retry_count + 1,
+            )
+        return await self.request_album(
+            user_id=task.user_id,
+            release_group_mbid=task.release_group_mbid,
+            artist_name=task.artist_name,
+            album_title=task.album_title,
+            artist_mbid=task.artist_mbid,
+            cover_url=task.cover_url,
+            origin="retry",
+            retry_count=task.retry_count + 1,
+        )
+
     async def retry_all_failed(
         self,
         user_id: str,

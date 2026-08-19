@@ -386,6 +386,29 @@ class DownloadOrchestrator:
             return self._usenet_enabled
         return False
 
+    def _next_source(self, source: str) -> str | None:
+        """The configured fallback after ``source`` (if any)."""
+        try:
+            index = self._source_priority.index(source)
+        except ValueError:
+            return None
+        return next(iter(self._source_priority[index + 1 :]), None)
+
+    def _sources_from(self, source: str) -> list[str]:
+        """Configured sources beginning at ``source`` (or the full order when blank)."""
+        try:
+            return self._source_priority[self._source_priority.index(source) :]
+        except ValueError:
+            return list(self._source_priority)
+
+    def _sources_after(self, source: str) -> list[str]:
+        """Configured fallbacks; after the last source, begin a new retry cycle."""
+        try:
+            index = self._source_priority.index(source)
+        except ValueError:
+            return list(self._source_priority)
+        return self._source_priority[index + 1 :] or list(self._source_priority)
+
     def _enabled_source_names(self) -> list[str]:
         """Display names of the sources actually searched - so failure messages name what
         was tried, never a source that's switched off."""
@@ -439,7 +462,7 @@ class DownloadOrchestrator:
         )
 
         remembered: list[list] = []
-        for source in self._source_priority:
+        for source in self._sources_from(task.source):
             if not self._source_enabled(source):
                 continue
             candidates = await self._search_and_score(task, source)
@@ -1565,7 +1588,7 @@ class DownloadOrchestrator:
 
         return await self._store.get_task(task.id)
 
-    async def _create_retry_task(self, task) -> str:  # noqa: ANN001 - DownloadTask
+    async def _create_retry_task(self, task, start_source: str = "") -> str:  # noqa: ANN001
         """Create a fresh queued task carrying ``retry_count + 1`` and dispatch it.
         The original is kept (terminal) for audit. Shared by manual retry and
         auto-retry."""
@@ -1590,6 +1613,7 @@ class DownloadOrchestrator:
             # everything else becomes 'retry' so quota counts ignore it.
             origin=task.origin if task.origin == "upgrade" else "retry",
             retry_count=task.retry_count + 1,
+            source=start_source,
         )
         await self._relink_request(task, new_task.id)
         self.dispatch(new_task.id)
@@ -1658,7 +1682,7 @@ class DownloadOrchestrator:
             return None
         return anchor + self._retry_backoff_seconds(task.retry_count)
 
-    async def retry_failed_tasks(self) -> None:
+    async def retry_failed_tasks(self, failover_to_spotiflac=None) -> None:  # noqa: ANN001
         """Periodic safety net: re-dispatch ``failed``/``partial`` downloads whose
         per-task exponential backoff has elapsed, up to ``auto_retry_max_attempts``.
         Mirrors the lidarr QueueCleaner pattern - a failed download sits until the
@@ -1700,6 +1724,26 @@ class DownloadOrchestrator:
                     task.release_group_mbid, task.user_id
                 )
             if active is not None and active.id != task.id:
+                continue
+
+            # Every source takes its turn. A successful handoff creates a new task
+            # owned by that source; only when every configured source is unavailable
+            # do we fall back to a fresh native retry below.
+            handed_off = False
+            for source in self._sources_after(task.source):
+                if source == "spotiflac":
+                    if (
+                        failover_to_spotiflac is not None
+                        and await failover_to_spotiflac(task)
+                    ):
+                        handed_off = True
+                        break
+                    continue
+                if self._source_enabled(source):
+                    await self._create_retry_task(task, start_source=source)
+                    handed_off = True
+                    break
+            if handed_off:
                 continue
 
             logger.info(

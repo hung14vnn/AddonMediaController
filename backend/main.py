@@ -353,7 +353,11 @@ async def lifespan(app: FastAPI):
         # a bad path is operator-fixable at /settings/library, never fatal
         logger.error("startup.config_invalid", extra={"error": str(exc)})
 
-    from core.dependencies import get_download_orchestrator, get_library_scanner
+    from core.dependencies import (
+        get_download_orchestrator,
+        get_library_scanner,
+        get_spotiflac_service,
+    )
     from core.tasks import (
         start_download_auto_retry_task,
         start_download_resume_task,
@@ -396,7 +400,7 @@ async def lifespan(app: FastAPI):
     # pass the provider (not an instance) so the watchdog always sweeps the current
     # orchestrator singleton, which is rebuilt when download-client settings are saved
     start_download_watchdog_task(get_download_orchestrator)
-    start_download_auto_retry_task(get_download_orchestrator)
+    start_download_auto_retry_task(get_download_orchestrator, get_spotiflac_service)
 
     from core.dependencies import get_download_store as _get_download_store
 

@@ -13,6 +13,7 @@ from api.v1.schemas.library import (
     LibraryGroupedResponse,
     TrackResolveRequest,
     TrackResolveResponse,
+    RemoveLibraryTracksRequest,
     NativeAlbumsResponse,
     NativeArtistsResponse,
     NativeTrackPage,
@@ -264,6 +265,23 @@ async def get_native_album_status(
     # (drives the honest In-Library badge, matched-only Play All, and the orphan
     # review section). Fail-open - a MB hiccup leaves the presence-only reading.
     return await album_service.annotate_album_coverage(mbid, status)
+
+
+@router.post("/tracks/batch-delete", response_model=StatusMessageResponse)
+async def remove_library_tracks(
+    _curator: CurrentCuratorDep,
+    body: RemoveLibraryTracksRequest = MsgSpecBody(RemoveLibraryTracksRequest),
+    library_service: LibraryService = Depends(get_library_service),
+):
+    """Remove library files using the same per-file cleanup as the single-delete route."""
+    file_ids = list(dict.fromkeys(file_id.strip() for file_id in body.file_ids if file_id.strip()))
+    if not file_ids:
+        raise ValidationError("Select at least one library track to delete.")
+    if len(file_ids) > 200:
+        raise ValidationError("You can delete at most 200 library tracks at once.")
+    for file_id in file_ids:
+        await library_service.remove_file(file_id)
+    return StatusMessageResponse(status="ok", message=f"Removed {len(file_ids)} file(s)")
 
 
 @router.delete("/tracks/{file_id}", response_model=StatusMessageResponse)

@@ -59,4 +59,15 @@ describe('PlaylistCard.svelte', () => {
 		const el = await subtitle.element();
 		expect(el.textContent).not.toContain(' - ');
 	});
+
+	it('hides playback controls for imported playlists', async () => {
+		renderCard({ ...basePlaylist, source_ref: 'spotify:abc' });
+
+		await expect
+			.element(page.getByRole('button', { name: /Play My Playlist/ }))
+			.not.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('button', { name: /Shuffle My Playlist/ }))
+			.not.toBeInTheDocument();
+	});
 });

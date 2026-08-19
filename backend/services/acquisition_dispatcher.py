@@ -51,13 +51,21 @@ class AcquisitionDispatcher:
         return self._get_free_music_service().is_ready()
 
     def _use_spotiflac(self) -> bool:
-        # Once explicitly enabled, SpotiFLAC owns the request.  Do not silently
-        # fall back to the native client merely because its mount is unavailable:
-        # the SpotiFLAC service can then return the actionable configuration error.
         return (
             self._get_spotiflac_service is not None
             and self._prefs.get_spotiflac_connection().enabled
         )
+
+    def _first_ready_source(self) -> str | None:
+        """Return the first configured acquisition source that can accept a request."""
+        for source in self._prefs.get_source_priority():
+            if source == "spotiflac" and self._use_spotiflac():
+                return source
+            if source == "soulseek" and self._prefs.is_soulseek_ready():
+                return source
+            if source == "usenet" and self._prefs.is_usenet_ready():
+                return source
+        return None
 
     async def request_album(
         self,
@@ -84,7 +92,7 @@ class AcquisitionDispatcher:
                 recording_mbid = await self._ownership.provider_track_id(recording_mbid)
             if artist_mbid is not None:
                 artist_mbid = await self._ownership.provider_artist_id(artist_mbid)
-        if self._use_spotiflac():
+        if self._first_ready_source() == "spotiflac":
             return await self._get_spotiflac_service().request_album(
                 user_id=user_id,
                 release_group_mbid=release_group_mbid,
@@ -140,7 +148,7 @@ class AcquisitionDispatcher:
                 )
             if artist_mbid is not None:
                 artist_mbid = await self._ownership.provider_artist_id(artist_mbid)
-        if self._use_spotiflac():
+        if self._first_ready_source() == "spotiflac":
             return await self._get_spotiflac_service().request_track(
                 user_id=user_id,
                 recording_mbid=recording_mbid,

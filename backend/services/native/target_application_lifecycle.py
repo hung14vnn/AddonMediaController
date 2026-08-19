@@ -207,6 +207,7 @@ async def start_target_operational_runtime(
         get_target_new_release_service,
         get_target_personal_mix_service,
         get_target_requests_page_service,
+        get_target_spotiflac_service,
         get_target_wanted_watcher_service,
         get_background_workload_gate,
         get_wanted_store,
@@ -242,7 +243,9 @@ async def start_target_operational_runtime(
 
     start_download_resume_task(get_target_download_orchestrator())
     start_download_watchdog_task(get_target_download_orchestrator)
-    start_download_auto_retry_task(get_target_download_orchestrator)
+    start_download_auto_retry_task(
+        get_target_download_orchestrator, get_target_spotiflac_service
+    )
 
     try:
         await get_target_drop_import_service().sweep_stale()

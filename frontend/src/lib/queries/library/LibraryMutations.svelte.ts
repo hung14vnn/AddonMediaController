@@ -128,3 +128,14 @@ export function removeLibraryTrack() {
 		}
 	}));
 }
+
+export function removeLibraryTracks() {
+	return createMutation(() => ({
+		mutationFn: ({ fileIds }: { fileIds: string[] }) =>
+			api.global.post<StatusMessageResponse>(API.library.removeTracks(), { file_ids: fileIds }),
+		onSuccess: async () => {
+			await invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.stats() });
+			await invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root });
+		}
+	}));
+}

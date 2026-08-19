@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
-	import { SvelteSet } from 'svelte/reactivity';
 	import {
 		deletePlaylist,
 		resolvePlaylistSources,
@@ -61,16 +60,19 @@
 
 	let isOwner = $derived(playlist?.is_owner ?? false);
 	let canDelete = $derived((playlist?.is_owner ?? false) || authStore.isAdmin);
+	let isLocalPlaylist = $derived(!playlist?.source_ref);
 
-	let missingAlbumCount = $derived.by(() => {
+	let missingTrackCount = $derived.by(() => {
 		if (!playlist) return 0;
-		const seen = new SvelteSet<string>();
+		let count = 0;
 		for (const t of playlist.tracks) {
 			if (t.album_id && (!t.available_sources || t.available_sources.length === 0)) {
-				seen.add(t.album_id);
+				// Count the tracks this action can request, rather than the albums
+				// they happen to belong to.
+				count += 1;
 			}
 		}
-		return seen.size;
+		return count;
 	});
 
 	let requesting = $state(false);
@@ -90,7 +92,7 @@
 
 	// Source-resolution cache is namespaced per user so two accounts on a shared
 	// browser never read each other's resolved sources (AMU-5).
-	const SOURCES_CACHE_PREFIX = 'droppedneedle_playlist_sources_';
+	const SOURCES_CACHE_PREFIX = 'droppedneedle_playlist_sources_v2_';
 	function sourcesCacheKey(playlistId: string): string {
 		return `${SOURCES_CACHE_PREFIX}${authStore.user?.id ?? 'anon'}_${playlistId}`;
 	}
@@ -177,7 +179,7 @@
 	});
 
 	function playAll() {
-		if (!playlist || playlist.tracks.length === 0) return;
+		if (!playlist || !isLocalPlaylist || playlist.tracks.length === 0) return;
 		const items = playlist.tracks
 			.map(playlistTrackToQueueItem)
 			.filter((item): item is NonNullable<typeof item> => item !== null);
@@ -189,7 +191,7 @@
 	}
 
 	function shuffleAll() {
-		if (!playlist || playlist.tracks.length < 2) return;
+		if (!playlist || !isLocalPlaylist || playlist.tracks.length < 2) return;
 		const items = playlist.tracks
 			.map(playlistTrackToQueueItem)
 			.filter((item): item is NonNullable<typeof item> => item !== null);
@@ -201,7 +203,7 @@
 	}
 
 	function playFromTrack(index: number) {
-		if (!playlist || playlist.tracks.length === 0) return;
+		if (!playlist || !isLocalPlaylist || playlist.tracks.length === 0) return;
 		const items = playlist.tracks
 			.map(playlistTrackToQueueItem)
 			.filter((item): item is NonNullable<typeof item> => item !== null);
@@ -365,6 +367,7 @@
 						canEdit={isOwner}
 						{canDelete}
 						sharePending={shareMutation.isPending}
+						playable={isLocalPlaylist}
 						onplayall={playAll}
 						onshuffleall={shuffleAll}
 						ondeleteclick={() => deleteModal?.showModal()}
@@ -374,14 +377,14 @@
 				</div>
 			</div>
 
-			{#if isOwner && missingAlbumCount > 0}
+			{#if isOwner && missingTrackCount > 0}
 				<div
 					class="flex items-center gap-3 rounded-xl border border-base-300/40 bg-base-200/40 px-4 py-3"
 				>
 					<Download class="h-4 w-4 shrink-0 text-base-content/50" />
 					<p class="flex-1 text-sm text-base-content/70">
-						{missingAlbumCount}
-						{missingAlbumCount === 1 ? 'album' : 'albums'} not in your library
+						{missingTrackCount}
+						{missingTrackCount === 1 ? 'track' : 'tracks'} not in your library
 					</p>
 					<button
 						class="btn btn-accent btn-sm"
@@ -393,7 +396,7 @@
 						{:else}
 							<Download class="h-3.5 w-3.5" />
 						{/if}
-						Request {missingAlbumCount === 1 ? 'album' : missingAlbumCount + ' albums'}
+						Request {missingTrackCount === 1 ? 'track' : missingTrackCount + ' tracks'}
 					</button>
 				</div>
 			{/if}
@@ -402,6 +405,7 @@
 				bind:this={trackList}
 				{playlist}
 				readonly={!isOwner}
+				playable={isLocalPlaylist}
 				ontrackchange={() => {}}
 				onsourcechange={handleSourceChange}
 				onplaytrack={playFromTrack}

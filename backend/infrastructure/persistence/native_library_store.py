@@ -3152,6 +3152,63 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def find_unique_target_track_by_metadata(
+        self,
+        *,
+        title: str,
+        artist_name: str,
+        album_title: str | None = None,
+        track_number: int | None = None,
+        disc_number: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Find one indexed native-catalog track by normalized metadata."""
+        if not title.strip() or not artist_name.strip():
+            return None
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any] | None:
+            clauses = [
+                "t.availability = 'indexed'",
+                "t.title_folded = ?",
+                "t.artist_name_folded = ?",
+            ]
+            parameters: list[Any] = [_fold(title), _fold(artist_name)]
+            if album_title and album_title.strip():
+                clauses.append("t.album_title_folded = ?")
+                parameters.append(_fold(album_title))
+            if track_number is not None:
+                clauses.append("t.track_number = ?")
+                parameters.append(track_number)
+            if disc_number is not None:
+                clauses.append("t.disc_number = ?")
+                parameters.append(disc_number)
+            rows = connection.execute(
+                "SELECT t.id, t.title FROM local_tracks t WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY t.id LIMIT 2",
+                parameters,
+            ).fetchall()
+            return _row(rows[0]) if len(rows) == 1 else None
+
+        return await self._read(operation)
+
+    async def find_target_track_by_title_artist(
+        self, *, title: str, artist_name: str
+    ) -> dict[str, Any] | None:
+        """Return an indexed native track by title and artist, regardless of edition."""
+        if not title.strip() or not artist_name.strip():
+            return None
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any] | None:
+            row = connection.execute(
+                "SELECT id, title FROM local_tracks "
+                "WHERE availability = 'indexed' AND title_folded = ? "
+                "AND artist_name_folded = ? ORDER BY imported_at DESC, id LIMIT 1",
+                (_fold(title), _fold(artist_name)),
+            ).fetchone()
+            return _row(row)
+
+        return await self._read(operation)
+
     async def get_target_artwork_context(
         self, kind: str, identifier: str
     ) -> dict[str, Any] | None:

@@ -77,15 +77,19 @@
 	}
 
 	export function open(items: QueueItem[]) {
-		pendingTracks = items;
-		trackCount = items.length;
+		// Local playlists are playback collections for downloaded files only.
+		pendingTracks = items.filter((item) => item.sourceType === 'local');
+		trackCount = pendingTracks.length;
 		addedSet.clear();
 		addingSet.clear();
 		membership = {};
 		newName = '';
 		search = '';
 		fetchError = null;
-		statusMessage = null;
+		statusMessage =
+			items.length > 0 && pendingTracks.length === 0
+				? { text: 'Only downloaded local tracks can be added.', type: 'error' }
+				: null;
 		loading = true;
 		dialogEl?.showModal();
 		loadPlaylists();
@@ -97,9 +101,10 @@
 
 	async function loadPlaylists() {
 		try {
-			// Only the user's own playlists are valid add targets (D4).
+			// Imported playlists are reference/import records. Only user-created
+			// local playlists are valid playback/add targets.
 			playlists = (await fetchPlaylists()).filter(
-				(p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.is_owner
+				(p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.is_owner && !p.source_ref
 			);
 			if (pendingTracks.length > 0) {
 				const trackIdentifiers = pendingTracks.map((t) => ({
@@ -218,7 +223,9 @@
 					<Disc3 class="h-6 w-6 {reducedMotion ? '' : 'vinyl-spin'}" />
 				</div>
 				<div class="min-w-0 flex-1">
-					<h3 class="text-lg font-extrabold leading-tight tracking-tight">Add to the crate</h3>
+					<h3 class="text-lg font-extrabold leading-tight tracking-tight">
+						Add to a local playlist
+					</h3>
 					<p class="text-xs text-base-content/55">{trackLabel} ready to file</p>
 				</div>
 				<form method="dialog">
@@ -283,7 +290,7 @@
 							<Disc3 class="h-7 w-7 text-base-content/45" />
 						</div>
 						<p class="text-sm font-semibold text-base-content/70">
-							You haven't created any playlists yet.
+							You haven't created any local playlists yet.
 						</p>
 						<p class="max-w-[16rem] text-xs text-base-content/45">
 							Name one above and press your first record.

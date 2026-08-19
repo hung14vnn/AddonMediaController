@@ -11,6 +11,8 @@ services:
       #                        If using Docker --user, PUID/PGID are ignored (user mapping is external).
       - PORT=8688            # Internal port (must match the right side of "ports" below)
       - TZ=Etc/UTC           # Timezone - e.g. America/New_York, Europe/London
+      - YOUTUBE_USE_OAUTH=${YOUTUBE_USE_OAUTH:-false}
+      - YOUTUBE_OAUTH_TOKEN_FILE=/app/cache/pytubefix-youtube-oauth.json
       # Override in .env when using a private or additional registry.
       - SPOTIFLAC_REGISTRIES=${SPOTIFLAC_REGISTRIES:-https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json}
     ports:

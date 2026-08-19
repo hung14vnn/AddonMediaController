@@ -500,6 +500,37 @@ def test_remove_track_curator_ok():
     service.remove_file.assert_awaited_once_with("file-1")
 
 
+def test_remove_tracks_batch_uses_single_file_removal_for_each_selected_track():
+    from api.v1.schemas.common import StatusMessageResponse
+
+    service = AsyncMock()
+    service.remove_file.return_value = StatusMessageResponse(
+        status="ok", message="File removed"
+    )
+    client = build_test_client(_remove_app(service))
+
+    response = client.post(
+        "/library/tracks/batch-delete", json={"file_ids": ["file-1", "file-2", "file-1"]}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "message": "Removed 2 file(s)"}
+    assert service.remove_file.await_args_list == [
+        (("file-1",), {}),
+        (("file-2",), {}),
+    ]
+
+
+def test_remove_tracks_batch_requires_curator():
+    service = AsyncMock()
+    client = build_test_client(_remove_app(service, curator=False))
+
+    response = client.post("/library/tracks/batch-delete", json={"file_ids": ["file-1"]})
+
+    assert response.status_code in (401, 403)
+    service.remove_file.assert_not_called()
+
+
 def test_remove_track_missing_404():
     service = AsyncMock()
     service.remove_file.side_effect = ResourceNotFoundError("Library file not found")

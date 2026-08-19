@@ -26,8 +26,13 @@
 	const createMutation = createCreatePlaylistMutation();
 
 	let items = $derived((query.data ?? []) as PlaylistListItem[]);
-	let myPlaylists = $derived(
-		items.filter((p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.is_owner)
+	let localPlaylists = $derived(
+		items.filter((p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.is_owner && !p.source_ref)
+	);
+	let importedPlaylists = $derived(
+		items.filter(
+			(p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.is_owner && !!p.source_ref
+		)
 	);
 	let sharedPlaylists = $derived(
 		items.filter((p): p is PlaylistSummary => !isRedactedPlaylist(p) && !p.is_owner)
@@ -84,7 +89,7 @@
 	<title>Playlists</title>
 </svelte:head>
 
-<div class="space-y-6 px-4 sm:px-6 lg:px-8">
+<div class="space-y-6 px-4 pb-12 sm:px-6 sm:pb-16 lg:px-8">
 	<div class="flex items-center justify-between gap-3">
 		<h1 class="text-2xl font-bold sm:text-3xl">Playlists</h1>
 		<div class="flex items-center gap-2">
@@ -104,7 +109,7 @@
 				}}
 			>
 				<Plus class="h-4 w-4" />
-				New Playlist
+				New Local Playlist
 			</button>
 		</div>
 	</div>
@@ -168,13 +173,31 @@
 			</button>
 		</div>
 	{:else}
-		{#if myPlaylists.length > 0}
+		{#if localPlaylists.length > 0}
 			<section class="space-y-3">
 				<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/60">
-					My Playlists
+					Local Playlists
 				</h2>
 				<div class={gridClass}>
-					{#each myPlaylists as playlist (playlist.id)}
+					{#each localPlaylists as playlist (playlist.id)}
+						<PlaylistCard {playlist} ondelete={handleCardDelete} />
+					{/each}
+				</div>
+			</section>
+		{/if}
+
+		{#if importedPlaylists.length > 0}
+			<section class="space-y-3">
+				<div>
+					<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/60">
+						Imported Playlists
+					</h2>
+					<p class="mt-1 text-xs text-base-content/45">
+						Used to find and import music; playback is available from local playlists.
+					</p>
+				</div>
+				<div class={gridClass}>
+					{#each importedPlaylists as playlist (playlist.id)}
 						<PlaylistCard {playlist} ondelete={handleCardDelete} />
 					{/each}
 				</div>

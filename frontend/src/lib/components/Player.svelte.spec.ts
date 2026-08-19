@@ -34,6 +34,14 @@ let mockQueryState: {
 	data: LyricsData | null | undefined;
 };
 
+const { mockOpenPlaylistModal } = vi.hoisted(() => ({
+	mockOpenPlaylistModal: vi.fn()
+}));
+
+vi.mock('$lib/components/AddToPlaylistModal.svelte', () => ({
+	openGlobalPlaylistModal: (...args: unknown[]) => mockOpenPlaylistModal(...args)
+}));
+
 vi.mock('$lib/queries/lyrics/LyricsQuery.svelte', () => ({
 	getLyricsQuery: vi.fn(() => mockQueryState)
 }));
@@ -58,6 +66,7 @@ function makeTrack(sourceType: 'navidrome' | 'jellyfin' | 'youtube' | 'local' | 
 describe('Player.svelte lyrics button', () => {
 	beforeEach(() => {
 		playerStore.stop();
+		mockOpenPlaylistModal.mockReset();
 		mockQueryState = {
 			isSuccess: false,
 			isError: false,
@@ -65,6 +74,15 @@ describe('Player.svelte lyrics button', () => {
 			isFetching: false,
 			data: undefined
 		};
+	});
+
+	it('opens add-to-playlist for the current local track', async () => {
+		const track = makeTrack('local');
+		playerStore.playQueue([track]);
+		render(Player);
+
+		await page.getByLabelText('Add current track to playlist').click();
+		expect(mockOpenPlaylistModal).toHaveBeenCalledWith([track]);
 	});
 
 	it('shows lyrics button when query succeeds with lyrics data', async () => {

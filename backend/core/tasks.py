@@ -942,7 +942,9 @@ _DOWNLOAD_AUTO_RETRY_INITIAL_DELAY = 180
 
 
 async def auto_retry_failed_downloads_periodically(
-    get_orchestrator, interval: int = _DOWNLOAD_AUTO_RETRY_INTERVAL
+    get_orchestrator,
+    get_spotiflac_service=None,
+    interval: int = _DOWNLOAD_AUTO_RETRY_INTERVAL,
 ) -> None:
     """Re-dispatch failed/partial downloads whose backoff has elapsed, giving the
     Soulseek network time to surface new sources. Mirrors the lidarr QueueCleaner
@@ -951,7 +953,21 @@ async def auto_retry_failed_downloads_periodically(
     await asyncio.sleep(_DOWNLOAD_AUTO_RETRY_INITIAL_DELAY)
     while True:
         try:
-            await get_orchestrator().retry_failed_tasks()
+            async def failover_to_spotiflac(task) -> bool:  # noqa: ANN001 - DownloadTask
+                """Start SpotiFLAC only as the configured fallback for another source."""
+                if get_spotiflac_service is None:
+                    return False
+                service = get_spotiflac_service()
+                if not service.is_ready():
+                    return False
+                await service.retry_from_task(task)
+                return True
+
+            await get_orchestrator().retry_failed_tasks(
+                failover_to_spotiflac=(
+                    failover_to_spotiflac if get_spotiflac_service is not None else None
+                )
+            )
         except asyncio.CancelledError:
             break
         except Exception as e:  # noqa: BLE001
@@ -959,9 +975,11 @@ async def auto_retry_failed_downloads_periodically(
         await asyncio.sleep(interval)
 
 
-def start_download_auto_retry_task(get_orchestrator) -> asyncio.Task:
+def start_download_auto_retry_task(get_orchestrator, get_spotiflac_service=None) -> asyncio.Task:
     task = asyncio.create_task(
-        auto_retry_failed_downloads_periodically(get_orchestrator)
+        auto_retry_failed_downloads_periodically(
+            get_orchestrator, get_spotiflac_service=get_spotiflac_service
+        )
     )
     TaskRegistry.get_instance().register("download-auto-retry", task)
     return task

@@ -157,6 +157,58 @@ class TestResolveTrackSourcesDiscovery:
     """Verify resolve_track_sources correctly discovers multi-source tracks."""
 
     @pytest.mark.asyncio
+    async def test_resolves_no_musicbrainz_track_from_unique_local_metadata(self, tmp_path):
+        service, repo = _make_service(tmp_path)
+        track = _make_track(album_id=None, track_number=None, source_type="youtube")
+        repo.get_tracks.return_value = [track]
+        local = _make_local_service(found=False)
+        local.match_track_by_metadata.return_value = ("local-file-1", track.track_name)
+
+        result = await service.resolve_track_sources("p-1", local_service=local)
+
+        assert result == {"t-1": ["local", "youtube"]}
+        local.match_track_by_metadata.assert_awaited_once_with(
+            title="Wall Street Shuffle",
+            artist_name="10cc",
+            album_title="Sheet Music",
+            track_number=None,
+            disc_number=None,
+        )
+        repo.batch_link_library_files.assert_called_once_with("p-1", {"t-1": "local-file-1"})
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_native_catalog_when_legacy_library_has_no_match(self, tmp_path):
+        service, repo = _make_service(tmp_path)
+        track = _make_track(album_id=None, track_number=None, source_type="youtube")
+        repo.get_tracks.return_value = [track]
+        legacy = AsyncMock()
+        legacy.match_track_by_metadata.return_value = None
+        native = AsyncMock()
+        native.match_track_by_metadata.return_value = ("native-file-1", track.track_name)
+
+        result = await service.resolve_track_sources(
+            "p-1", local_service=legacy, additional_local_service=native
+        )
+
+        assert result == {"t-1": ["local", "youtube"]}
+        native.match_track_by_metadata.assert_awaited_once()
+        repo.batch_link_library_files.assert_called_once_with("p-1", {"t-1": "native-file-1"})
+
+    @pytest.mark.asyncio
+    async def test_promotes_resolved_local_match_when_track_has_no_active_source(self, tmp_path):
+        service, repo = _make_service(tmp_path)
+        track = _make_track(album_id=None, track_number=None, source_type="")
+        repo.get_tracks.return_value = [track]
+        local = AsyncMock()
+        local.match_track_by_metadata.return_value = ("local-file-1", track.track_name)
+
+        await service.resolve_track_sources("p-1", local_service=local)
+
+        args = repo.update_track_source.call_args.args
+        assert args[:5] == ("p-1", "t-1", "local", ["local"], "local-file-1")
+        assert args[-1] == "local-file-1"
+
+    @pytest.mark.asyncio
     async def test_discovers_local_and_navidrome_sources(self, tmp_path):
         service, repo = _make_service(tmp_path)
         track = _make_track(available_sources=["navidrome"])

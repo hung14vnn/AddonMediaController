@@ -340,6 +340,27 @@ async def test_match_album_by_mbid_not_found_when_no_tracks(service):
 
 
 @pytest.mark.asyncio
+async def test_match_track_by_metadata_uses_title_and_artist_only(service):
+    svc, library_repo, _music_dir, _cache = service
+    library_repo.find_track_by_title_artist = AsyncMock(
+        return_value={"id": "local-1", "track_title": "Song"}
+    )
+
+    match = await svc.match_track_by_metadata(
+        title="Song",
+        artist_name="Artist",
+        album_title="Deluxe Edition",
+        track_number=3,
+        disc_number=1,
+    )
+
+    assert match == ("local-1", "Song")
+    library_repo.find_track_by_title_artist.assert_awaited_once_with(
+        title="Song", artist_name="Artist"
+    )
+
+
+@pytest.mark.asyncio
 async def test_get_album_tracks_by_id_uses_native_tracks(service):
     svc, library_repo, music_dir, cache = service
     library_repo.get_tracks = AsyncMock(return_value=[_native_track(id="t9")])

@@ -11,7 +11,7 @@
 	import PlaylistMosaic from '$lib/components/PlaylistMosaic.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
-	import { Play, Shuffle, Pencil, Check, X, Tv, Sparkles, Globe, Lock } from 'lucide-svelte';
+	import { Play, Shuffle, Pencil, Check, X, Tv, Sparkles, Globe, Lock, Plus } from 'lucide-svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
 	import { getSourceColor, getSourceLabel } from '$lib/utils/sources';
@@ -21,6 +21,7 @@
 		canEdit?: boolean;
 		canDelete?: boolean;
 		sharePending?: boolean;
+		playable?: boolean;
 		onplayall: () => void;
 		onshuffleall: () => void;
 		ondeleteclick: () => void;
@@ -33,6 +34,7 @@
 		canEdit = false,
 		canDelete = false,
 		sharePending = false,
+		playable = true,
 		onplayall,
 		onshuffleall,
 		ondeleteclick,
@@ -335,33 +337,43 @@
 		</div>
 
 		<div class="flex items-center gap-3 pt-4">
-			<button
-				type="button"
-				class="btn btn-accent"
-				onclick={onplayall}
-				disabled={playlist.track_count === 0}
-			>
-				<Play class="h-4 w-4" />
-				Play All
-			</button>
-			<button
-				type="button"
-				class="btn btn-ghost"
-				onclick={onshuffleall}
-				disabled={playlist.track_count < 2}
-			>
-				<Shuffle class="h-4 w-4" />
-				Shuffle
-			</button>
-			<button
-				type="button"
-				class="btn btn-ghost"
-				onclick={() => (discoverModalOpen = true)}
-				disabled={playlist.track_count === 0}
-			>
-				<Sparkles class="h-4 w-4" />
-				Discover
-			</button>
+			{#if playable}
+				<button
+					type="button"
+					class="btn btn-accent"
+					onclick={onplayall}
+					disabled={playlist.track_count === 0}
+				>
+					<Play class="h-4 w-4" />
+					Play All
+				</button>
+				<button
+					type="button"
+					class="btn btn-ghost"
+					onclick={onshuffleall}
+					disabled={playlist.track_count < 2}
+				>
+					<Shuffle class="h-4 w-4" />
+					Shuffle
+				</button>
+				{#if canEdit}
+					<a class="btn btn-ghost" href="/library/tracks?playlist={playlist.id}">
+						<Plus class="h-4 w-4" />
+						Add local tracks
+					</a>
+				{/if}
+			{/if}
+			{#if playable}
+				<button
+					type="button"
+					class="btn btn-ghost"
+					onclick={() => (discoverModalOpen = true)}
+					disabled={playlist.track_count === 0}
+				>
+					<Sparkles class="h-4 w-4" />
+					Discover
+				</button>
+			{/if}
 
 			{#if canEdit}
 				<label

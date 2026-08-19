@@ -336,6 +336,24 @@ class LocalFilesService:
             primary_format=primary_format,
         )
 
+    async def match_track_by_metadata(
+        self,
+        *,
+        title: str,
+        artist_name: str,
+        album_title: str | None = None,
+        track_number: int | None = None,
+        disc_number: int | None = None,
+    ) -> tuple[str, str] | None:
+        """Return a local file by title and artist, ignoring album edition metadata."""
+        finder = getattr(self._library_repo, "find_track_by_title_artist", None)
+        if finder is None:
+            return None
+        match = await finder(title=title, artist_name=artist_name)
+        if not match:
+            return None
+        return str(match["id"]), str(match.get("track_title") or match.get("title") or title)
+
     async def get_download_track(self, file_id: str) -> tuple[Path, str, str]:
         """Resolve a track file for download. Returns (path, filename, media_type)."""
         library_path = await self.get_track_file_path(file_id)

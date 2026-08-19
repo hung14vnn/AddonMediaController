@@ -18,6 +18,7 @@ const mockUploadPlaylistCover = vi.fn();
 const mockDeletePlaylistCover = vi.fn();
 const mockCheckTrackMembership = vi.fn();
 const mockResolvePlaylistSources = vi.fn();
+const mockRequestMissingTracks = vi.fn();
 
 vi.mock('$lib/api/playlists', () => ({
 	queueItemToTrackData: (item: unknown) => item,
@@ -36,7 +37,7 @@ vi.mock('$lib/api/playlists', () => ({
 	deletePlaylistCover: (...args: unknown[]) => mockDeletePlaylistCover(...args),
 	checkTrackMembership: (...args: unknown[]) => mockCheckTrackMembership(...args),
 	resolvePlaylistSources: (...args: unknown[]) => mockResolvePlaylistSources(...args),
-	requestMissingTracks: vi.fn()
+	requestMissingTracks: (...args: unknown[]) => mockRequestMissingTracks(...args)
 }));
 
 // The detail page consumes the user-scoped TanStack detail query + share mutation;
@@ -181,6 +182,8 @@ describe('Playlist detail page', () => {
 		mockDeletePlaylistCover.mockReset();
 		mockResolvePlaylistSources.mockReset();
 		mockResolvePlaylistSources.mockResolvedValue({});
+		mockRequestMissingTracks.mockReset();
+		mockRequestMissingTracks.mockResolvedValue({ message: '1 track queued' });
 		mockToastShow.mockReset();
 		mockPlayQueue.mockReset();
 		mockAddToQueue.mockReset();
@@ -253,6 +256,18 @@ describe('Playlist detail page', () => {
 		expect(items).toHaveLength(2);
 		expect(startIdx).toBe(0);
 		expect(shuffle).toBe(false);
+	});
+
+	it('does not expose playback controls for an imported playlist', async () => {
+		detailQuery.data = makePlaylist({ source_ref: 'spotify:37i9dQZF1DX' });
+		renderDetail('pl-1');
+
+		await expect
+			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
+			.toBeVisible();
+		await expect.element(page.getByRole('button', { name: /Play All/ })).not.toBeInTheDocument();
+		await expect.element(page.getByRole('button', { name: /Shuffle/ })).not.toBeInTheDocument();
+		expect(mockPlayQueue).not.toHaveBeenCalled();
 	});
 
 	it('Shuffle calls playQueue with shuffle=true', async () => {
@@ -354,6 +369,23 @@ describe('Playlist detail page', () => {
 		await vi.waitFor(() => {
 			expect(mockResolvePlaylistSources).toHaveBeenCalledWith('pl-1');
 		});
+	});
+
+	it('requests missing playlist tracks, not albums', async () => {
+		detailQuery.data = makePlaylist({
+			tracks: [
+				makeTrack({ id: 'missing-1', available_sources: [] }),
+				makeTrack({ id: 'missing-2', album_id: 'alb-2', available_sources: [] })
+			]
+		});
+		renderDetail('pl-1');
+
+		const requestButton = page.getByRole('button', { name: 'Request 2 tracks' });
+		await expect.element(requestButton).toBeVisible();
+		await expect.element(page.getByText('2 tracks not in your library')).toBeVisible();
+		await requestButton.click();
+
+		expect(mockRequestMissingTracks).toHaveBeenCalledWith('pl-1');
 	});
 
 	it('shows play button on track hover with correct aria label', async () => {

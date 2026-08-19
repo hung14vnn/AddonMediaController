@@ -10,6 +10,7 @@
 	import QueueDrawer from '$lib/components/QueueDrawer.svelte';
 	import EqPanel from '$lib/components/EqPanel.svelte';
 	import LyricsPanel from '$lib/components/LyricsPanel.svelte';
+	import { openGlobalPlaylistModal } from '$lib/components/AddToPlaylistModal.svelte';
 	import AudioQualityBadge from '$lib/components/AudioQualityBadge.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
@@ -32,6 +33,7 @@
 		Check,
 		CircleX,
 		ListMusic,
+		ListPlus,
 		SlidersHorizontal,
 		Music2
 	} from 'lucide-svelte';
@@ -86,6 +88,12 @@
 		if (trackSourceId) {
 			window.open(`https://www.youtube.com/watch?v=${trackSourceId}`, '_blank');
 		}
+	}
+
+	function addCurrentTrackToPlaylist(): void {
+		const item = playerStore.currentQueueItem;
+		if (!item || item.sourceType !== 'local') return;
+		openGlobalPlaylistModal([item]);
 	}
 
 	const nowPlayingCoverUrl = $derived.by(() => {
@@ -201,6 +209,19 @@
 			<div class="flex shrink-0 flex-col items-center justify-center gap-1 sm:flex-1">
 				<div class="flex items-center gap-1 sm:gap-3">
 					{#if playerStore.hasQueue}
+						<button
+							class="btn btn-ghost btn-sm btn-circle hidden sm:inline-flex"
+							class:opacity-30={playerStore.currentQueueItem?.sourceType !== 'local'}
+							class:cursor-not-allowed={playerStore.currentQueueItem?.sourceType !== 'local'}
+							onclick={addCurrentTrackToPlaylist}
+							disabled={playerStore.currentQueueItem?.sourceType !== 'local'}
+							aria-label="Add current track to playlist"
+							title={playerStore.currentQueueItem?.sourceType === 'local'
+								? 'Add to playlist'
+								: 'Only downloaded local tracks can be added'}
+						>
+							<ListPlus class="h-4 w-4" />
+						</button>
 						<button
 							class="btn btn-ghost btn-sm btn-circle hidden sm:inline-flex"
 							class:text-accent={playerStore.shuffleEnabled}

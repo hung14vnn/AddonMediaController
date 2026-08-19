@@ -112,7 +112,7 @@ describe('Playlists list page', () => {
 		render(PlaylistsPage);
 
 		await expect.element(page.getByText('No playlists yet')).toBeVisible();
-		const newBtn = page.getByRole('button', { name: /New Playlist/ }).first();
+		const newBtn = page.getByRole('button', { name: /New Local Playlist/ }).first();
 		await newBtn.click();
 
 		await expect.element(page.getByPlaceholder('Playlist name...')).toBeVisible();
@@ -139,9 +139,22 @@ describe('Playlists list page', () => {
 		];
 		render(PlaylistsPage);
 
-		await expect.element(page.getByRole('heading', { name: 'My Playlists' })).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: 'Local Playlists' })).toBeVisible();
 		await expect.element(page.getByRole('heading', { name: 'Shared with you' })).toBeVisible();
 		await expect.element(page.getByText(/Shared by Ann Smith/)).toBeVisible();
+	});
+
+	it('separates imported playlists from local playback playlists', async () => {
+		listQuery.data = [
+			makePlaylist({ id: 'local', name: 'Local Mix', source_ref: null }),
+			makePlaylist({ id: 'spotify', name: 'Spotify Mix', source_ref: 'spotify:abc' })
+		];
+		render(PlaylistsPage);
+
+		await expect.element(page.getByRole('heading', { name: 'Local Playlists' })).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: 'Imported Playlists' })).toBeVisible();
+		await expect.element(page.getByText('Local Mix')).toBeVisible();
+		await expect.element(page.getByText('Spotify Mix')).toBeVisible();
 	});
 
 	it('renders an admin redacted private card', async () => {

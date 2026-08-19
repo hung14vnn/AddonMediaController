@@ -1117,6 +1117,68 @@ class LibraryDB(PersistenceBase):
 
         return await self._read(operation)
 
+    async def find_unique_track_by_metadata(
+        self,
+        *,
+        title: str,
+        artist_name: str,
+        album_title: str | None = None,
+        track_number: int | None = None,
+        disc_number: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Find one active file by exact, normalized metadata.
+
+        Playlist imports can lack MusicBrainz IDs. This deliberately returns no
+        result when the metadata describes multiple files, avoiding an incorrect
+        local source link.
+        """
+        if not title.strip() or not artist_name.strip():
+            return None
+        filters = [
+            "deleted_at IS NULL",
+            "track_title_folded = fold(?)",
+            "artist_name_folded = fold(?)",
+        ]
+        params: list[object] = [title, artist_name]
+        if album_title and album_title.strip():
+            filters.append("album_title_folded = fold(?)")
+            params.append(album_title)
+        if track_number is not None:
+            filters.append("track_number = ?")
+            params.append(track_number)
+        if disc_number is not None:
+            filters.append("disc_number = ?")
+            params.append(disc_number)
+        where = " AND ".join(filters)
+
+        def operation(conn: sqlite3.Connection) -> dict[str, Any] | None:
+            rows = conn.execute(
+                f"SELECT id, track_title FROM library_files WHERE {where} LIMIT 2",
+                params,
+            ).fetchall()
+            return dict(rows[0]) if len(rows) == 1 else None
+
+        return await self._read(operation)
+
+    async def find_track_by_title_artist(
+        self, *, title: str, artist_name: str
+    ) -> dict[str, Any] | None:
+        """Return an active local file by title and artist, regardless of edition."""
+        if not title.strip() or not artist_name.strip():
+            return None
+
+        def operation(conn: sqlite3.Connection) -> dict[str, Any] | None:
+            row = conn.execute(
+                "SELECT id, track_title FROM library_files "
+                "WHERE deleted_at IS NULL AND track_title_folded = fold(?) "
+                "AND artist_name_folded = fold(?) "
+                "ORDER BY imported_at DESC, id LIMIT 1",
+                (title, artist_name),
+            ).fetchone()
+            return dict(row) if row else None
+
+        return await self._read(operation)
+
     async def get_crate_tracks(
         self, *, order: str = "random", limit: int = 8, decade: int | None = None
     ) -> list[dict[str, Any]]:

@@ -253,6 +253,7 @@ export const API = {
 		updateTrackTags: (fileId: string) => `/api/v1/library/tracks/${fileId}`,
 		trackTags: (fileId: string) => `/api/v1/library/tracks/${fileId}/tags`,
 		removeTrack: (fileId: string) => `/api/v1/library/tracks/${fileId}`,
+		removeTracks: () => '/api/v1/library/tracks/batch-delete',
 		scanCancel: () => '/api/v1/library/scan/cancel',
 		scanStream: () => '/api/v1/library/scan/stream',
 		activity: () => '/api/v1/library/activity',
@@ -377,6 +378,8 @@ export const API = {
 	search: {
 		artists: (query: string) => `/api/v1/search/artists?q=${encodeURIComponent(query)}`,
 		albums: (query: string) => `/api/v1/search/albums?q=${encodeURIComponent(query)}`,
+		tracks: (query: string, limit = 10) =>
+			`/api/v1/search?q=${encodeURIComponent(query.trim())}&buckets=artists,albums&limit_artists=0&limit_albums=0&limit_per_bucket=${limit}`,
 		suggest: (query: string, limit = 5) =>
 			`/api/v1/search/suggest?q=${encodeURIComponent(query.trim())}&limit=${limit}`
 	},
