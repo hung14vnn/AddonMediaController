@@ -36,7 +36,6 @@
 	import ServiceHealthIndicator from '$lib/components/ServiceHealthIndicator.svelte';
 	import VersionOverlays from '$lib/components/VersionOverlays.svelte';
 	import SearchSuggestions from '$lib/components/SearchSuggestions.svelte';
-	import Footer from '$lib/components/Footer.svelte';
 	import type { SuggestResult } from '$lib/types';
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { cancelPendingImages } from '$lib/utils/lazyImage';
@@ -340,8 +339,7 @@
 								aria-label="Addon Music home"
 							>
 								<span
-									><span class="text-primary">Addon</span><span class="text-base-content"
-										>ify</span
+									><span class="text-primary">Addon</span><span class="text-base-content">ify</span
 									></span
 								>
 							</a>
@@ -379,7 +377,6 @@
 						class:droppedneedle-player-visible={playerStore.isPlayerVisible}
 					>
 						{@render children()}
-						<Footer />
 					</div>
 				</div>
 

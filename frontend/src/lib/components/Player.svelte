@@ -52,8 +52,7 @@
 	const supportsLyrics = $derived(lyricsQuery.isSuccess && lyricsQuery.data !== null);
 
 	$effect(() => {
-		void playerStore.nowPlaying;
-		lyricsPanelOpen = false;
+		if (!playerStore.nowPlaying) lyricsPanelOpen = false;
 	});
 
 	function toggleLyrics() {
@@ -120,90 +119,94 @@
 			class="droppedneedle-player-inner flex items-center gap-2 px-3 pr-9 sm:gap-4 sm:px-4 sm:pr-10 max-w-screen-2xl mx-auto"
 		>
 			<div class="flex min-w-0 flex-1 items-center gap-2 sm:gap-3 lg:w-1/4 lg:flex-none">
-				{#if nowPlayingCoverUrl}
-					<a
-						href="/library/local"
-						class="shrink-0 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-						aria-label="Open the Listening Room"
-					>
-						<AlbumImage
-							mbid={playerStore.nowPlaying.albumId}
-							source="local"
-							customUrl={nowPlayingCoverUrl}
-							available={true}
-							alt={playerStore.nowPlaying.albumName}
-							size="full"
-							lazy={false}
-							rounded="lg"
-							className="w-12 h-12 sm:w-15 sm:h-15 shadow-lg ring-1 ring-base-content/10"
-						/>
-					</a>
-				{:else}
-					<a
-						href="/library/local"
-						class="w-12 h-12 sm:w-15 sm:h-15 rounded-lg shadow-lg bg-base-200 flex items-center justify-center shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-						aria-label="Open the Listening Room"
-					>
-						<Disc3 class="h-6 w-6 text-base-content/20" />
-					</a>
-				{/if}
+				{#key playerStore.nowPlaying.trackSourceId}
+					<div class="track-change flex min-w-0 items-center gap-2 sm:gap-3">
+						{#if nowPlayingCoverUrl}
+							<a
+								href="/library/local"
+								class="shrink-0 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+								aria-label="Open the Listening Room"
+							>
+								<AlbumImage
+									mbid={playerStore.nowPlaying.albumId}
+									source="local"
+									customUrl={nowPlayingCoverUrl}
+									available={true}
+									alt={playerStore.nowPlaying.albumName}
+									size="full"
+									lazy={false}
+									rounded="lg"
+									className="w-12 h-12 sm:w-15 sm:h-15 shadow-lg ring-1 ring-base-content/10"
+								/>
+							</a>
+						{:else}
+							<a
+								href="/library/local"
+								class="w-12 h-12 sm:w-15 sm:h-15 rounded-lg shadow-lg bg-base-200 flex items-center justify-center shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+								aria-label="Open the Listening Room"
+							>
+								<Disc3 class="h-6 w-6 text-base-content/20" />
+							</a>
+						{/if}
+						<div class="min-w-0 pr-1">
+							{#if playerStore.nowPlaying.trackName}
+								<p class="text-sm font-semibold truncate">{playerStore.nowPlaying.trackName}</p>
+								<p class="text-xs opacity-60 truncate">
+									{#if isAlbumLinkable(playerStore.nowPlaying.albumId)}
+										<a href="/album/{playerStore.nowPlaying.albumId}" class="hover:underline"
+											>{playerStore.nowPlaying.albumName}</a
+										>
+									{:else}
+										{playerStore.nowPlaying.albumName}
+									{/if}
+									-
+									{#if playerStore.nowPlaying.artistId}
+										<a href="/artist/{playerStore.nowPlaying.artistId}" class="hover:underline"
+											>{playerStore.nowPlaying.artistName}</a
+										>
+									{:else}
+										{playerStore.nowPlaying.artistName}
+									{/if}
+								</p>
+							{:else}
+								<p class="text-sm font-semibold truncate">
+									{#if isAlbumLinkable(playerStore.nowPlaying.albumId)}
+										<a href="/album/{playerStore.nowPlaying.albumId}" class="hover:underline"
+											>{playerStore.nowPlaying.albumName}</a
+										>
+									{:else}
+										{playerStore.nowPlaying.albumName}
+									{/if}
+								</p>
+								<p class="text-xs opacity-60 truncate">
+									{#if playerStore.nowPlaying.artistId}
+										<a href="/artist/{playerStore.nowPlaying.artistId}" class="hover:underline"
+											>{playerStore.nowPlaying.artistName}</a
+										>
+									{:else}
+										{playerStore.nowPlaying.artistName}
+									{/if}
+								</p>
+							{/if}
+							{#if playerStore.hasQueue}
+								<p class="text-xs opacity-40 truncate">
+									Track {playerStore.currentTrackNumber} of {playerStore.queueLength}
+								</p>
+							{/if}
+							{#if playerStore.nowPlaying.format}
+								<AudioQualityBadge codec={playerStore.nowPlaying.format} compact />
+							{/if}
+							{#if playerStore.playbackState === 'error'}
+								<p class="text-xs text-error truncate">This track isn't available right now.</p>
+							{/if}
+						</div>
+					</div>
+				{/key}
 				{#if playerStore.isPlaying}
 					<div class="hidden sm:block">
 						<NowPlayingIndicator size="md" />
 					</div>
 				{/if}
-				<div class="min-w-0 pr-1">
-					{#if playerStore.nowPlaying.trackName}
-						<p class="text-sm font-semibold truncate">{playerStore.nowPlaying.trackName}</p>
-						<p class="text-xs opacity-60 truncate">
-							{#if isAlbumLinkable(playerStore.nowPlaying.albumId)}
-								<a href="/album/{playerStore.nowPlaying.albumId}" class="hover:underline"
-									>{playerStore.nowPlaying.albumName}</a
-								>
-							{:else}
-								{playerStore.nowPlaying.albumName}
-							{/if}
-							-
-							{#if playerStore.nowPlaying.artistId}
-								<a href="/artist/{playerStore.nowPlaying.artistId}" class="hover:underline"
-									>{playerStore.nowPlaying.artistName}</a
-								>
-							{:else}
-								{playerStore.nowPlaying.artistName}
-							{/if}
-						</p>
-					{:else}
-						<p class="text-sm font-semibold truncate">
-							{#if isAlbumLinkable(playerStore.nowPlaying.albumId)}
-								<a href="/album/{playerStore.nowPlaying.albumId}" class="hover:underline"
-									>{playerStore.nowPlaying.albumName}</a
-								>
-							{:else}
-								{playerStore.nowPlaying.albumName}
-							{/if}
-						</p>
-						<p class="text-xs opacity-60 truncate">
-							{#if playerStore.nowPlaying.artistId}
-								<a href="/artist/{playerStore.nowPlaying.artistId}" class="hover:underline"
-									>{playerStore.nowPlaying.artistName}</a
-								>
-							{:else}
-								{playerStore.nowPlaying.artistName}
-							{/if}
-						</p>
-					{/if}
-					{#if playerStore.hasQueue}
-						<p class="text-xs opacity-40 truncate">
-							Track {playerStore.currentTrackNumber} of {playerStore.queueLength}
-						</p>
-					{/if}
-					{#if playerStore.nowPlaying.format}
-						<AudioQualityBadge codec={playerStore.nowPlaying.format} compact />
-					{/if}
-					{#if playerStore.playbackState === 'error'}
-						<p class="text-xs text-error truncate">This track isn't available right now.</p>
-					{/if}
-				</div>
 			</div>
 
 			<div class="flex shrink-0 flex-col items-center justify-center gap-1 sm:flex-1">
@@ -320,18 +323,20 @@
 					</button>
 				</div>
 
-				{#if supportsLyrics}
-					<div class="tooltip tooltip-left" data-tip="Lyrics">
-						<button
-							class="btn btn-ghost btn-sm btn-circle"
-							class:text-accent={lyricsPanelOpen}
-							onclick={toggleLyrics}
-							aria-label="Toggle lyrics"
-						>
-							<Music2 class="h-4 w-4" />
-						</button>
-					</div>
-				{/if}
+				<div
+					class="tooltip tooltip-left"
+					data-tip={supportsLyrics ? 'Lyrics' : 'Lyrics unavailable for this track'}
+				>
+					<button
+						class="btn btn-ghost btn-sm btn-circle"
+						class:text-accent={lyricsPanelOpen}
+						onclick={toggleLyrics}
+						disabled={!supportsLyrics}
+						aria-label="Toggle lyrics"
+					>
+						<Music2 class="h-4 w-4" />
+					</button>
+				</div>
 
 				<div
 					class="tooltip tooltip-left"
@@ -440,3 +445,26 @@
 		onclose={() => (lyricsPanelOpen = false)}
 	/>
 {/if}
+
+<style>
+	.track-change {
+		animation: track-change 760ms cubic-bezier(0.22, 1, 0.36, 1);
+	}
+
+	@keyframes track-change {
+		from {
+			opacity: 0;
+			transform: translate3d(16px, 0, 0);
+		}
+		to {
+			opacity: 1;
+			transform: translate3d(0, 0, 0);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.track-change {
+			animation: none;
+		}
+	}
+</style>

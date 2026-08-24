@@ -36,8 +36,6 @@ class LrclibLyricsService:
             self._cache.move_to_end(key)
             return cached[1]
         result = await self._fetch(artist, title, album, duration)
-        # A transient DNS, timeout, or rate-limit failure is not evidence that
-        # lyrics are absent. Do not turn it into a 24-hour negative cache entry.
         if result is _REQUEST_FAILED:
             return None
         self._cache[key] = (time.monotonic() + (_FOUND_TTL_SECONDS if result else _MISSING_TTL_SECONDS), result)
@@ -49,15 +47,42 @@ class LrclibLyricsService:
         async with self._request_lock:
             payload = None
             if album.strip() and duration and duration > 0:
-                payload = await self._request("/get", {"artist_name": artist, "track_name": title, "album_name": album, "duration": round(duration)})
-                if payload is _REQUEST_FAILED:
-                    return _REQUEST_FAILED
+                for artist_candidate in self._artist_variants(artist):
+                    payload = await self._request(
+                        "/get",
+                        {
+                            "artist_name": artist_candidate,
+                            "track_name": title,
+                            "album_name": album,
+                            "duration": round(duration),
+                        },
+                    )
+                    if payload is _REQUEST_FAILED:
+                        return _REQUEST_FAILED
+                    if payload is not None:
+                        break
             if payload is None:
-                matches = await self._request("/search", {"artist_name": artist, "track_name": title})
-                if matches is _REQUEST_FAILED:
-                    return _REQUEST_FAILED
+                matches: list[dict] = []
+                for artist_candidate in self._artist_variants(artist):
+                    result = await self._request(
+                        "/search", {"artist_name": artist_candidate, "track_name": title}
+                    )
+                    if result is _REQUEST_FAILED:
+                        return _REQUEST_FAILED
+                    if isinstance(result, list):
+                        matches.extend(item for item in result if isinstance(item, dict))
                 payload = self._select_match(matches, artist, title, album, duration)
         return self._normalise(payload)
+
+    @staticmethod
+    def _artist_variants(artist: str) -> list[str]:
+        """Return the full credit plus likely lead-artist forms, preserving order."""
+        variants = [artist.strip()]
+        for value in re.split(r"\s*(?:,|&|/|;|\bfeat\.?\b|\bft\.?\b)\s*", artist, flags=re.IGNORECASE):
+            value = value.strip()
+            if value and value.casefold() not in {item.casefold() for item in variants}:
+                variants.append(value)
+        return variants
 
     async def _request(self, path: str, params: dict) -> dict | list | None | object:
         wait = self._next_request_at - time.monotonic()
@@ -86,16 +111,49 @@ class LrclibLyricsService:
     def _select_match(matches: dict | list | None, artist: str, title: str, album: str, duration: float | None) -> dict | None:
         if not isinstance(matches, list):
             return None
+
         def normalise(value: object) -> str:
             return re.sub(r"[^\w]", "", str(value).casefold())
-        artist_key, title_key = normalise(artist), normalise(title)
-        candidates = [item for item in matches if isinstance(item, dict) and normalise(item.get("artistName")) == artist_key and normalise(item.get("trackName")) == title_key]
-        if album:
-            album_key = normalise(album)
-            candidates.sort(key=lambda item: normalise(item.get("albumName")) != album_key)
-        if duration:
-            candidates.sort(key=lambda item: abs(float(item.get("duration") or 0) - duration))
-        return candidates[0] if candidates else None
+
+        artist_keys = [normalise(value) for value in LrclibLyricsService._artist_variants(artist)]
+        title_key = normalise(title)
+        album_key = normalise(album)
+
+        def score(item: dict) -> float:
+            candidate_title = normalise(item.get("trackName"))
+            candidate_artist = normalise(item.get("artistName"))
+            if candidate_title == title_key:
+                title_score = 100
+            elif candidate_title.startswith(title_key) or title_key.startswith(candidate_title):
+                title_score = 75
+            else:
+                return -1
+
+            artist_score = next(
+                (
+                    60 if candidate_artist == artist_key else 45
+                    for artist_key in artist_keys
+                    if candidate_artist in artist_key or artist_key in candidate_artist
+                ),
+                0,
+            )
+            if not artist_score:
+                return -1
+
+            result = title_score + artist_score
+            if album_key and normalise(item.get("albumName")) == album_key:
+                result += 20
+            if item.get("syncedLyrics"):
+                result += 10
+            if duration:
+                try:
+                    result -= min(abs(float(item.get("duration") or 0) - duration), 30)
+                except (TypeError, ValueError):
+                    result -= 30
+            return result
+
+        candidates = [item for item in matches if isinstance(item, dict)]
+        return max(candidates, key=score, default=None) if any(score(item) >= 0 for item in candidates) else None
 
     def _normalise(self, payload: dict | list | None) -> dict | None:
         if not isinstance(payload, dict):

@@ -236,11 +236,7 @@
 
 <svelte:head><title>Listening Room &middot; Addonify</title></svelte:head>
 
-<div
-	class="listening-room relative isolate h-[calc(100dvh-3.5rem)] overflow-y-auto overscroll-contain {reducedMotion
-		? ''
-		: 'snap-y snap-proximity'}"
->
+<div class="listening-room relative isolate">
 	{#if heroCover}
 		<div
 			class="pointer-events-none fixed inset-0 -z-10 bg-cover bg-center transition-opacity duration-1000"
@@ -255,14 +251,12 @@
 
 	<section
 		bind:this={heroEl}
-		class="relative isolate flex min-h-[calc(100dvh-4.5rem)] snap-start flex-col px-4 pt-5 sm:px-6 lg:px-8"
+		class="relative isolate flex min-h-[calc(100dvh-4.5rem)] flex-col px-4 pt-5 sm:px-6 lg:px-8"
 	>
 		<DeckVisualiser {reducedMotion} />
 
 		<header class="mb-4 flex items-center gap-3">
-			<Headphones class="h-6 w-6 text-accent" />
 			<div>
-				<h1 class="text-lg font-black tracking-tight sm:text-xl">The Listening Room</h1>
 				<p class="text-xs text-base-content/50">
 					{#if stats}{stats.total_tracks.toLocaleString()} tracks &middot; {stats.total_artists} artists
 						&middot; {stats.total_size_human}{:else}Your local music, ready to spin{/if}
@@ -327,7 +321,7 @@
 	</section>
 
 	<section
-		class="snap-start space-y-10 px-4 pb-24 pt-6 transition-opacity duration-700 sm:px-6 lg:px-8 {dimmed
+		class="space-y-10 px-4 pb-24 pt-6 transition-opacity duration-700 sm:px-6 lg:px-8 {dimmed
 			? 'opacity-60'
 			: 'opacity-100'}"
 	>
