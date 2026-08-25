@@ -1,4 +1,27 @@
 services:
+  karaoke-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.karaoke
+    image: addonify-karaoke:local
+    container_name: addonify-karaoke
+    restart: unless-stopped
+    networks:
+      - music
+    environment:
+      KARAOKE_MUSIC_ROOTS: /music
+      KARAOKE_CACHE_TMP_ROOT: /app/cache/karaoke/tmp
+    volumes:
+      - cache:/app/cache
+      - ./music:/music:ro
+    cpus: "2.0"
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8091/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   slskd:
     image: slskd/slskd:latest
     container_name: slskd
@@ -23,6 +46,7 @@ services:
     restart: unless-stopped
     depends_on:
       - slskd
+      - karaoke-worker
     networks:
       - music
     ports:
