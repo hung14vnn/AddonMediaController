@@ -25,6 +25,7 @@ export interface PlaybackSource {
 	pause(): void;
 	seekTo(seconds: number): void;
 	setVolume(level: number): void;
+	setVocalLevel?(level: number): void;
 	getCurrentTime(): number;
 	getDuration(): number;
 	isSeekable?(): boolean;

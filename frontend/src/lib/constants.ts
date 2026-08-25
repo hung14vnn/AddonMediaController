@@ -130,6 +130,10 @@ export const STATUS_COLORS = {
 export const YOUTUBE_PLAYER_ELEMENT_ID = 'yt-player-embed';
 
 export const API = {
+	karaoke: {
+		prepare: () => '/api/v1/karaoke',
+		job: (jobId: string) => `/api/v1/karaoke/jobs/${encodeURIComponent(jobId)}`
+	},
 	lyrics: (
 		source: string,
 		trackId: string,

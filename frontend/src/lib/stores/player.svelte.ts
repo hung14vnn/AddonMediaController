@@ -50,6 +50,7 @@ import {
 	buildNowPlayingMetadata
 } from './playerSourceResolver';
 import { resumeAudioEngine } from '$lib/player/audioElement';
+import { KaraokePlaybackSource } from '$lib/player/KaraokePlaybackSource';
 import { setMediaSessionActionHandler, updateMediaSessionMetadata } from '$lib/player/mediaSession';
 import {
 	persistSession as doPersistSession,
@@ -90,6 +91,8 @@ function createPlayerStore() {
 	let progress = $state(0);
 	let duration = $state(0);
 	let isPlayerVisible = $state(false);
+	let karaokeActive = $state(false);
+	let karaokeVocalLevel = $state(100);
 	let loadGeneration = 0;
 	let queue = $state<QueueItem[]>([]);
 	let currentIndex = $state(0);
@@ -198,6 +201,7 @@ function createPlayerStore() {
 		playbackState = 'idle';
 		isSeekable = true;
 		isPlayerVisible = false;
+		karaokeActive = false;
 		progress = 0;
 		duration = 0;
 		queue = [];
@@ -283,6 +287,7 @@ function createPlayerStore() {
 			unregisterBeforeUnload();
 		}
 		currentSource?.destroy();
+		karaokeActive = false;
 		const gen = ++loadGeneration;
 		let source: PlaybackSource,
 			resolvedUrl: string | undefined = item.streamUrl;
@@ -455,6 +460,36 @@ function createPlayerStore() {
 		});
 	}
 
+	async function replaceCurrentSource(
+		source: PlaybackSource,
+		startAt: number,
+		resume: boolean
+	): Promise<void> {
+		currentSource?.pause();
+		currentSource?.destroy();
+		const gen = ++loadGeneration;
+		currentSource = source;
+		playbackState = 'loading';
+		source.setVolume(volume);
+		await source.load({});
+		if (gen !== loadGeneration) {
+			source.destroy();
+			throw new Error('Playback changed while the new source was loading');
+		}
+		subscribeToSource(source, gen);
+		source.seekTo(startAt);
+		progress = startAt;
+		if (resume) source.play();
+		else playbackState = 'paused';
+	}
+
+	async function restoreOriginalSource(startAt: number, resume: boolean): Promise<void> {
+		const item = queue[currentIndex];
+		if (!item) throw new Error('Current queue item is unavailable');
+		const resolved = resolveSourceForItem(item);
+		await replaceCurrentSource(resolved.source, startAt, resume);
+	}
+
 	return {
 		get currentSource() {
 			return currentSource;
@@ -485,6 +520,12 @@ function createPlayerStore() {
 		},
 		get isPlayerVisible() {
 			return isPlayerVisible;
+		},
+		get karaokeActive() {
+			return karaokeActive;
+		},
+		get karaokeVocalLevel() {
+			return karaokeVocalLevel;
 		},
 		get hasQueue() {
 			return hasQueue;
@@ -538,6 +579,7 @@ function createPlayerStore() {
 			playbackState = 'loading';
 			isSeekable = true;
 			isPlayerVisible = true;
+			karaokeActive = false;
 			queue = [];
 			currentIndex = 0;
 			shuffleOrder = [];
@@ -823,6 +865,41 @@ function createPlayerStore() {
 			volume = clamped;
 			currentSource?.setVolume(clamped);
 			storeVolume(clamped);
+		},
+
+		async activateKaraoke(instrumentalUrl: string, vocalsUrl: string): Promise<void> {
+			const item = queue[currentIndex];
+			if (!item || item.sourceType !== 'local') {
+				throw new Error('Karaoke is currently available for local tracks only');
+			}
+			if (karaokeActive) return;
+			const startAt = progress;
+			const resume = isPlaying;
+			const source = new KaraokePlaybackSource(instrumentalUrl, vocalsUrl);
+			source.setVocalLevel(karaokeVocalLevel);
+			try {
+				await replaceCurrentSource(source, startAt, resume);
+				karaokeActive = true;
+			} catch (error) {
+				karaokeActive = false;
+				if (queue[currentIndex]?.trackSourceId === item.trackSourceId) {
+					await restoreOriginalSource(startAt, resume);
+				}
+				throw error;
+			}
+		},
+
+		async deactivateKaraoke(): Promise<void> {
+			if (!karaokeActive) return;
+			const startAt = progress;
+			const resume = isPlaying;
+			await restoreOriginalSource(startAt, resume);
+			karaokeActive = false;
+		},
+
+		setKaraokeVocalLevel(level: number): void {
+			karaokeVocalLevel = Math.max(0, Math.min(100, level));
+			currentSource?.setVocalLevel?.(karaokeVocalLevel);
 		},
 
 		stop(): void {

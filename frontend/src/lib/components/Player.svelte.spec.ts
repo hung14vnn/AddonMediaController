@@ -189,4 +189,18 @@ describe('Player.svelte lyrics button', () => {
 
 		await expect.element(page.getByLabelText('Toggle lyrics')).not.toBeInTheDocument();
 	});
+
+	it('offers karaoke for a local queue track', async () => {
+		playerStore.playQueue([makeTrack('local')]);
+		render(Player);
+
+		await expect.element(page.getByLabelText('Start karaoke')).toBeInTheDocument();
+	});
+
+	it('does not offer karaoke for a remote track', async () => {
+		playerStore.playQueue([makeTrack('navidrome')]);
+		render(Player);
+
+		await expect.element(page.getByLabelText('Start karaoke')).not.toBeInTheDocument();
+	});
 });

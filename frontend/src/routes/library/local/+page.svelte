@@ -8,6 +8,7 @@
 	import { API } from '$lib/constants';
 	import { api } from '$lib/api/client';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
+	import { formatArtistCredit } from '$lib/utils/formatting';
 	import type { CrateTrack, LocalAlbumSummary, LocalAlbumMatch, CrateResponse } from '$lib/types';
 	import type { QueueItem } from '$lib/player/types';
 	import { launchLocalPlayback } from '$lib/player/launchLocalPlayback';
@@ -377,10 +378,10 @@
 					<a
 						href="/artist/{album.artist_mbid}"
 						class="block truncate text-xs text-base-content/55 transition-colors hover:text-accent hover:underline"
-						title={album.artist_name}>{album.artist_name}</a
+						title={formatArtistCredit(album.artist_name)}>{formatArtistCredit(album.artist_name)}</a
 					>
 				{:else}
-					<p class="truncate text-xs text-base-content/55">{album.artist_name}</p>
+					<p class="truncate text-xs text-base-content/55">{formatArtistCredit(album.artist_name)}</p>
 				{/if}
 			</div>
 		{/snippet}

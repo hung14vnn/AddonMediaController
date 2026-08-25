@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { formatArtistCredit } from '$lib/utils/formatting';
 	import { tick } from 'svelte';
 	import { fly, fade } from 'svelte/transition';
 	import { playerStore } from '$lib/stores/player.svelte';
@@ -304,7 +305,7 @@
 								<p class="text-sm font-medium truncate {isCurrent ? 'text-accent' : ''}">
 									{item.trackName || item.albumName}
 								</p>
-								<p class="text-xs opacity-60 truncate">{item.artistName}</p>
+								<p class="text-xs opacity-60 truncate">{formatArtistCredit(item.artistName)}</p>
 							</div>
 
 							{#if item.duration}

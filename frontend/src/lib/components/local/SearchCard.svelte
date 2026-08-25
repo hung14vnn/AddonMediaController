@@ -3,6 +3,7 @@
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { getLocalSearchQuery } from '$lib/queries/local/LocalQueries.svelte';
 	import { fly } from 'svelte/transition';
+	import { formatArtistCredit } from '$lib/utils/formatting';
 	import { Search, X, Disc3, Music2, Play, ListPlus, GripVertical, Loader } from 'lucide-svelte';
 
 	interface Props {
@@ -150,7 +151,7 @@
 						</div>
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-semibold text-base-content">{a.name}</p>
-							<p class="truncate text-xs text-base-content/55">{a.artist_name}</p>
+							<p class="truncate text-xs text-base-content/55">{formatArtistCredit(a.artist_name)}</p>
 							<span class="badge badge-xs badge-primary mt-1 gap-1 border-none">
 								<Disc3 class="h-2.5 w-2.5" /> Album
 							</span>
@@ -215,7 +216,7 @@
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-semibold text-base-content">{t.title}</p>
 							<p class="truncate text-xs text-base-content/55">
-								{t.artist_name}<span class="text-base-content/35"> · {t.album_name}</span>
+								{formatArtistCredit(t.artist_name)}<span class="text-base-content/35"> · {t.album_name}</span>
 							</p>
 							<span class="badge badge-xs badge-accent mt-1 gap-1 border-none">
 								<Music2 class="h-2.5 w-2.5" /> Song

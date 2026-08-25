@@ -8,15 +8,16 @@
 	import { openGlobalPlaylistModal } from '$lib/components/AddToPlaylistModal.svelte';
 	import { getLyricsQuery } from '$lib/queries/lyrics/LyricsQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import { karaokeController } from '$lib/stores/karaoke.svelte';
+	import { slide } from 'svelte/transition';
 	import { getNavidromeFolderScopeRevision } from '$lib/utils/navidromeLibraryCache';
+	import { formatArtistCredit } from '$lib/utils/formatting';
 	import type { CrateTrack, LocalAlbumSummary } from '$lib/types';
 	import {
 		Play,
 		Pause,
 		SkipBack,
 		SkipForward,
-		ChevronsLeft,
-		ChevronsRight,
 		Shuffle,
 		Disc3,
 		Sparkles,
@@ -28,7 +29,8 @@
 		SlidersHorizontal,
 		Music2,
 		Check,
-		CircleX
+		CircleX,
+		Mic
 	} from 'lucide-svelte';
 
 	interface Props {
@@ -54,10 +56,16 @@
 		() => getNavidromeFolderScopeRevision(authStore.user?.id ?? '')
 	);
 	const hasLyrics = $derived(lyricsQuery.isSuccess && lyricsQuery.data !== null);
+	const karaokeBusy = $derived(
+		karaokeController.status === 'preparing' ||
+			karaokeController.status === 'queued' ||
+			karaokeController.status === 'processing'
+	);
 
 	let dragOver = $state(false);
 	let eqPanelOpen = $state(false);
 	let lyricsOpen = $state(false);
+	let karaokePanelOpen = $state(false);
 	let lyricsViewport: HTMLDivElement | undefined = $state();
 	let lyricsManualScroll = $state(false);
 	let lyricsScrollTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -77,11 +85,13 @@
 	});
 
 	$effect(() => {
+		karaokeController.syncTrack(np?.trackSourceId);
 		if (!np) {
 			lyricsOpen = false;
 			return;
 		}
 		void np.trackSourceId;
+		karaokePanelOpen = false;
 		lyricsManualScroll = false;
 		clearTimeout(lyricsScrollTimeout);
 	});
@@ -316,7 +326,7 @@
 			</div>
 			{#key np.trackSourceId}
 				<p class="track-title-change truncate text-sm text-base-content/70">
-					{np.artistName}{#if np.albumName}<span class="text-base-content/40">
+					{formatArtistCredit(np.artistName)}{#if np.albumName}<span class="text-base-content/40">
 							&middot; {np.albumName}</span
 						>{/if}
 				</p>
@@ -361,6 +371,7 @@
 			>
 				<Shuffle class="h-5 w-5 {playerStore.shuffleEnabled ? 'text-accent' : ''}" />
 			</button>
+			<!-- Previous/next album controls are temporarily hidden.
 			<div class="tooltip tooltip-top" data-tip="Previous album">
 				<button
 					class="btn btn-circle btn-ghost btn-sm"
@@ -371,6 +382,7 @@
 					<ChevronsLeft class="h-5 w-5" />
 				</button>
 			</div>
+			-->
 			<button
 				class="btn btn-circle btn-ghost"
 				onclick={() => playerStore.previousTrack()}
@@ -394,6 +406,7 @@
 			>
 				<SkipForward class="h-6 w-6" />
 			</button>
+			<!--
 			<div class="tooltip tooltip-top" data-tip="Next album">
 				<button
 					class="btn btn-circle btn-ghost btn-sm"
@@ -404,6 +417,7 @@
 					<ChevronsRight class="h-5 w-5" />
 				</button>
 			</div>
+			-->
 			<div class="indicator">
 				{#if playerStore.upcomingQueueLength > 0}
 					<span class="badge indicator-item badge-xs badge-accent"
@@ -427,6 +441,50 @@
 				</button>
 			</div>
 		</div>
+
+		{#if isLocal && karaokePanelOpen}
+			<div
+				class="flex w-full max-w-md flex-wrap items-center justify-center gap-3 rounded-2xl border border-base-content/10 bg-base-100/35 px-3 py-2"
+				transition:slide={{ duration: 220, axis: 'y' }}
+			>
+				<button
+					class="btn btn-sm rounded-full {playerStore.karaokeActive ? 'btn-accent' : 'btn-ghost'}"
+					disabled={karaokeBusy}
+					onclick={() => void karaokeController.toggle()}
+					aria-label={playerStore.karaokeActive ? 'Turn off karaoke' : 'Start karaoke'}
+					title={karaokeController.error || 'Create or enable karaoke'}
+				>
+					{#if karaokeBusy}
+						<span class="loading loading-spinner loading-xs"></span>
+					{:else}
+						<Mic class="h-4 w-4" />
+					{/if}
+					{playerStore.karaokeActive ? 'Karaoke on' : karaokeBusy ? 'Creating stems...' : 'Karaoke'}
+				</button>
+				{#if playerStore.karaokeActive}
+					<div class="flex min-w-40 flex-1 items-center gap-2">
+						<Mic class="h-4 w-4 shrink-0 text-accent" />
+						<input
+							type="range"
+							min="0"
+							max="100"
+							value={playerStore.karaokeVocalLevel}
+							oninput={(event) =>
+								playerStore.setKaraokeVocalLevel(
+									Number((event.currentTarget as HTMLInputElement).value)
+								)}
+							aria-label="Original vocal level"
+							class="range range-xs range-accent flex-1"
+						/>
+						<span class="w-8 text-right text-[10px] tabular-nums text-base-content/60"
+							>{Math.round(playerStore.karaokeVocalLevel)}%</span
+						>
+					</div>
+				{:else if karaokeController.status === 'failed'}
+					<span class="text-xs text-error">{karaokeController.error}</span>
+				{/if}
+			</div>
+		{/if}
 
 		<div class="flex w-full max-w-md items-center justify-between gap-4">
 			<div class="flex min-w-0 items-center gap-2">
@@ -465,6 +523,23 @@
 						class="range range-xs range-accent w-20 sm:w-24"
 					/>
 				</div>
+				{#if isLocal}
+					<div class="tooltip tooltip-top" data-tip="Karaoke">
+						<button
+							class="btn btn-circle btn-ghost btn-sm"
+							class:text-accent={karaokePanelOpen || playerStore.karaokeActive}
+							onclick={() => (karaokePanelOpen = !karaokePanelOpen)}
+							aria-label={karaokePanelOpen ? 'Hide karaoke controls' : 'Show karaoke controls'}
+							aria-expanded={karaokePanelOpen}
+						>
+							{#if karaokeBusy}
+								<span class="loading loading-spinner loading-xs"></span>
+							{:else}
+								<Mic class="h-4 w-4" />
+							{/if}
+						</button>
+					</div>
+				{/if}
 				<div
 					class="tooltip tooltip-top"
 					data-tip={isYouTube ? 'EQ unavailable for YouTube' : 'Equalizer'}

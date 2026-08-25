@@ -4,6 +4,11 @@ const DEFAULT_Q = 1.4;
 // Small FFT keeps per-frame visualiser reads cheap; 128 yields 64 bins.
 const ANALYSER_FFT_SIZE = 128;
 
+export interface AuxiliaryAudioConnection {
+	setGain(level: number): void;
+	destroy(): void;
+}
+
 export class AudioEngine {
 	private context: AudioContext | null = null;
 	private source: MediaElementAudioSourceNode | null = null;
@@ -90,6 +95,25 @@ export class AudioEngine {
 
 	isConnected(): boolean {
 		return this.connectedElement !== null;
+	}
+
+	connectAuxiliary(audio: HTMLAudioElement): AuxiliaryAudioConnection | null {
+		if (!this.context) return null;
+		const source = this.context.createMediaElementSource(audio);
+		const gain = this.context.createGain();
+		source.connect(gain);
+		gain.connect(this.filters[0] ?? this.context.destination);
+		return {
+			setGain: (level: number) => {
+				const value = Math.max(0, Math.min(1, level));
+				gain.gain.cancelScheduledValues(this.context!.currentTime);
+				gain.gain.setTargetAtTime(value, this.context!.currentTime, 0.03);
+			},
+			destroy: () => {
+				source.disconnect();
+				gain.disconnect();
+			}
+		};
 	}
 
 	async resume(): Promise<void> {

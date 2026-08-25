@@ -374,7 +374,8 @@
 
 					<div
 						class="droppedneedle-main-content flex-1"
-						class:droppedneedle-player-visible={playerStore.isPlayerVisible}
+						class:droppedneedle-player-visible={playerStore.isPlayerVisible &&
+							currentPath !== '/library/local'}
 					>
 						{@render children()}
 					</div>

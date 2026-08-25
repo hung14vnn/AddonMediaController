@@ -185,6 +185,14 @@ def get_target_local_files_service() -> "LocalFilesService":
 
 
 @singleton
+def get_target_karaoke_service() -> "KaraokeService":
+    from core.config import get_settings
+    from services.karaoke_service import KaraokeService
+
+    return KaraokeService(get_settings(), get_target_local_files_service())
+
+
+@singleton
 def get_target_catalog_writer_service() -> "TargetCatalogWriterService":
     from services.native.target_catalog_writer_service import TargetCatalogWriterService
 
@@ -1878,6 +1886,14 @@ def get_local_files_service() -> "LocalFilesService":
     preferences_service = get_preferences_service()
     cache = get_cache()
     return LocalFilesService(library_repo, preferences_service, cache)
+
+
+@singleton
+def get_karaoke_service() -> "KaraokeService":
+    from core.config import get_settings
+    from services.karaoke_service import KaraokeService
+
+    return KaraokeService(get_settings(), get_local_files_service())
 
 
 @singleton

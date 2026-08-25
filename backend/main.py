@@ -84,6 +84,7 @@ from api.v1.routes import (
     wrapped,
 )
 from api.v1.routes import discovery_batches as discovery_batches_routes
+from api.v1.routes import karaoke as karaoke_routes
 from api.v1.routes import library_scan as library_scan_routes
 from api.v1.routes import library_policies as library_policy_routes
 from api.v1.routes import cache as cache_routes
@@ -453,6 +454,10 @@ async def lifespan(app: FastAPI):
         interval=advanced_settings.disk_cache_cleanup_interval,
         cover_disk_cache=cover_disk_cache,
     )
+
+    from core.dependencies import get_karaoke_service
+
+    get_karaoke_service().start()
 
     library_service = get_library_service()
     from core.dependencies import get_scan_state_store
@@ -863,6 +868,7 @@ v1_router.include_router(system_routes.router)
 v1_router.include_router(spotify_routes.router)
 v1_router.include_router(now_playing_routes.router)
 v1_router.include_router(lyrics_routes.router)
+v1_router.include_router(karaoke_routes.router)
 v1_router.include_router(profile.router)
 v1_router.include_router(playlists.router)
 v1_router.include_router(version_routes.router)

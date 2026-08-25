@@ -92,6 +92,12 @@ class Settings(BaseSettings):
     cache_dir: Path = Field(default=Path("/app/cache"), description="Root directory for all cache files")
     library_db_path: Path = Field(default=Path("/app/cache/library.db"), description="SQLite library database path")
     cover_cache_max_size_mb: int = Field(default=500, description="Maximum cover cache size in MB")
+    karaoke_enabled: bool = Field(default=True, description="Enable on-demand local-track karaoke")
+    karaoke_worker_url: str = Field(default="http://karaoke-worker:8091")
+    karaoke_job_timeout_seconds: int = Field(default=900, ge=30, le=3600)
+    karaoke_cache_max_size_mb: int = Field(default=10240, ge=128)
+    karaoke_cache_ttl_days: int = Field(default=45, ge=1)
+    karaoke_cache_cleanup_interval_seconds: int = Field(default=3600, ge=60)
     trusted_proxy_ips: str = Field(
         default="127.0.0.1",
         description="Comma-separated IPs/CIDRs trusted as reverse proxies for X-Forwarded-* headers. Configure the private proxy network in a reverse-proxy deployment; never use '*' on a directly reachable service.",

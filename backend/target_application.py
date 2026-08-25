@@ -47,6 +47,7 @@ from api.v1.routes import (
     lastfm,
     lidarr_import,
     lyrics,
+    karaoke,
     library_operations_target,
     library_contributions,
     library_policies_target,
@@ -91,6 +92,7 @@ from core.dependencies import (
     get_home_service,
     get_home_charts_service,
     get_local_files_service,
+    get_karaoke_service,
     get_navidrome_library_service,
     get_plex_library_service,
     get_download_service,
@@ -135,6 +137,7 @@ from core.dependencies import (
     get_target_library_scan_coordinator,
     get_target_library_scan_scheduler,
     get_target_library_policy_service,
+    get_target_karaoke_service,
     get_target_request_service,
     get_target_requests_page_service,
     get_target_search_service,
@@ -302,6 +305,7 @@ def create_isolated_target_application(
         scrobble.router,
         now_playing.router,
         lyrics.router,
+        karaoke.router,
         profile.router,
         playlists.router,
         download.router,
@@ -363,6 +367,7 @@ def create_isolated_target_application(
             get_cache_service: get_target_cache_service,
             get_wrapped_service: get_target_wrapped_service,
             get_local_files_service: lambda: target().local_files,
+            get_karaoke_service: get_target_karaoke_service,
             get_navidrome_library_service: get_target_navidrome_library_service,
             get_plex_library_service: get_target_plex_library_service,
             get_compat_services: get_target_compat_services,
@@ -415,6 +420,7 @@ def _include_complete_target_routes(app: FastAPI) -> None:
         spotify.router,
         now_playing.router,
         lyrics.router,
+        karaoke.router,
         profile.router,
         playlists.router,
         version.router,
@@ -473,6 +479,7 @@ def _install_target_overrides(app: FastAPI) -> None:
             get_cache_service: get_target_cache_service,
             get_wrapped_service: get_target_wrapped_service,
             get_local_files_service: lambda: target().local_files,
+            get_karaoke_service: get_target_karaoke_service,
             get_navidrome_library_service: get_target_navidrome_library_service,
             get_plex_library_service: get_target_plex_library_service,
             get_compat_services: get_target_compat_services,
@@ -570,6 +577,7 @@ async def production_target_lifespan(app: FastAPI):
             interval=advanced.disk_cache_cleanup_interval,
             cover_disk_cache=get_target_consumer_composition().covers.disk_cache,
         )
+        get_target_karaoke_service().start()
 
         def root_paths() -> dict[str, Path]:
             return {

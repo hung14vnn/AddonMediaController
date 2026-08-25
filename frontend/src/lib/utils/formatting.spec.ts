@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { formatListenCount } from './formatting';
+import { formatArtistCredit, formatListenCount } from './formatting';
+
+describe('formatArtistCredit', () => {
+	it('renders semicolon-separated artist credits with commas', () => {
+		expect.assertions(3);
+		expect(formatArtistCredit('Artist A; Artist B')).toBe('Artist A, Artist B');
+		expect(formatArtistCredit('Artist A ;  Artist B')).toBe('Artist A, Artist B');
+		expect(formatArtistCredit(null)).toBe('');
+	});
+});
 
 describe('formatListenCount', () => {
 	it('returns empty string for null', () => {

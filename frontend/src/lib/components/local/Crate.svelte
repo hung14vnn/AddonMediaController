@@ -3,6 +3,7 @@
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { flip } from 'svelte/animate';
 	import { fly } from 'svelte/transition';
+	import { formatArtistCredit } from '$lib/utils/formatting';
 	import {
 		Sparkles,
 		RotateCcw,
@@ -281,7 +282,7 @@
 						</div>
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-semibold text-base-content">{t.title}</p>
-							<p class="truncate text-xs text-base-content/55">{t.artist_name}</p>
+							<p class="truncate text-xs text-base-content/55">{formatArtistCredit(t.artist_name)}</p>
 							<span class="badge badge-xs {meta.badge} mt-1 gap-1 border-none">
 								<Icon class="h-2.5 w-2.5" />
 								{meta.label}

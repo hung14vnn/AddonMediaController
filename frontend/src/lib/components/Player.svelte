@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { page } from '$app/state';
+	import { fly } from 'svelte/transition';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { deckFocus } from '$lib/stores/deckFocus.svelte';
 	import { eqStore } from '$lib/stores/eq.svelte';
@@ -15,8 +17,10 @@
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
+	import { formatArtistCredit } from '$lib/utils/formatting';
 	import { getLyricsQuery } from '$lib/queries/lyrics/LyricsQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import { karaokeController } from '$lib/stores/karaoke.svelte';
 	import { getNavidromeFolderScopeRevision } from '$lib/utils/navidromeLibraryCache';
 	import {
 		X,
@@ -35,13 +39,17 @@
 		ListMusic,
 		ListPlus,
 		SlidersHorizontal,
-		Music2
+		Music2,
+		Mic
 	} from 'lucide-svelte';
 
 	let eqPanelOpen = $state(false);
 	let queueDrawerOpen = $state(false);
 
 	let lyricsPanelOpen = $state(false);
+	const karaokeStatus = $derived(karaokeController.status);
+	const karaokeError = $derived(karaokeController.error);
+	const isListeningRoom = $derived(page.url.pathname === '/library/local');
 
 	const lyricsQuery = getLyricsQuery(
 		() => playerStore.nowPlaying,
@@ -53,6 +61,10 @@
 
 	$effect(() => {
 		if (!playerStore.nowPlaying) lyricsPanelOpen = false;
+	});
+
+	$effect(() => {
+		karaokeController.syncTrack(playerStore.nowPlaying?.trackSourceId);
 	});
 
 	function toggleLyrics() {
@@ -74,6 +86,11 @@
 	function handleVolume(e: Event): void {
 		const target = e.target as HTMLInputElement;
 		playerStore.setVolume(Number(target.value));
+	}
+
+	async function toggleKaraoke(): Promise<void> {
+		if (!playerStore.karaokeActive) lyricsPanelOpen = true;
+		await karaokeController.toggle();
 	}
 
 	const MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -103,9 +120,10 @@
 	});
 </script>
 
-{#if playerStore.isPlayerVisible && playerStore.nowPlaying && !deckFocus.inView}
+{#if playerStore.isPlayerVisible && playerStore.nowPlaying && !deckFocus.inView && !isListeningRoom}
 	<div
 		class="droppedneedle-player-bar fixed left-0 right-0 z-50 bg-base-300/95 backdrop-blur-md shadow-[0_-4px_20px_rgba(0,0,0,0.3)] transition-transform duration-300"
+		transition:fly={{ y: 96, duration: 220 }}
 	>
 		<button
 			class="btn btn-ghost btn-xs btn-circle absolute top-1.5 right-1.5 opacity-60 hover:opacity-100"
@@ -162,10 +180,10 @@
 									-
 									{#if playerStore.nowPlaying.artistId}
 										<a href="/artist/{playerStore.nowPlaying.artistId}" class="hover:underline"
-											>{playerStore.nowPlaying.artistName}</a
+										>{formatArtistCredit(playerStore.nowPlaying.artistName)}</a
 										>
 									{:else}
-										{playerStore.nowPlaying.artistName}
+										{formatArtistCredit(playerStore.nowPlaying.artistName)}
 									{/if}
 								</p>
 							{:else}
@@ -181,10 +199,10 @@
 								<p class="text-xs opacity-60 truncate">
 									{#if playerStore.nowPlaying.artistId}
 										<a href="/artist/{playerStore.nowPlaying.artistId}" class="hover:underline"
-											>{playerStore.nowPlaying.artistName}</a
+										>{formatArtistCredit(playerStore.nowPlaying.artistName)}</a
 										>
 									{:else}
-										{playerStore.nowPlaying.artistName}
+										{formatArtistCredit(playerStore.nowPlaying.artistName)}
 									{/if}
 								</p>
 							{/if}
@@ -278,6 +296,26 @@
 					>
 						<SkipForward class="h-4 w-4 fill-current" />
 					</button>
+
+					{#if playerStore.currentQueueItem?.sourceType === 'local'}
+						<button
+							class="btn btn-ghost btn-sm btn-circle md:hidden"
+							class:text-accent={playerStore.karaokeActive ||
+								karaokeStatus === 'processing' ||
+								karaokeStatus === 'queued'}
+							disabled={karaokeStatus === 'preparing' ||
+								karaokeStatus === 'queued' ||
+								karaokeStatus === 'processing'}
+							onclick={toggleKaraoke}
+							aria-label="Karaoke controls"
+						>
+							{#if karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'}
+								<span class="loading loading-spinner loading-xs"></span>
+							{:else}
+								<Mic class="h-4 w-4" />
+							{/if}
+						</button>
+					{/if}
 				</div>
 
 				<div class="hidden sm:flex items-center gap-2 w-full max-w-lg">
@@ -337,6 +375,31 @@
 						<Music2 class="h-4 w-4" />
 					</button>
 				</div>
+
+				{#if playerStore.currentQueueItem?.sourceType === 'local'}
+					<div
+						class="tooltip tooltip-left"
+						data-tip={playerStore.karaokeActive ? 'Turn off karaoke' : 'Karaoke'}
+					>
+						<button
+							class="btn btn-ghost btn-sm btn-circle"
+							class:text-accent={playerStore.karaokeActive ||
+								karaokeStatus === 'processing' ||
+								karaokeStatus === 'queued'}
+							disabled={karaokeStatus === 'preparing' ||
+								karaokeStatus === 'queued' ||
+								karaokeStatus === 'processing'}
+							onclick={toggleKaraoke}
+							aria-label={playerStore.karaokeActive ? 'Turn off karaoke' : 'Start karaoke'}
+						>
+							{#if karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'}
+								<span class="loading loading-spinner loading-xs"></span>
+							{:else}
+								<Mic class="h-4 w-4" />
+							{/if}
+						</button>
+					</div>
+				{/if}
 
 				<div
 					class="tooltip tooltip-left"
@@ -441,8 +504,15 @@
 		hasError={lyricsQuery.isError}
 		currentTime={playerStore.progress}
 		trackName={playerStore.nowPlaying?.trackName ?? ''}
-		artistName={playerStore.nowPlaying?.artistName ?? ''}
+		artistName={formatArtistCredit(playerStore.nowPlaying?.artistName)}
 		onclose={() => (lyricsPanelOpen = false)}
+		{karaokeStatus}
+		karaokeAvailable={playerStore.currentQueueItem?.sourceType === 'local'}
+		karaokeActive={playerStore.karaokeActive}
+		{karaokeError}
+		vocalLevel={playerStore.karaokeVocalLevel}
+		ontogglekaraoke={toggleKaraoke}
+		onvocalchange={(level) => playerStore.setKaraokeVocalLevel(level)}
 	/>
 {/if}
 

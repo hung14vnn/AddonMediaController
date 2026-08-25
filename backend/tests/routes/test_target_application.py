@@ -128,6 +128,11 @@ def test_isolated_target_application_mounts_target_catalog_and_compat_routes() -
     route_modules = {
         route.endpoint.__module__ for route in app.routes if hasattr(route, "endpoint")
     }
+    method_paths = {
+        (method, route.path)
+        for route in app.routes
+        for method in getattr(route, "methods", set())
+    }
 
     assert response.status_code == 200
     assert response.json() == {"items": [], "total": 0}
@@ -139,6 +144,7 @@ def test_isolated_target_application_mounts_target_catalog_and_compat_routes() -
     assert "api.v1.routes.library_scan" not in route_modules
     assert "api.compat.subsonic.router" in route_modules
     assert "api.compat.jellyfin.router" in route_modules
+    assert ("POST", "/api/v1/karaoke") in method_paths
     assert {
         "api.v1.routes.stream",
         "api.v1.routes.local_library",
@@ -150,6 +156,7 @@ def test_isolated_target_application_mounts_target_catalog_and_compat_routes() -
         "api.v1.routes.tracks",
         "api.v1.routes.requests_page",
         "api.v1.routes.scrobble",
+        "api.v1.routes.karaoke",
     }.issubset(route_modules)
     assert app.dependency_overrides[get_download_service] is get_target_download_service
     assert app.dependency_overrides[get_album_service] is get_target_album_service

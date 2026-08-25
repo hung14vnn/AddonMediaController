@@ -1,0 +1,35 @@
+FROM python:3.11-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    OMP_NUM_THREADS=2 \
+    MKL_NUM_THREADS=2 \
+    OPENBLAS_NUM_THREADS=2 \
+    AUDIO_SEPARATOR_MODEL_DIR=/app/.cache/audio-separator/models
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates libsndfile1 build-essential \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
+        "torch==2.7.1" "torchaudio==2.7.1" "torchvision==0.22.1" \
+    && pip install --no-cache-dir "numpy>=2,<3" "audio-separator[cpu]==0.44.5"
+
+# Keep model download out of the first karaoke request.
+RUN mkdir -p "$AUDIO_SEPARATOR_MODEL_DIR" \
+    && audio-separator \
+        --model_filename UVR_MDXNET_9482.onnx \
+        --model_file_dir "$AUDIO_SEPARATOR_MODEL_DIR" \
+        --download_model_only
+
+COPY backend/karaoke_worker.py /app/karaoke_worker.py
+
+RUN groupadd -r -g 1000 karaoke \
+    && useradd -r -u 1000 -g karaoke -d /app -s /sbin/nologin karaoke \
+    && mkdir -p /app/cache/karaoke/tmp /app/.cache \
+    && chown -R karaoke:karaoke /app
+
+USER karaoke
+EXPOSE 8091
+CMD ["python", "/app/karaoke_worker.py"]
