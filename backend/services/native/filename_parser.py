@@ -35,6 +35,30 @@ def _clean_album_folder(folder: str) -> tuple[str | None, int | None]:
     return (album or None, year)
 
 
+def fallback_track_title(
+    path: Path, *, disc_number: int | None = None, track_number: int | None = None
+) -> str:
+    """Return a safe title when the file has no readable TITLE tag.
+
+    DroppedNeedle's default naming template prefixes the filename with the
+    zero-padded disc and track positions (``0103 Love Story.flac``).  Remove
+    that prefix only when it agrees with the file's numeric tags; this avoids
+    changing legitimate numeric titles such as ``1999`` or ``1000 Oceans``.
+    """
+    stem = path.stem.strip()
+    disc = int(disc_number or 0)
+    track = int(track_number or 0)
+    if disc > 0 and track > 0:
+        prefix = f"{disc:02d}{track:02d}"
+        if stem.startswith(prefix) and len(stem) > len(prefix):
+            remainder = stem[len(prefix) :]
+            if remainder[0].isspace():
+                cleaned = remainder.strip()
+                if cleaned:
+                    return cleaned
+    return stem
+
+
 def parse_names_from_path(path: Path) -> ParsedNames:
     """Best-effort artist/album/title/track/year from a path."""
     stem = path.stem

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from services.native.filename_parser import parse_names_from_path
+from services.native.filename_parser import fallback_track_title, parse_names_from_path
 
 
 @pytest.mark.parametrize(
@@ -56,3 +56,31 @@ def test_strips_artist_prefix_from_album_folder():
     assert r.album == "Hot Wire"
     assert r.title == "Take It On"
     assert r.track_number == 2
+
+
+def test_fallback_title_strips_default_disc_track_prefix_when_tags_agree():
+    assert (
+        fallback_track_title(
+            Path("/music/Indila/Mini World/0103 Love Story.flac"),
+            disc_number=1,
+            track_number=3,
+        )
+        == "Love Story"
+    )
+
+
+@pytest.mark.parametrize(
+    "filename,disc,track",
+    [
+        ("0103 Love Story.flac", 1, 4),
+        ("1999.flac", 1, 9),
+        ("1000 Oceans.flac", 1, 10),
+        ("0103Love Story.flac", 1, 3),
+    ],
+)
+def test_fallback_title_keeps_numeric_title_when_prefix_is_not_an_exact_tagged_position(
+    filename, disc, track
+):
+    assert fallback_track_title(
+        Path(filename), disc_number=disc, track_number=track
+    ) == Path(filename).stem

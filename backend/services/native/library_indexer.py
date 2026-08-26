@@ -21,6 +21,7 @@ from services.native.identification_queue_service import IdentificationQueueServ
 from services.native.local_album_grouper import grouping_directory
 from services.native.local_album_grouping_service import LocalAlbumGroupingService
 from services.native.file_revision import revision_from_stat
+from services.native.filename_parser import fallback_track_title
 
 INDEX_FETCH_SIZE = 256
 TAG_BATCH_SIZE = 64
@@ -291,7 +292,12 @@ class LibraryIndexer:
             stat_revision=str(item["stat_revision"]),
             tag_revision=tag_revision,
             tags_read_at=now,
-            title=tag.title.strip() or Path(relative_path).stem,
+            title=tag.title.strip()
+            or fallback_track_title(
+                Path(relative_path),
+                disc_number=tag.disc_number,
+                track_number=tag.track_number,
+            ),
             artist_name=tag.artist or album_artist,
             album_title=album.title,
             album_artist_name=album_artist,

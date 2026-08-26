@@ -9,6 +9,7 @@ from core.exceptions import PermissionDeniedError, ResourceNotFoundError, Valida
 logger = logging.getLogger(__name__)
 
 _PROVIDER_FALLBACKS = ["ext:tidal-web", "ext:qobuz-web", "ext:deezer", "ext:amazon"]
+_SPOTIFLAC_PROVIDER_TIMEOUT_SECONDS = 150
 
 _AUDIO_EXTENSIONS = {
     ".flac",
@@ -89,6 +90,22 @@ def spotiflac_client_options(output_dir: str, quality: str) -> dict[str, object]
         )
 
     return options
+
+
+async def _download_track_with_timeout(  # noqa: ANN001
+    client,
+    url: str,
+    provider: str,
+) -> None:
+    """Bound one provider so a wedged callback cannot block the fallback chain."""
+    try:
+        async with asyncio.timeout(_SPOTIFLAC_PROVIDER_TIMEOUT_SECONDS):
+            await client.download_track(url)
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"SpotiFLAC provider {provider} timed out after "
+            f"{_SPOTIFLAC_PROVIDER_TIMEOUT_SECONDS} seconds"
+        ) from exc
 
 
 class SpotiflacService:
@@ -412,24 +429,46 @@ class SpotiflacService:
                 exist_ok=True,
             )
 
-            async with AsyncSpotiFLAC(
-                **spotiflac_client_options(
-                    str(staging),
-                    quality,
-                )
-            ) as client:
-                await client.download_track(url)
+            downloaded_files: list[Path] = []
+            provider_errors: list[str] = []
 
-            downloaded_files = [
-                path
-                for path in staging.rglob("*")
-                if path.is_file()
-                and path.suffix.lower() in _AUDIO_EXTENSIONS
-            ]
+            # SpotiFLAC runs its own provider chain inside one call.  A wedged
+            # signed-session callback prevents that call from ever advancing to
+            # the next extension, so isolate each provider behind its own
+            # deadline and client lifecycle.
+            for provider in _PROVIDER_FALLBACKS:
+                options = spotiflac_client_options(str(staging), quality)
+                options.update(
+                    services=[provider],
+                    allow_fallback=False,
+                )
+
+                try:
+                    async with AsyncSpotiFLAC(**options) as client:
+                        await _download_track_with_timeout(client, url, provider)
+                except Exception as exc:  # noqa: BLE001 - isolate third-party provider
+                    error = str(exc) or type(exc).__name__
+                    provider_errors.append(f"{provider}: {error}")
+                    logger.warning(
+                        "SpotiFLAC provider %s failed for task %s: %s",
+                        provider,
+                        task_id,
+                        error,
+                    )
+
+                downloaded_files = [
+                    path
+                    for path in staging.rglob("*")
+                    if path.is_file()
+                    and path.suffix.lower() in _AUDIO_EXTENSIONS
+                ]
+                if downloaded_files:
+                    break
 
             if not downloaded_files:
                 raise RuntimeError(
                     "No configured SpotiFLAC provider produced an audio file"
+                    + (f" ({'; '.join(provider_errors)})" if provider_errors else "")
                 )
 
             files: list[Path] = []

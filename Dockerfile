@@ -39,6 +39,7 @@ LABEL org.opencontainers.image.title="DroppedNeedle" \
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     MALLOC_ARENA_MAX=2 \
+    HOME=/app \
     CHROME_PATH=/usr/bin/chromium \
     PORT=8688 \
     COMMIT_TAG=${COMMIT_TAG} \
@@ -81,7 +82,8 @@ RUN find /app -type f -print0 \
       | cut -d' ' -f1 > /app/.droppedneedle-source-revision \
     && test -s /app/.droppedneedle-source-revision
 
-RUN mkdir -p /app/cache /app/config /app/imports \
+RUN mkdir -p /app/cache/spotiflac /app/config /app/imports \
+    && ln -s /app/cache/spotiflac /app/.spotiflac \
     && chown -R droppedneedle:droppedneedle /app \
     && chmod +x /entrypoint.sh
 

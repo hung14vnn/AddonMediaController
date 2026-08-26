@@ -17,6 +17,7 @@ from models.local_catalog import LocalAlbum, LocalArtist, LocalArtistCredit, Loc
 from services.local_files_service import AUDIO_EXTENSIONS
 from services.native.identification_revisions import album_input_revisions
 from services.native.file_revision import revision_from_stat
+from services.native.filename_parser import fallback_track_title
 from services.native.local_album_grouper import (
     grouping_directory,
     normalize_group_value,
@@ -189,7 +190,12 @@ class TargetImportLibraryService:
             stat_revision=revision_from_stat(stat),
             tag_revision=tag_revision,
             tags_read_at=now,
-            title=tag.title.strip() or audio_path.stem,
+            title=tag.title.strip()
+            or fallback_track_title(
+                audio_path,
+                disc_number=tag.disc_number,
+                track_number=tag.track_number,
+            ),
             artist_name=tag.artist or album_artist,
             album_title=album_title,
             album_artist_name=album_artist,

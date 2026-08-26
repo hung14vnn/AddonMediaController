@@ -46,6 +46,7 @@ export interface NowPlaying {
 	coverRemoteUrl?: string | null;
 	sourceType: SourceType;
 	discNumber?: number;
+	trackNumber?: number;
 	trackSourceId?: string;
 	embedUrl?: string;
 	trackName?: string;

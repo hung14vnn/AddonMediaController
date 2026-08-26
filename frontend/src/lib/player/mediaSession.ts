@@ -2,7 +2,13 @@ import type { NowPlaying } from './types';
 
 type MediaSessionTrack = Pick<
 	NowPlaying,
-	'trackName' | 'artistName' | 'albumName' | 'coverUrl' | 'coverRemoteUrl'
+	| 'trackName'
+	| 'artistName'
+	| 'albumName'
+	| 'coverUrl'
+	| 'coverRemoteUrl'
+	| 'discNumber'
+	| 'trackNumber'
 >;
 
 type MediaSessionAction = 'nexttrack' | 'previoustrack';
@@ -31,6 +37,18 @@ function artworkFor(track: MediaSessionTrack): MediaImage[] | undefined {
 	}
 }
 
+function mediaSessionTitle(track: MediaSessionTrack): string {
+	const title = track.trackName?.trim() || track.albumName;
+	const disc = Number(track.discNumber ?? 0);
+	const position = Number(track.trackNumber ?? 0);
+	if (disc <= 0 || position <= 0) return title;
+
+	const prefix = `${String(disc).padStart(2, '0')}${String(position).padStart(2, '0')}`;
+	if (!title.startsWith(prefix)) return title;
+	const remainder = title.slice(prefix.length);
+	return /^\s/.test(remainder) && remainder.trim() ? remainder.trim() : title;
+}
+
 /**
  * Supplies the operating system's media controls with the active track details.
  * Without this, Chromium falls back to the document title (for example,
@@ -46,7 +64,7 @@ export function updateMediaSessionMetadata(track: MediaSessionTrack | null): voi
 
 	try {
 		navigator.mediaSession.metadata = new MediaMetadata({
-			title: track.trackName ?? track.albumName,
+			title: mediaSessionTitle(track),
 			artist: track.artistName,
 			album: track.albumName,
 			artwork: artworkFor(track)
