@@ -555,6 +555,7 @@ def _build_file_processor(library_manager, library_paths) -> "FileProcessor":
         slskd_downloads_path=Path(get_settings().slskd_downloads_path),
         fingerprinter=get_audio_fingerprinter(),
         verify_downloads=policy.verify_downloads,
+        saving_storage_mode=policy.saving_storage_mode,
         download_store=get_download_store(),
         held_dir=Path(get_settings().cache_dir) / "held",
         recycle_bin=resolve_bin_path(policy.recycle_bin_path, library_paths),

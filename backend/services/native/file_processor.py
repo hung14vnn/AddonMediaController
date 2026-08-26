@@ -460,6 +460,7 @@ class FileProcessor:
         slskd_downloads_path: Path | None = None,
         fingerprinter: "AudioFingerprinter | None" = None,
         verify_downloads: bool = True,
+        saving_storage_mode: bool = False,
         download_store: "DownloadStore | None" = None,
         held_dir: Path | None = None,
         recycle_bin: Path | None = None,
@@ -474,6 +475,7 @@ class FileProcessor:
         )
         self._fingerprinter = fingerprinter
         self._verify_downloads = verify_downloads
+        self._saving_storage_mode = saving_storage_mode
         # When both are wired, a verify-rejected file is copied here and recorded for an
         # "import anyway" review instead of being silently dropped.
         self._download_store = download_store
@@ -1103,7 +1105,10 @@ class FileProcessor:
             ) from exc
 
         target_tag = self._build_target_tag(manifest, tag)
-        output_format = "m4a" if source.suffix.casefold() == ".flac" else info.file_format
+        transcode_flac = (
+            self._saving_storage_mode and source.suffix.casefold() == ".flac"
+        )
+        output_format = "m4a" if transcode_flac else info.file_format
         target_path = self._library_paths[0] / self._naming.format_path(
             manifest.naming_template, target_tag, output_format
         )
@@ -1258,7 +1263,7 @@ class FileProcessor:
                         source,
                         target_path,
                         target_tag,
-                        transcode_flac=source.suffix.casefold() == ".flac",
+                        transcode_flac=transcode_flac,
                     )
                 else:
                     # already imported on a prior run; drop the leftover slskd source
@@ -1277,7 +1282,7 @@ class FileProcessor:
                     source,
                     target_path,
                     target_tag,
-                    transcode_flac=source.suffix.casefold() == ".flac",
+                    transcode_flac=transcode_flac,
                 )
                 logger.info(
                     "process.file_tagged",

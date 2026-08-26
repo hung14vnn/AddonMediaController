@@ -2237,6 +2237,7 @@ export interface DownloadPolicySettings {
 	quality_max: string;
 	preferred_quality: string;
 	flac_mp3_only: boolean;
+	saving_storage_mode: boolean;
 	verify_downloads: boolean;
 	preflight_score_auto_accept: number;
 	preflight_score_manual_min: number;

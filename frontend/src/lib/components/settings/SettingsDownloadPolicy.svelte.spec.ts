@@ -9,6 +9,7 @@ const basePolicy: DownloadPolicySettings = {
 	quality_max: 'lossless',
 	preferred_quality: '',
 	flac_mp3_only: true,
+	saving_storage_mode: false,
 	verify_downloads: true,
 	preflight_score_auto_accept: 0.7,
 	preflight_score_manual_min: 0.5,

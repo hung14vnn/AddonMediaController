@@ -21,6 +21,7 @@
 	let upgradeAllowed = $state(false);
 	let backgroundScan = $state(false);
 	let flacMp3Only = $state(true);
+	let savingStorageMode = $state(false);
 	let verifyDownloads = $state(true);
 	let autoAccept = $state(0.7);
 	let manualMin = $state(0.5);
@@ -42,6 +43,7 @@
 			upgradeAllowed = d.upgrade_allowed;
 			backgroundScan = d.background_upgrade_scan_enabled;
 			flacMp3Only = d.flac_mp3_only;
+			savingStorageMode = d.saving_storage_mode ?? false;
 			verifyDownloads = d.verify_downloads;
 			autoAccept = d.preflight_score_auto_accept;
 			manualMin = d.preflight_score_manual_min;
@@ -80,6 +82,7 @@
 			upgrade_allowed: upgradeAllowed,
 			background_upgrade_scan_enabled: backgroundScan,
 			flac_mp3_only: flacMp3Only,
+			saving_storage_mode: savingStorageMode,
 			verify_downloads: verifyDownloads,
 			preflight_score_auto_accept: autoAccept,
 			preflight_score_manual_min: manualMin,
@@ -166,6 +169,19 @@
 			<input type="checkbox" class="toggle toggle-sm toggle-primary" bind:checked={flacMp3Only} />
 			<span class="label-text">Only accept FLAC and MP3</span>
 		</label>
+		<div class="rounded-box flex flex-col gap-2 border border-base-300 bg-base-200/40 p-3">
+			<label class="label cursor-pointer justify-start gap-3 p-0">
+				<input
+					type="checkbox"
+					class="toggle toggle-sm toggle-primary"
+					bind:checked={savingStorageMode}
+				/>
+				<span class="label-text">Saving storage mode</span>
+			</label>
+			<p class="text-xs text-base-content/60">
+				Convert verified Soulseek FLAC downloads to AAC 256 kbps M4A files to reduce library storage.
+			</p>
+		</div>
 		<label class="label cursor-pointer justify-start gap-3">
 			<input
 				type="checkbox"

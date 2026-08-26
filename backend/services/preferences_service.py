@@ -290,6 +290,7 @@ class PreferencesService:
                 quality_min=dc.get("quality_min", "mp3_320"),
                 quality_max=dc.get("quality_max", "lossless"),
                 flac_mp3_only=dc.get("flac_mp3_only", True),
+                saving_storage_mode=dc.get("saving_storage_mode", False),
                 verify_downloads=dc.get("verify_downloads", True),
                 preflight_score_auto_accept=dc.get("preflight_score_auto_accept", 0.70),
                 preflight_score_manual_min=dc.get("preflight_score_manual_min", 0.50),

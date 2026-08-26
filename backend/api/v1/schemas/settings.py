@@ -175,6 +175,9 @@ class DownloadPolicySettings(AppStruct):
     # historical behaviour of preferring the highest available tier.
     preferred_quality: str = ""
     flac_mp3_only: bool = True
+    # When enabled, verified Soulseek FLAC downloads are published as AAC 256 kbps
+    # M4A files to reduce library storage usage. Other sources/formats are unchanged.
+    saving_storage_mode: bool = False
     verify_downloads: bool = True
     preflight_score_auto_accept: float = 0.70
     preflight_score_manual_min: float = 0.50
