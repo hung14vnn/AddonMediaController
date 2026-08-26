@@ -80,7 +80,9 @@
 		].filter((p) => p.n > 0)
 	);
 
-	let historyOpen = $state(false);
+	// Completed downloads should be visible immediately; users can still collapse
+	// the history section when they want a compact queue.
+	let historyOpen = $state(true);
 	let quarantineOpen = $state(false);
 </script>
 

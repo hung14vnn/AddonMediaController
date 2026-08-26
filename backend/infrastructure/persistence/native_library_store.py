@@ -64,6 +64,7 @@ from models.local_catalog import (
     LocalArtworkAssociation,
     LocalTrack,
     LocalTrackExternalIdentity,
+    LocalTrackGenre,
 )
 
 MAX_REVISION = 9_223_372_036_854_775_807
@@ -4877,7 +4878,11 @@ class NativeLibraryStore(PersistenceBase):
         )
 
     @staticmethod
-    def _insert_track(connection: sqlite3.Connection, track: LocalTrack) -> None:
+    def _insert_track(
+        connection: sqlite3.Connection,
+        track: LocalTrack,
+        genres: list[LocalTrackGenre] | None = None,
+    ) -> None:
         connection.execute(
             "INSERT INTO local_tracks "
             "(id, local_album_id, root_id, file_path, relative_path, path_hash, "
@@ -4961,6 +4966,62 @@ class NativeLibraryStore(PersistenceBase):
                 track.applied_policy,
                 track.row_revision,
             ),
+        )
+        NativeLibraryStore._replace_track_genres_tx(
+            connection, track.id, genres, scalar_genre=track.genre
+        )
+
+    @staticmethod
+    def _replace_track_genres_tx(
+        connection: sqlite3.Connection,
+        track_id: str,
+        genres: list[LocalTrackGenre] | None,
+        *,
+        scalar_genre: str | None,
+    ) -> None:
+        """Keep normalized multi-value genres in sync with the track row."""
+        values = genres
+        if values is None:
+            values = (
+                [
+                    LocalTrackGenre(
+                        local_track_id=track_id,
+                        position=0,
+                        name=scalar_genre,
+                        folded_name=_fold(scalar_genre) or "",
+                        source="local",
+                    )
+                ]
+                if scalar_genre and scalar_genre.strip()
+                else []
+            )
+        connection.execute(
+            "DELETE FROM local_track_genres WHERE local_track_id = ?", (track_id,)
+        )
+        seen: set[str] = set()
+        rows: list[tuple[Any, ...]] = []
+        for genre in values:
+            folded = _fold(genre.folded_name or genre.name)
+            if not folded or folded in seen:
+                continue
+            seen.add(folded)
+            rows.append(
+                (
+                    track_id,
+                    len(rows),
+                    genre.name.strip(),
+                    folded,
+                    genre.source,
+                    genre.genre_mbid,
+                    genre.weight,
+                    genre.source_document_revision,
+                )
+            )
+        connection.executemany(
+            "INSERT INTO local_track_genres "
+            "(local_track_id, position, name, folded_name, source, genre_mbid, "
+            "weight, source_document_revision) VALUES (?,?,?,?,?,?,?,?)",
+            rows,
         )
 
     async def get_local_album(self, album_id: str) -> dict[str, Any] | None:
@@ -8410,7 +8471,7 @@ class NativeLibraryStore(PersistenceBase):
             (track.root_id, track.relative_path),
         ).fetchone()
         if existing is None:
-            self._insert_track(connection, track)
+            self._insert_track(connection, track, write.genres or None)
             track_id = track.id
             catalog_changed = True
         else:
@@ -8419,6 +8480,9 @@ class NativeLibraryStore(PersistenceBase):
                 str(existing["local_album_id"])
                 if bool(existing["membership_locked"])
                 else track.local_album_id
+            )
+            self._replace_track_genres_tx(
+                connection, track_id, write.genres or None, scalar_genre=track.genre
             )
             catalog_changed = any(
                 (
@@ -8610,6 +8674,7 @@ class NativeLibraryStore(PersistenceBase):
         album: LocalAlbum,
         track: LocalTrack,
         credit: LocalArtistCredit,
+        genres: list[LocalTrackGenre] | None = None,
         scan_run_id: str | None = None,
         grouping_context: str | None = None,
         expected_policy_revision: str | None = None,
@@ -8683,7 +8748,7 @@ class NativeLibraryStore(PersistenceBase):
                 (track.root_id, track.relative_path),
             ).fetchone()
             if existing is None:
-                self._insert_track(connection, track)
+                self._insert_track(connection, track, genres)
                 track_id = track.id
             else:
                 track_id = str(existing["id"])
@@ -8768,6 +8833,9 @@ class NativeLibraryStore(PersistenceBase):
                         track_id,
                     ),
                 )
+            self._replace_track_genres_tx(
+                connection, track_id, genres, scalar_genre=track.genre
+            )
             connection.execute(
                 "INSERT OR IGNORE INTO local_track_artists "
                 "(local_track_id, position, local_artist_id, role, credited_name) "
