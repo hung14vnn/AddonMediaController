@@ -308,11 +308,13 @@
 							{:else if result.type === 'artist'}
 								Artist
 							{/if}
-							{#if result.year}
-								&middot; {result.year}
-							{/if}
-							{#if result.disambiguation}
-								({result.disambiguation})
+							{#if !isTrack(result)}
+								{#if result.year}
+									&middot; {result.year}
+								{/if}
+								{#if result.disambiguation}
+									({result.disambiguation})
+								{/if}
 							{/if}
 						</div>
 					</div>
