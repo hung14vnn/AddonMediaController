@@ -98,6 +98,11 @@ def _to_response(  # noqa: ANN001 - DownloadTask
         download_type=task.download_type,
         source=task.source,
         release_group_mbid=task.release_group_mbid,
+        # These release-level identifiers were added to the queue response while
+        # keeping the existing fork route.  Populate them explicitly so msgspec
+        # does not reject otherwise valid tasks when serialising the list endpoint.
+        release_mbid=getattr(task, "release_mbid", None),
+        release_track_mbid=getattr(task, "release_track_mbid", None),
         recording_mbid=task.recording_mbid,
         artist_mbid=task.artist_mbid,
         artist_name=task.artist_name,
@@ -314,6 +319,8 @@ def _held_to_response(held) -> HeldImportResponse:  # noqa: ANN001 - HeldImport
     return HeldImportResponse(
         id=held.id,
         release_group_mbid=held.release_group_mbid,
+        release_mbid=getattr(held, "release_mbid", None),
+        release_track_mbid=getattr(held, "release_track_mbid", None),
         recording_mbid=held.recording_mbid,
         track_number=held.track_number,
         disc_number=held.disc_number,
@@ -325,6 +332,7 @@ def _held_to_response(held) -> HeldImportResponse:  # noqa: ANN001 - HeldImport
         file_format=held.file_format,
         duration_seconds=held.duration_seconds,
         reason=held.reason,
+        reason_detail=getattr(held, "reason_detail", None),
         source=held.source,
         source_task_id=held.source_task_id,
         created_at=held.created_at,
