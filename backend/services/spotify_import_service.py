@@ -100,6 +100,10 @@ class SpotifyImportService:
         artist_name = ", ".join(a.get("name", "") for a in artists if a.get("name"))
         track_title = track.get("name") or ""
         album_title = album.get("name") or ""
+        # Keep Spotify artwork independently of MusicBrainz resolution.  A
+        # MusicBrainz match supplies identity only; it must not discard the
+        # image URL that SpotiFLAC needs when the track is imported.
+        spotify_cover_url = _best_image_url(album.get("images") or [])
 
         recording_ids: list[tuple[str, str | None]] = []
         if isrc:
@@ -133,6 +137,7 @@ class SpotifyImportService:
                     album_title,
                     track.get("duration_ms"),
                     artist_mbid=artist_mbid,
+                    cover_url=spotify_cover_url,
                 )
 
         # ISRC coverage is incomplete in MusicBrainz. Fall back to a metadata search,
@@ -157,7 +162,13 @@ class SpotifyImportService:
                     best = candidate
         if best is not None:
             return self._resolved_track(
-                best[1], best[2], artist_name, track_title, album_title, track.get("duration_ms")
+                best[1],
+                best[2],
+                artist_name,
+                track_title,
+                album_title,
+                track.get("duration_ms"),
+                cover_url=spotify_cover_url,
             )
 
         # Keep an unmatchable Spotify result useful: group it under its Spotify album
@@ -228,6 +239,7 @@ class SpotifyImportService:
         duration_ms: int | None,
         *,
         artist_mbid: str | None = None,
+        cover_url: str | None = None,
     ) -> dict[str, Any]:
         return {
             "recording_mbid": recording_mbid,
@@ -237,6 +249,7 @@ class SpotifyImportService:
             "track_title": track_title,
             "album_title": album_title,
             "duration_seconds": round((duration_ms or 0) / 1000) or None,
+            "cover_url": cover_url,
         }
 
     async def list_playlists(self, user_id: str) -> list[dict]:

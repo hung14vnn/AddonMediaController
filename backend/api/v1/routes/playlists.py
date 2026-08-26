@@ -684,6 +684,8 @@ async def _queue_playlist_tracks(
                 or track.duration,
                 artist_mbid=(spotify_resolution or {}).get("artist_mbid")
                 or track.artist_id,
+                cover_url=(spotify_resolution or {}).get("cover_url")
+                or track.cover_url,
             )
         except Exception:  # noqa: BLE001 - one bad track must not sink the batch
             logger.exception("Playlist track request failed for %s", recording_mbid)
