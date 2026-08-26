@@ -28,6 +28,8 @@ export interface LibraryActivityItem {
 	needs_review_count: number;
 	failed_count: number;
 	deferred_count: number;
+	deferred_reason_counts: Record<string, number>;
+	attention_count: number;
 	priority_band: string | null;
 	oldest_backlog_at: number | null;
 	provider_unavailable: boolean;
@@ -37,8 +39,51 @@ export interface LibraryActivityItem {
 	foreground_operation_count: number;
 }
 
+export type LibraryWorkKind =
+	| 'scan'
+	| 'identification'
+	| 'identity_preparation'
+	| 'reidentification'
+	| 'identity_review'
+	| 'maintenance'
+	| 'library_management'
+	| 'recovery';
+
+export interface LibraryWorkItem {
+	id: string;
+	kind: LibraryWorkKind;
+	state: string;
+	phase: string | null;
+	mode: string | null;
+	effect: 'catalog_only' | 'file_writing' | 'attention';
+	processed: number;
+	total: number | null;
+	unit: 'files' | 'albums' | 'releases' | 'items';
+	indeterminate: boolean;
+	remaining_count: number | null;
+	subject_count: number | null;
+	started_at: number | null;
+	updated_at: number;
+	origin: string | null;
+	profile_name: string | null;
+	scope_label: string | null;
+	new_count: number;
+	changed_count: number;
+	missing_count: number;
+	warning_count: number;
+	blocked_count: number;
+	succeeded_count: number;
+	failed_count: number;
+	skipped_count: number;
+	priority: number;
+	failure_event_id: string | null;
+	failure_at: number | null;
+}
+
 export interface LibraryActivityResponse {
 	items: LibraryActivityItem[];
+	work_items: LibraryWorkItem[];
+	revisions?: Record<string, number>;
 }
 
 export type ScanKind = 'incremental' | 'rescan_files' | 'policy_reconcile';
@@ -92,6 +137,20 @@ export interface ScanRunHistoryResponse {
 
 export interface ScanRunDetailResponse {
 	snapshot: ScanRunSnapshot;
+}
+
+export interface ScanRunFailureItem {
+	root_id: string;
+	relative_path: string;
+	failure_code: string;
+	failure_detail: string;
+	phase: 'discovering' | 'indexing' | 'reconciling';
+	recorded_at: number;
+}
+
+export interface ScanRunFailuresResponse {
+	items: ScanRunFailureItem[];
+	next_cursor: number | null;
 }
 
 export interface ScanEstimateResponse {
@@ -168,6 +227,8 @@ export interface TrackEvidence {
 	candidate_disc_number: number | null;
 	candidate_track_position: number | null;
 	recording_mbid: string | null;
+	release_track_mbid: string | null;
+	recording_mbid_redirects?: string[];
 }
 
 export interface CandidateEvidence {
@@ -319,12 +380,26 @@ export interface RepairReportSummary {
 	album_counts_by_root: Record<string, number>;
 	provider_deferred_count: number;
 	failed_evidence_count: number;
+	purpose: string;
+	ready_album_count: number;
+	mapping_candidate_count: number;
+	exact_release_required_count: number;
+	needs_review_count: number;
 }
 
 export interface RepairEstimateResponse {
 	identity_count: number;
 	selected_root_count: number;
 	queued_repair_count: number;
+}
+
+export interface IdentityPreparationEstimateResponse {
+	album_count: number;
+	ready_album_count: number;
+	mapping_required_count: number;
+	exact_release_required_count: number;
+	selected_root_count: number;
+	queued_preparation_count: number;
 }
 
 export interface OperationResponse {
@@ -351,6 +426,7 @@ export interface OperationResponse {
 		evidence: CandidateEvidence;
 		automatic_safe: boolean;
 	}>;
+	selected_reidentification_candidate_key: string | null;
 }
 
 export interface OperationListResponse {
@@ -375,9 +451,24 @@ export interface MembershipPreviewResponse {
 	reference_counts: Record<string, number>;
 }
 
+export interface SuggestedEditionSummary {
+	release_mbid: string;
+	release_group_mbid: string;
+	title: string;
+	track_count: number;
+	competing_count: number;
+	date: string | null;
+	country: string | null;
+	status: string | null;
+}
+
 export interface RepairFindingResponse {
 	id: string;
 	local_album_id: string;
+	album_title: string;
+	album_artist_name: string | null;
+	album_year: number | null;
+	cover_available: boolean;
 	evidence_id: string | null;
 	review_id: string | null;
 	finding_code: string;
@@ -386,6 +477,7 @@ export interface RepairFindingResponse {
 	apply_eligible: boolean;
 	state: string;
 	apply_result: string | null;
+	suggested_edition: SuggestedEditionSummary | null;
 	updated_at: number;
 	row_revision: number;
 }
@@ -394,6 +486,8 @@ export interface RepairFindingListResponse {
 	items: RepairFindingResponse[];
 	next_cursor: string | null;
 	has_more: boolean;
+	current_counts_by_finding: Record<string, number>;
+	refresh_required: boolean;
 }
 
 export type LibraryIdentificationPolicy = 'local_metadata' | 'automatic' | 'excluded';
@@ -417,6 +511,7 @@ export interface TypedLibrarySettings {
 	staging_path: string;
 	naming_template: string;
 	acoustid_api_key: string;
+	enabled: boolean;
 }
 
 export interface TargetLibrarySettingsResponse extends TypedLibrarySettings {
@@ -446,6 +541,22 @@ export interface LibraryPolicyTreeResponse {
 	policy_revision: string;
 	roots: LibraryPolicyTreeNode[];
 	warnings: string[];
+}
+
+export interface LibraryRestorableRoot {
+	root_id: string;
+	path: string;
+	indexed_file_count: number;
+}
+
+export interface LibraryRestorableRootsResponse {
+	policy_revision: string;
+	restorable_roots: LibraryRestorableRoot[];
+}
+
+export interface LibraryRestoreRootsRequest {
+	expected_policy_revision: string;
+	paths: Record<string, string> | null;
 }
 
 export interface LibraryPolicyImpactResponse {

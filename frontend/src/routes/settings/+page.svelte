@@ -85,7 +85,6 @@
 		youtube: 'youtube'
 	};
 
-	let activeTab = $state('library');
 	let filter = $state('');
 
 	const tiers = [
@@ -142,6 +141,10 @@
 		{ id: 'advanced', label: 'Advanced', tier: 'system', icon: Settings },
 		{ id: 'about', label: 'About', tier: 'system', icon: Info }
 	];
+	const requestedTab = page.url.searchParams.get('tab');
+	let activeTab = $state(
+		requestedTab && tabs.some((tab) => tab.id === requestedTab) ? requestedTab : 'library'
+	);
 
 	const normalizedFilter = $derived(filter.trim().toLowerCase());
 	function tabsForTier(tier: string) {

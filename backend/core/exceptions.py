@@ -36,6 +36,16 @@ class ServiceDisabledUpstreamError(DroppedNeedleException):
     provider's endpoints are healthy)."""
 
 
+class InvalidExternalPayloadError(ExternalServiceError):
+    """A provider answered successfully but its payload violates the verified
+    response schema (e.g. a MusicBrainz field that arrives as JSON null but was
+    modelled as required). Deterministic per payload: it must not count as a
+    service-health failure on the shared circuit breaker (pass through
+    ``non_breaking_exceptions`` at the ``with_retry`` call site) - the service is
+    healthy, the schema expectation was wrong. Stays an ExternalServiceError so
+    callers degrade through their normal paths."""
+
+
 class ResourceNotFoundError(DroppedNeedleException):
     pass
 
@@ -44,8 +54,63 @@ class ValidationError(DroppedNeedleException):
     pass
 
 
+class ArtworkProcessingError(ValidationError):
+    """Artwork bytes cannot be admitted or transformed safely."""
+
+    pass
+
+
+class AudioFormatError(ValidationError):
+    """An admitted audio path cannot be represented by a verified adapter."""
+
+    pass
+
+
+class AudioFormatMismatchError(AudioFormatError):
+    pass
+
+
+class UnsupportedAudioFormatError(AudioFormatError):
+    pass
+
+
+class AudioWriteError(AudioFormatError):
+    """A staged audio mutation or validation failed before publication."""
+
+    pass
+
+
+class ScriptValidationError(ValidationError):
+    """A bounded management script failed syntax or runtime validation."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        script_name: str,
+        line: int,
+        column: int,
+    ) -> None:
+        self.script_name = script_name
+        self.line = line
+        self.column = column
+        super().__init__(f"{script_name}:{line}:{column}: {message}")
+
+
+class PathLimitExceededError(ScriptValidationError):
+    """A rendered management path exceeded an enabled length limit."""
+
+
 class ProviderIdentityRequiredError(ValidationError):
     error_code = "PROVIDER_IDENTITY_REQUIRED"
+
+
+class ExactReleaseMappingIncompleteError(ValidationError):
+    error_code = "EXACT_RELEASE_MAPPING_INCOMPLETE"
+
+
+class CustomEditionNotSealableError(ValidationError):
+    error_code = "CUSTOM_EDITION_NOT_SEALABLE"
 
 
 class RangeNotSatisfiableError(ValidationError):
@@ -62,6 +127,12 @@ class PermissionDeniedError(DroppedNeedleException):
 
 class ConflictError(DroppedNeedleException):
     """Duplicate active request/download. Mapped to HTTP 409 by the registered handler."""
+
+    pass
+
+
+class LibraryManagementDestinationConflictError(ConflictError):
+    """A staged Library Management destination is occupied or aliases another path."""
 
     pass
 
@@ -90,6 +161,20 @@ class ConfigurationError(DroppedNeedleException):
 
 class StaleRevisionError(ConflictError):
     pass
+
+
+class LibraryManagementPolicyChangedError(StaleRevisionError):
+    """The Library Management policy or root projection changed during publication."""
+
+    pass
+
+
+class AutomaticManagementHoldError(DroppedNeedleException):
+    """A verified import unit must remain intact until management can be retried."""
+
+    def __init__(self, reason_code: str, message: str) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
 class ContributionStateError(ConflictError):
@@ -271,6 +356,12 @@ class SkiddleApiError(ExternalServiceError):
 
     Mapped to HTTP 503 by the registered ``ExternalServiceError`` handler.
     """
+
+    pass
+
+
+class LrclibApiError(ExternalServiceError):
+    """Transport, HTTP, or decode failure from the LRCLIB lyrics service."""
 
     pass
 

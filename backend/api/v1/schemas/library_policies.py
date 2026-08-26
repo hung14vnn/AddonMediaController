@@ -31,6 +31,10 @@ class TypedLibrarySettings(AppStruct):
     staging_path: str = ""
     naming_template: str = DEFAULT_NAMING_TEMPLATE
     acoustid_api_key: str = ""
+    # Master switch (GH #276): when False the target application stops claiming
+    # new scan/identification/organization work. Deliberately excluded from the
+    # policy revision hash so toggling never churns boundary transitions.
+    enabled: bool = True
 
 
 class LibrarySettingsResponse(TypedLibrarySettings):
@@ -46,6 +50,24 @@ class LibrarySettingsResponse(TypedLibrarySettings):
 class LibrarySettingsUpdateRequest(AppStruct):
     settings: TypedLibrarySettings
     expected_policy_revision: str
+
+
+class LibraryRestorableRoot(AppStruct):
+    root_id: str
+    path: str
+    indexed_file_count: int = 0
+
+
+class LibraryRestorableRootsResponse(AppStruct):
+    policy_revision: str
+    restorable_roots: list[LibraryRestorableRoot] = msgspec.field(
+        default_factory=list
+    )
+
+
+class LibraryRestoreRootsRequest(AppStruct):
+    expected_policy_revision: str
+    paths: dict[str, str] | None = None
 
 
 class LibraryPolicyTreeNode(AppStruct):

@@ -11,6 +11,7 @@ export type Artist = {
 	release_group_count?: number | null;
 	listen_count?: number | null;
 	score?: number;
+	local_id?: string | null;
 };
 
 export type Album = {
@@ -35,6 +36,8 @@ export type Album = {
 	listen_count?: number | null;
 	score?: number;
 	selected_release_mbid?: string | null;
+	local_id?: string | null;
+	cover_available?: boolean;
 };
 
 export interface LibraryMembershipResponse {
@@ -52,6 +55,23 @@ export type SuggestResult = {
 	requested?: boolean;
 	disambiguation?: string | null;
 	score: number;
+	local_id?: string | null;
+};
+
+export type SearchRemoteStatus = 'ok' | 'partial' | 'timeout' | 'error';
+
+export type SearchBucketResponse<T extends Artist | Album> = {
+	bucket: 'artists' | 'albums';
+	limit: number;
+	offset: number;
+	results: T[];
+	top_result?: T | null;
+	status: SearchRemoteStatus;
+};
+
+export type SearchSuggestResponse = {
+	results: SuggestResult[];
+	remote_status: SearchRemoteStatus;
 };
 
 export type SpotifyTrackResult = {
@@ -139,6 +159,7 @@ export type ArtistInfoBasic = {
 	aliases: string[];
 	external_links: ExternalLink[];
 	in_library: boolean;
+	appears_in_library: boolean;
 	// per-user follow state; artist page reads it from the dedicated /follow query
 	followed?: boolean;
 	auto_download?: boolean;
@@ -182,6 +203,7 @@ export type Track = {
 	title: string;
 	length?: number | null;
 	recording_id?: string | null;
+	release_track_id?: string | null;
 };
 
 export type AlbumBasicInfo = {
@@ -1166,7 +1188,6 @@ export type FreeMusicSettings = {
 // mirrors backend api/v1/schemas/settings.py (GetItSettings)
 export type GetItSettings = {
 	store_region: string; // ISO 3166-1 alpha-2, feeds the iTunes storefront
-	support_droppedneedle: boolean; // D19 affiliate toggle
 };
 
 // mirrors backend api/v1/schemas/get_it.py
@@ -1182,13 +1203,11 @@ export type PurchaseOptionsResponse = {
 	physical: PurchaseLink[];
 	free: PurchaseLink[];
 	bandcamp_search_url: string;
-	disclosure: boolean;
 };
 
 export type ArtistPurchaseOptionsResponse = {
 	links: PurchaseLink[];
 	bandcamp_search_url: string;
-	disclosure: boolean;
 };
 
 // mirrors backend api/v1/schemas/settings.py (EventsSettings)
@@ -1490,6 +1509,12 @@ export type NavidromeLyricsResponse = {
 	lines: LyricLine[];
 };
 
+export type LocalLyricsResponse = {
+	text: string;
+	is_synced: boolean;
+	lines: LyricLine[];
+};
+
 export type JellyfinLyricsLine = {
 	text: string;
 	start_seconds: number | null;
@@ -1516,7 +1541,11 @@ export type AlbumSort = 'recent' | 'title' | 'artist';
 
 export type TrackSort = 'recent' | 'title' | 'artist' | 'album';
 
-export type AlbumIdentityState = 'local_only' | 'release_group_linked' | 'release_linked';
+export type AlbumIdentityState =
+	| 'local_only'
+	| 'release_group_linked'
+	| 'release_linked'
+	| 'custom_edition';
 
 export type ArtistIdentityState = 'local_only' | 'musicbrainz_linked';
 
@@ -1603,6 +1632,34 @@ export interface LibraryAlbumDetail extends LibraryAlbumSummary {
 		| 'manual_identity_needs_review';
 	review_id: string | null;
 	review_revision: number | null;
+	management_identity_readiness:
+		| 'not_applicable'
+		| 'exact_release_required'
+		| 'track_mapping_required'
+		| 'custom_manifest_stale'
+		| 'ready';
+	mapped_track_count: number;
+	management_identity_kind: 'exact_release' | 'custom_edition' | null;
+	custom_manifest_id: string | null;
+	custom_manifest_version: number | null;
+	custom_manifest_track_count: number;
+	custom_manifest_recognized_track_count: number;
+	custom_manifest_stale: boolean;
+	management_excluded: boolean;
+	management_exclusion_revision: number | null;
+	management_excluded_at: number | null;
+	active_edition_conversion: {
+		job_id: string;
+		release_mbid: string;
+		state: 'preflight' | 'acquiring' | 'ready' | 'needs_recheck';
+		kept_count: number;
+		acquire_count: number;
+		staged_count: number;
+		failed_count: number;
+		recycle_count: number;
+		row_revision: number;
+		final_preview_job_id: string | null;
+	} | null;
 }
 
 export type ContributionState =
@@ -1870,7 +1927,9 @@ export interface NativeAlbumsResponse {
 	total: number;
 }
 
-export type ArtistSort = 'name' | 'album_count' | 'date_added';
+export type ArtistSort = 'name' | 'album_count' | 'appearance_count' | 'date_added';
+export type LibraryArtistScope = 'album' | 'contributors';
+export type LibraryArtistRelationship = 'album_artist' | 'contributor' | 'both';
 
 export interface LibraryArtistSummary {
 	id: string;
@@ -1879,6 +1938,9 @@ export interface LibraryArtistSummary {
 	artist_identity_state: ArtistIdentityState;
 	album_count: number;
 	track_count: number;
+	appearance_release_count: number;
+	appearance_track_count: number;
+	library_relationship: LibraryArtistRelationship;
 	date_added: number | null;
 	row_revision: number;
 }
@@ -1886,6 +1948,21 @@ export interface LibraryArtistSummary {
 export interface NativeArtistsResponse {
 	items: LibraryArtistSummary[];
 	total: number;
+	album_artist_total: number;
+	contributor_total: number;
+}
+
+export interface LibraryArtistAppearance {
+	album: LibraryAlbumSummary;
+	tracks: NativeTrackListItem[];
+}
+
+export interface LibraryArtistAppearancesResponse {
+	items: LibraryArtistAppearance[];
+	total: number;
+	total_tracks: number;
+	offset: number;
+	limit: number;
 }
 
 export interface LibraryTrack {
@@ -2019,22 +2096,6 @@ export interface LibraryScanSchedule {
 	server_timezone?: string;
 }
 
-export interface TrackTagUpdate {
-	title: string;
-	artist: string;
-	album: string;
-	track_number: number;
-	album_artist: string | null;
-	disc_number: number;
-	year: number | null;
-	genre: string | null;
-	musicbrainz_release_group_id: string | null;
-	musicbrainz_release_id: string | null;
-	musicbrainz_recording_id: string | null;
-	musicbrainz_artist_id: string | null;
-	musicbrainz_album_artist_id: string | null;
-}
-
 export interface LibraryActionResponse {
 	status: string;
 	message: string;
@@ -2061,6 +2122,7 @@ export interface DownloadClientConfig {
 	preflight_score_manual_min: number;
 	download_stall_timeout_minutes: number;
 	download_queued_timeout_minutes: number;
+	preferred_quality_wait_minutes: number;
 	max_failover_attempts: number;
 	max_concurrent_downloads: number;
 }
@@ -2180,6 +2242,7 @@ export interface DownloadPolicySettings {
 	preflight_score_manual_min: number;
 	download_stall_timeout_minutes: number;
 	download_queued_timeout_minutes: number;
+	preferred_quality_wait_minutes: number;
 	max_failover_attempts: number;
 	max_concurrent_downloads: number;
 	auto_retry_enabled: boolean;
@@ -2295,6 +2358,8 @@ export interface DownloadTask {
 	// Optional for backward-compat with cached/older responses.
 	source?: string;
 	release_group_mbid: string;
+	release_mbid: string | null;
+	release_track_mbid: string | null;
 	recording_mbid: string | null;
 	// Backfilled from the release group at request time; older tasks predating the
 	// backfill (or one MusicBrainz couldn't resolve) have no artist link.
@@ -2325,6 +2390,25 @@ export interface DownloadTask {
 	// The full auto-retry backoff schedule in minutes for this task's max attempts, e.g.
 	// [15, 30, 60, 120, 240, 480]. Empty when auto-retry is off. Drives the Wanted ladder.
 	retry_ladder_minutes: number[];
+	acquisition_cleanup_state:
+		| 'not_tracked'
+		| 'in_use'
+		| 'pending'
+		| 'complete'
+		| 'preserved'
+		| 'needs_attention';
+	quality_format: string | null;
+	quality_bit_depth: number | null;
+	quality_sample_rate: number | null;
+	advertised_queue_depth: number | null;
+	queue_position_start: number | null;
+	queue_position_end: number | null;
+	remote_queued: boolean;
+	preferred_quality_fallback_at: number | null;
+	attempt_number: number;
+	attempt_total: number;
+	has_next_source: boolean;
+	held_for_review: boolean;
 }
 
 export interface DownloadListResponse {
@@ -2333,12 +2417,23 @@ export interface DownloadListResponse {
 	page_size: number;
 }
 
+// mirrors backend DownloadActivitySummaryResponse (api/v1/schemas/download.py)
+export interface DownloadActivitySummary {
+	revision: number;
+	active_count: number;
+	held_count: number;
+	failed_count: number;
+	landed_release_group_mbids: string[];
+}
+
 // A downloaded track that matched by duration but failed the AcoustID recording-identity
 // check (usually wrong MusicBrainz metadata). Held for a human "import anyway" / "discard"
 // decision instead of being dropped. `evidence_*` is what AcoustID heard.
 export interface HeldImport {
 	id: number;
 	release_group_mbid: string | null;
+	release_mbid: string | null;
+	release_track_mbid: string | null;
 	recording_mbid: string | null;
 	track_number: number | null;
 	disc_number: number | null;
@@ -2350,20 +2445,39 @@ export interface HeldImport {
 	file_format: string | null;
 	duration_seconds: number | null;
 	reason: string;
+	reason_detail: string | null;
 	source: string;
 	source_task_id: string | null;
 	created_at: number;
 	evidence_title: string | null;
 	evidence_artist: string | null;
 	evidence_score: number | null;
+	management_retry_count: number;
+	management_next_retry_at: number | null;
 }
 
 export interface HeldListResponse {
 	items: HeldImport[];
 }
 
+export interface DownloadSourceUpdate {
+	candidate_index: number | null;
+	source: string | null;
+	quality_format: string | null;
+	quality_bit_depth: number | null;
+	quality_sample_rate: number | null;
+	advertised_queue_depth: number | null;
+	queue_position_start: number | null;
+	queue_position_end: number | null;
+	remote_queued: boolean;
+	preferred_quality_fallback_at: number | null;
+	attempt_number: number;
+	attempt_total: number;
+	has_next_source: boolean;
+}
+
 // SSE payload on the `download:{task_id}` channel `progress` event
-export interface DownloadProgress {
+export interface DownloadProgress extends DownloadSourceUpdate {
 	bytes_downloaded: number;
 	bytes_total: number;
 	files_completed: number;
@@ -2388,6 +2502,12 @@ export interface TrackRequestResponse {
 export interface CancelDownloadResponse {
 	success: boolean;
 	status?: string;
+}
+
+export interface NextSourceResponse {
+	success: boolean;
+	status: string;
+	candidate_index: number;
 }
 
 export interface RetryDownloadResponse {

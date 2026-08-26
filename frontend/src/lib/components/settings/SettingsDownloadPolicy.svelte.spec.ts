@@ -14,6 +14,7 @@ const basePolicy: DownloadPolicySettings = {
 	preflight_score_manual_min: 0.5,
 	download_stall_timeout_minutes: 30,
 	download_queued_timeout_minutes: 120,
+	preferred_quality_wait_minutes: 15,
 	max_failover_attempts: 3,
 	max_concurrent_downloads: 3,
 	auto_retry_enabled: true,

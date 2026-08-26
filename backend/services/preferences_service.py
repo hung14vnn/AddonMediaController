@@ -55,8 +55,21 @@ from api.v1.schemas.settings import (
 )
 from api.v1.schemas.advanced_settings import AdvancedSettings
 from api.v1.schemas.library_policies import LibraryRootSettings, TypedLibrarySettings
+from api.v1.schemas.library_management import (
+    LibraryManagementSettings,
+    LibraryManagementSettingsResponse,
+    build_initial_library_management_settings,
+    migrate_library_management_presets,
+    normalize_library_management_settings,
+    settings_revision as library_management_settings_revision,
+    to_library_management_response,
+)
 from core.config import Settings
-from core.exceptions import ConfigurationError, StaleRevisionError
+from core.exceptions import (
+    ConfigurationError,
+    ScriptValidationError,
+    StaleRevisionError,
+)
 from infrastructure.crypto import decrypt, encrypt
 from infrastructure.file_utils import atomic_write_json, read_json
 from infrastructure.serialization import to_jsonable
@@ -72,6 +85,7 @@ class PreferencesService:
         self._config_path = settings.config_file_path
         self._config_cache: Optional[dict] = None
         self._cache_lock = threading.RLock()
+        self._normalize_get_it_settings()
         self._migrate_musicbrainz_settings()
         self._ensure_instance_id()
 
@@ -250,6 +264,7 @@ class PreferencesService:
                 "preflight_score_manual_min": settings.preflight_score_manual_min,
                 "download_stall_timeout_minutes": settings.download_stall_timeout_minutes,
                 "download_queued_timeout_minutes": settings.download_queued_timeout_minutes,
+                "preferred_quality_wait_minutes": settings.preferred_quality_wait_minutes,
                 "max_failover_attempts": settings.max_failover_attempts,
                 "max_concurrent_downloads": settings.max_concurrent_downloads,
             }
@@ -283,6 +298,9 @@ class PreferencesService:
                 ),
                 download_queued_timeout_minutes=dc.get(
                     "download_queued_timeout_minutes", 120
+                ),
+                preferred_quality_wait_minutes=dc.get(
+                    "preferred_quality_wait_minutes", 15
                 ),
                 max_failover_attempts=dc.get("max_failover_attempts", 3),
                 max_concurrent_downloads=dc.get("max_concurrent_downloads", 3),
@@ -966,11 +984,10 @@ class PreferencesService:
         return raw.enabled and bool(raw.client_id) and bool(raw.client_secret)
 
     def get_get_it_settings(self) -> GetItSettings:
-        """ "Get it" purchase-link settings (no secrets - safe for API responses)."""
+        """Return the regional storefront used by purchase-link fallbacks."""
         data = self._load_config().get("get_it", {})
         return GetItSettings(
             store_region=(data.get("store_region") or "US").upper(),
-            support_droppedneedle=bool(data.get("support_droppedneedle", True)),
         )
 
     def save_get_it_settings(self, settings: GetItSettings) -> None:
@@ -978,12 +995,31 @@ class PreferencesService:
             config = self._load_config().copy()
             config["get_it"] = {
                 "store_region": settings.store_region.upper(),
-                "support_droppedneedle": settings.support_droppedneedle,
             }
             self._save_config(config)
         except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to save Get it settings: {e}")
             raise ConfigurationError("Failed to save Get it settings")
+
+    def _normalize_get_it_settings(self) -> None:
+        """Remove fields retired from the purchase-link settings section."""
+        config = self._load_config()
+        data = config.get("get_it")
+        if not isinstance(data, dict):
+            return
+
+        region = data.get("store_region")
+        normalized = {
+            "store_region": region.upper()
+            if isinstance(region, str) and region
+            else "US"
+        }
+        if data == normalized:
+            return
+
+        updated = config.copy()
+        updated["get_it"] = normalized
+        self._save_config(updated)
 
     def get_plugin_config(self, plugin_name: str) -> PluginConfig:
         """Per-plugin admin state (01b). Unknown plugins get the safe default:
@@ -1167,6 +1203,78 @@ class PreferencesService:
             acoustid_api_key=settings.acoustid_api_key,
         )
 
+    def _library_management_settings_section(self) -> LibraryManagementSettings:
+        """Return typed management policy, seeding inert presets exactly once."""
+
+        with self._cache_lock:
+            config = self._load_config()
+            data = config.get("library_management")
+            if data:
+                try:
+                    parsed = msgspec.convert(data, type=LibraryManagementSettings)
+                    migrated = migrate_library_management_presets(parsed)
+                    normalized = normalize_library_management_settings(migrated)
+                except (
+                    msgspec.ValidationError,
+                    ScriptValidationError,
+                    TypeError,
+                    ValueError,
+                ) as e:
+                    logger.error("Failed to parse Library Management settings: %s", e)
+                    raise ConfigurationError(
+                        "Library Management settings are invalid."
+                    ) from e
+                if to_jsonable(normalized) != data:
+                    new_config = config.copy()
+                    new_config["library_management"] = to_jsonable(normalized)
+                    self._save_config(new_config)
+                return normalized
+
+            legacy_template = self._typed_library_settings_section().naming_template
+            migrated = build_initial_library_management_settings(legacy_template)
+            new_config = self._load_config().copy()
+            new_config["library_management"] = to_jsonable(migrated)
+            self._save_config(new_config)
+            return migrated
+
+    def get_library_management_settings(
+        self,
+    ) -> LibraryManagementSettingsResponse:
+        return to_library_management_response(
+            self._library_management_settings_section()
+        )
+
+    def get_library_management_settings_raw(self) -> LibraryManagementSettings:
+        """Server-side typed settings; the section deliberately contains no secrets."""
+
+        stored = self._library_management_settings_section()
+        return msgspec.convert(
+            msgspec.to_builtins(stored), type=LibraryManagementSettings
+        )
+
+    def save_library_management_settings_if_current(
+        self,
+        settings: LibraryManagementSettings,
+        *,
+        expected_settings_revision: str,
+    ) -> LibraryManagementSettingsResponse:
+        """Persist policy with CAS. Saving alone never assigns or starts work."""
+
+        with self._cache_lock:
+            current = self._library_management_settings_section()
+            current_revision = library_management_settings_revision(current)
+            if current_revision != expected_settings_revision:
+                raise StaleRevisionError(
+                    "Library Management settings changed. Refresh this page and try again."
+                )
+            try:
+                settings.preset_catalog_version = current.preset_catalog_version
+                normalized = normalize_library_management_settings(settings)
+                self._save_section("library_management", normalized)
+            except (ScriptValidationError, ValueError) as e:
+                raise ConfigurationError(str(e)) from e
+            return to_library_management_response(normalized)
+
     def get_legacy_library_paths(self) -> list[str]:
         """Derived compatibility projection for consumers not switched to roots yet."""
         return [
@@ -1180,6 +1288,7 @@ class PreferencesService:
             staging_path=settings.staging_path,
             naming_template=settings.naming_template,
             acoustid_api_key=ACOUSTID_KEY_MASK if settings.acoustid_api_key else "",
+            enabled=settings.enabled,
         )
 
     def get_typed_library_settings_raw(self) -> TypedLibrarySettings:
@@ -1192,6 +1301,7 @@ class PreferencesService:
             staging_path=settings.staging_path,
             naming_template=settings.naming_template,
             acoustid_api_key=api_key,
+            enabled=settings.enabled,
         )
 
     def get_library_settings(self) -> LibrarySettings:
@@ -1257,6 +1367,37 @@ class PreferencesService:
         with self._cache_lock:
             self._save_typed_library_settings(settings)
 
+    def retarget_library_roots_for_upgrade(self, replacements: dict[str, str]) -> None:
+        """Retarget existing root IDs during the isolated legacy upgrade only."""
+
+        with self._cache_lock:
+            current = self.get_typed_library_settings()
+            known_ids = {root.id for root in current.library_roots}
+            if not replacements or not set(replacements).issubset(known_ids):
+                raise ConfigurationError(
+                    "The automatic upgrade supplied an unknown library root."
+                )
+            roots = [
+                LibraryRootSettings(
+                    id=root.id,
+                    path=replacements.get(root.id, root.path),
+                    label=root.label,
+                    policy=root.policy,
+                    rules=root.rules,
+                )
+                for root in current.library_roots
+            ]
+            self._save_typed_library_settings(
+                TypedLibrarySettings(
+                    library_roots=roots,
+                    staging_path=current.staging_path,
+                    naming_template=current.naming_template,
+                    acoustid_api_key=current.acoustid_api_key,
+                    enabled=current.enabled,
+                ),
+                allow_root_path_changes=True,
+            )
+
     def save_typed_library_settings_if_current(
         self,
         settings: TypedLibrarySettings,
@@ -1275,7 +1416,12 @@ class PreferencesService:
                 )
             self._save_typed_library_settings(settings)
 
-    def _save_typed_library_settings(self, settings: TypedLibrarySettings) -> None:
+    def _save_typed_library_settings(
+        self,
+        settings: TypedLibrarySettings,
+        *,
+        allow_root_path_changes: bool = False,
+    ) -> None:
         try:
             from services.native.library_policy_resolver import LibraryPolicyResolver
 
@@ -1283,9 +1429,12 @@ class PreferencesService:
             current_by_id = {root.id: root for root in current_settings.library_roots}
             for root in settings.library_roots:
                 previous = current_by_id.get(root.id)
-                if previous is not None and Path(previous.path).resolve(
-                    strict=False
-                ) != Path(root.path).resolve(strict=False):
+                if (
+                    not allow_root_path_changes
+                    and previous is not None
+                    and Path(previous.path).resolve(strict=False)
+                    != Path(root.path).resolve(strict=False)
+                ):
                     raise ConfigurationError(
                         f"Library root {previous.label} cannot be moved. Add a new root instead."
                     )
@@ -1321,6 +1470,7 @@ class PreferencesService:
                     naming_template=normalized.naming_template
                     or DEFAULT_NAMING_TEMPLATE,
                     acoustid_api_key=api_key,
+                    enabled=normalized.enabled,
                 ),
             )
         except ConfigurationError:

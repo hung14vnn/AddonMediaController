@@ -25,7 +25,7 @@
 	$effect(() => {
 		if (localArtist && shouldRedirect) {
 			void cacheCanonicalLibraryArtistDetail(localArtist);
-			void goto(artistHref(localArtist.id), { replaceState: true });
+			void goto(artistHref(providerArtistId ?? data.artistId), { replaceState: true });
 		}
 	});
 </script>

@@ -10,7 +10,7 @@
 	}
 
 	let { album }: Props = $props();
-	let href = $derived(albumHref(album.id));
+	let href = $derived(albumHref(album.musicbrainz_release_group_id ?? album.id));
 </script>
 
 <div
@@ -25,6 +25,7 @@
 				customUrl={album.cover_url}
 				alt={album.title}
 				size="full"
+				requestSize={250}
 				rounded="none"
 				className="w-full h-full"
 			/>

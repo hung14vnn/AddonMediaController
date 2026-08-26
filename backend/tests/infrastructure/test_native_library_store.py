@@ -33,6 +33,7 @@ from models.library_work import (
     OperationWorkItem,
     RepairFinding,
     ReviewDecision,
+    ScanFailureRecord,
     ScanInventoryItem,
     ScanRun,
     ScanScope,
@@ -257,6 +258,324 @@ async def test_schema_repairs_release_alias_stored_as_release_group_id(
 
 
 @pytest.mark.asyncio
+async def test_schema_repairs_relationship_anchored_synthetic_artist_duplicates(
+    store: NativeLibraryStore,
+    db_path: Path,
+) -> None:
+    canonical_id = "artist-canonical"
+    local_id = "artist-local"
+    synthetic_id = "artist-synthetic"
+    unanchored_id = "artist-unanchored"
+    guest_id = "artist-guest"
+    unrelated_id = "artist-unrelated"
+    canonical_mbid = "88d17133-abbc-42db-9526-4e2c1db60336"
+    synthetic_mbid = "d4ee74d98c7a6f053a0ebffd0ed5fccb"
+    unanchored_mbid = "b" * 32
+
+    def membership(
+        artist_id: str,
+        suffix: str,
+        *,
+        embedded_album_artist_mbid: str | None = None,
+    ) -> CatalogMembership:
+        artist = _artist(artist_id, "Shared Artist")
+        album = LocalAlbum(
+            id=f"album-{suffix}",
+            root_id="root-1",
+            grouping_key=f"group-{suffix}",
+            title=f"Album {suffix}",
+            album_artist_id=artist_id,
+            album_artist_name=artist.display_name,
+            created_at=1,
+            updated_at=1,
+        )
+        track = LocalTrack(
+            id=f"track-{suffix}",
+            local_album_id=album.id,
+            root_id="root-1",
+            file_path=f"/music/{suffix}.flac",
+            relative_path=f"{suffix}.flac",
+            path_hash=f"hash-{suffix}",
+            file_size_bytes=100,
+            file_mtime_ns=200,
+            stat_revision=f"stat-{suffix}",
+            title=f"Track {suffix}",
+            artist_name=artist.display_name,
+            album_title=album.title,
+            album_artist_name=artist.display_name,
+            embedded_album_artist_mbid=embedded_album_artist_mbid,
+            file_format="flac",
+            imported_at=1,
+        )
+        return CatalogMembership(
+            album=album,
+            artists=[artist],
+            tracks=[track],
+            track_credits={
+                track.id: [LocalArtistCredit(local_artist_id=artist_id, position=0)]
+            },
+        )
+
+    await store.create_catalog_membership(membership(canonical_id, "canonical"))
+    await store.create_catalog_membership(
+        membership(
+            local_id,
+            "local",
+            embedded_album_artist_mbid=canonical_mbid,
+        )
+    )
+    await store.create_catalog_membership(membership(unrelated_id, "unrelated"))
+    await store.create_catalog_membership(membership(unanchored_id, "unanchored"))
+    with sqlite3.connect(db_path) as connection:
+        connection.executemany(
+            "INSERT INTO local_artists "
+            "(id, display_name, folded_name, normalized_name, kind, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'person', 1, 1)",
+            [
+                (synthetic_id, "Shared Artist", "shared artist", "shared artist"),
+                (guest_id, "Guest Credit", "guest credit", "guest credit"),
+            ],
+        )
+        connection.executemany(
+            "INSERT INTO local_artist_external_identities "
+            "(local_artist_id, provider, provider_artist_id, decision_source, selected_at) "
+            "VALUES (?, 'musicbrainz', ?, 'legacy_import', 1)",
+            [
+                (canonical_id, canonical_mbid),
+                (synthetic_id, synthetic_mbid),
+                (unanchored_id, unanchored_mbid),
+                (guest_id, "a" * 32),
+            ],
+        )
+        connection.execute(
+            "UPDATE local_track_artists SET local_artist_id = ? "
+            "WHERE local_track_id = 'track-canonical'",
+            (synthetic_id,),
+        )
+        connection.execute(
+            "INSERT INTO local_track_artists "
+            "(local_track_id, position, local_artist_id, role) "
+            "VALUES ('track-canonical', 1, ?, 'guest')",
+            (guest_id,),
+        )
+        connection.execute(
+            "INSERT INTO local_artist_aliases VALUES (?, ?, 'legacy_artist', 1)",
+            (synthetic_mbid, synthetic_id),
+        )
+        left, right = sorted((canonical_id, local_id))
+        connection.execute(
+            "INSERT INTO local_artist_merge_candidates "
+            "(id, left_artist_id, right_artist_id, reason_code, created_at, updated_at) "
+            "VALUES ('candidate-1', ?, ?, 'SHARED_PROVIDER_IDENTITY', 1, 1)",
+            (left, right),
+        )
+        connection.execute(
+            "INSERT INTO library_user_favorites VALUES " "('admin', 'artist', ?, 1)",
+            (local_id,),
+        )
+        connection.execute(
+            "INSERT INTO library_play_history "
+            "(id, user_id, local_track_id, local_album_id, local_artist_id, "
+            "track_name, artist_name, played_at) VALUES "
+            "('history-1', 'admin', 'track-local', 'album-local', ?, "
+            "'Track local', 'Shared Artist', '2026-07-23T00:00:00Z')",
+            (local_id,),
+        )
+        connection.execute(
+            "INSERT INTO library_playlists "
+            "(id, name, created_at, updated_at, user_id) "
+            "VALUES ('playlist-1', 'Test', '1', '1', 'admin')"
+        )
+        connection.execute(
+            "INSERT INTO library_playlist_tracks "
+            "(id, playlist_id, position, track_name, artist_name, album_name, "
+            "source_type, created_at, local_artist_id) "
+            "VALUES ('playlist-track-1', 'playlist-1', 0, 'Track local', "
+            "'Shared Artist', 'Album local', 'local', '1', ?)",
+            (local_id,),
+        )
+        connection.execute(
+            "INSERT INTO library_compat_id_map VALUES ('compat-artist', 'artist', ?)",
+            (local_id,),
+        )
+        connection.execute(
+            "INSERT INTO library_migration_provenance "
+            "(source_kind, source_key, target_kind, target_id, source_revision, imported_at) "
+            "VALUES ('native_artist_alias', ?, 'local_artist', ?, 'revision-1', 1)",
+            (synthetic_mbid, synthetic_id),
+        )
+        connection.execute(
+            "INSERT INTO library_scan_runs "
+            "(id, kind, trigger, state, phase, aggregate_scope, queued_at, updated_at) "
+            "VALUES ('scan-1', 'incremental', 'manual', 'reconciling', 'reconciling', "
+            "'root-1', 1, 1)"
+        )
+        connection.execute(
+            "INSERT INTO library_scan_grouping_contexts "
+            "(run_id, root_id, relative_directory) VALUES ('scan-1', 'root-1', '.')"
+        )
+        connection.execute(
+            "INSERT INTO library_scan_grouping_groups "
+            "(run_id, root_id, relative_directory, grouping_token, grouping_key, title, "
+            "album_artist_name, reason_code, local_artist_id) "
+            "VALUES ('scan-1', 'root-1', '.', 'token-1', 'group-1', 'Album local', "
+            "'Shared Artist', 'AUTOMATIC_GROUPING', ?)",
+            (local_id,),
+        )
+        connection.executemany(
+            "INSERT INTO local_entity_source_links "
+            "(id, local_artist_id, provider, external_entity_type, external_id, "
+            "canonical_url, decision_source, verified_at, created_at, updated_at) "
+            "VALUES (?, ?, 'discogs', 'artist', ?, ?, 'manual', 1, 1, 1)",
+            [
+                (
+                    "source-canonical",
+                    canonical_id,
+                    "shared-source",
+                    "https://www.discogs.com/artist/shared-source",
+                ),
+                (
+                    "source-local-duplicate",
+                    local_id,
+                    "shared-source",
+                    "https://www.discogs.com/artist/shared-source",
+                ),
+                (
+                    "source-local-unique",
+                    local_id,
+                    "unique-source",
+                    "https://www.discogs.com/artist/unique-source",
+                ),
+            ],
+        )
+
+    repaired = NativeLibraryStore(db_path, threading.Lock())
+    revision_after_repair = await repaired.get_catalog_revision()
+    NativeLibraryStore(db_path, threading.Lock())
+    listed_artists, listed_total = await repaired.list_target_artists(
+        search="Shared Artist"
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        active_shared = connection.execute(
+            "SELECT id FROM local_artists WHERE normalized_name = 'shared artist' "
+            "AND retired_into_artist_id IS NULL"
+        ).fetchall()
+        retired = dict(
+            connection.execute(
+                "SELECT id, retired_into_artist_id FROM local_artists "
+                "WHERE id IN (?, ?)",
+                (local_id, synthetic_id),
+            ).fetchall()
+        )
+        album_artists = {
+            row[0]
+            for row in connection.execute(
+                "SELECT album_artist_id FROM local_albums "
+                "WHERE id IN ('album-canonical', 'album-local')"
+            )
+        }
+        track_artists = {
+            row[0]
+            for row in connection.execute(
+                "SELECT local_artist_id FROM local_track_artists "
+                "WHERE local_track_id IN ('track-canonical', 'track-local') "
+                "AND role = 'primary'"
+            )
+        }
+        aliases = dict(
+            connection.execute(
+                "SELECT alias, local_artist_id FROM local_artist_aliases "
+                "WHERE alias IN (?, ?, ?)",
+                (synthetic_mbid, synthetic_id, local_id),
+            ).fetchall()
+        )
+        references = (
+            connection.execute(
+                "SELECT item_id FROM library_user_favorites WHERE user_id = 'admin'"
+            ).fetchone()[0],
+            connection.execute(
+                "SELECT local_artist_id FROM library_play_history "
+                "WHERE id = 'history-1'"
+            ).fetchone()[0],
+            connection.execute(
+                "SELECT local_artist_id FROM library_playlist_tracks "
+                "WHERE id = 'playlist-track-1'"
+            ).fetchone()[0],
+            connection.execute(
+                "SELECT internal_id FROM library_compat_id_map "
+                "WHERE jf_id = 'compat-artist'"
+            ).fetchone()[0],
+            connection.execute(
+                "SELECT target_id FROM library_migration_provenance "
+                "WHERE source_key = ?",
+                (synthetic_mbid,),
+            ).fetchone()[0],
+        )
+        guest_identity = connection.execute(
+            "SELECT provider_artist_id FROM local_artist_external_identities "
+            "WHERE local_artist_id = ?",
+            (guest_id,),
+        ).fetchone()
+        unanchored = connection.execute(
+            "SELECT artist.retired_into_artist_id, identity.provider_artist_id "
+            "FROM local_artists artist "
+            "LEFT JOIN local_artist_external_identities identity "
+            "ON identity.local_artist_id = artist.id WHERE artist.id = ?",
+            (unanchored_id,),
+        ).fetchone()
+        candidate_state = connection.execute(
+            "SELECT state FROM local_artist_merge_candidates WHERE id = 'candidate-1'"
+        ).fetchone()[0]
+        actions = connection.execute(
+            "SELECT action_kind FROM library_catalog_actions "
+            "WHERE reason_code = 'LEGACY_SYNTHETIC_ARTIST_IDENTITY' "
+            "ORDER BY action_kind"
+        ).fetchall()
+        grouping_artist = connection.execute(
+            "SELECT local_artist_id FROM library_scan_grouping_groups "
+            "WHERE run_id = 'scan-1' AND grouping_token = 'token-1'"
+        ).fetchone()[0]
+        source_links = connection.execute(
+            "SELECT id, local_artist_id FROM local_entity_source_links ORDER BY id"
+        ).fetchall()
+    assert {row[0] for row in active_shared} == {
+        canonical_id,
+        unrelated_id,
+        unanchored_id,
+    }
+    assert listed_total == 3
+    assert {artist["artist_mbid"] for artist in listed_artists} == {
+        canonical_id,
+        unrelated_id,
+        unanchored_id,
+    }
+    assert retired == {local_id: canonical_id, synthetic_id: canonical_id}
+    assert album_artists == {canonical_id}
+    assert track_artists == {canonical_id}
+    assert aliases == {
+        synthetic_mbid: canonical_id,
+        synthetic_id: canonical_id,
+        local_id: canonical_id,
+    }
+    assert references == (canonical_id,) * 5
+    assert guest_identity is None
+    assert unanchored == (None, None)
+    assert candidate_state == "resolved"
+    assert actions == [
+        ("detach_artist_identity",),
+        ("detach_artist_identity",),
+        ("merge_artist",),
+    ]
+    assert grouping_artist == canonical_id
+    assert source_links == [
+        ("source-canonical", canonical_id),
+        ("source-local-unique", canonical_id),
+    ]
+    assert await repaired.get_catalog_revision() == revision_after_repair
+
+
+@pytest.mark.asyncio
 async def test_schema_is_idempotent_and_contains_complete_target_surface(
     db_path: Path,
 ) -> None:
@@ -283,6 +602,9 @@ async def test_schema_is_idempotent_and_contains_complete_target_surface(
         "library_policy_transitions",
         "library_scan_runs",
         "library_scan_inventory",
+        "library_scan_failures",
+        "library_scan_management_candidates",
+        "library_scan_management_staging",
         "library_scan_grouping_contexts",
         "library_migration_provenance",
         "library_reference_tombstones",
@@ -302,6 +624,210 @@ async def test_schema_is_idempotent_and_contains_complete_target_surface(
     assert await first.get_catalog_modified_at_ms() >= 1_577_836_800_000
     assert await first.get_stream_revision("scan") == 0
     assert _scalar(db_path, "SELECT COUNT(*) FROM local_artists") == 2
+
+
+def test_scan_management_candidate_schema_upgrade_is_idempotent(
+    db_path: Path,
+) -> None:
+    lock = threading.Lock()
+    NativeLibraryStore(db_path, lock)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("DROP TABLE library_scan_management_candidates")
+        connection.execute("DROP TABLE library_scan_management_staging")
+        connection.execute("DROP INDEX idx_scan_inventory_management_candidates")
+
+    NativeLibraryStore(db_path, lock)
+    NativeLibraryStore(db_path, lock)
+
+    with sqlite3.connect(db_path) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            )
+        }
+    assert "library_scan_management_candidates" in tables
+    assert "library_scan_management_staging" in tables
+    assert {
+        "idx_scan_inventory_management_candidates",
+        "idx_scan_management_candidates_due",
+    } <= indexes
+
+
+@pytest.mark.asyncio
+async def test_scan_failures_round_trip_pagination_and_dedupe(
+    store: NativeLibraryStore,
+) -> None:
+    await store.create_scan_run(
+        ScanRun(id="scan-fail", kind="incremental", trigger="manual", queued_at=1)
+    )
+    records = [
+        ScanFailureRecord(
+            root_id="root-1",
+            relative_path=f"dir-{ordinal}",
+            failure_code="WALK_EACCES",
+            recorded_at=100 + ordinal,
+            failure_detail=f"detail {ordinal}",
+            phase="discovering",
+        )
+        for ordinal in range(3)
+    ]
+    await store.record_scan_failures("scan-fail", records)
+    await store.record_scan_failures("scan-fail", [records[0]])
+
+    first_page, cursor = await store.list_scan_run_failures("scan-fail", limit=2)
+
+    assert [item.relative_path for item in first_page] == ["dir-0", "dir-1"]
+    assert first_page[0].failure_code == "WALK_EACCES"
+    assert first_page[0].failure_detail == "detail 0"
+    assert first_page[0].phase == "discovering"
+    assert first_page[0].recorded_at == 100
+    assert cursor is not None
+
+    second_page, next_cursor = await store.list_scan_run_failures(
+        "scan-fail", limit=2, cursor_rowid=cursor
+    )
+    assert [item.relative_path for item in second_page] == ["dir-2"]
+    assert next_cursor is None
+
+
+@pytest.mark.asyncio
+async def test_scan_failures_cascade_with_their_run(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await store.create_scan_run(
+        ScanRun(id="scan-cascade", kind="incremental", trigger="manual", queued_at=1)
+    )
+    await store.record_scan_failures(
+        "scan-cascade",
+        [
+            ScanFailureRecord(
+                root_id="root-1",
+                relative_path="dir",
+                failure_code="WALK_TIMEOUT",
+                recorded_at=100,
+            )
+        ],
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("DELETE FROM library_scan_runs WHERE id = 'scan-cascade'")
+        remaining = connection.execute(
+            "SELECT COUNT(*) FROM library_scan_failures"
+        ).fetchone()[0]
+
+    assert remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_commit_scan_index_batch_records_failure_rows(
+    store: NativeLibraryStore,
+) -> None:
+    await store.create_scan_run(
+        ScanRun(id="scan-index", kind="incremental", trigger="manual", queued_at=1)
+    )
+
+    await store.commit_scan_index_batch(
+        "scan-index",
+        writes=[],
+        states={},
+        failures=[("root-1", "broken.flac", "TAG_READ_TIMEOUT")],
+        increments={},
+        updated_at=2.0,
+    )
+
+    items, next_cursor = await store.list_scan_run_failures("scan-index")
+    assert next_cursor is None
+    assert [
+        (item.root_id, item.relative_path, item.failure_code, item.phase)
+        for item in items
+    ] == [("root-1", "broken.flac", "TAG_READ_TIMEOUT", "indexing")]
+    assert items[0].recorded_at == 2.0
+
+
+@pytest.mark.asyncio
+async def test_cleanup_terminal_scan_inventory_prunes_failure_rows(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await store.create_scan_run(
+        ScanRun(id="scan-prune", kind="incremental", trigger="manual", queued_at=1)
+    )
+    await store.record_scan_failures(
+        "scan-prune",
+        [
+            ScanFailureRecord(
+                root_id="root-1",
+                relative_path="dir",
+                failure_code="WALK_EACCES",
+                recorded_at=100,
+            )
+        ],
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_scan_runs SET terminal_at = 10, "
+            "inventory_cleanup_pending = 1, state = 'failed' WHERE id = 'scan-prune'"
+        )
+
+    while True:
+        _run_id, _deleted, done = await store.cleanup_terminal_scan_inventory()
+        if done:
+            break
+
+    items, _cursor = await store.list_scan_run_failures("scan-prune")
+    assert items == []
+
+
+@pytest.mark.asyncio
+async def test_scan_management_candidates_follow_album_and_run_lifetimes(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await store.create_scan_run(
+        ScanRun(id="scan-candidate", kind="incremental", trigger="manual", queued_at=1)
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute(
+            "INSERT INTO local_albums "
+            "(id,root_id,grouping_key,title,title_folded,album_artist_id,"
+            "grouping_source,created_at,updated_at) "
+            "VALUES ('album-candidate','root-1','candidate','Candidate','candidate',"
+            "?,'automatic',1,1)",
+            (UNKNOWN_ARTIST_ID,),
+        )
+        connection.execute(
+            "INSERT INTO library_scan_management_candidates "
+            "(run_id,local_album_id,next_attempt_at) "
+            "VALUES ('scan-candidate','album-candidate',1)"
+        )
+        connection.execute(
+            "INSERT INTO library_scan_management_staging(run_id,staged_at) "
+            "VALUES ('scan-candidate',1)"
+        )
+
+        connection.execute("DELETE FROM local_albums WHERE id='album-candidate'")
+        candidates_after_album = connection.execute(
+            "SELECT COUNT(*) FROM library_scan_management_candidates"
+        ).fetchone()[0]
+        staging_after_album = connection.execute(
+            "SELECT COUNT(*) FROM library_scan_management_staging"
+        ).fetchone()[0]
+
+        connection.execute("DELETE FROM library_scan_runs WHERE id='scan-candidate'")
+        staging_after_run = connection.execute(
+            "SELECT COUNT(*) FROM library_scan_management_staging"
+        ).fetchone()[0]
+
+    assert candidates_after_album == 0
+    assert staging_after_album == 1
+    assert staging_after_run == 0
 
 
 def test_bulk_preview_staging_columns_upgrade_idempotently(db_path: Path) -> None:
@@ -957,6 +1483,66 @@ async def test_revision_failures_have_specific_safe_api_codes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_identification_snapshot_counts_attention_and_deferral_reasons(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    subjects = {
+        "job-provider-queued": "album-1",
+        "job-provider-paused": "album-2",
+        "job-subject-queued": "album-3",
+        "job-attention-cap": "album-4",
+        "job-attention-subject": "album-5",
+        "job-failed-other": "album-6",
+    }
+    for suffix in ("1", "2", "3", "4", "5", "6"):
+        await store.create_catalog_membership(_membership(suffix))
+    for job_id, album_id in subjects.items():
+        await store.enqueue_identification_job(
+            IdentificationJob(
+                id=job_id,
+                dedupe_key=f"automatic:{album_id}:rev",
+                local_album_id=album_id,
+                created_at=10,
+            )
+        )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_identification_jobs SET last_failure_code = "
+            "'PROVIDER_TEMPORARILY_UNAVAILABLE' WHERE id IN "
+            "('job-provider-queued', 'job-provider-paused')"
+        )
+        connection.execute(
+            "UPDATE library_identification_jobs SET state = 'paused' "
+            "WHERE id = 'job-provider-paused'"
+        )
+        connection.execute(
+            "UPDATE library_identification_jobs SET last_failure_code = "
+            "'SUBJECT_NOT_AVAILABLE' WHERE id = 'job-subject-queued'"
+        )
+        connection.execute(
+            "UPDATE library_identification_jobs SET state = 'failed', terminal_at = 12, "
+            "last_failure_code = 'MAX_DEFERRALS_EXCEEDED' WHERE id = 'job-attention-cap'"
+        )
+        connection.execute(
+            "UPDATE library_identification_jobs SET state = 'failed', terminal_at = 13, "
+            "last_failure_code = 'SUBJECT_NOT_AVAILABLE' "
+            "WHERE id = 'job-attention-subject'"
+        )
+        connection.execute(
+            "UPDATE library_identification_jobs SET state = 'failed', terminal_at = 14, "
+            "last_failure_code = 'UNRELATED_CODE' WHERE id = 'job-failed-other'"
+        )
+
+    snapshot = await store.get_identification_activity_snapshot(now=10)
+    assert snapshot["attention_count"] == 2
+    assert snapshot["deferred_reason_counts"] == {
+        "PROVIDER_TEMPORARILY_UNAVAILABLE": 2,
+        "SUBJECT_NOT_AVAILABLE": 1,
+    }
+    assert snapshot["deferred_count"] == 3
+
+
+@pytest.mark.asyncio
 async def test_identification_activity_snapshot_and_revisioned_controls(
     store: NativeLibraryStore, db_path: Path
 ) -> None:
@@ -985,7 +1571,7 @@ async def test_identification_activity_snapshot_and_revisioned_controls(
             "WHERE id = 'job-failed'"
         )
 
-    snapshot = await store.get_identification_activity_snapshot()
+    snapshot = await store.get_identification_activity_snapshot(now=12)
     assert snapshot["counts"] == {"failed": 1, "queued": 1}
     assert snapshot["started_at"] == 10
     assert snapshot["failure_event_id"] == "job-failed"
@@ -1007,7 +1593,7 @@ async def test_identification_activity_snapshot_and_revisioned_controls(
             )
         ],
     )
-    assert (await store.get_identification_activity_snapshot())[
+    assert (await store.get_identification_activity_snapshot(now=13))[
         "foreground_operation_count"
     ] == 1
 
@@ -1016,7 +1602,7 @@ async def test_identification_activity_snapshot_and_revisioned_controls(
             "UPDATE library_operation_jobs SET state = 'ready' "
             "WHERE id = 'foreground-operation'"
         )
-    assert (await store.get_identification_activity_snapshot())[
+    assert (await store.get_identification_activity_snapshot(now=13))[
         "foreground_operation_count"
     ] == 0
 
@@ -1031,6 +1617,194 @@ async def test_identification_activity_snapshot_and_revisioned_controls(
     assert (
         await store.resume_identification_queue(resumed_at=14, expected_revision=2) == 3
     )
+
+
+def test_identification_jobs_attention_cause_ratchet_is_idempotent(
+    db_path: Path,
+) -> None:
+    lock = threading.Lock()
+    NativeLibraryStore(db_path, lock)
+    NativeLibraryStore(db_path, lock)
+    NativeLibraryStore(db_path, lock)
+
+    with sqlite3.connect(db_path) as connection:
+        columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(library_identification_jobs)"
+            )
+        }
+    assert "attention_cause" in columns
+
+
+@pytest.mark.asyncio
+async def test_terminal_fail_identification_job_surfaces_one_review_row(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await store.create_catalog_membership(_membership())
+
+    async def fail_album_job(
+        job_id: str, kind: str, failure_code: str, now: float
+    ) -> None:
+        await store.enqueue_identification_job(
+            IdentificationJob(
+                id=job_id,
+                local_album_id="album-1",
+                kind=kind,
+                dedupe_key=f"{kind}:album-1:one",
+                input_revision="one",
+                priority=20,
+                created_at=now - 1,
+            )
+        )
+        claimed = await store.claim_identification_job(
+            "worker", now=now, lease_seconds=60
+        )
+        assert claimed is not None
+        await store.terminal_fail_identification_job(
+            str(claimed["id"]),
+            worker_id="worker",
+            expected_job_revision=int(claimed["row_revision"]),
+            failure_code=failure_code,
+            attention_cause=failure_code,
+            now=now,
+        )
+
+    await fail_album_job("job-auto", "automatic", "MAX_DEFERRALS_EXCEEDED", 3)
+    with sqlite3.connect(db_path) as connection:
+        reviews = connection.execute(
+            "SELECT state, reason_code, attempt_id, input_revision, local_track_id "
+            "FROM library_identification_reviews"
+        ).fetchall()
+    assert reviews == [("needs_review", "MAX_DEFERRALS_EXCEEDED", None, "one", None)]
+
+    # A second terminal failure for the same album + input revision dedupes.
+    await fail_album_job("job-retry", "review_retry", "SUBJECT_NOT_AVAILABLE", 6)
+    with sqlite3.connect(db_path) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM library_identification_reviews"
+        ).fetchone()[0]
+    assert count == 1
+
+    # Track-scoped terminal failures never create review rows.
+    await store.enqueue_identification_job(
+        IdentificationJob(
+            id="job-track",
+            local_track_id="track-1",
+            kind="automatic",
+            dedupe_key="automatic:track-1:one",
+            input_revision="one",
+            priority=20,
+            created_at=7,
+        )
+    )
+    claimed = await store.claim_identification_job("worker", now=8, lease_seconds=60)
+    assert claimed is not None
+    await store.terminal_fail_identification_job(
+        str(claimed["id"]),
+        worker_id="worker",
+        expected_job_revision=int(claimed["row_revision"]),
+        failure_code="MAX_DEFERRALS_EXCEEDED",
+        attention_cause="MAX_DEFERRALS_EXCEEDED",
+        now=9,
+    )
+    with sqlite3.connect(db_path) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM library_identification_reviews"
+        ).fetchone()[0]
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_dismiss_review_resolves_without_touching_tracks_and_cancels_jobs(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await store.create_catalog_membership(_membership())
+    # A capped automatic job surfaces its own review row with attention markers.
+    await store.enqueue_identification_job(
+        IdentificationJob(
+            id="job-capped",
+            local_album_id="album-1",
+            kind="automatic",
+            dedupe_key="automatic:album-1:one",
+            input_revision="one",
+            priority=20,
+            created_at=1,
+        )
+    )
+    claimed = await store.claim_identification_job("worker", now=2, lease_seconds=60)
+    assert claimed is not None
+    await store.terminal_fail_identification_job(
+        str(claimed["id"]),
+        worker_id="worker",
+        expected_job_revision=int(claimed["row_revision"]),
+        failure_code="MAX_DEFERRALS_EXCEEDED",
+        attention_cause="UNEXPECTED_ERROR",
+        now=3,
+    )
+    # An unrelated queued job for the same album is cancelled by the decision.
+    await store.enqueue_identification_job(
+        IdentificationJob(
+            id="job-auto",
+            local_album_id="album-1",
+            kind="automatic",
+            dedupe_key="automatic:album-1:two",
+            input_revision="two",
+            priority=20,
+            created_at=4,
+        )
+    )
+    with sqlite3.connect(db_path) as connection:
+        review_row = connection.execute(
+            "SELECT id FROM library_identification_reviews WHERE local_album_id = 'album-1'"
+        ).fetchone()
+    assert review_row is not None
+    review_id = str(review_row[0])
+    catalog_revision = await store.get_catalog_revision()
+    assert (await store.get_identification_activity_snapshot(now=4))["attention_count"] == 1
+
+    result = await store.apply_review_decision(
+        review_id,
+        action="dismiss",
+        actor_user_id="admin",
+        expected_review_revision=1,
+        expected_catalog_revision=catalog_revision,
+        expected_identity_revision=None,
+        action_id="action-dismiss",
+        idempotency_key=None,
+        now=5,
+    )
+
+    assert result["review"]["state"] == "resolved"
+    assert result["review"]["reason_code"] == "DISMISS"
+    with sqlite3.connect(db_path) as connection:
+        review = connection.execute(
+            "SELECT state, reason_code, decided_by_user_id, decided_at "
+            "FROM library_identification_reviews WHERE id = ?",
+            (review_id,),
+        ).fetchone()
+        track = connection.execute(
+            "SELECT availability, manual_excluded FROM local_tracks WHERE id = 'track-1'"
+        ).fetchone()
+        queued = connection.execute(
+            "SELECT state, last_failure_code FROM library_identification_jobs "
+            "WHERE id = 'job-auto'"
+        ).fetchone()
+        capped = connection.execute(
+            "SELECT state, last_failure_code, attention_cause "
+            "FROM library_identification_jobs WHERE id = 'job-capped'"
+        ).fetchone()
+        audit = connection.execute(
+            "SELECT action_kind, reason_code FROM library_catalog_actions "
+            "WHERE id = 'action-dismiss'"
+        ).fetchone()
+    assert review == ("resolved", "DISMISS", "admin", 5)
+    assert track == ("indexed", 0)
+    assert queued == ("cancelled", "ADMIN_DECISION")
+    # The capped job stays failed for audit but stops counting as attention.
+    assert capped == ("failed", None, None)
+    assert (await store.get_identification_activity_snapshot(now=5))["attention_count"] == 0
+    assert audit == ("dismiss", "DISMISS")
 
 
 @pytest.mark.asyncio
@@ -1332,6 +2106,7 @@ async def test_identification_claim_is_atomic_and_active_dedupe_is_unique(
     store: NativeLibraryStore,
 ) -> None:
     await store.create_catalog_membership(_membership())
+    wake_revision = store.work_wakeups.revision("identification")
     first_id = await store.enqueue_identification_job(
         IdentificationJob(
             id="job-1", dedupe_key="album-1:input-1", local_album_id="album-1"
@@ -1348,6 +2123,7 @@ async def test_identification_claim_is_atomic_and_active_dedupe_is_unique(
     )
 
     assert first_id == second_id == "job-1"
+    assert store.work_wakeups.revision("identification") == wake_revision + 2
     assert len([claim for claim in claims if claim is not None]) == 1
     assert await store.get_stream_revision("identification") == 1
 
@@ -1435,6 +2211,7 @@ async def test_operation_materialization_claim_heartbeat_recovery_and_work_compl
     store: NativeLibraryStore, db_path: Path
 ) -> None:
     await store.create_catalog_membership(_membership())
+    wake_revision = store.work_wakeups.revision("operation")
     await store.create_operation_with_work(
         OperationJob(id="operation-1", kind="repair", created_at=1),
         [
@@ -1448,11 +2225,15 @@ async def test_operation_materialization_claim_heartbeat_recovery_and_work_compl
             )
         ],
     )
+    assert store.work_wakeups.revision("operation") == wake_revision + 1
     claim = await store.claim_operation_job("worker", now=1, lease_seconds=10)
     assert claim is not None
     assert await store.heartbeat_operation_job(
         "operation-1", "worker", now=2, lease_seconds=10
     )
+    after_heartbeat = await store.get_operation_job("operation-1")
+    assert after_heartbeat is not None
+    assert after_heartbeat["row_revision"] == claim["row_revision"]
     assert await store.recover_expired_operation_leases(now=5) == 0
     work = await store.claim_operation_work("operation-1", "worker", now=3)
     assert work is not None
@@ -1466,7 +2247,7 @@ async def test_operation_materialization_claim_heartbeat_recovery_and_work_compl
         failure_code=None,
         completed_at=4,
     )
-    assert (work_revision, job_revision, stream_revision) == (3, 4, 2)
+    assert (work_revision, job_revision, stream_revision) == (3, 3, 2)
     assert (
         _scalar(
             db_path,
@@ -1474,6 +2255,115 @@ async def test_operation_materialization_claim_heartbeat_recovery_and_work_compl
         )
         == 1
     )
+
+
+@pytest.mark.asyncio
+async def test_claim_operation_job_defers_until_retry_not_before(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    """A job deferred with next_attempt_at must not be re-claimed before it is
+    due (the provider-defer hot-spin regression), and claiming clears it."""
+    await store.create_catalog_membership(_membership())
+    await store.create_operation_with_work(
+        OperationJob(id="operation-deferred", kind="repair", created_at=1),
+        [
+            OperationWorkItem(
+                ordinal=0,
+                local_album_id="album-1",
+                expected_subject_revision=1,
+                expected_input_revision="input-1",
+                action="repair",
+                idempotency_key="album-1",
+            )
+        ],
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_operation_jobs SET next_attempt_at = 50 "
+            "WHERE id = 'operation-deferred'"
+        )
+    assert await store.claim_operation_job("worker", now=49, lease_seconds=10) is None
+    claimed = await store.claim_operation_job("worker", now=50, lease_seconds=10)
+    assert claimed is not None
+    assert claimed["next_attempt_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_start_repair_apply_wakes_sleeping_operation_worker(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO library_operation_jobs "
+            "(id, kind, state, created_at, updated_at) "
+            "VALUES ('repair-apply-1', 'repair', 'ready', 1, 1)"
+        )
+        connection.execute(
+            "INSERT INTO library_repair_snapshots "
+            "(job_id, scope_json, target_matcher_version, created_at) "
+            "VALUES ('repair-apply-1', '{}', 'matcher-1', 1)"
+        )
+        connection.commit()
+    revision = store.work_wakeups.revision("operation")
+    waiting = asyncio.create_task(
+        store.work_wakeups.wait(
+            "operation", after_revision=revision, timeout_seconds=1.0
+        )
+    )
+    await asyncio.sleep(0)
+
+    job = await store.start_repair_apply(
+        "repair-apply-1", expected_row_revision=1, now=2
+    )
+
+    assert job["state"] == "queued"
+    assert await waiting is True
+    assert store.work_wakeups.revision("operation") == revision + 1
+
+
+@pytest.mark.asyncio
+async def test_deferred_repair_rotates_behind_other_queued_repairs(
+    store: NativeLibraryStore,
+) -> None:
+    await store.create_catalog_membership(_membership())
+    for ordinal, created_at in enumerate((1.0, 2.0), start=1):
+        await store.create_operation_with_work(
+            OperationJob(
+                id=f"operation-{ordinal}", kind="repair", created_at=created_at
+            ),
+            [
+                OperationWorkItem(
+                    ordinal=0,
+                    local_album_id="album-1",
+                    expected_subject_revision=1,
+                    expected_input_revision=f"input-{ordinal}",
+                    action="repair",
+                    idempotency_key=f"album-{ordinal}",
+                )
+            ],
+        )
+
+    first = await store.claim_operation_job(
+        "worker", now=3, lease_seconds=10, kind="repair"
+    )
+    assert first is not None
+    assert first["id"] == "operation-1"
+    work = await store.claim_operation_work("operation-1", "worker", now=3)
+    assert work is not None
+
+    await store.defer_catalog_identity_hygiene_work(
+        job_id="operation-1",
+        ordinal=0,
+        worker_id="worker",
+        reason_code="SCAN_ACTIVE",
+        now=4,
+    )
+
+    second = await store.claim_operation_job(
+        "worker", now=5, lease_seconds=10, kind="repair"
+    )
+    assert second is not None
+    assert second["id"] == "operation-2"
 
 
 @pytest.mark.asyncio

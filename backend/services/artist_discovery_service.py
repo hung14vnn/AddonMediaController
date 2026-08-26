@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from time import monotonic
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from api.v1.schemas.discovery import (
@@ -24,6 +25,7 @@ from services.preferences_service import PreferencesService
 
 if TYPE_CHECKING:
     from infrastructure.persistence.auth_store import AuthStore
+    from services.native.background_workload_gate import BackgroundWorkloadGate
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +37,35 @@ DEFAULT_SIMILAR_COUNT = 15
 DEFAULT_TOP_SONGS_COUNT = 10
 DEFAULT_TOP_ALBUMS_COUNT = 10
 _DISCOVERY_WORKER_TIMEOUT = 120
+_PRECACHE_MAX_CONSECUTIVE_FAILURES = 5
+_PRECACHE_PAUSE_SECONDS = 1800.0  # matches ListenBrainz _POPULARITY_DEGRADED_TTL
 
 # Module-level flag survives singleton cache invalidation / instance recreation
 _discovery_precache_running = False
+
+# Module-level pause state survives singleton cache invalidation / instance
+# recreation, same rationale as _discovery_precache_running above.
+_precache_consecutive_failures = 0
+_precache_paused_until = 0.0  # time.monotonic deadline; 0 = not paused
+
+
+def _record_precache_unit_failure() -> None:
+    global _precache_consecutive_failures, _precache_paused_until
+    _precache_consecutive_failures += 1
+    if _precache_consecutive_failures >= _PRECACHE_MAX_CONSECUTIVE_FAILURES:
+        _precache_paused_until = monotonic() + _PRECACHE_PAUSE_SECONDS
+        _precache_consecutive_failures = 0
+        logger.info(
+            "Discovery precache paused for %ds after %d consecutive unit "
+            "failures (upstream outage backoff); will probe again after the pause",
+            int(_PRECACHE_PAUSE_SECONDS),
+            _PRECACHE_MAX_CONSECUTIVE_FAILURES,
+        )
+
+
+def _record_precache_unit_success() -> None:
+    global _precache_consecutive_failures
+    _precache_consecutive_failures = 0
 
 
 def _dedupe_similar_artists(artists: list[SimilarArtist]) -> list[SimilarArtist]:
@@ -71,6 +99,7 @@ class ArtistDiscoveryService:
         preferences_service: Optional[PreferencesService] = None,
         client_factory: Optional[PerUserClientFactory] = None,
         auth_store: Optional["AuthStore"] = None,
+        workload_gate: "BackgroundWorkloadGate | None" = None,
     ):
         self._lb_repo = listenbrainz_repo
         self._mb_repo = musicbrainz_repo
@@ -81,6 +110,7 @@ class ArtistDiscoveryService:
         self._preferences_service = preferences_service
         self._client_factory = client_factory
         self._auth_store = auth_store
+        self._workload_gate = workload_gate
 
     async def _resolve_listenbrainz(
         self, user_id: str | None
@@ -115,20 +145,20 @@ class ArtistDiscoveryService:
         """When the ListenBrainz source yields nothing (popularity disabled/auth-gated
         or breaker tripped upstream), try the same section from Last.fm. Returns the
         response (possibly empty) or None when Last.fm isn't available/failed."""
-        lastfm_repo = await self._resolve_lastfm(user_id)
-        if lastfm_repo is None:
-            return None
         try:
             if kind == "similar":
-                return await self._get_similar_artists_lastfm(
-                    lastfm_repo, artist_mbid, count
+                result = await self.get_similar_artists(
+                    artist_mbid, count, source="lastfm", user_id=user_id
                 )
-            if kind == "top_songs":
-                return await self._get_top_songs_lastfm(lastfm_repo, artist_mbid, count)
-            if kind == "top_albums":
-                return await self._get_top_albums_lastfm(
-                    lastfm_repo, artist_mbid, count
+            elif kind == "top_songs":
+                result = await self.get_top_songs(
+                    artist_mbid, count, source="lastfm", user_id=user_id
                 )
+            else:
+                result = await self.get_top_albums(
+                    artist_mbid, count, source="lastfm", user_id=user_id
+                )
+            return result if result.configured else None
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "Last.fm %s fallback failed for %s: %s", kind, artist_mbid[:8], e
@@ -192,7 +222,7 @@ class ArtistDiscoveryService:
             "similar", artist_mbid, count, effective_source
         )
         cached = await self._cache.get(cache_key)
-        if cached:
+        if cached is not None:
             return cached
 
         lb_unavailable = False
@@ -275,7 +305,7 @@ class ArtistDiscoveryService:
             "top_songs", artist_mbid, count, effective_source
         )
         cached = await self._cache.get(cache_key)
-        if cached:
+        if cached is not None:
             return cached
 
         lb_unavailable = False
@@ -374,7 +404,7 @@ class ArtistDiscoveryService:
             "top_albums", artist_mbid, count, effective_source
         )
         cached = await self._cache.get(cache_key)
-        if cached:
+        if cached is not None:
             return cached
 
         lb_unavailable = False
@@ -620,6 +650,9 @@ class ArtistDiscoveryService:
         global _discovery_precache_running
         if _discovery_precache_running:
             return 0
+        if monotonic() < _precache_paused_until:
+            logger.debug("Discovery precache skipped: paused after repeated upstream failures")
+            return 0
 
         _discovery_precache_running = True
         try:
@@ -641,6 +674,7 @@ class ArtistDiscoveryService:
         mbid_to_name: dict[str, str] | None = None,
         generation: int = 0,
     ) -> int:
+        started = monotonic()
         # Precache warms a GLOBAL cache (keyed by mbid+source, not per-user), so it
         # only needs one valid set of credentials. Use the first admin's per-user
         # connection - the same identity the startup backfill seeds.
@@ -673,9 +707,17 @@ class ArtistDiscoveryService:
 
         async def process_artist(idx: int, mbid: str) -> bool:
             nonlocal cached_count, source_fetches, progress_counter
+            if monotonic() < _precache_paused_until:
+                return False
             try:
                 async with sem:
+                    if monotonic() < _precache_paused_until:
+                        # Pause tripped while this unit queued on the semaphore:
+                        # fast-complete without invoking sources.
+                        return False
                     for source in sources:
+                        if self._workload_gate is not None:
+                            await self._workload_gate.wait_until_available()
                         similar_key = self._build_cache_key(
                             "similar", mbid, DEFAULT_SIMILAR_COUNT, source
                         )
@@ -738,8 +780,10 @@ class ArtistDiscoveryService:
                         local_progress, current_item=artist_name, generation=generation
                     )
 
+                _record_precache_unit_success()
                 return True
             except Exception as e:  # noqa: BLE001
+                _record_precache_unit_failure()
                 logger.warning("Failed to precache discovery for %s: %s", mbid[:8], e)
                 async with counter_lock:
                     progress_counter += 1
@@ -759,6 +803,7 @@ class ArtistDiscoveryService:
                     process_artist(idx, mbid), timeout=_DISCOVERY_WORKER_TIMEOUT
                 )
             except asyncio.TimeoutError:
+                _record_precache_unit_failure()
                 logger.warning(
                     "Discovery timed out for %s after %ds",
                     mbid[:8],
@@ -780,6 +825,8 @@ class ArtistDiscoveryService:
 
         chunk = max(discovery_concurrency * 4, 20)
         for i in range(0, len(artist_mbids), chunk):
+            if monotonic() < _precache_paused_until:
+                break
             if status_service and status_service.is_cancelled():
                 break
             batch = artist_mbids[i : i + chunk]
@@ -790,6 +837,12 @@ class ArtistDiscoveryService:
             if batch_tasks:
                 await asyncio.gather(*batch_tasks, return_exceptions=True)
 
+        logger.info(
+            "Artist discovery precache complete: artists=%d source_fetches=%d duration=%.2fs",
+            cached_count,
+            source_fetches,
+            monotonic() - started,
+        )
         return cached_count
 
     async def _resolve_release_groups(self, release_ids: list[str]) -> dict[str, str]:

@@ -22,6 +22,7 @@ from services.native.quality_tiers import (
     DEFAULT_QUALITY_MAX,
     DEFAULT_QUALITY_MIN,
     file_tier,
+    folder_hires_key,
     in_range,
     is_audio,
     is_flac_or_mp3,
@@ -55,7 +56,8 @@ class TrackMatcher:
         manual_threshold: float = 0.50,
     ) -> ScoredCandidate | None:
         ranked = await self.rank(
-            target, results,
+            target,
+            results,
             auto_accept_threshold=auto_accept_threshold,
             manual_threshold=manual_threshold,
         )
@@ -78,8 +80,10 @@ class TrackMatcher:
         the recording's best held copy (D12; the track path has no spec pipeline)."""
         quarantined = await self._store.load_quarantine_set()
         filtered = [
-            r for r in results
-            if ("soulseek", soulseek_identity(r.username, r.filename)) not in quarantined
+            r
+            for r in results
+            if ("soulseek", soulseek_identity(r.username, r.filename))
+            not in quarantined
         ]
         # drop the art/cue/log sidecars a folder search returns alongside the tracks
         filtered = [r for r in filtered if is_audio(r)]
@@ -102,7 +106,10 @@ class TrackMatcher:
             # strict_title: a track title is directly comparable to a filename, so the
             # containment metric applies (unlike the album path's title-vs-album noise).
             score = _file_confidence(
-                target.track_title, target.artist_name, target.duration_seconds, file,
+                target.track_title,
+                target.artist_name,
+                target.duration_seconds,
+                file,
                 strict_title=True,
             )
             acceptance = (
@@ -137,14 +144,6 @@ class TrackMatcher:
             # plausible duration clears 0.70 on score alone, so a candidate whose
             # full remote path never names the requested artist caps at 'manual'
             # (one human click in Review) instead of downloading silently.
-            if score >= auto_accept_threshold and artist_evidence(
-                target.artist_name, file.filename
-            ):
-                tier = "auto"
-            elif score >= manual_threshold:
-                tier = "manual"
-            else:
-                tier = "rejected"
             candidates.append(
                 ScoredCandidate(
                     username=file.username,
@@ -153,7 +152,7 @@ class TrackMatcher:
                     coherence=score,
                     file_confidence=score,
                     final_score=score,
-                    tier=tier,
+                    tier=acceptance,
                 )
             )
             if len(candidates) >= limit:

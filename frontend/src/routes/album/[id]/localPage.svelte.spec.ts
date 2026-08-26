@@ -42,6 +42,18 @@ const album: LibraryAlbumDetail = {
 	identification_status: 'local_metadata',
 	review_id: null,
 	review_revision: null,
+	management_identity_readiness: 'exact_release_required',
+	mapped_track_count: 0,
+	management_identity_kind: null,
+	custom_manifest_id: null,
+	custom_manifest_version: null,
+	custom_manifest_track_count: 0,
+	custom_manifest_recognized_track_count: 0,
+	custom_manifest_stale: false,
+	management_excluded: false,
+	management_exclusion_revision: null,
+	management_excluded_at: null,
+	active_edition_conversion: null,
 	contribution_id: null,
 	contribution_state: null
 };
@@ -94,6 +106,60 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	getAlbumEditionsQuery: () => ({ data: undefined, isLoading: false, isError: false })
 }));
+
+vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({
+	getLibraryOperationQuery: () => ({ data: undefined, isError: false })
+}));
+
+vi.mock('$lib/queries/library/LibraryEditionQueries.svelte', () => ({
+	getReleaseEditionSearchQuery: () => ({
+		data: {
+			title_query: '',
+			artist_query: '',
+			items: [],
+			total: 0,
+			offset: 0,
+			limit: 12
+		},
+		isLoading: false,
+		isFetching: false,
+		isError: false,
+		refetch: vi.fn()
+	})
+}));
+
+vi.mock('$lib/queries/library/LibraryCatalogMutations.svelte', () => {
+	const mutation = () => ({
+		mutateAsync: vi.fn(),
+		isPending: false,
+		isError: false,
+		reset: vi.fn()
+	});
+	return {
+		reidentifyLibraryAlbum: mutation,
+		selectReidentificationCandidate: mutation,
+		reenableAlbumManagement: mutation,
+		previewAlbumMembership: mutation,
+		applyAlbumMembership: mutation
+	};
+});
+
+vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
+	controlLibraryOperation: () => ({ mutateAsync: vi.fn() })
+}));
+
+vi.mock('$lib/queries/library/EditionConversionQueries.svelte', () => {
+	const mutation = () => ({ mutateAsync: vi.fn(), isPending: false, reset: vi.fn() });
+	return {
+		getEditionConversionQuery: () => ({ data: undefined, refetch: vi.fn() }),
+		createEditionConversionPreflight: mutation,
+		createEditionConversionPreview: mutation,
+		startEditionConversion: mutation,
+		retryEditionConversion: mutation,
+		recheckEditionConversion: mutation,
+		cancelEditionConversion: mutation
+	};
+});
 
 vi.mock('$lib/queries/libraryContributions/LibraryContributionMutations.svelte', () => ({
 	createLibraryContributionMutation: () => ({ isPending: false, mutate: vi.fn() })

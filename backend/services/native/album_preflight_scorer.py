@@ -138,16 +138,20 @@ def _album_identity_text(
     )
 
 
-def _availability_key(candidate: ScoredCandidate) -> tuple[int, int, int, int]:
+def _availability_key(candidate: ScoredCandidate) -> tuple[int, int, int, int, int]:
     queue_lengths = [
         file.queue_length for file in candidate.files if file.queue_length is not None
     ]
-    best_queue = min(queue_lengths) if queue_lengths else 2**31 - 1
+    complete_queue = max(queue_lengths) if queue_lengths else 2**31 - 1
     return (
-        int(any(file.has_free_slot for file in candidate.files)),
-        int(bool(queue_lengths)),
-        -best_queue,
-        max((file.upload_speed for file in candidate.files), default=0),
+        int(
+            bool(candidate.files)
+            and all(file.has_free_slot for file in candidate.files)
+        ),
+        int(len(queue_lengths) == len(candidate.files)),
+        -complete_queue,
+        min((file.upload_speed for file in candidate.files), default=0),
+        -sum(file.size for file in candidate.files),
     )
 
 

@@ -11,16 +11,16 @@ pick) or discards.
 
 Boundaries:
 - Only the user's own files ever enter here (an upload); nothing is fetched.
-- Identified files import download-style: album identity is stamped on the
-  file (``write_album_identity``), the move is atomic and cross-mount safe,
-  and the library row carries ``source='drop'``.
+- Identified files are submitted as one durable staged bundle. The shared publisher
+  stamps the minimal album identity, publishes atomically per file, and commits the
+  complete catalog unit with ``source='drop'``.
 - Duplicate policy (owner-signed): a file whose album position is already
   covered imports only when strictly better quality (the old file goes to the
   recycle bin, download-upgrade semantics); otherwise it is skipped.
 """
 
 import asyncio
-import errno
+import hashlib
 import logging
 import os
 import re
@@ -33,14 +33,18 @@ from typing import TYPE_CHECKING, Awaitable, Callable, NamedTuple
 
 import msgspec
 
-from core.exceptions import ResourceNotFoundError, ValidationError
+from core.exceptions import (
+    AutomaticManagementHoldError,
+    ResourceNotFoundError,
+    ValidationError,
+)
 from models.drop_import import DropImportItem, DropImportJob, ItemStatus, JobStatus
 from services.native.album_matcher import AlbumMatch, LocalTrack, MBTrack, _ReleaseMeta, score_release
 from services.native.file_processor import row_covers_track
 from services.native.library_manager import _AUDIO_SUFFIXES
 from services.native.naming import NamingTemplateEngine
 from services.native.quality_tiers import tier_for, tier_rank
-from services.native.recycle_bin import recycle, resolve_bin_path
+from services.native.recycle_bin import resolve_bin_path
 
 if TYPE_CHECKING:
     from infrastructure.audio.fingerprinter import AudioFingerprinter
@@ -93,6 +97,20 @@ class _OrganiseResult(NamedTuple):
     upgraded: int
     skipped: int
     bonus: int
+
+
+class _PlannedDropImport(NamedTuple):
+    entry: _Entry
+    target: Path
+    tag: "AudioTag"
+    recording_mbid: str | None
+    release_track_mbid: str | None
+    medium_position: int | None
+    release_track_position: int | None
+    authoritative_mapping: bool
+    confidence: float
+    replacement: dict | None
+    bonus: bool
 
 
 def _strip_stage_prefix(stem: str) -> str:
@@ -268,8 +286,27 @@ class DropImportService:
 
         # the user's explicit choice is authoritative: full confidence, so the
         # scanner's sticky-anchor guard protects it from later re-attribution
-        result = await self._organise(entries, ident, confidence_override=1.0)
+        try:
+            result = await self._organise(
+                entries,
+                ident,
+                confidence_override=1.0,
+                idempotency_key=f"drop:{job.id}:{item.id}:manual",
+            )
+        except AutomaticManagementHoldError as hold:
+            await self._store.update_item(
+                item.id,
+                status=ItemStatus.NEEDS_REVIEW,
+                detail=(
+                    f"Library Management still holds this album ({hold.reason_code}). "
+                    "Fix the profile or provider, then retry."
+                ),
+            )
+            refreshed = await self._store.get_item(item.id)
+            assert refreshed is not None
+            return refreshed
         await self._finish_item(job, item.id, ident, result, unreadable, staged=entries)
+        await asyncio.to_thread(self._remove_empty_dirs, Path(job.staging_dir))
         await self._publish_job(job)
         refreshed = await self._store.get_item(item.id)
         assert refreshed is not None
@@ -293,6 +330,7 @@ class DropImportService:
         await self._store.update_item(
             item.id, status=ItemStatus.DISCARDED, staging_paths=[], detail="Discarded"
         )
+        await asyncio.to_thread(self._remove_empty_dirs, Path(job.staging_dir))
         await self._publish_job(job)
         refreshed = await self._store.get_item(item.id)
         assert refreshed is not None
@@ -1197,7 +1235,38 @@ class DropImportService:
         )
         track_by_recording = {t.recording_mbid: t for t in tracks if t.recording_mbid}
 
-        imported = upgraded = skipped = bonus = 0
+        if self._publish_import_bundle is None or self._policy_revision_getter is None:
+            raise RuntimeError("The shared drop import publisher is not configured.")
+        if idempotency_key is None:
+            raise RuntimeError("A shared drop import needs a durable source ID.")
+        return await self._organise_shared(
+            entries,
+            ident,
+            root,
+            template,
+            confidence,
+            track_by_recording,
+            idempotency_key=idempotency_key,
+        )
+
+    async def _organise_shared(
+        self,
+        entries: list[_Entry],
+        ident: _Identified,
+        root: Path,
+        template: str,
+        confidence: float,
+        track_by_recording: dict[str, MBTrack],
+        *,
+        idempotency_key: str,
+    ) -> _OrganiseResult:
+        publisher = self._publish_import_bundle
+        revision_getter = self._policy_revision_getter
+        if publisher is None or revision_getter is None:
+            raise RuntimeError("The shared drop import publisher is not configured.")
+        meta, match = ident.meta, ident.match
+        planned: list[_PlannedDropImport] = []
+        skipped = 0
         for entry in entries:
             recording = match.assignments.get(str(entry.path))
             track = track_by_recording.get(recording) if recording else None
@@ -1205,13 +1274,11 @@ class DropImportService:
                 outcome = await self._import_mapped(
                     entry, meta, track, root, template, confidence, cover_url
                 )
-                if outcome == "imported":
-                    imported += 1
-                elif outcome == "upgraded":
-                    imported += 1
-                    upgraded += 1
-                else:
-                    skipped += 1
+                if track is not None
+                else self._plan_shared_bonus(entry, meta, root, template)
+            )
+            if value is None:
+                skipped += 1
             else:
                 if await self._import_bonus(entry, meta, root, template, cover_url):
                     imported += 1
@@ -1219,10 +1286,13 @@ class DropImportService:
                 else:
                     skipped += 1
         return _OrganiseResult(
-            imported=imported, upgraded=upgraded, skipped=skipped, bonus=bonus
+            imported=len(planned),
+            upgraded=sum(value.replacement is not None for value in planned),
+            skipped=skipped,
+            bonus=sum(value.bonus for value in planned),
         )
 
-    async def _import_mapped(
+    async def _plan_shared_mapped(
         self,
         entry: _Entry,
         meta,  # noqa: ANN001 - album_matcher._ReleaseMeta
@@ -1235,69 +1305,52 @@ class DropImportService:
         """Import one file mapped to an MB track. Returns 'imported', 'upgraded'
         or 'skipped'."""
         target_tag = self._target_tag(meta, track, entry.tag)
-        upgrading = False
+        replacement = None
         present = await self._library.get_file_at_position(
             meta.release_group_mbid,
             target_tag.disc_number or 1,
             target_tag.track_number,
         )
-        if present is not None:
-            covers = row_covers_track(
-                present,
-                recording_mbid=track.recording_mbid,
-                title=track.title,
-                duration_seconds=entry.info.duration_seconds,
+        if present is not None and row_covers_track(
+            present,
+            recording_mbid=track.recording_mbid,
+            title=track.title,
+            duration_seconds=entry.info.duration_seconds,
+        ):
+            new_rank = tier_rank(tier_for(entry.info.file_format, entry.info.bitrate))
+            old_rank = tier_rank(
+                tier_for(present.get("file_format") or "", present.get("bit_rate"))
             )
-            if covers:
-                new_rank = tier_rank(
-                    tier_for(entry.info.file_format, entry.info.bitrate)
-                )
-                old_rank = tier_rank(
-                    tier_for(present.get("file_format") or "", present.get("bit_rate"))
-                )
-                if new_rank <= old_rank:
-                    return "skipped"
-                old_path = Path(present["file_path"])
-                policy = self._prefs.get_download_policy()
-                bin_path = resolve_bin_path(
-                    policy.recycle_bin_path,
-                    [
-                        root.path
-                        for root in self._prefs.get_typed_library_settings_raw().library_roots
-                    ],
-                )
-                try:
-                    if bin_path is not None and old_path.exists():
-                        await asyncio.to_thread(recycle, old_path, bin_path)
-                    await self._library.soft_delete_file(str(old_path))
-                except OSError:
-                    logger.warning(
-                        "Could not recycle %s; keeping both copies", old_path
-                    )
-                upgrading = True
-            # a non-covering occupant is a squatter from an earlier wrong grab -
-            # import alongside, keep it for review (the download importer's D5 rule)
-
+            settings = self._prefs.get_typed_library_settings_raw()
+            recycle_bin = resolve_bin_path(
+                self._prefs.get_download_policy().recycle_bin_path,
+                [value.path for value in settings.library_roots],
+            )
+            if new_rank <= old_rank or recycle_bin is None:
+                return None
+            replacement = present
         target = root / self._naming.format_path(
             template, target_tag, entry.info.file_format
         )
-        if target.exists() and not upgrading:
-            return "skipped"
-        await asyncio.to_thread(self._move_into_library, entry.path, target, target_tag)
-        await self._library.upsert_file(
-            target,
-            target_tag,
-            entry.info,
-            release_group_mbid=meta.release_group_mbid,
-            release_mbid=meta.release_mbid,
+        if target.exists() and (
+            replacement is None or Path(replacement["file_path"]) != target
+        ):
+            return None
+        return _PlannedDropImport(
+            entry=entry,
+            target=target,
+            tag=target_tag,
             recording_mbid=track.recording_mbid,
+            release_track_mbid=track.release_track_mbid,
+            medium_position=track.disc,
+            release_track_position=track.position,
+            authoritative_mapping=True,
             confidence=confidence,
             source=_SOURCE,
             cover_url=cover_url,
         )
-        return "upgraded" if upgrading else "imported"
 
-    async def _import_bonus(
+    def _plan_shared_bonus(
         self,
         entry: _Entry,
         meta,  # noqa: ANN001 - album_matcher._ReleaseMeta
@@ -1313,20 +1366,20 @@ class DropImportService:
             template, target_tag, entry.info.file_format
         )
         if target.exists():
-            return False
-        await asyncio.to_thread(self._move_into_library, entry.path, target, target_tag)
-        await self._library.upsert_file(
-            target,
-            target_tag,
-            entry.info,
-            release_group_mbid=meta.release_group_mbid,
-            release_mbid=meta.release_mbid,
+            return None
+        return _PlannedDropImport(
+            entry=entry,
+            target=target,
+            tag=target_tag,
             recording_mbid=None,
+            release_track_mbid=None,
+            medium_position=None,
+            release_track_position=None,
+            authoritative_mapping=False,
             confidence=_UNMAPPED_CONFIDENCE,
             source=_SOURCE,
             cover_url=cover_url,
         )
-        return True
 
     @staticmethod
     def _target_tag(

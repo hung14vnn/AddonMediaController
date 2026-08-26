@@ -9,22 +9,24 @@ built-in client because it needs source scouting and partial-track acquisition.
 After 2.0 deletes slskd and Usenet, that watcher will be reworked separately and
 this dispatcher will always route to Free Music.
 
-The method signatures mirror ``DownloadService`` exactly, so a call site swaps the
-receiver and nothing else. Free Music ignores the args it has no use for (year,
-origin, dedup, duration) and never returns the ``ALREADY_IN_LIBRARY`` sentinel -
-its own drop-import handoff skips or upgrades an owned album after the fact.
+The public acquisition arguments mirror ``DownloadService``. The dispatcher adds
+one internal priority hint for resolving a missing album track count before Free
+Music ranks sources. Free Music ignores the args it has no use for (year, origin,
+dedup, duration) and never returns the ``ALREADY_IN_LIBRARY`` sentinel - its own
+drop-import handoff skips or upgrades an owned album after the fact.
 """
 
-import logging
 from typing import TYPE_CHECKING, Callable
 
+from core.exceptions import ProviderIdentityRequiredError
+from infrastructure.queue.priority_queue import RequestPriority
+
 if TYPE_CHECKING:
+    from services.album_service import AlbumService
     from services.native.download_service import DownloadService
     from services.native.free_music_service import FreeMusicService
     from services.preferences_service import PreferencesService
     from services.native.library_ownership_service import LibraryOwnershipService
-
-logger = logging.getLogger(__name__)
 
 
 class AcquisitionDispatcher:
@@ -36,14 +38,14 @@ class AcquisitionDispatcher:
         get_spotiflac_service=None,  # Callable[[], SpotiflacService] | None
         preferences_service: "PreferencesService",
         ownership_service: "LibraryOwnershipService | None" = None,
+        get_album_service: "Callable[[], AlbumService] | None" = None,
     ) -> None:
-        # both resolved fresh per call: a settings save rebuilds the DownloadService
-        # singleton, and Free Music reads its own settings per request
         self._get_download_service = get_download_service
         self._get_free_music_service = get_free_music_service
         self._get_spotiflac_service = get_spotiflac_service
         self._prefs = preferences_service
         self._ownership = ownership_service
+        self._get_album_service = get_album_service
 
     def _use_free_music(self) -> bool:
         if self._prefs.is_builtin_download_ready():
@@ -83,6 +85,8 @@ class AcquisitionDispatcher:
         cover_url: str | None = None,
         origin: str = "user",
         release_mbid: str | None = None,
+        release_track_mbid: str | None = None,
+        track_count_priority: RequestPriority = RequestPriority.USER_INITIATED,
     ) -> str:
         if self._ownership is not None:
             release_group_mbid = await self._ownership.provider_album_id(
@@ -103,12 +107,18 @@ class AcquisitionDispatcher:
                 origin=origin,
             )
         if self._use_free_music():
+            resolved_track_count = await self._free_music_track_count(
+                release_group_mbid,
+                release_mbid,
+                track_count,
+                track_count_priority,
+            )
             return await self._get_free_music_service().request_album(
                 user_id=user_id,
                 release_group_mbid=release_group_mbid,
                 artist_name=artist_name,
                 album_title=album_title,
-                track_count=track_count or 0,
+                track_count=resolved_track_count,
             )
         return await self._get_download_service().request_album(
             user_id=user_id,
@@ -124,6 +134,7 @@ class AcquisitionDispatcher:
             artist_mbid=artist_mbid,
             origin=origin,
             release_mbid=release_mbid,
+            release_track_mbid=release_track_mbid,
         )
 
     async def request_track(
@@ -139,6 +150,9 @@ class AcquisitionDispatcher:
         cover_url: str | None = None,
         origin: str = "user",
         release_mbid: str | None = None,
+        release_track_mbid: str | None = None,
+        track_number: int | None = None,
+        disc_number: int | None = None,
     ) -> str:
         if self._ownership is not None:
             recording_mbid = await self._ownership.provider_track_id(recording_mbid)
@@ -161,11 +175,26 @@ class AcquisitionDispatcher:
                 origin=origin,
             )
         if self._use_free_music():
+            if origin != "edition_conversion":
+                return await self._get_free_music_service().request_track(
+                    user_id=user_id,
+                    recording_mbid=recording_mbid,
+                    artist_name=artist_name,
+                    track_title=track_title,
+                )
             return await self._get_free_music_service().request_track(
                 user_id=user_id,
                 recording_mbid=recording_mbid,
                 artist_name=artist_name,
                 track_title=track_title,
+                origin=origin,
+                release_group_mbid=release_group_mbid,
+                release_mbid=release_mbid,
+                release_track_mbid=release_track_mbid,
+                duration_seconds=duration_seconds,
+                album_title=album_title,
+                track_number=track_number,
+                disc_number=disc_number,
             )
         return await self._get_download_service().request_track(
             user_id=user_id,
@@ -178,4 +207,5 @@ class AcquisitionDispatcher:
             artist_mbid=artist_mbid,
             origin=origin,
             release_mbid=release_mbid,
+            release_track_mbid=release_track_mbid,
         )

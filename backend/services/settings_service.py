@@ -324,6 +324,7 @@ class SettingsService:
     async def on_coverart_settings_changed(self) -> None:
         from core.dependencies import (
             get_coverart_repository,
+            clear_library_management_provider_graph,
             get_target_consumer_composition,
             get_target_compat_services,
             get_target_coverart_repository,
@@ -345,6 +346,7 @@ class SettingsService:
         get_target_wrapped_service.cache_clear()
         get_target_discover_service.cache_clear()
         get_target_discover_queue_manager.cache_clear()
+        clear_library_management_provider_graph()
         logger.info("Coverart settings change: singleton reset")
 
     async def verify_navidrome(
@@ -645,6 +647,7 @@ class SettingsService:
         self, settings: MusicBrainzConnectionSettings
     ) -> None:
         from repositories.musicbrainz_base import (
+            get_mb_api_base,
             set_mb_api_base,
             mb_rate_limiter,
             mb_circuit_breaker,
@@ -661,6 +664,19 @@ class SettingsService:
             settings.concurrent_searches = min(
                 settings.concurrent_searches, _OFFICIAL_MB_CONCURRENT_SEARCHES
             )
+
+        # Compare against live module state, not stored settings: the route
+        # saves before calling this handler, so stored == incoming always.
+        if (
+            get_mb_api_base() == settings.api_url
+            and mb_rate_limiter.rate == settings.rate_limit
+            and mb_rate_limiter.capacity == settings.concurrent_searches
+        ):
+            logger.info(
+                "MusicBrainz connection settings unchanged; "
+                "skipping circuit breaker reset and cache clear"
+            )
+            return
 
         set_mb_api_base(settings.api_url)
         mb_rate_limiter.update_rate(settings.rate_limit)

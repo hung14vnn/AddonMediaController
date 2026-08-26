@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, APIRouter, HTTPException
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from core.dependencies import (
     get_cache,
@@ -58,6 +57,7 @@ from core.exception_handlers import (
     stale_revision_error_handler,
 )
 from infrastructure.resilience.retry import CircuitOpenError
+from infrastructure.http.compression import CompressibleGZipMiddleware
 from infrastructure.msgspec_fastapi import MsgSpecJSONResponse
 from middleware import (
     DegradationMiddleware,
@@ -360,10 +360,12 @@ async def lifespan(app: FastAPI):
         get_spotiflac_service,
     )
     from core.tasks import (
+        start_acquisition_cleanup_task,
         start_download_auto_retry_task,
         start_download_resume_task,
         start_download_watchdog_task,
         start_library_scan_resume_task,
+        start_management_hold_auto_retry_task,
     )
 
     start_library_scan_resume_task(
@@ -371,6 +373,11 @@ async def lifespan(app: FastAPI):
         [_Path(root.path) for root in _library_settings.library_roots],
     )
 
+    try:
+        await get_acquisition_cleanup_service().recover_startup()
+    except Exception:  # noqa: BLE001 - durable worker continues recovery after startup
+        logger.exception("Acquisition cleanup startup recovery failed")
+    start_acquisition_cleanup_task(get_acquisition_cleanup_service)
     start_download_resume_task(get_download_orchestrator())
 
     # drop-import housekeeping: jobs whose task died with the process are failed,
@@ -525,6 +532,22 @@ async def lifespan(app: FastAPI):
     )
     cache_task.add_done_callback(handle_cache_warming_error)
     TaskRegistry.get_instance().register("library-cache-warmup", cache_task)
+
+    from core.dependencies import get_legacy_pending_migration_service
+
+    pending_migration_task = asyncio.create_task(
+        get_legacy_pending_migration_service().schedule()
+    )
+    pending_migration_task.add_done_callback(
+        lambda task: logger.error(
+            "Legacy pending migration scheduling failed: %s", task.exception()
+        )
+        if not task.cancelled() and task.exception()
+        else None
+    )
+    TaskRegistry.get_instance().register(
+        "legacy-pending-migration-startup", pending_migration_task
+    )
 
     from services.cache_status_service import CacheStatusService
 
@@ -785,7 +808,7 @@ app.add_exception_handler(Exception, general_exception_handler)
 app.add_middleware(HSTSMiddleware)
 app.add_middleware(DegradationMiddleware)
 app.add_middleware(PerformanceMiddleware)
-app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
+app.add_middleware(CompressibleGZipMiddleware, minimum_size=1000, compresslevel=6)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(
     RateLimitMiddleware,

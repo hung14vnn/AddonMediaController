@@ -3,9 +3,14 @@ from unittest.mock import AsyncMock, MagicMock
 from types import SimpleNamespace
 
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
-from api.v1.schemas.search import SuggestResponse, SuggestResult, SearchResponse, SearchResult
+from api.v1.schemas.search import (
+    EnrichmentResponse,
+    SearchResponse,
+    SearchResult,
+    SuggestResponse,
+    SuggestResult,
+)
 from api.v1.routes.search import router
 from middleware import _get_current_user
 from core.dependencies import (
@@ -88,7 +93,9 @@ def test_suggest_custom_limit(client, mock_search_service):
     mock_search_service.suggest.assert_called_once_with(query="test", limit=3)
 
 
-def test_suggest_whitespace_padded_short_input_returns_empty(client, mock_search_service):
+def test_suggest_whitespace_padded_short_input_returns_empty(
+    client, mock_search_service
+):
     """Whitespace-padded query that is < 2 chars after strip returns empty at route level."""
     response = client.get("/search/suggest?q=%20%20a%20%20")
 
@@ -146,20 +153,31 @@ def test_suggest_includes_spotify_tracks_when_catalog_is_configured(client):
 def test_search_response_tolerates_additive_score_field():
     """Existing /api/search consumers tolerate the additive score field on SearchResult."""
     mock_search_service = MagicMock()
-    mock_search_service.search = AsyncMock(return_value=SearchResponse(
-        artists=[
-            SearchResult(
-                type="artist", title="Muse", musicbrainz_id="mb-1",
-                in_library=False, requested=False, score=90,
-            )
-        ],
-        albums=[
-            SearchResult(
-                type="album", title="Absolution", musicbrainz_id="mb-2",
-                artist="Muse", in_library=True, requested=False, score=85,
-            )
-        ],
-    ))
+    mock_search_service.search = AsyncMock(
+        return_value=SearchResponse(
+            artists=[
+                SearchResult(
+                    type="artist",
+                    title="Muse",
+                    musicbrainz_id="mb-1",
+                    in_library=False,
+                    requested=False,
+                    score=90,
+                )
+            ],
+            albums=[
+                SearchResult(
+                    type="album",
+                    title="Absolution",
+                    musicbrainz_id="mb-2",
+                    artist="Muse",
+                    in_library=True,
+                    requested=False,
+                    score=85,
+                )
+            ],
+        )
+    )
     mock_search_service.schedule_cover_prefetch = MagicMock(return_value=[])
 
     mock_coverart = MagicMock()
@@ -187,3 +205,26 @@ def test_search_response_tolerates_additive_score_field():
     assert data["artists"][0]["score"] == 90
     assert data["albums"][0]["score"] == 85
     assert data["artists"][0]["title"] == "Muse"
+
+
+def test_enrichment_route_forwards_request_disconnect_callback():
+    enrichment_service = MagicMock()
+    enrichment_service.enrich_batch = AsyncMock(return_value=EnrichmentResponse())
+    test_app = FastAPI()
+    test_app.include_router(router)
+    test_app.dependency_overrides[get_search_enrichment_service] = (
+        lambda: enrichment_service
+    )
+    search_client = build_test_client(test_app)
+
+    response = search_client.post(
+        "/search/enrich/batch",
+        json={"artists": [], "albums": []},
+    )
+
+    assert response.status_code == 200
+    assert enrichment_service.enrich_batch.await_count == 1
+    disconnect_callback = enrichment_service.enrich_batch.call_args.kwargs[
+        "is_disconnected"
+    ]
+    assert callable(disconnect_callback)

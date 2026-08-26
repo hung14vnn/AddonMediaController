@@ -8,6 +8,7 @@ real-audio fixtures with the real tagger.
 """
 
 import asyncio
+import shutil
 import threading
 import zipfile
 from pathlib import Path
@@ -79,11 +80,10 @@ def _tracks() -> list[MBTrack]:
 
 
 class FakeTagger:
-    """Serves canned (tag, info) per file NAME; records album-identity stamps."""
+    """Serve canned tag and technical metadata by filename."""
 
     def __init__(self, by_name: dict) -> None:
         self.by_name = by_name
-        self.stamped: list[str] = []
 
     def read_tags(self, path: Path):
         entry = self.by_name.get(Path(path).name)
@@ -91,8 +91,35 @@ class FakeTagger:
             raise ValueError(f"unreadable: {path}")
         return entry
 
-    def write_album_identity(self, path: Path, tag: AudioTag) -> None:
-        self.stamped.append(tag.album)
+
+def _write_fixture_tag(path: Path, tag: AudioTag) -> None:
+    """Seed real FLAC fixtures with raw mutagen; fake audio remains opaque."""
+    import mutagen
+    from mutagen.flac import FLAC
+
+    try:
+        audio = FLAC(path)
+    except mutagen.MutagenError:
+        return
+    values = {
+        "TITLE": tag.title,
+        "ARTIST": tag.artist,
+        "ALBUM": tag.album,
+        "ALBUMARTIST": tag.album_artist,
+        "TRACKNUMBER": str(tag.track_number) if tag.track_number is not None else None,
+        "DISCNUMBER": str(tag.disc_number) if tag.disc_number is not None else None,
+        "DATE": str(tag.year) if tag.year is not None else None,
+        "MUSICBRAINZ_RELEASEGROUPID": tag.musicbrainz_release_group_id,
+        "MUSICBRAINZ_ALBUMID": tag.musicbrainz_release_id,
+        "MUSICBRAINZ_TRACKID": tag.musicbrainz_recording_id,
+        "MUSICBRAINZ_ALBUMARTISTID": tag.musicbrainz_album_artist_id,
+    }
+    for key, value in values.items():
+        if value is None:
+            audio.pop(key, None)
+        else:
+            audio[key] = value
+    audio.save()
 
 
 def _build_service(
@@ -104,7 +131,7 @@ def _build_service(
     if prefs is None:
         prefs = SimpleNamespace(
             get_typed_library_settings_raw=lambda: SimpleNamespace(
-                library_roots=[SimpleNamespace(path=str(library_root))],
+                library_roots=[SimpleNamespace(id="root-a", path=str(library_root))],
                 naming_template=None,
             ),
             get_download_policy=lambda: SimpleNamespace(recycle_bin_path=""),
@@ -119,6 +146,46 @@ def _build_service(
     library.get_file_at_position = AsyncMock(return_value=None)
     library.upsert_file = AsyncMock(return_value="file-1")
     library.soft_delete_file = AsyncMock()
+    if publisher is None:
+
+        async def publisher(bundle):
+            paths: list[str] = []
+            local_track_ids: list[str] = []
+            for request in bundle.files:
+                source = Path(request.input_path)
+                destination = library_root / request.destination_relative_path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if request.replacement_relative_path is not None:
+                    replacement = library_root / request.replacement_relative_path
+                    recycle_root = Path(str(request.recycle_bin_path))
+                    recycle_target = (
+                        recycle_root / f"test-{request.ordinal}" / replacement.name
+                    )
+                    recycle_target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(replacement), str(recycle_target))
+                    await library.soft_delete_file(str(replacement))
+                shutil.move(str(source), str(destination))
+                _write_fixture_tag(destination, request.tag)
+                local_track_ids.append(
+                    await library.upsert_file(
+                        destination,
+                        request.tag,
+                        request.info,
+                        release_group_mbid=request.release_group_mbid,
+                        release_mbid=request.release_mbid,
+                        recording_mbid=request.recording_mbid,
+                        confidence=request.confidence,
+                        source=request.source,
+                        source_path=request.source_path,
+                    )
+                )
+                paths.append(str(destination))
+            return LibraryManagementImportResult(
+                bundle_id="test-drop-bundle",
+                paths=tuple(paths),
+                local_track_ids=tuple(local_track_ids),
+            )
+
     service = DropImportService(
         store=store,
         tagger=tagger,
@@ -527,7 +594,10 @@ async def test_strictly_better_quality_upgrades_and_recycles(tmp_path):
         old_files.append(old)
     library.get_file_at_position = AsyncMock(
         side_effect=lambda rg, disc, pos: {
+            "id": f"old-{pos}",
             "file_path": str(old_files[pos - 1]),
+            "root_id": "root-a",
+            "relative_path": old_files[pos - 1].name,
             "recording_mbid": f"rec-{pos}",
             "file_format": "mp3",
             "bit_rate": 320,
@@ -590,6 +660,43 @@ async def test_unidentified_drop_needs_review_then_manual_match(tmp_path):
     assert matched.release_group_mbid == "rg-manual"
     assert library.upsert_file.await_count == 2
     assert (library_root / "Test Artist" / "Test Album (2020)").exists()
+    assert not Path(job.staging_dir).exists()
+
+
+@pytest.mark.asyncio
+async def test_automatic_management_failure_keeps_drop_staging_for_retry(tmp_path):
+    from core.exceptions import AutomaticManagementHoldError
+
+    tagger = FakeTagger(
+        {
+            "01 Song One.flac": (_tag("Song One", 1), _info()),
+            "02 Song Two.flac": (_tag("Song Two", 2), _info()),
+        }
+    )
+    identifier = AsyncMock()
+    identifier.identify = AsyncMock(return_value=_accepted_match())
+    identifier.release_tracks = AsyncMock(return_value=(_meta(), _tracks()))
+    publisher = AsyncMock(
+        side_effect=AutomaticManagementHoldError(
+            "PROFILE_CHANGED", "The activated profile changed."
+        )
+    )
+    service, store, library, _library_root = _build_service(
+        tmp_path, tagger, identifier=identifier, publisher=publisher
+    )
+    upload = _zip_album(tmp_path / "held.zip")
+
+    job = await service.create_job(
+        user_id="user-1", user_name="Harvey", uploads=[("held.zip", upload)]
+    )
+    done = await _wait_job(store, job.id)
+
+    item = done.items[0]
+    assert item.status == ItemStatus.NEEDS_REVIEW
+    assert "PROFILE_CHANGED" in (item.detail or "")
+    assert item.staging_paths
+    assert all(Path(path).is_file() for path in item.staging_paths)
+    library.upsert_file.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -649,6 +756,7 @@ async def test_discard_removes_staged_files(tmp_path):
     discarded = await service.discard_item(item.id, user_id="user-1", is_admin=False)
     assert discarded.status == ItemStatus.DISCARDED
     assert all(not p.exists() for p in staged)
+    assert not Path(job.staging_dir).exists()
 
 
 @pytest.mark.asyncio

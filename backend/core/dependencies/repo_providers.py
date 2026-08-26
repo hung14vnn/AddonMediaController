@@ -20,6 +20,7 @@ from .cache_providers import (
     get_disk_cache,
     get_library_db,
     get_mbid_store,
+    get_native_library_store,
     get_preferences_service,
 )
 
@@ -118,6 +119,22 @@ def get_listenbrainz_repository() -> "ListenBrainzRepository":
         user_token=lb_settings.user_token if lb_settings.enabled else "",
         fallback_token_provider=fallback_token_provider,
     )
+
+
+@singleton
+def get_lrclib_repository() -> "LrclibRepository":
+    from repositories.lrclib_repository import LrclibRepository
+
+    advanced = get_preferences_service().get_advanced_settings()
+    client = HttpClientFactory.get_client(
+        name="lrclib",
+        timeout=float(advanced.http_timeout),
+        connect_timeout=float(advanced.http_connect_timeout),
+        max_connections=4,
+        max_keepalive=4,
+        settings=get_settings(),
+    )
+    return LrclibRepository(client, get_cache())
 
 
 @singleton
@@ -484,7 +501,9 @@ def get_follow_store() -> "FollowStore":
     )
 
 
-def _build_coverart_repository(*, library_repo=None, library_db=None):
+def _build_coverart_repository(
+    *, library_repo=None, library_db=None, native_library_store=None
+):
     from repositories.coverart_repository import CoverArtRepository
 
     settings = get_settings()
@@ -515,21 +534,28 @@ def _build_coverart_repository(*, library_repo=None, library_db=None):
         * 1024,
         cover_non_monitored_ttl_seconds=advanced.cache_ttl_recently_viewed_bytes,
         library_db=library_db,
+        local_cover_priority=lambda: get_preferences_service()
+        .get_advanced_settings()
+        .prefer_local_cover_art,
+        native_library_store=native_library_store,
     )
 
 
 @singleton
 def get_coverart_repository() -> "CoverArtRepository":
     return _build_coverart_repository(
-        library_repo=get_library_repository(), library_db=get_library_db()
+        library_repo=get_library_repository(),
+        library_db=get_library_db(),
+        native_library_store=get_native_library_store(),
     )
 
 
 @singleton
 def get_target_coverart_repository() -> "CoverArtRepository":
-    """Provider-only cover lookup with no retained legacy catalog authority."""
+    """Provider cover lookup with native folder/embedded art, but no retained
+    legacy catalog authority."""
 
-    return _build_coverart_repository()
+    return _build_coverart_repository(native_library_store=get_native_library_store())
 
 
 @singleton

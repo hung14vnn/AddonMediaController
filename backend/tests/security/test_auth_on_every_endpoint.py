@@ -31,6 +31,7 @@ from api.v1.routes import import_drop as import_drop_routes
 from api.v1.routes import plugins as plugins_routes
 from api.v1.routes import library as library_routes
 from api.v1.routes import library_contributions as library_contribution_routes
+from api.v1.routes import library_management as library_management_routes
 from api.v1.routes import library_operations_target as library_operations_target_routes
 from api.v1.routes import library_policies as library_policy_routes
 from api.v1.routes import library_policies_target as target_library_policy_routes
@@ -65,6 +66,8 @@ from core.dependencies import (
     get_jellyfin_user_auth_service,
     get_lastfm_auth_service,
     get_library_manager,
+    get_library_management_preview_service,
+    get_library_management_profile_service,
     get_library_contribution_service,
     get_library_policy_service,
     get_library_scanner,
@@ -79,6 +82,7 @@ from core.dependencies import (
     get_navidrome_folder_scope_service,
     get_now_playing_service,
     get_per_user_client_factory,
+    get_native_library_store,
     get_personal_mix_service,
     get_playlist_service,
     get_plex_playback_service,
@@ -95,6 +99,7 @@ from core.dependencies import (
     get_user_section_prefs_store,
     get_wanted_watcher_service,
     get_target_catalog_correction_service,
+    get_target_album_edition_finder_service,
     get_target_explicit_reidentification_worker,
     get_target_identity_repair_service,
     get_target_library_diagnostics_service,
@@ -128,6 +133,8 @@ _SERVICE_PROVIDERS = (
     get_jellyfin_user_auth_service,
     get_lastfm_auth_service,
     get_library_manager,
+    get_library_management_preview_service,
+    get_library_management_profile_service,
     get_library_policy_service,
     get_target_library_policy_service,
     get_library_scanner,
@@ -142,6 +149,7 @@ _SERVICE_PROVIDERS = (
     get_navidrome_folder_scope_service,
     get_now_playing_service,
     get_per_user_client_factory,
+    get_native_library_store,
     get_personal_mix_service,
     get_playlist_service,
     get_plex_playback_service,
@@ -158,6 +166,7 @@ _SERVICE_PROVIDERS = (
     get_user_section_prefs_store,
     get_wanted_watcher_service,
     get_target_catalog_correction_service,
+    get_target_album_edition_finder_service,
     get_target_explicit_reidentification_worker,
     get_target_identity_repair_service,
     get_target_library_diagnostics_service,
@@ -260,6 +269,130 @@ _ADMIN_ENDPOINTS = [
     ("GET", "/api/v1/settings/library/path-mapping", None),
     ("GET", "/api/v1/settings/library", None),
     ("PUT", "/api/v1/settings/library", {"library_roots": []}),
+    ("GET", "/api/v1/settings/library/restorable-roots", None),
+    (
+        "POST",
+        "/api/v1/settings/library/restore-roots",
+        {"expected_policy_revision": "policy"},
+    ),
+    ("GET", "/api/v1/settings/library-management", None),
+    (
+        "PUT",
+        "/api/v1/settings/library-management",
+        {"settings": {}, "expected_settings_revision": "settings"},
+    ),
+    (
+        "POST",
+        "/api/v1/settings/library-management/impact",
+        {"settings": {}, "expected_settings_revision": "settings"},
+    ),
+    (
+        "POST",
+        "/api/v1/settings/library-management/validate",
+        {"settings": {}, "expected_settings_revision": "settings"},
+    ),
+    (
+        "GET",
+        "/api/v1/settings/library-management/profiles/profile-1",
+        None,
+    ),
+    (
+        "POST",
+        "/api/v1/settings/library-management/profiles",
+        {"name": "Profile", "expected_settings_revision": "settings"},
+    ),
+    (
+        "POST",
+        "/api/v1/settings/library-management/profiles/profile-1/copy",
+        {"name": "Profile copy", "expected_settings_revision": "settings"},
+    ),
+    (
+        "PUT",
+        "/api/v1/settings/library-management/profiles/profile-1",
+        {
+            "profile": {"id": "profile-1", "name": "Profile"},
+            "expected_settings_revision": "settings",
+        },
+    ),
+    (
+        "DELETE",
+        "/api/v1/settings/library-management/profiles/profile-1",
+        {"expected_settings_revision": "settings"},
+    ),
+    (
+        "GET",
+        "/api/v1/settings/library-management/profiles/profile-1/preset-diff",
+        None,
+    ),
+    (
+        "POST",
+        "/api/v1/settings/library-management/profiles/profile-1/export",
+        {"expected_settings_revision": "settings"},
+    ),
+    (
+        "POST",
+        "/api/v1/settings/library-management/profile-imports/preview",
+        {"content": "DNLP1:code", "expected_settings_revision": "settings"},
+    ),
+    (
+        "POST",
+        "/api/v1/settings/library-management/profile-imports",
+        {
+            "content": "DNLP1:code",
+            "reviewed_bundle_hash": "hash",
+            "name": "Imported profile",
+            "expected_settings_revision": "settings",
+        },
+    ),
+    (
+        "POST",
+        "/api/v1/settings/library-management/activation-previews",
+        {
+            "root_id": "root-1",
+            "settings": {},
+            "expected_settings_revision": "settings",
+            "expected_policy_revision": "policy",
+        },
+    ),
+    (
+        "GET",
+        "/api/v1/settings/library-management/activation-previews/job-1",
+        None,
+    ),
+    (
+        "POST",
+        "/api/v1/settings/library-management/activation-confirmations",
+        {
+            "settings": {},
+            "proofs": [],
+            "expected_settings_revision": "settings",
+            "confirmation": True,
+        },
+    ),
+    (
+        "POST",
+        "/api/v1/library/management/previews",
+        {
+            "selection": {"kind": "tracks", "ids": ["track-1"]},
+            "profile_id": "profile-1",
+            "expected_settings_revision": "settings",
+            "expected_policy_revision": "policy",
+        },
+    ),
+    ("GET", "/api/v1/library/management/tracks/track-1/tag-editor", None),
+    (
+        "POST",
+        "/api/v1/library/management/tag-edit-previews",
+        {
+            "local_track_id": "track-1",
+            "mode": "write_once",
+            "expected_settings_revision": "settings",
+            "expected_policy_revision": "policy",
+            "fields": [{"field_name": "title", "value": "Title"}],
+        },
+    ),
+    ("GET", "/api/v1/library/management/previews/job-1", None),
+    ("GET", "/api/v1/library/management/previews/job-1/items", None),
     (
         "POST",
         "/api/v1/settings/library/policy-apply-preview",
@@ -278,11 +411,6 @@ _ADMIN_ENDPOINTS = [
     ("DELETE", "/api/v1/downloads/quarantine/1", None),
     ("POST", "/api/v1/downloads/task-1/reimport", None),
     ("GET", "/api/v1/library/tracks/file-1/tags", None),
-    (
-        "POST",
-        "/api/v1/library/tracks/file-1",
-        {"title": "t", "artist": "a", "album": "al", "track_number": 1},
-    ),
     ("POST", "/api/v1/library/albums/rg-1/rescan", None),
     # Spotify app credentials + home settings (admin-gated at the /settings router level).
     ("GET", "/api/v1/settings/spotify", None),
@@ -304,7 +432,7 @@ _ADMIN_ENDPOINTS = [
     (
         "PUT",
         "/api/v1/settings/get-it",
-        {"store_region": "US", "support_droppedneedle": True},
+        {"store_region": "US"},
     ),
     # Upcoming Events sources (admin, settings router)
     ("GET", "/api/v1/settings/events", None),
@@ -362,6 +490,11 @@ _ADMIN_ENDPOINTS = [
     ),
     (
         "POST",
+        "/api/v1/library/reviews/review-1/dismiss",
+        {"expected_review_revision": 1, "expected_catalog_revision": 1},
+    ),
+    (
+        "POST",
         "/api/v1/library/reviews/review-1/candidate",
         {
             "expected_review_revision": 1,
@@ -401,6 +534,50 @@ _ADMIN_ENDPOINTS = [
             "expected_input_revision": "input-1",
             "idempotency_key": "reidentify-1",
         },
+    ),
+    (
+        "GET",
+        "/api/v1/library/albums/album-1/reidentification/releases?title=Album&artist=Artist",
+        None,
+    ),
+    (
+        "POST",
+        "/api/v1/library/albums/album-1/management/re-enable",
+        {"expected_exclusion_revision": 1},
+    ),
+    (
+        "POST",
+        "/api/v1/library/albums/album-1/edition-conversions/preflight",
+        {
+            "release_group_mbid": "00000000-0000-4000-8000-000000000001",
+            "release_mbid": "00000000-0000-4000-8000-000000000002",
+        },
+    ),
+    (
+        "POST",
+        "/api/v1/library/edition-conversions/job-1/start",
+        {"preflight_token": "token", "expected_row_revision": 1, "confirmation": True},
+    ),
+    ("GET", "/api/v1/library/edition-conversions/job-1", None),
+    (
+        "POST",
+        "/api/v1/library/edition-conversions/job-1/preview",
+        {"expected_row_revision": 1},
+    ),
+    (
+        "POST",
+        "/api/v1/library/edition-conversions/job-1/retry",
+        {"target_ordinals": [0], "expected_row_revision": 1},
+    ),
+    (
+        "POST",
+        "/api/v1/library/edition-conversions/job-1/recheck",
+        {"expected_row_revision": 1},
+    ),
+    (
+        "POST",
+        "/api/v1/library/edition-conversions/job-1/cancel",
+        {"expected_row_revision": 1, "confirmation": True},
     ),
     (
         "POST",
@@ -492,6 +669,14 @@ _ADMIN_ENDPOINTS = [
             "idempotency_key": "artist-merge-1",
         },
     ),
+    ("GET", "/api/v1/library/artists/reconciliation", None),
+    ("GET", "/api/v1/library/artists/duplicate-groups", None),
+    ("GET", "/api/v1/library/artists/duplicate-groups/group-1", None),
+    (
+        "POST",
+        "/api/v1/library/artists/duplicate-groups/group-1/dismiss",
+        {"expected_member_revisions": {"artist-1": 1, "artist-2": 1}},
+    ),
     ("POST", "/api/v1/library/identity-repairs", {"idempotency_key": "repair-1"}),
     ("GET", "/api/v1/library/identity-repairs", None),
     ("GET", "/api/v1/library/identity-repairs/estimate", None),
@@ -517,6 +702,29 @@ _ADMIN_ENDPOINTS = [
         "/api/v1/library/identity-repairs/job-1/stop",
         {"expected_row_revision": 1},
     ),
+    (
+        "POST",
+        "/api/v1/library/management/identity-preparations",
+        {"idempotency_key": "identity-preparation-1"},
+    ),
+    ("GET", "/api/v1/library/management/identity-preparations", None),
+    ("GET", "/api/v1/library/management/identity-preparations/estimate", None),
+    ("GET", "/api/v1/library/management/identity-preparations/job-1", None),
+    (
+        "GET",
+        "/api/v1/library/management/identity-preparations/job-1/findings",
+        None,
+    ),
+    (
+        "POST",
+        "/api/v1/library/management/identity-preparations/job-1/apply",
+        {"expected_row_revision": 1, "confirmation": True},
+    ),
+    (
+        "POST",
+        "/api/v1/library/management/identity-preparations/job-1/discard",
+        {"expected_row_revision": 1},
+    ),
     ("GET", "/api/v1/library/scan-runs/run-1/diagnostics", None),
     ("POST", "/api/v1/library/identification/pause", {"expected_revision": 1}),
     ("POST", "/api/v1/library/identification/resume", {"expected_revision": 1}),
@@ -533,6 +741,7 @@ _ADMIN_ENDPOINTS = [
     ("GET", "/api/v1/library/scan-runs", None),
     ("GET", "/api/v1/library/scan-runs/estimate", None),
     ("GET", "/api/v1/library/scan-runs/run-1", None),
+    ("GET", "/api/v1/library/scan-runs/run-1/failures", None),
     (
         "POST",
         "/api/v1/library/scan-runs/run-1/pause",
@@ -548,6 +757,8 @@ _ADMIN_ENDPOINTS = [
         "/api/v1/library/scan-runs/run-1/stop",
         {"expected_revision": 1},
     ),
+    ("POST", "/api/v1/downloads/held/management/task-1/retry", None),
+    ("POST", "/api/v1/downloads/held/management/task-1/discard", None),
 ]
 
 _USER_ENDPOINTS = [
@@ -561,8 +772,14 @@ _USER_ENDPOINTS = [
     ("GET", "/api/v1/library/scan/status", None),
     ("GET", "/api/v1/download-client/status", None),
     ("GET", "/api/v1/downloads", None),
+    ("GET", "/api/v1/downloads/activity-summary", None),
     ("GET", "/api/v1/downloads/task-1/files", None),
     ("POST", "/api/v1/downloads/task-1/cancel", None),
+    (
+        "POST",
+        "/api/v1/downloads/task-1/next-source",
+        {"expected_candidate_index": 0},
+    ),
     ("POST", "/api/v1/downloads/task-1/retry", None),
     ("GET", "/api/v1/downloads/task-1", None),
     (
@@ -585,6 +802,7 @@ _USER_ENDPOINTS = [
     ("GET", "/api/v1/library/recently-added", None),
     ("GET", "/api/v1/library/artists/artist-1", None),
     ("GET", "/api/v1/library/artists/artist-1/albums", None),
+    ("GET", "/api/v1/library/artists/artist-1/appearances", None),
     ("GET", "/api/v1/library/albums/album-1", None),
     ("GET", "/api/v1/library/albums/album-1/artwork/cached?v=1", None),
     ("POST", "/api/v1/library/resolve-tracks", {"items": []}),
@@ -693,12 +911,13 @@ def _client(scenario: str):
         downloads_routes.router,
         following_routes.router,
         tracks_routes.router,
+        library_operations_target_routes.router,
         target_library_routes.router,
         library_contribution_routes.router,
         target_library_scan_routes.router,
         library_routes.router,
-        library_operations_target_routes.router,
         target_library_policy_routes.router,
+        library_management_routes.router,
         library_policy_routes.router,
         me_routes.router,
         navidrome_preferences_routes.router,
@@ -738,6 +957,8 @@ def _client(scenario: str):
     target_native.canonical_id.return_value = None
     target_native.artist.return_value = None
     target_native.artist_albums.return_value = []
+    target_native.artist_appearances.return_value = ([], 0, 0)
+    target_native.artist_scope_counts.return_value = (0, 0)
     target_native.album_detail.return_value = None
     target_native.resolve_tracks.return_value = {"items": []}
     target_native.album_tracks.return_value = []

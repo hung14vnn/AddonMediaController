@@ -25,6 +25,7 @@
 	const detach = actOnLibraryReview('detach_keep_tagged');
 	const exclude = actOnLibraryReview('exclude');
 	const restore = actOnLibraryReview('restore');
+	const dismiss = actOnLibraryReview('dismiss');
 	const accept = acceptLibraryReviewCandidate();
 	const retry = retryLibraryReview();
 	let dialog: HTMLDialogElement;
@@ -145,6 +146,8 @@
 	function reasonLabel(reasonCode: string): string {
 		const labels: Record<string, string> = {
 			CONTRADICTORY: 'The local evidence conflicts with this release',
+			RELEASE_TYPE_REQUIRES_CONFIRMATION: 'Compilation or live edition needs confirmation',
+			UNSAFE_RELEASE_TYPE: 'Compilation or live edition needs confirmation',
 			MULTIPLE_LIKELY_RELEASES: 'More than one release is equally likely',
 			UNKNOWN_EXTRAS: 'Some local tracks cannot be matched safely',
 			INCOMPLETE_SUPPORT: 'The available evidence does not support the whole album'
@@ -362,6 +365,18 @@
 										.mutateAsync({ reviewId: detail.review.id, body: request })
 										.catch(() => undefined);
 							}}>Restore availability</button
+						>{/if}
+					{#if detail.available_actions.includes('dismiss')}<button
+							class="btn btn-outline"
+							disabled={dismiss.isPending}
+							title="Close this review without changing anything. It only returns if the files change."
+							onclick={() => {
+								const request = body();
+								if (request)
+									void dismiss
+										.mutateAsync({ reviewId: detail.review.id, body: request })
+										.catch(() => undefined);
+							}}>Dismiss</button
 						>{/if}
 					<button class="btn btn-ghost" onclick={() => dialog.close()}>Leave for later</button>
 				</div>

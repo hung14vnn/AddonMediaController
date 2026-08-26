@@ -3,6 +3,7 @@
 	import { eqStore } from '$lib/stores/eq.svelte';
 	import { scrobbleManager } from '$lib/stores/scrobble.svelte';
 	import EqPanel from '$lib/components/EqPanel.svelte';
+	import LyricsPanel from '$lib/components/LyricsPanel.svelte';
 	import AudioQualityBadge from '$lib/components/AudioQualityBadge.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { openGlobalPlaylistModal } from '$lib/components/AddToPlaylistModal.svelte';
