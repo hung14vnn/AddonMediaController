@@ -8,13 +8,13 @@ from datetime import datetime
 
 import logging
 import os
-import asyncio
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.routing import APIRoute
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -91,7 +91,6 @@ from core.dependencies import (
     get_discovery_batch_service,
     get_home_service,
     get_home_charts_service,
-    get_legacy_pending_migration_service,
     get_local_files_service,
     get_karaoke_service,
     get_navidrome_library_service,
@@ -160,7 +159,6 @@ from core.dependencies import (
     get_library_contribution_verification_worker,
     get_background_workload_gate,
     get_library_policy_resolver,
-    get_library_management_recovery_service,
 )
 from core.config import get_settings
 from core.exception_handlers import (
@@ -192,14 +190,13 @@ from core.exceptions import (
     StaleRevisionError,
     ValidationError,
 )
-from infrastructure.resilience.retry import CircuitOpenError, CircuitState
+from infrastructure.resilience.retry import CircuitOpenError
 from core.task_registry import TaskRegistry
 from core.tasks import (
     start_cache_cleanup_task,
     start_disk_cache_cleanup_task,
     start_memory_maintenance_task,
 )
-from infrastructure.http.compression import CompressibleGZipMiddleware
 from infrastructure.msgspec_fastapi import MsgSpecJSONResponse
 from middleware import (
     AuthMiddleware,
@@ -210,14 +207,9 @@ from middleware import (
 )
 from services.native.library_scan_supervisor import start_target_scan_supervisor
 from services.native.target_application_runtime import (
-    CONTRIBUTION_VERIFICATION_WORKER_TASK_NAME,
-    IDENTIFICATION_WORKER_TASK_NAME,
-    OPERATION_WORKER_TASK_NAME,
-    TARGET_WORKER_WATCHDOG_TASK_NAME,
     start_library_contribution_verification_worker,
     start_target_identification_worker,
     start_target_operation_worker,
-    start_target_worker_watchdog,
 )
 from services.native.target_application_lifecycle import (
     run_target_one_time_migrations,
@@ -299,16 +291,15 @@ def create_isolated_target_application(
         search.router,
         requests.router,
         requests_page.router,
-        library_scan_target.router,
-        library_operations_target.router,
         library_target.router,
         library_contributions.router,
+        library_scan_target.router,
         status.router,
         covers.router,
         library_policies_target.router,
-        library_management.router,
         home.router,
         discover.router,
+        library_operations_target.router,
         stream.router,
         local_library.router,
         scrobble.router,
@@ -392,10 +383,9 @@ def _include_complete_target_routes(app: FastAPI) -> None:
     for router in (
         search.router,
         requests.router,
-        library_scan_target.router,
-        library_operations_target.router,
         library_target.router,
         library_contributions.router,
+        library_scan_target.router,
         status.router,
         covers.router,
     ):
@@ -407,11 +397,11 @@ def _include_complete_target_routes(app: FastAPI) -> None:
     v1.include_router(albums.router, dependencies=[Depends(_require_provider_album_id)])
     for router in (
         library_policies_target.router,
-        library_management.router,
         home.router,
         wrapped.router,
         discovery_batches.router,
         discover.router,
+        library_operations_target.router,
         youtube.router,
         cache.router,
         cache_status.router,
@@ -571,21 +561,8 @@ async def production_target_lifespan(app: FastAPI):
             auth_store=auth_store,
             preferences=preferences,
             cache_dir=settings.cache_dir,
-            library_enabled=preferences.get_typed_library_settings().enabled,
         )
         logger.info("target_startup.data_ratchets_completed")
-    async with target_startup_progress(settings, "management_recovery"):
-        await get_target_library_operation_supervisor().recover()
-        recovery = await get_library_management_recovery_service().recover_startup()
-        logger.info(
-            "target_startup.management_recovery_completed examined=%s recovered=%s "
-            "rolled_back=%s needs_attention=%s skipped=%s",
-            recovery.examined_bundles,
-            recovery.recovered_bundles,
-            recovery.rolled_back_bundles,
-            recovery.needs_attention_bundles,
-            recovery.skipped_bundles,
-        )
     async with target_startup_progress(settings, "operational_runtime"):
         settings.instance_id = preferences.get_instance_id()
         cache_instance = get_cache()
@@ -620,91 +597,36 @@ async def production_target_lifespan(app: FastAPI):
                 "timezone_name": timezone_name,
             }
 
-        work_wakeups = get_native_library_store().work_wakeups
-
-        def library_enabled() -> bool:
-            return get_preferences_service().get_typed_library_settings().enabled
-
         start_target_scan_supervisor(
             get_target_library_scan_coordinator,
             root_paths,
-            work_wakeups,
             scheduler_getter=get_target_library_scan_scheduler,
             resolver_getter=get_library_policy_resolver,
             schedule_settings_getter=schedule_settings,
         )
-
-        def mb_provider_state() -> CircuitState:
-            from repositories.musicbrainz_base import mb_circuit_breaker
-
-            return mb_circuit_breaker.state
-
-        async def probe_mb_provider() -> None:
-            # Thin background-priority probe mirroring verify_musicbrainz; the
-            # breaker records the outcome, resolving HALF_OPEN without traffic.
-            from infrastructure.queue.priority_queue import RequestPriority
-            from repositories.musicbrainz_base import mb_api_get
-
-            await mb_api_get(
-                "/artist",
-                params={"query": "test", "limit": 1},
-                priority=RequestPriority.BACKGROUND_SYNC,
-            )
-
-        def start_identification_worker() -> asyncio.Task[None]:
-            return start_target_identification_worker(
-                get_target_identification_queue,
-                get_target_album_identification_service,
-                work_wakeups,
-                workload_gate=get_background_workload_gate(),
-                provider_state_getter=mb_provider_state,
-                probe_provider=probe_mb_provider,
-                enabled_getter=library_enabled,
-            )
-
-        def start_operation_worker() -> asyncio.Task[None]:
-            return start_target_operation_worker(
-                get_target_library_operation_supervisor,
-                work_wakeups,
-                recovery_getter=get_library_management_recovery_service,
-                enabled_getter=library_enabled,
-            )
-
-        def start_contribution_worker() -> asyncio.Task[None]:
-            return start_library_contribution_verification_worker(
-                get_library_contribution_verification_worker,
-                work_wakeups,
-            )
-
-        worker_starters = {
-            IDENTIFICATION_WORKER_TASK_NAME: start_identification_worker,
-            OPERATION_WORKER_TASK_NAME: start_operation_worker,
-            CONTRIBUTION_VERIFICATION_WORKER_TASK_NAME: start_contribution_worker,
-        }
-        for start_worker in worker_starters.values():
-            start_worker()
-        start_target_worker_watchdog(worker_starters)
+        start_target_identification_worker(
+            get_target_identification_queue,
+            get_target_album_identification_service,
+            get_background_workload_gate(),
+        )
+        start_target_operation_worker(get_target_library_operation_supervisor)
+        start_library_contribution_verification_worker(
+            get_library_contribution_verification_worker
+        )
         await start_target_operational_runtime(
             settings=settings,
             preferences=preferences,
             auth_store=auth_store,
         )
-        if library_enabled():
-            try:
-                await get_legacy_pending_migration_service().schedule()
-            except Exception:  # noqa: BLE001
-                logger.exception("Legacy pending migration scheduling failed")
         logger.info("target_startup.operational_runtime_started")
         logger.info("DroppedNeedle target application started")
 
     try:
         yield
     finally:
-        registry = TaskRegistry.get_instance()
-        # Cancel the watchdog before the snapshot+cancel_all pass so it cannot
-        # restart a worker mid-shutdown and orphan the task.
-        await registry.cancel(TARGET_WORKER_WATCHDOG_TASK_NAME)
-        await registry.cancel_all(grace_period=settings.shutdown_grace_period)
+        await TaskRegistry.get_instance().cancel_all(
+            grace_period=settings.shutdown_grace_period
+        )
         await cleanup_app_state(
             queue_manager_getter=get_target_discover_queue_manager,
             genre_prewarm_getter=get_target_genre_cover_prewarm_service,
@@ -746,7 +668,7 @@ def create_production_target_application() -> FastAPI:
     app.add_middleware(HSTSMiddleware)
     app.add_middleware(DegradationMiddleware)
     app.add_middleware(PerformanceMiddleware)
-    app.add_middleware(CompressibleGZipMiddleware, minimum_size=1000, compresslevel=6)
+    app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
     app.add_middleware(AuthMiddleware)
     app.add_middleware(
         RateLimitMiddleware,
