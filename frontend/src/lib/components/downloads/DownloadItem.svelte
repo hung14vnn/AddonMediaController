@@ -55,6 +55,7 @@
 	const isLive = $derived(isSearchingState || isDownloading || isProcessing);
 	const showBar = $derived(isDownloading || isProcessing);
 	const isCompleted = $derived(task.status === 'completed' || task.status === 'partial');
+	const cleanupState = $derived(task.acquisition_cleanup_state);
 	const hasAlbumLink = $derived(Boolean(task.release_group_mbid));
 
 	// only stream live progress while the transfer is moving
