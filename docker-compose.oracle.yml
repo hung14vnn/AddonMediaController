@@ -41,7 +41,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: addonify:local
+    # Version the locally-built image so Portainer Git redeploys cannot reuse
+    # the previous SpotiFLAC 3.0.3 build.
+    image: addonify:spotiflac-306
     container_name: addonify
     restart: unless-stopped
     depends_on:
