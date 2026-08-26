@@ -2048,6 +2048,7 @@ class NativeLibraryStore(PersistenceBase):
         sort_by: str = "name",
         sort_order: str = "asc",
         artist_ids: list[str] | None = None,
+        scope: str = "album",
     ) -> tuple[list[dict[str, Any]], int]:
         def operation(
             connection: sqlite3.Connection,
@@ -2056,6 +2057,21 @@ class NativeLibraryStore(PersistenceBase):
                 "ar.retired_into_artist_id IS NULL",
                 "t.availability = 'indexed'",
             ]
+            # Newer clients can request album artists or credited contributors.
+            # Keep the fork's established projection/query intact while applying
+            # the scope at the artist level; this also remains compatible with
+            # databases created before the scoped endpoint was introduced.
+            normalized_scope = scope if scope in {"album", "contributors", "all"} else "album"
+            if normalized_scope == "album":
+                clauses.append(
+                    "EXISTS (SELECT 1 FROM local_album_artists scope_album "
+                    "WHERE scope_album.local_artist_id = ar.id)"
+                )
+            elif normalized_scope == "contributors":
+                clauses.append(
+                    "EXISTS (SELECT 1 FROM local_track_artists scope_contributor "
+                    "WHERE scope_contributor.local_artist_id = ar.id)"
+                )
             parameters: list[Any] = []
             if search:
                 clauses.append("ar.folded_name LIKE ?")
@@ -2118,6 +2134,41 @@ class NativeLibraryStore(PersistenceBase):
                 (*parameters, max(1, limit), max(0, offset)),
             ).fetchall()
             return [dict(row) for row in rows], total
+
+        return await self._read(operation)
+
+    async def target_artist_scope_counts(self) -> tuple[int, int]:
+        """Return counts for the album-artist and contributor artist scopes."""
+
+        def operation(connection: sqlite3.Connection) -> tuple[int, int]:
+            album_count = int(
+                connection.execute(
+                    "SELECT COUNT(DISTINCT aa.local_artist_id) "
+                    "FROM local_album_artists aa "
+                    "JOIN local_artists ar ON ar.id = aa.local_artist_id "
+                    "JOIN local_albums a ON a.id = aa.local_album_id "
+                    "JOIN local_tracks t ON t.local_album_id = a.id "
+                    "WHERE ar.retired_into_artist_id IS NULL "
+                    "AND a.retired_into_album_id IS NULL "
+                    "AND t.availability = 'indexed'"
+                ).fetchone()[0]
+            )
+            contributor_count = int(
+                connection.execute(
+                    "SELECT COUNT(DISTINCT ta.local_artist_id) "
+                    "FROM local_track_artists ta "
+                    "JOIN local_artists ar ON ar.id = ta.local_artist_id "
+                    "JOIN local_tracks t ON t.id = ta.local_track_id "
+                    "JOIN local_albums a ON a.id = t.local_album_id "
+                    "WHERE ar.retired_into_artist_id IS NULL "
+                    "AND a.retired_into_album_id IS NULL "
+                    "AND t.availability = 'indexed' "
+                    "AND NOT EXISTS (SELECT 1 FROM local_album_artists aa "
+                    "WHERE aa.local_album_id = a.id "
+                    "AND aa.local_artist_id = ta.local_artist_id)"
+                ).fetchone()[0]
+            )
+            return album_count, contributor_count
 
         return await self._read(operation)
 

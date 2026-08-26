@@ -93,3 +93,6 @@ class SuggestResult(AppStruct):
 class SuggestResponse(AppStruct):
     results: list[SuggestResult] = []
     tracks: list[SpotifyTrackResult] = []
+    # ``SearchService.suggest`` reports degraded MusicBrainz responses so the UI
+    # can distinguish an empty result from a provider timeout/error.
+    remote_status: SearchRemoteStatus = "ok"
