@@ -7,7 +7,8 @@ Two halves:
   For each expected file it resolves the on-disk source in slskd's download dir,
   verifies it, writes MBID tags, computes the target via the naming template,
   atomically moves it into the library, and inserts a ``library_files`` row. A bad
-  file is recorded and skipped; the rest still import.
+  file is recorded and skipped; the rest still import. Soulseek FLAC sources are
+  published as AAC 256 kbps M4A files after verification.
 
 FileProcessor never touches slskd transfers - removing completed transfer records
 after import is the orchestrator's job (via the client's ``cancel``).
@@ -19,6 +20,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
@@ -810,7 +812,12 @@ class FileProcessor:
         return existing_tier is not None and _is_strict_upgrade(existing_tier, info)
 
     async def _replace_same_path(
-        self, source: Path, target_path: Path, target_tag: AudioTag
+        self,
+        source: Path,
+        target_path: Path,
+        target_tag: AudioTag,
+        *,
+        transcode_flac: bool = False,
     ) -> None:
         """Same-path replace: recycle the current file BEFORE the in-place
         ``os.replace`` publish (publishing first would destroy the old bytes with
@@ -821,7 +828,13 @@ class FileProcessor:
             extra={"target": target_path.name, "recycled_to": str(recycled)},
         )
         try:
-            await asyncio.to_thread(self._import_into_library, source, target_path, target_tag)
+            await asyncio.to_thread(
+                self._import_into_library,
+                source,
+                target_path,
+                target_tag,
+                transcode_flac=transcode_flac,
+            )
         except BaseException:
             try:
                 await asyncio.to_thread(shutil.move, str(recycled), str(target_path))
@@ -1090,30 +1103,15 @@ class FileProcessor:
             ) from exc
 
         target_tag = self._build_target_tag(manifest, tag)
+        output_format = "m4a" if source.suffix.casefold() == ".flac" else info.file_format
         target_path = self._library_paths[0] / self._naming.format_path(
-            manifest.naming_template, target_tag, info.file_format
+            manifest.naming_template, target_tag, output_format
         )
 
         expected_track = (
             manifest.expected_tracks[0] if len(manifest.expected_tracks) == 1 else None
         )
 
-        # Position-level dedup, before the expensive verification below: if the album
-        # already holds a file at this (disc, track), don't write a second copy. Stops
-        # the flac-vs-mp3 / failover re-pull duplicate (completeness dedupes by position,
-        # but the files themselves never were) and skips fingerprinting a copy we
-        # discard. Known track numbers only; an untagged file (track 0) falls through to
-        # the path check below.
-        # An upgrade import that strictly beats the occupying file falls through (the
-        # fingerprint check below still runs first, D10) and retires the old file
-        # after publishing; anything else keeps the existing copy exactly as before.
-        # EXCEPTION (P4 livelock fix, incident review R3): when the occupying row does
-        # NOT cover the expected track - a wrong file from an earlier grab squatting on
-        # the slot - the verified new file is not its duplicate. Import alongside (the
-        # naming template yields a distinct filename); the squatter stays for human
-        # review (D5: never auto-delete). Without this, the correct re-download was
-        # unlinked as a "duplicate" of the wrong file, forever. Upgrade runs are
-        # exempt: replace-at-position is their owned semantics (CollectionMgmt D4/D18).
         replace_old: Path | None = None
         if target_tag.track_number:
             present = await self._library.get_file_at_position(
@@ -1256,7 +1254,12 @@ class FileProcessor:
             if target_path.exists():
                 if await self._same_path_upgrade_applies(manifest.origin, target_path, info):
                     # _import_into_library consumes the source + prunes its dirs
-                    await self._replace_same_path(source, target_path, target_tag)
+                    await self._replace_same_path(
+                        source,
+                        target_path,
+                        target_tag,
+                        transcode_flac=source.suffix.casefold() == ".flac",
+                    )
                 else:
                     # already imported on a prior run; drop the leftover slskd source
                     logger.info(
@@ -1270,7 +1273,11 @@ class FileProcessor:
             else:
                 # copy/tag/rename are blocking I/O -> run off the event loop
                 await asyncio.to_thread(
-                    self._import_into_library, source, target_path, target_tag
+                    self._import_into_library,
+                    source,
+                    target_path,
+                    target_tag,
+                    transcode_flac=source.suffix.casefold() == ".flac",
                 )
                 logger.info(
                     "process.file_tagged",
@@ -1292,10 +1299,22 @@ class FileProcessor:
             if replace_old is not None:
                 await self._retire_replaced_file(replace_old)
 
+            stored_info = info
+            if target_path.exists() and target_path.suffix.casefold() == ".m4a":
+                try:
+                    _stored_tag, stored_info = await asyncio.to_thread(
+                        self._tagger.read_tags, target_path
+                    )
+                except Exception:  # noqa: BLE001 - source metadata remains usable
+                    logger.warning(
+                        "Could not re-read transcoded artifact %s; using source metadata",
+                        target_path,
+                    )
+
             await self._library.upsert_file(
                 target_path,
                 target_tag,
-                info,
+                stored_info,
                 release_group_mbid=manifest.release_group_mbid,
                 release_mbid=manifest.release_mbid,
                 recording_mbid=manifest.external_track_id or tag.musicbrainz_recording_id,
@@ -1320,7 +1339,12 @@ class FileProcessor:
         return target_path
 
     def _import_into_library(
-        self, source: Path, target_path: Path, target_tag: AudioTag
+        self,
+        source: Path,
+        target_path: Path,
+        target_tag: AudioTag,
+        *,
+        transcode_flac: bool = False,
     ) -> None:
         """Bring a finished download onto the library side and publish it atomically.
 
@@ -1332,25 +1356,30 @@ class FileProcessor:
         placement is always an ``os.replace`` within one directory. After a
         cross-mount copy the slskd source is removed so there's no doubled storage."""
         tmp = target_path.parent / f".{target_path.stem}.{uuid4().hex[:8]}.part"
+        staged = tmp
         consumed_source = False
         try:
-            try:
-                os.replace(source, tmp)  # same mount: atomic, no copy
-                consumed_source = True
-            except OSError as exc:
-                if exc.errno != errno.EXDEV:
-                    raise
-                # cross-mount: copy bytes, then best-effort metadata. copy2's next step
-                # (copystat -> chmod/utime) is rejected by some filesystems even for the
-                # file's owner (TrueNAS NFSv4 ACLs), so it threw and killed the import.
-                # Bytes are all that matter; the tag write below resets mtime, so swallow.
-                shutil.copyfile(source, tmp)
+            if transcode_flac:
+                staged = tmp.with_suffix(".m4a")
+                self._transcode_flac_to_aac(source, staged)
+            else:
                 try:
-                    shutil.copystat(source, tmp)
-                except OSError:
-                    logger.debug("copystat skipped for %s (filesystem rejected metadata)", tmp.name)
-            self._tagger.write_album_identity(tmp, target_tag)
-            os.replace(tmp, target_path)  # atomic publish within the library dir
+                    os.replace(source, tmp)  # same mount: atomic, no copy
+                    consumed_source = True
+                except OSError as exc:
+                    if exc.errno != errno.EXDEV:
+                        raise
+                    # cross-mount: copy bytes, then best-effort metadata. copy2's next step
+                    # (copystat -> chmod/utime) is rejected by some filesystems even for the
+                    # file's owner (TrueNAS NFSv4 ACLs), so it threw and killed the import.
+                    # Bytes are all that matter; the tag write below resets mtime, so swallow.
+                    shutil.copyfile(source, tmp)
+                    try:
+                        shutil.copystat(source, tmp)
+                    except OSError:
+                        logger.debug("copystat skipped for %s (filesystem rejected metadata)", tmp.name)
+            self._tagger.write_album_identity(staged, target_tag)
+            os.replace(staged, target_path)  # atomic publish within the library dir
         except BaseException:
             # same-mount path renamed source into tmp; if tagging/publish then fails,
             # restore slskd's original so a failed import never destroys the only copy
@@ -1361,10 +1390,11 @@ class FileProcessor:
                     pass
                 else:
                     raise
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
+            for leftover in {tmp, staged}:
+                try:
+                    leftover.unlink(missing_ok=True)
+                except OSError:
+                    pass
             raise
         if not consumed_source:
             try:
@@ -1372,6 +1402,50 @@ class FileProcessor:
             except OSError:
                 logger.warning("Imported but could not remove slskd source %s", source)
         self._prune_empty_source_dirs(source)
+
+    @staticmethod
+    def _transcode_flac_to_aac(source: Path, target: Path) -> None:
+        """Convert one Soulseek FLAC source to a 256 kbps AAC M4A artifact."""
+        logger.info("Converting %s to AAC 256 kbps M4A", source.name)
+        try:
+            process = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-nostdin",
+                    "-i",
+                    str(source),
+                    "-map",
+                    "0:a:0",
+                    "-map_metadata",
+                    "0",
+                    "-vn",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "256k",
+                    "-movflags",
+                    "+faststart",
+                    str(target),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=600,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError("FFmpeg is unavailable or timed out during FLAC conversion") from exc
+        if process.returncode != 0:
+            detail = process.stderr.decode(errors="replace")
+            raise RuntimeError(f"FFmpeg conversion failed for {source.name}: {detail}")
+        if not target.exists() or target.stat().st_size == 0:
+            raise RuntimeError(f"FFmpeg did not produce a valid output for {source.name}")
+        logger.info(
+            "Converted %s -> %s (%.2f MB)",
+            source.name,
+            target.name,
+            target.stat().st_size / 1024 / 1024,
+        )
 
     def _prune_empty_source_dirs(self, source: Path) -> None:
         """Remove the now-empty folders slskd left behind after a file is moved out of
