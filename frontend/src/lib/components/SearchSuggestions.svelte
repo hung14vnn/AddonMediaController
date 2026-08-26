@@ -33,9 +33,11 @@
 
 	let suggestions = $state<Suggestion[]>([]);
 	let imageErrors = $state<Record<string, boolean>>({});
+	let loading = $state(false);
 	let showDropdown = $state(false);
 	let activeIndex = $state(-1);
 	let debounceTimeout: ReturnType<typeof setTimeout>;
+	let abortController: AbortController | null = null;
 	let rootRef: HTMLDivElement;
 	let fetchGeneration = 0;
 	const download = requestSpotifyTrack();
@@ -61,23 +63,23 @@
 
 	function handleInput() {
 		clearTimeout(debounceTimeout);
-		queryEnabled = false;
-		debouncedQuery = '';
+		abortController?.abort();
+		abortController = null;
 		activeIndex = -1;
 
 		if (query.trim().length < 2) {
+			suggestions = [];
 			showDropdown = false;
+			loading = false;
 			return;
 		}
 
+		loading = true;
 		showDropdown = true;
 
-		debounceTimeout = setTimeout(() => {
-			debouncedQuery = query.trim();
-			queryEnabled = true;
-			imageErrors = {};
-		}, 300);
-	}
+		debounceTimeout = setTimeout(async () => {
+			abortController = new AbortController();
+			const generation = ++fetchGeneration;
 
 			try {
 				const data = await api.get<{
@@ -118,7 +120,8 @@
 
 	function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
-		closeDropdown();
+		showDropdown = false;
+		suggestions = [];
 		onSearch();
 	}
 
@@ -138,7 +141,9 @@
 	}
 
 	function handleViewAll() {
-		closeDropdown();
+		showDropdown = false;
+		suggestions = [];
+		activeIndex = -1;
 		onSearch();
 	}
 
@@ -148,8 +153,7 @@
 				e.preventDefault();
 				e.stopPropagation();
 				showDropdown = false;
-				queryEnabled = false;
-				debouncedQuery = '';
+				suggestions = [];
 				activeIndex = -1;
 			}
 			return;
@@ -207,6 +211,7 @@
 	$effect(() => {
 		return () => {
 			clearTimeout(debounceTimeout);
+			abortController?.abort();
 		};
 	});
 </script>
@@ -244,7 +249,7 @@
 		</label>
 	</form>
 
-	{#if showDropdown && (suggestions.length > 0 || loading || remoteStatus !== 'ok')}
+	{#if showDropdown && (suggestions.length > 0 || loading)}
 		<ul
 			role="listbox"
 			id={listboxId}
@@ -361,17 +366,6 @@
 			{#if loading && suggestions.length === 0}
 				<li class="p-4 flex justify-center">
 					<span class="loading loading-spinner loading-md"></span>
-				</li>
-			{/if}
-
-			{#if !loading && remoteStatus !== 'ok'}
-				<li class="flex items-center justify-between gap-3 border-t border-base-300 p-3 text-sm">
-					<span>
-						{remoteStatus === 'timeout'
-							? 'MusicBrainz suggestions took too long.'
-							: 'Some MusicBrainz suggestions are unavailable.'}
-					</span>
-					<button class="btn btn-xs" onclick={() => remoteQuery.refetch()}>Retry</button>
 				</li>
 			{/if}
 		</ul>
