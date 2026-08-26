@@ -248,6 +248,28 @@ async def test_target_view_browses_identified_and_local_only_without_provider_le
 
 
 @pytest.mark.asyncio
+async def test_target_view_exposes_epoch_revision_and_advances_when_track_disappears(
+    target_services,
+) -> None:
+    store, view, _favorites, _history, _root = target_services
+
+    before = await view.get_library_revision()
+    assert before >= 1_577_836_800_000
+
+    await store.mark_target_tracks_missing(
+        [LOCAL_TRACK_ID],
+        actor_user_id=None,
+        reason_code="test_missing",
+        missing_at=5,
+    )
+
+    assert await view.get_library_revision() > before
+    tracks, total = await view.get_tracks_page(limit=10)
+    assert total == 1
+    assert [track.file_id for track in tracks] == [IDENTIFIED_TRACK_ID]
+
+
+@pytest.mark.asyncio
 async def test_target_stats_count_local_only_albums(target_services) -> None:
     store, _view, _favorites, _history, _root = target_services
     stats = await TargetNativeLibraryService(store).stats()

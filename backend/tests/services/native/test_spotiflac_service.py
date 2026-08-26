@@ -1,8 +1,15 @@
+import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import AsyncMock
 
 import pytest
 
-from services.native.spotiflac_service import SpotiflacService, spotiflac_client_options
+from services.native.spotiflac_service import (
+    SpotiflacService,
+    _CrossLoopAsyncLock,
+    spotiflac_client_options,
+)
 
 
 def test_low_quality_uses_lossy_youtube_extension():
@@ -38,6 +45,60 @@ def test_lossless_quality_preserves_provider_output():
         "ext:deezer",
         "ext:amazon",
     ]
+
+
+def test_cross_loop_lock_serializes_independent_event_loops():
+    lock = _CrossLoopAsyncLock()
+    start = threading.Barrier(2)
+    state_guard = threading.Lock()
+    active = 0
+    peak_active = 0
+
+    async def contender():
+        nonlocal active, peak_active
+        await asyncio.to_thread(start.wait)
+        async with lock:
+            with state_guard:
+                active += 1
+                peak_active = max(peak_active, active)
+            await asyncio.sleep(0.03)
+            with state_guard:
+                active -= 1
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(asyncio.run, contender()) for _ in range(2)]
+        for future in futures:
+            future.result(timeout=2)
+
+    assert peak_active == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_cross_loop_waiter_does_not_strand_lock():
+    lock = _CrossLoopAsyncLock()
+    holder_entered = asyncio.Event()
+    release_holder = asyncio.Event()
+
+    async def holder():
+        async with lock:
+            holder_entered.set()
+            await release_holder.wait()
+
+    holder_task = asyncio.create_task(holder())
+    await holder_entered.wait()
+
+    cancelled_waiter = asyncio.create_task(lock.__aenter__())
+    await asyncio.sleep(0.02)
+    cancelled_waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled_waiter
+
+    release_holder.set()
+    await holder_task
+
+    async with asyncio.timeout(0.2):
+        async with lock:
+            pass
 
 
 @pytest.mark.asyncio

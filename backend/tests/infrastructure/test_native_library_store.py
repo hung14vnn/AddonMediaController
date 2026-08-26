@@ -299,6 +299,7 @@ async def test_schema_is_idempotent_and_contains_complete_target_surface(
     assert required <= await first.table_names()
     assert await second.foreign_keys_enabled() is True
     assert await first.get_catalog_revision() == 0
+    assert await first.get_catalog_modified_at_ms() >= 1_577_836_800_000
     assert await first.get_stream_revision("scan") == 0
     assert _scalar(db_path, "SELECT COUNT(*) FROM local_artists") == 2
 

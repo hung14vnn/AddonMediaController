@@ -902,6 +902,22 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def get_catalog_modified_at_ms(self) -> int:
+        """Epoch-millisecond timestamp of the latest catalog change.
+
+        This is intentionally distinct from ``get_catalog_revision``: the latter
+        is an opaque counter used for optimistic concurrency, while compatibility
+        protocols such as Subsonic define their modification token as Unix time.
+        """
+
+        def operation(connection: sqlite3.Connection) -> int:
+            row = connection.execute(
+                "SELECT modified_at_ms FROM library_catalog_modified WHERE singleton = 1"
+            ).fetchone()
+            return int(row["modified_at_ms"])
+
+        return await self._read(operation)
+
     @staticmethod
     def _resolve_target_id(
         connection: sqlite3.Connection, *, kind: str, identifier: str

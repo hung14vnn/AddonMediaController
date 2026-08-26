@@ -31,7 +31,11 @@ class TargetLibraryViewService:
         self._history = play_history_store
 
     async def get_library_revision(self) -> int:
-        return await self._store.get_catalog_revision()
+        # Subsonic getIndexes exposes this value as ``lastModified`` and defines
+        # it as milliseconds since the Unix epoch.  The target catalog revision
+        # is only an opaque counter (1, 2, 3, ...), so exposing it directly can
+        # prevent mobile clients from invalidating songs removed by a scan.
+        return await self._store.get_catalog_modified_at_ms()
 
     async def missing_targets(
         self, targets: list[tuple[str, str]]

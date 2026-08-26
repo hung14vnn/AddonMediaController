@@ -930,6 +930,33 @@ CREATE TABLE IF NOT EXISTS library_catalog_revision (
 );
 INSERT OR IGNORE INTO library_catalog_revision(singleton, value) VALUES (1, 0);
 
+-- Protocol-facing consumers (notably Subsonic getIndexes) need an epoch
+-- timestamp, not the catalog's opaque optimistic-concurrency counter.  Keep the
+-- two values separate so internal callers can continue to use the compact
+-- revision while compatibility clients receive the time-based contract they
+-- expect.  The trigger also covers the few migration paths that bump the
+-- catalog counter directly instead of going through NativeLibraryStore.
+CREATE TABLE IF NOT EXISTS library_catalog_modified (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    modified_at_ms INTEGER NOT NULL CHECK(modified_at_ms BETWEEN 0 AND 9223372036854775807)
+);
+INSERT OR IGNORE INTO library_catalog_modified(singleton, modified_at_ms)
+VALUES (
+    1,
+    CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
+);
+CREATE TRIGGER IF NOT EXISTS trg_library_catalog_modified
+AFTER UPDATE OF value ON library_catalog_revision
+WHEN NEW.value != OLD.value
+BEGIN
+    UPDATE library_catalog_modified
+    SET modified_at_ms = MAX(
+        modified_at_ms + 1,
+        CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
+    )
+    WHERE singleton = 1;
+END;
+
 CREATE TABLE IF NOT EXISTS library_event_stream_revisions (
     stream_kind TEXT PRIMARY KEY CHECK(stream_kind IN ('scan','identification','operation')),
     value INTEGER NOT NULL CHECK(value BETWEEN 0 AND 9223372036854775807)

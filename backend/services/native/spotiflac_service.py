@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import shutil
+import threading
 from pathlib import Path
 
 from core.exceptions import PermissionDeniedError, ResourceNotFoundError, ValidationError
@@ -18,6 +19,57 @@ _AUDIO_EXTENSIONS = {
     ".ogg",
     ".opus",
 }
+
+
+class _CrossLoopAsyncLock:
+    """Serialize SpotiFLAC auth callbacks that run on independent event loops."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+
+    async def __aenter__(self):  # noqa: ANN001 - context manager protocol
+        # Do not use ``to_thread(self._lock.acquire)`` here.  Cancelling that
+        # await abandons a worker which may later acquire the lock forever.
+        while not self._lock.acquire(blocking=False):
+            await asyncio.sleep(0.01)
+        return self
+
+    async def __aexit__(self, *_exc):  # noqa: ANN001 - context manager protocol
+        self._lock.release()
+
+
+_SPOTIFLAC_AUTH_LOCKS: dict[str, _CrossLoopAsyncLock] = {}
+_SPOTIFLAC_AUTH_LOCKS_GUARD = threading.Lock()
+_SPOTIFLAC_LOCK_PATCHED = False
+
+
+def _patch_spotiflac_cross_loop_lock() -> None:
+    """Correct SpotiFLAC 3.0.6's loop-bound signed-session auth lock.
+
+    Its JavaScript runtime handles every signed-session callback with a fresh
+    ``asyncio.run()`` loop, but the auth module caches one ``asyncio.Lock`` per
+    namespace.  Concurrent callbacks therefore reuse a lock bound to another
+    loop.  Authentication is process-wide, so a thread-backed async context
+    manager matches the actual lifecycle.
+    """
+    global _SPOTIFLAC_LOCK_PATCHED
+
+    with _SPOTIFLAC_AUTH_LOCKS_GUARD:
+        if _SPOTIFLAC_LOCK_PATCHED:
+            return
+
+        from SpotiFLAC.core import signed_session_mobile
+
+        def get_auth_lock(namespace: str) -> _CrossLoopAsyncLock:
+            with _SPOTIFLAC_AUTH_LOCKS_GUARD:
+                lock = _SPOTIFLAC_AUTH_LOCKS.get(namespace)
+                if lock is None:
+                    lock = _CrossLoopAsyncLock()
+                    _SPOTIFLAC_AUTH_LOCKS[namespace] = lock
+                return lock
+
+        signed_session_mobile._get_auth_lock = get_auth_lock
+        _SPOTIFLAC_LOCK_PATCHED = True
 
 
 def spotiflac_client_options(output_dir: str, quality: str) -> dict[str, object]:
@@ -221,6 +273,8 @@ class SpotiflacService:
 
         from SpotiFLAC.client import AsyncSpotiFLAC
 
+        _patch_spotiflac_cross_loop_lock()
+
         settings = self._prefs.get_spotiflac_connection()
 
         async with AsyncSpotiFLAC(
@@ -347,6 +401,8 @@ class SpotiflacService:
         output: Path,
     ) -> None:
         from SpotiFLAC.client import AsyncSpotiFLAC
+
+        _patch_spotiflac_cross_loop_lock()
 
         staging = output / f".droppedneedle-{task_id}"
 
