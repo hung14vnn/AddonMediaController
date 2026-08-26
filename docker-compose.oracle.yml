@@ -41,7 +41,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: addonify:spotiflac-309
+    image: addonify:local
     container_name: addonify
     restart: unless-stopped
     depends_on:
