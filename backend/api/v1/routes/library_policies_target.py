@@ -8,15 +8,10 @@ from api.v1.schemas.library_policies import (
     LibraryPolicyImpactRequest,
     LibraryPolicyImpactResponse,
     LibraryPolicyTreeResponse,
-    LibraryRestorableRootsResponse,
-    LibraryRestoreRootsRequest,
     LibrarySettingsResponse,
     LibrarySettingsUpdateRequest,
 )
-from core.dependencies import (
-    LegacyPendingMigrationServiceDep,
-    TargetLibraryPolicyServiceDep,
-)
+from core.dependencies import TargetLibraryPolicyServiceDep
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from middleware import CurrentAdminDep
 
@@ -42,16 +37,12 @@ async def get_library_settings(
 @router.put("", response_model=LibrarySettingsResponse)
 async def update_library_settings(
     service: TargetLibraryPolicyServiceDep,
-    pending_migration: LegacyPendingMigrationServiceDep,
     request: LibrarySettingsUpdateRequest = MsgSpecBody(LibrarySettingsUpdateRequest),
 ) -> LibrarySettingsResponse:
-    response = await service.save_settings(
+    return await service.save_settings(
         request.settings,
         expected_policy_revision=request.expected_policy_revision,
     )
-    if response.enabled:
-        await pending_migration.schedule()
-    return response
 
 
 @router.get("/policy-tree", response_model=LibraryPolicyTreeResponse)
@@ -75,22 +66,3 @@ async def preview_saved_policy_apply(
     request: LibraryPolicyApplyRequest = MsgSpecBody(LibraryPolicyApplyRequest),
 ) -> LibraryPolicyApplyPreviewResponse:
     return await service.preview_apply(request)
-
-
-@router.get("/restorable-roots", response_model=LibraryRestorableRootsResponse)
-async def get_restorable_library_roots(
-    service: TargetLibraryPolicyServiceDep,
-) -> LibraryRestorableRootsResponse:
-    return await service.restorable_roots()
-
-
-@router.post("/restore-roots", response_model=LibrarySettingsResponse)
-async def restore_library_roots(
-    service: TargetLibraryPolicyServiceDep,
-    pending_migration: LegacyPendingMigrationServiceDep,
-    request: LibraryRestoreRootsRequest = MsgSpecBody(LibraryRestoreRootsRequest),
-) -> LibrarySettingsResponse:
-    response = await service.restore_roots(request)
-    if response.enabled:
-        await pending_migration.schedule()
-    return response
