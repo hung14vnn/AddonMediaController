@@ -194,8 +194,8 @@ class DownloadPolicySettings(AppStruct):
     # Don't permanently blocklist a Usenet release younger than this; let it retry once it
     # has propagated across Usenet servers (review M4 / owner Q2).
     usenet_min_release_age_minutes: int = 30
-    # --- Acquisition-pipeline substrate (ArrRebuild). Source-agnostic; consumed by the
-    # decision specs. All default to "off" so behaviour is unchanged until opted in. ---
+    # Acquisition-pipeline substrate (ArrRebuild). Source-agnostic; consumed by the
+    # decision specs. All default to "off" so behaviour is unchanged until opted in.
     # Hard upper bound on a single album's total size (0 = unbounded). Rejects a mislabeled
     # boxset/discography before the bytes are spent.
     max_size_mb: int = 0
@@ -207,7 +207,7 @@ class DownloadPolicySettings(AppStruct):
     ignored_terms: list[str] = msgspec.field(default_factory=list)
     # When non-empty, a release must match at least one of these to be considered.
     required_terms: list[str] = msgspec.field(default_factory=list)
-    # --- Upgrade/cutoff substrate (full feature lives in CollectionManagement). ---
+    # Upgrade/cutoff substrate (full feature lives in CollectionManagement).
     # Stop upgrading once a release-group's worst track reaches this tier.
     quality_cutoff: str = "lossless"
     # Master opt-in for replacing held lower-quality files with better ones.
@@ -218,14 +218,14 @@ class DownloadPolicySettings(AppStruct):
     recycle_bin_path: str = ""
     # Recycled files older than this are pruned by the periodic task.
     recycle_retention_days: int = 30
-    # --- Cost control (CollectionManagement Feature C). 0 = unlimited. Caps BLOCK
+    # Cost control (CollectionManagement Feature C). 0 = unlimited. Caps BLOCK
     # new non-upgrade grabs at/over the ceiling; nothing is ever auto-evicted (A3).
     # Per-user values are defaults; user_quotas rows override them (NULL = inherit).
     max_library_size_gb: int = 0
     default_request_quota_count: int = 0
     default_request_quota_days: int = 7
     default_storage_quota_gb: int = 0
-    # --- Background upgrade scan (CollectionManagement Phase 5; opt-in, default OFF).
+    # Background upgrade scan (CollectionManagement Phase 5; opt-in, default OFF).
     # Runs only while upgrade_allowed is ALSO on; enqueues at most
     # background_upgrade_max_per_run origin='upgrade' grabs per sweep.
     background_upgrade_scan_enabled: bool = False
@@ -375,7 +375,7 @@ class SpotiflacConnectionSettings(AppStruct):
 
 class NewznabIndexerSettings(AppStruct):
     """One configured Newznab indexer (D6). ``api_key`` is a Fernet-encrypted
-    secret, masked on read and preserved on a masked save - **per array element**.
+    secret, masked on read and preserved on a masked save - per array element.
     DroppedNeedle ships no indexers; the user adds their own (guardrail 1)."""
 
     id: str = ""
@@ -451,9 +451,13 @@ SPOTIFY_SECRET_MASK = "spotify****"
 
 
 class SpotifySettings(AppStruct):
+    # GH-298: optional admin-configured origin (scheme://host[:port]) the OAuth
+    # redirect URI is built from; empty keeps the request.base_url fallback.
+    # Not a secret - returned unmasked like client_id.
     client_id: str = ""
     client_secret: str = ""
     enabled: bool = False
+    spotify_redirect_origin: str = ""
 
 
 TICKETMASTER_KEY_MASK = "ticketmaster****"
@@ -683,6 +687,14 @@ class PrimaryMusicSourceSettings(AppStruct):
 _OFFICIAL_MB_RATE_LIMIT = 1.0
 _OFFICIAL_MB_CONCURRENT_SEARCHES = 6
 
+# P2 full-mirror tier (owner decision 2026-08-24): non-official endpoints are
+# user-owned or deliberately chosen infrastructure, so throughput there is a
+# user decision within these widened bounds. rate_limit == 0 is the "Unlimited"
+# sentinel: valid OFF-OFFICIAL ONLY - it bypasses the client-side limiter for
+# that host entirely. The official ceilings below are never raised.
+_MAX_MB_RATE_LIMIT = 500.0
+_MAX_MB_CONCURRENT_SEARCHES = 64
+
 
 def is_official_musicbrainz(url: str) -> bool:
     from urllib.parse import urlparse
@@ -710,22 +722,49 @@ class MusicBrainzConnectionSettings(AppStruct):
     api_url: str = "https://musicbrainz.org/ws/2"
     rate_limit: float = 1.0
     concurrent_searches: int = 6
+    # Surfaced on the save/settings response: True when the official-host clamp
+    # had to force entered values down (or lift a sentinel 0 up) to the official
+    # limits. The frontend renders this as "values were clamped to official
+    # limits" - never a refusal, always applied.
+    clamped_to_official_limits: bool = False
 
     def __post_init__(self) -> None:
         self.api_url = self.api_url.strip()
         if not self.api_url or not self.api_url.startswith(("http://", "https://")):
             self.api_url = "https://musicbrainz.org/ws/2"
         self.api_url = self.api_url.rstrip("/")
+        self.clamped_to_official_limits = False
         if is_official_musicbrainz(self.api_url):
+            before = (self.rate_limit, self.concurrent_searches)
             self.rate_limit = min(self.rate_limit, _OFFICIAL_MB_RATE_LIMIT)
             self.concurrent_searches = min(
                 self.concurrent_searches, _OFFICIAL_MB_CONCURRENT_SEARCHES
             )
-        if self.rate_limit < 0.1 or self.rate_limit > 50.0:
-            raise msgspec.ValidationError("rate_limit must be between 0.1 and 50.0")
-        if self.concurrent_searches < 1 or self.concurrent_searches > 30:
+            # The Unlimited sentinel is off-official only: on the official host
+            # a 0 lifts to the official rate instead of disabling the limiter.
+            if self.rate_limit <= 0:
+                self.rate_limit = _OFFICIAL_MB_RATE_LIMIT
+            self.clamped_to_official_limits = before != (
+                self.rate_limit,
+                self.concurrent_searches,
+            )
+            return
+
+        if (
+            self.rate_limit < 0
+            or (0 < self.rate_limit < 0.1)
+            or (self.rate_limit > _MAX_MB_RATE_LIMIT)
+        ):
             raise msgspec.ValidationError(
-                "concurrent_searches must be between 1 and 30"
+                "rate_limit must be 0 (unlimited) or between 0.1 and "
+                f"{_MAX_MB_RATE_LIMIT}"
+            )
+        if (
+            self.concurrent_searches < 1
+            or self.concurrent_searches > _MAX_MB_CONCURRENT_SEARCHES
+        ):
+            raise msgspec.ValidationError(
+                f"concurrent_searches must be between 1 and {_MAX_MB_CONCURRENT_SEARCHES}"
             )
 
 

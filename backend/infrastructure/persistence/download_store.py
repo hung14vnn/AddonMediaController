@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import msgspec
 
@@ -24,6 +24,7 @@ from infrastructure.persistence._database import (
     PersistenceBase,
     _decode_json,
     _encode_json,
+    _safe_alter,
 )
 from infrastructure.serialization import to_jsonable
 from models.download import (
@@ -425,14 +426,6 @@ _ATTEMPT_CAS_UPDATABLE = frozenset(
 )
 
 
-def _safe_alter(conn: sqlite3.Connection, sql: str) -> None:
-    try:
-        conn.execute(sql)
-    except sqlite3.OperationalError as error:
-        if "duplicate column" not in str(error).lower():
-            raise
-
-
 class DownloadStore(PersistenceBase):
     def __init__(self, db_path: Path, write_lock: threading.Lock) -> None:
         super().__init__(db_path, write_lock)
@@ -733,6 +726,26 @@ class DownloadStore(PersistenceBase):
                 "SELECT * FROM download_tasks WHERE id = ?", (task_id,)
             ).fetchone()
             return _row_to_task(row)
+
+        return await self._read(operation)
+
+    async def get_tasks(self, task_ids: Sequence[str]) -> dict[str, DownloadTask]:
+        """F-PERF-03: batch lookup for the retrying-history pages - one
+        parameterized ``IN`` query per bounded page instead of one
+        ``get_task()`` round trip per linked record. Missing IDs are absent
+        from the mapping; an empty input opens no query."""
+        unique = list(dict.fromkeys(task_ids))
+        if not unique:
+            return {}
+        placeholders = ",".join("?" for _ in unique)
+
+        def operation(conn: sqlite3.Connection) -> dict[str, DownloadTask]:
+            rows = conn.execute(
+                f"SELECT * FROM download_tasks WHERE id IN ({placeholders})",
+                unique,
+            ).fetchall()
+            tasks = (_row_to_task(row) for row in rows)
+            return {task.id: task for task in tasks if task is not None}
 
         return await self._read(operation)
 
@@ -1210,6 +1223,30 @@ class DownloadStore(PersistenceBase):
                 (source, job_name),
             ).fetchone()
             return _row_to_attempt(row)
+
+        return await self._read(operation)
+
+    async def has_download_cleanup_debt(
+        self, *, source: str, task_id: str, job_name: str
+    ) -> bool:
+        """True when any attempt-journal row still owns this job's mount workspace.
+
+        Every non-terminal state blocks orphan reconciliation: acquiring/in_use
+        mean live work, cleanup_pending/workspace_removed mean pending or mid-flight
+        debt, preserved/needs_attention mean the bytes must stay. Only ``complete``
+        releases the name; a folder left behind under a completed name is debris no
+        claim query will ever pick up.
+        """
+
+        def operation(conn: sqlite3.Connection) -> bool:
+            row = conn.execute(
+                """SELECT 1 FROM download_attempts
+                   WHERE ((source=? AND job_name=?) OR task_id=?)
+                     AND state<>'complete'
+                   LIMIT 1""",
+                (source, job_name, task_id),
+            ).fetchone()
+            return row is not None
 
         return await self._read(operation)
 

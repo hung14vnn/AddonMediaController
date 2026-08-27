@@ -11,7 +11,6 @@ from fastapi.responses import StreamingResponse
 from api.v1.schemas.library_scan_target import (
     IdentificationControlRequestBody,
     IdentificationControlResponse,
-    LegacyScanShimResponse,
     LibraryActivityItem,
     LibraryActivityResponse,
     ScanControlRequestBody,
@@ -23,7 +22,6 @@ from api.v1.schemas.library_scan_target import (
     ScanRunRequestBody,
     ScanRunRequestedResponse,
 )
-from api.v1.schemas.library import LibraryScanStatusResponse
 from core.dependencies import (
     LibraryPolicyResolverDep,
     TargetIdentificationQueueDep,
@@ -301,17 +299,30 @@ async def request_scan_run(
     current_admin: CurrentAdminDep,
     coordinator: TargetLibraryScanCoordinatorDep,
     resolver: LibraryPolicyResolverDep,
+    reconciliation: LibraryPolicyReconciliationServiceDep,
     body: ScanRunRequestBody = MsgSpecBody(ScanRunRequestBody),
 ) -> ScanRunRequestedResponse:
-    result = await coordinator.request_run(
-        ScanRequest(
-            kind=body.kind,
-            trigger="manual",
-            scopes=_selected_scopes(body, resolver),
+    if body.kind == "policy_reconcile":
+        # F-TARGETCATALOG-02: a policy Apply must run the frozen pending
+        # transition scopes (removed roots, deleted rules, same-ID re-paths)
+        # through the reconciliation service instead of rebuilding scopes from
+        # current settings. The service owns the expected-revision gate and
+        # keeps trigger="policy_apply".
+        result = await reconciliation.apply(
+            body.scope_ids,
+            expected_policy_revision=body.expected_policy_revision,
             requested_by_user_id=current_admin.id,
-            policy_revision=resolver.policy_revision,
         )
-    )
+    else:
+        result = await coordinator.request_run(
+            ScanRequest(
+                kind=body.kind,
+                trigger="manual",
+                scopes=_selected_scopes(body, resolver),
+                requested_by_user_id=current_admin.id,
+                policy_revision=resolver.policy_revision,
+            )
+        )
     return ScanRunRequestedResponse(
         run_id=result.run_id,
         disposition=result.disposition,
@@ -420,74 +431,3 @@ async def stop_scan_run(
     body: ScanControlRequestBody = MsgSpecBody(ScanControlRequestBody),
 ) -> ScanControlResponse:
     return await _control(run_id, "stop", body, coordinator)
-
-
-@router.post("/scan/start", response_model=LegacyScanShimResponse, status_code=202)
-async def legacy_start_scan_shim(
-    current_admin: CurrentAdminDep,
-    coordinator: TargetLibraryScanCoordinatorDep,
-    resolver: LibraryPolicyResolverDep,
-    force: bool = Query(default=False),
-) -> LegacyScanShimResponse:
-    if force:
-        raise ValidationError(
-            "Force rescan has been replaced. Use Rescan files or Retry identification."
-        )
-    result = await coordinator.request_run(
-        ScanRequest(
-            kind="incremental",
-            trigger="manual",
-            requested_by_user_id=current_admin.id,
-            policy_revision=resolver.policy_revision,
-            scopes=_selected_scopes(
-                ScanRunRequestBody(expected_policy_revision=resolver.policy_revision),
-                resolver,
-            ),
-        )
-    )
-    return LegacyScanShimResponse(
-        status=result.disposition,
-        message="Library update requested.",
-        run_id=result.run_id,
-    )
-
-
-@router.post("/scan/cancel", response_model=LegacyScanShimResponse)
-async def legacy_cancel_scan_shim(
-    _: CurrentAdminDep,
-    coordinator: TargetLibraryScanCoordinatorDep,
-) -> LegacyScanShimResponse:
-    runs = await coordinator.current()
-    active = next((run for run in runs if run.state != "queued"), None)
-    if active is None:
-        raise ValidationError("No library update is running.")
-    await coordinator.control(active.id, "stop", active.row_revision)
-    return LegacyScanShimResponse(
-        status="stopping",
-        message="Stopping the library update.",
-        run_id=active.id,
-    )
-
-
-@router.get("/scan/status", response_model=LibraryScanStatusResponse)
-async def legacy_scan_status_shim(
-    _: CurrentUserDep,
-    coordinator: TargetLibraryScanCoordinatorDep,
-) -> LibraryScanStatusResponse:
-    runs = await coordinator.current()
-    if not runs:
-        return LibraryScanStatusResponse()
-    run = runs[0]
-    snapshot = await coordinator.snapshot(run.id)
-    counters = snapshot.counters
-    total = counters.get("total_count") or counters.get("discovered_count", 0)
-    return LibraryScanStatusResponse(
-        status="scanning",
-        total_files=total,
-        processed_files=counters.get("inspected_count", 0),
-        matched_files=counters.get("indexed_count", 0)
-        + counters.get("unchanged_count", 0),
-        failed_files=counters.get("errored_count", 0),
-        started_at=run.started_at,
-        updated_at=run.updated_at,
-    )

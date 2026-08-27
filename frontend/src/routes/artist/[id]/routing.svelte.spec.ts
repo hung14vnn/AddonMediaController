@@ -4,7 +4,13 @@ import { render } from 'vitest-browser-svelte';
 const h = vi.hoisted(() => ({
 	goto: vi.fn(),
 	cache: vi.fn().mockResolvedValue(undefined),
-	getEnabled: vi.fn()
+	getEnabled: vi.fn(),
+	localView: vi.fn(),
+	providerView: vi.fn(),
+	artist: {
+		id: 'local-artist-id',
+		musicbrainz_artist_id: 'provider-artist-id' as string | null
+	}
 }));
 
 vi.mock('$app/navigation', () => ({
@@ -32,10 +38,7 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', async (importOriginal) => 
 	getLibraryArtistDetailQuery: (_getArtistId: () => string, getEnabled?: () => boolean) => {
 		h.getEnabled(getEnabled?.());
 		return {
-			data: {
-				id: 'local-artist-id',
-				musicbrainz_artist_id: 'provider-artist-id'
-			},
+			data: h.artist,
 			isLoading: false
 		};
 	},

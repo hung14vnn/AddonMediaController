@@ -77,8 +77,8 @@ export const LibraryQueryKeyFactory = {
 		] as const,
 	albums: (page: number, sort: AlbumSort, q: string, format: string) =>
 		[...LibraryQueryKeyFactory.all, 'albums-v2', { page, sort, q, format }] as const,
-	artists: (sortBy: ArtistSort, sortOrder: string, q: string) =>
-		[...LibraryQueryKeyFactory.all, 'artists-v2', { sortBy, sortOrder, q }] as const,
+	artists: (scope: string, sortBy: ArtistSort, sortOrder: string, q: string) =>
+		[...LibraryQueryKeyFactory.all, 'artists-v2', { scope, sortBy, sortOrder, q }] as const,
 	album: (mbid: string) => [...LibraryQueryKeyFactory.all, 'album', mbid] as const,
 	albumDetail: (albumId: string) =>
 		[...LibraryQueryKeyFactory.all, 'album-detail', albumId] as const,

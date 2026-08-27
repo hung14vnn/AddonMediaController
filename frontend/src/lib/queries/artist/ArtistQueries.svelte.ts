@@ -108,6 +108,11 @@ export const getArtistLastFmEnrichmentQuery = (
 
 const BATCH_SIZE = 50;
 
+// A3: while the backend walker completes a large catalog, page 1 arrives partial
+// (warming=true, source_total_count=null). Poll page 0 until any response reports
+// warming false/absent, then stop. Payloads without the flag never poll.
+const WARMING_POLL_INTERVAL_MS = 2_000;
+
 export const getArtistReleasesInfiniteQuery = (getArtistId: Getter<string>) =>
 	createInfiniteQuery(() => ({
 		staleTime: CACHE_TTL.ARTIST_DETAIL_BASIC,
@@ -128,7 +133,9 @@ export const getArtistReleasesInfiniteQuery = (getArtistId: Getter<string>) =>
 				return lastPage.next_offset;
 			}
 			return undefined;
-		}
+		},
+		refetchInterval: (query: { state: { data?: { pages?: Array<{ warming?: boolean }> } } }) =>
+			query.state.data?.pages?.[0]?.warming === true ? WARMING_POLL_INTERVAL_MS : false
 	}));
 
 type ArtistReleasesInfiniteQuery = ReturnType<typeof getArtistReleasesInfiniteQuery>;

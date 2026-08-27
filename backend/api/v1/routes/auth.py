@@ -83,7 +83,31 @@ def _bearer_token(request: Request) -> str | None:
 
 @router.get("/setup/status", response_model = SetupStatusResponse)
 async def setup_status(auth: AuthService = Depends(get_auth_service)) -> SetupStatusResponse:
-    required = await auth.is_setup_required()
+    # (GH-293) one process-wide coalesced bootstrap demand signal plus
+    # bounded latency/error telemetry; the signal is released in every path,
+    # including client cancellation.
+    import asyncio
+
+    from core.dependencies.service_providers import get_bootstrap_demand_signal
+
+    import time as _time
+
+    signal = get_bootstrap_demand_signal()
+    signal.begin()
+    started = _time.perf_counter()
+    try:
+        required = await auth.is_setup_required()
+    except asyncio.CancelledError:
+        # Client disconnects cancel the handler; record the cancellation and
+        # release the demand signal before propagating.
+        signal.observe_latency(_time.perf_counter() - started, error = True)
+        raise
+    except Exception:
+        signal.observe_latency(_time.perf_counter() - started, error = True)
+        raise
+    finally:
+        signal.end()
+    signal.observe_latency(_time.perf_counter() - started, error = False)
     return SetupStatusResponse(required = required)
 
 
@@ -91,7 +115,6 @@ async def setup_status(auth: AuthService = Depends(get_auth_service)) -> SetupSt
 async def list_auth_providers(
     oidc_auth: OIDCUserAuthService = Depends(get_oidc_user_auth_service),
 ) -> AuthProvidersResponse:
-    """Return which login methods are currently configured."""
     return oidc_auth.get_enabled_providers()
 
 

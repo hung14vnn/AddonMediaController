@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import sqlite3
 import threading
@@ -6,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import msgspec
+
+from infrastructure.persistence._database import PersistenceBase
 
 logger = logging.getLogger(__name__)
 
@@ -44,24 +45,18 @@ class RequestHistoryRecord(msgspec.Struct):
     reviewed_at: str | None = None
 
 
-class RequestHistoryStore:
+class RequestHistoryStore(PersistenceBase):
     _ACTIVE_STATUSES = ("pending", "downloading")
     # Statuses a non-admin user sees in their "active" view (includes awaiting approval)
     _USER_ACTIVE_STATUSES = ("pending", "downloading", "awaiting_approval", "queued")
 
-    def __init__(self, db_path: Path, write_lock: threading.Lock | None = None):
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._write_lock = write_lock or threading.Lock()
-        with self._write_lock:
-            self._ensure_tables()
+    # foreign_keys intentionally omitted: this store never set it, and adding FK
+    # enforcement could raise IntegrityErrors on legacy rows (out-of-scope to
+    # enable here). busy_timeout stays unpinned like the other compat-era stores.
+    busy_timeout_ms: int | None = None
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        return conn
+    def __init__(self, db_path: Path, write_lock: threading.Lock | None = None):
+        super().__init__(db_path, write_lock or threading.Lock())
 
     def _ensure_tables(self) -> None:
         conn = self._connect()
@@ -86,6 +81,10 @@ class RequestHistoryStore:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_request_history_status_requested_at ON request_history(status, requested_at DESC)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_request_history_retrying_keyset "
+                "ON request_history(status, requested_at DESC, musicbrainz_id_lower DESC)"
             )
             for col, definition in [
                 ("monitor_artist", "INTEGER NOT NULL DEFAULT 0"),
@@ -118,29 +117,6 @@ class RequestHistoryStore:
             conn.commit()
         finally:
             conn.close()
-
-    def _execute(self, operation, write: bool):
-        if write:
-            with self._write_lock:
-                conn = self._connect()
-                try:
-                    result = operation(conn)
-                    conn.commit()
-                    return result
-                finally:
-                    conn.close()
-
-        conn = self._connect()
-        try:
-            return operation(conn)
-        finally:
-            conn.close()
-
-    async def _read(self, operation):
-        return await asyncio.to_thread(self._execute, operation, False)
-
-    async def _write(self, operation):
-        return await asyncio.to_thread(self._execute, operation, True)
 
     @staticmethod
     def _row_to_record(row: sqlite3.Row | None) -> RequestHistoryRecord | None:
@@ -736,6 +712,64 @@ class RequestHistoryStore:
             ]
             total = int(total_row["count"] if total_row is not None else 0)
             return records, total
+
+        return await self._read(operation)
+
+    async def async_get_retrying_page(
+        self,
+        status_filter: str,
+        page_size: int = 200,
+        cursor: tuple[str, str] | None = None,
+        owner_id: str | None = None,
+    ) -> tuple[list[RequestHistoryRecord], tuple[str, str] | None]:
+        """F-PERF-03: keyset-paged failed/incomplete history for the Wanted
+        retrying paths.
+
+        One bounded SELECT per page - no COUNT, no OFFSET. Ordering is
+        ``requested_at DESC, musicbrainz_id_lower DESC`` so the cursor never
+        duplicates or skips rows on equal timestamps. ``owner_id`` pushes the
+        non-admin scope into SQL; ``None`` keeps the admin all-users behavior.
+        Returns the records plus the next cursor (``None`` on the last page).
+        """
+        safe_page_size = max(page_size, 1)
+
+        def operation(
+            conn: sqlite3.Connection,
+        ) -> tuple[list[RequestHistoryRecord], tuple[str, str] | None]:
+            clauses = ["status = ?"]
+            params: list[object] = [status_filter]
+            if owner_id is not None:
+                clauses.append("user_id = ?")
+                params.append(owner_id)
+            if cursor is not None:
+                last_requested_at, last_mbid = cursor
+                clauses.append(
+                    "(requested_at < ? OR (requested_at = ? "
+                    "AND musicbrainz_id_lower < ?))"
+                )
+                params.extend([last_requested_at, last_requested_at, last_mbid])
+            where_clause = f"WHERE {' AND '.join(clauses)}"
+            rows = conn.execute(
+                f"SELECT * FROM request_history {where_clause} "
+                "ORDER BY requested_at DESC, musicbrainz_id_lower DESC LIMIT ?",
+                (*params, safe_page_size),
+            ).fetchall()
+            if not rows:
+                return [], None
+            next_cursor: tuple[str, str] | None = None
+            if len(rows) == safe_page_size:
+                # Cursor comes from the raw rows so filtered conversions or
+                # trailing taskless rows can never shorten the walk.
+                next_cursor = (
+                    str(rows[-1]["requested_at"]),
+                    str(rows[-1]["musicbrainz_id_lower"]),
+                )
+            records = [
+                record
+                for row in rows
+                if (record := self._row_to_record(row)) is not None
+            ]
+            return records, next_cursor
 
         return await self._read(operation)
 

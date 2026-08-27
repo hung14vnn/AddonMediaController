@@ -440,7 +440,9 @@ def _basename(filename: str) -> str:
 
 def _row_tier(row: dict) -> str:
     """A library_files row's quality tier, judged exactly like the scanner/gate."""
-    return tier_for(row.get("file_format") or "", row.get("bit_rate"))
+    return tier_for(
+        row.get("file_format") or "", row.get("bit_rate"), row.get("bit_depth")
+    )
 
 
 def _is_strict_upgrade(existing_tier: str, info: AudioInfo) -> bool:
@@ -775,7 +777,7 @@ class FileProcessor:
             ) from exc
         return target_path
 
-    # --- Replace-on-import (CollectionManagement D4/D18/D19) --------------------
+    # Replace-on-import (CollectionManagement D4/D18/D19)
     # Fires ONLY for an origin='upgrade' import, and only strictly-better. Two
     # shapes: same-path (mp3_192 -> mp3_320, identical filename - recycle BEFORE the
     # in-place publish) and different-path (mp3 -> flac - publish, soft-delete the
@@ -803,7 +805,7 @@ class FileProcessor:
             _tag, info = await asyncio.to_thread(self._tagger.read_tags, path)
         except Exception:  # noqa: BLE001 - unreadable existing file -> don't touch it
             return None
-        return tier_for(info.file_format or "", info.bitrate)
+        return tier_for(info.file_format or "", info.bitrate, info.bit_depth)
 
     async def _same_path_upgrade_applies(
         self, origin: str, target_path: Path, info: AudioInfo

@@ -17,7 +17,7 @@
 
 	interface Props {
 		dossiers: ManagementAuditDossier[];
-		inspector: Snippet<[number]>;
+		inspector: (ordinal: number) => ReturnType<Snippet>;
 		detailLabel?: string;
 		reserveStickyFooter?: boolean;
 		stickyFooterHeight?: number;

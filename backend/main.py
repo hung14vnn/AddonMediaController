@@ -1,16 +1,19 @@
-import logging
-import asyncio
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, APIRouter, HTTPException
-from fastapi.exceptions import RequestValidationError
-from starlette.exceptions import HTTPException as StarletteHTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from core.dependencies import (
-    get_cache,
-    get_library_service,
-    get_preferences_service,
-    init_app_state,
-    cleanup_app_state,
+"""Unsupported entrypoint guard (F-NL-03 clean cutover).
+
+The legacy ``main:app`` composition was removed: it served the retired
+``LibraryScanner`` surface that GH #290 reported against. Launch the supported
+target application instead:
+
+    uvicorn target_main:app --host 0.0.0.0 --port 8688
+
+See CONTRIBUTING.md for local development and the project README for the
+official Docker/supervisor launch path.
+"""
+
+raise SystemExit(
+    "Unsupported installation: main:app was removed in the F-NL-03 scan "
+    "cutover. Launch target_main:app instead - see CONTRIBUTING.md and the "
+    "README upgrade notes."
 )
 from core.tasks import (
     start_cache_cleanup_task,

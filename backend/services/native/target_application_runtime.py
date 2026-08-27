@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import socket
 from collections.abc import Callable
 
+from core.exceptions import StaleRevisionError
 from core.task_registry import TaskRegistry
 from services.native.album_identification_service import AlbumIdentificationService
 from services.native.identification_queue_service import IdentificationQueueService

@@ -780,10 +780,16 @@ class DownloadService:
         # A manual re-request is an explicit "try again" - clear this album's blocklist so
         # releases quarantined by an earlier failed attempt are reconsidered (otherwise the
         # scorer keeps filtering them and the re-request finds nothing). Album-scoped only;
-        # a per-track retry must not wipe the whole album's blocklist. The wanted watcher's
-        # dispatches never clear (Wanted D5): the blocklist records verified-bad releases
-        # and only an explicit human re-request/retry may reset it.
-        if download_type == "album" and release_group_mbid and origin != "wanted":
+        # a per-track retry must not wipe the whole album's blocklist. Automated dispatches
+        # NEVER clear (#255 defect 1): the blocklist records verified-bad releases, and a
+        # 'retry' or 'wanted' task re-arming its own condemned sources is what turned one
+        # bad attempt into an endless re-download loop. Only an explicit human re-request
+        # here - or retry_task's manual-retry clear - may reset it.
+        if (
+            download_type == "album"
+            and release_group_mbid
+            and origin not in ("wanted", "retry")
+        ):
             cleared = await self._store.delete_quarantine_for_album(release_group_mbid)
             if cleared:
                 logger.info(
@@ -1114,7 +1120,9 @@ class DownloadService:
                 continue
             if not self._upgrade_allowed:
                 continue
-            held_tier = tier_for(row.get("file_format") or "", row.get("bit_rate"))
+            held_tier = tier_for(
+            row.get("file_format") or "", row.get("bit_rate"), row.get("bit_depth")
+        )
             if tier_rank(held_tier) >= tier_rank(self._quality_cutoff):
                 continue
             recording = row.get("recording_mbid") or track.recording_id
@@ -1271,7 +1279,7 @@ class DownloadService:
         """The full auto-retry backoff schedule (minutes) for the queue UI's ladder."""
         return self._orchestrator.retry_ladder_minutes()
 
-    # -- held imports ("import anyway" review) --
+    # held imports ("import anyway" review)
 
     async def held_task_ids(self, user_id: str, user_role: str) -> set[str]:
         """Task ids paused for a held-track review, so the queue shows them as needing a

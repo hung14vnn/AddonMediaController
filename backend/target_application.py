@@ -206,7 +206,10 @@ from middleware import (
     PerformanceMiddleware,
     RateLimitMiddleware,
 )
-from services.native.library_scan_supervisor import start_target_scan_supervisor
+from services.native.library_scan_supervisor import (
+    SUPERVISOR_TASK_NAME,
+    start_target_scan_supervisor,
+)
 from services.native.target_application_runtime import (
     start_library_contribution_verification_worker,
     start_target_identification_worker,
@@ -217,6 +220,7 @@ from services.native.target_application_lifecycle import (
     start_target_operational_runtime,
 )
 from services.native.target_startup_validator import TargetStartupValidator
+from services.native.wal_checkpoint_service import start_target_wal_checkpoint_task
 from static_server import mount_frontend
 
 logger = logging.getLogger(__name__)

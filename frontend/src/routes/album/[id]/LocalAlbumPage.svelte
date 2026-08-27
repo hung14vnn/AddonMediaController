@@ -177,10 +177,10 @@
 							Remove
 						</button>
 					{/if}
-					{#if authStore.isAdmin}<AlbumIdentificationPanel {album} /><AlbumOrganizationDialog
-							{album}
-							attentionLabel={managementIdentityAttention}
-						/><AlbumOrganizationDialog {album} {tracks} />{/if}
+					{#if authStore.isAdmin}
+						<AlbumIdentificationPanel {album} attentionLabel={managementIdentityAttention} />
+						<AlbumOrganizationDialog {album} {tracks} />
+					{/if}
 				</div>
 				{#if album.review_id && authStore.isAdmin}
 					<a

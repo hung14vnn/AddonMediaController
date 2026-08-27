@@ -1,6 +1,6 @@
 import { API } from '$lib/constants';
 import { getApiUrl } from '$lib/api/api-utils';
-import type { DownloadProgress } from '$lib/types';
+import type { DownloadProgress, DownloadSourceUpdate } from '$lib/types';
 
 interface DownloadStreamState {
 	progress: DownloadProgress | null;
@@ -104,7 +104,7 @@ export function createDownloadStream() {
 
 	function start(taskId: string) {
 		stop();
-		state = { progress: null, status: null, done: false };
+		state = { progress: null, status: null, source: null, done: false };
 		source = new EventSource(getApiUrl(API.downloads.stream(taskId)), { withCredentials: true });
 		source.addEventListener('status', (e) => {
 			const d = parse(e);

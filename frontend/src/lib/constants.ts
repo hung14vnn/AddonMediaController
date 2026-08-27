@@ -86,6 +86,7 @@ const CACHE_TTL_GROUPS = {
 		ALBUM_DETAIL_LASTFM: 30 * 60 * 1000,
 		ALBUM_DETAIL_YOUTUBE: 60 * 60 * 1000,
 		ALBUM_DETAIL_SOURCE_MATCH: 5 * 60 * 1000,
+		ALBUM_DETAIL_EDITIONS: 5 * 60 * 1000,
 		ARTIST_DETAIL_BASIC: 5 * 60 * 1000,
 		ARTIST_DETAIL_EXTENDED: 30 * 60 * 1000,
 		ARTIST_DETAIL_LASTFM: 30 * 60 * 1000,
@@ -468,10 +469,9 @@ export const API = {
 			`/api/v1/library/management/identity-preparations/${encodeURIComponent(jobId)}/apply`,
 		discardIdentityPreparation: (jobId: string) =>
 			`/api/v1/library/management/identity-preparations/${encodeURIComponent(jobId)}/discard`,
+		undoAutomaticEdition: (albumId: string) =>
+			`/api/v1/library/albums/${encodeURIComponent(albumId)}/undo-automatic-edition`,
 		scanDiagnostics: (runId: string) => `/api/v1/library/scan-runs/${runId}/diagnostics`,
-		unmatched: () => '/api/v1/library/scan/unmatched',
-		resolveUnmatched: (id: number) => `/api/v1/library/scan/unmatched/${id}/resolve`,
-		resolveUnmatchedBatch: () => '/api/v1/library/scan/unmatched/resolve-batch',
 		settings: () => '/api/v1/settings/library',
 		typedSettings: () => '/api/v1/settings/library/roots',
 		policyTree: () => '/api/v1/settings/library/policy-tree',
@@ -593,15 +593,20 @@ export const API = {
 			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/items/${ordinal}/artwork/${encodeURIComponent(sha256)}`
 	},
 	search: {
-		artists: (query: string) => `/api/v1/search/artists?q=${encodeURIComponent(query)}`,
-		albums: (query: string) => `/api/v1/search/albums?q=${encodeURIComponent(query)}`,
+		artists: (query: string, limit = 50, offset = 0) =>
+			`/api/v1/search/artists?q=${encodeURIComponent(query)}&limit=${limit}${offset ? `&offset=${offset}` : ''}`,
+		albums: (query: string, limit = 50, offset = 0) =>
+			`/api/v1/search/albums?q=${encodeURIComponent(query)}&limit=${limit}${offset ? `&offset=${offset}` : ''}`,
+		enrichment: () => '/api/v1/search/enrich/batch',
 		tracks: (query: string, limit = 10) =>
 			`/api/v1/search?q=${encodeURIComponent(query.trim())}&buckets=artists,albums&limit_artists=0&limit_albums=0&limit_per_bucket=${limit}`,
 		suggest: (query: string, limit = 5) =>
 			`/api/v1/search/suggest?q=${encodeURIComponent(query.trim())}&limit=${limit}`
 	},
 	system: {
-		health: () => '/api/v1/system/health'
+		health: () => '/api/v1/system/health',
+		queueStats: () => '/api/v1/system/queue-stats',
+		providerStats: () => '/api/v1/system/provider-stats'
 	},
 	home: () => '/api/v1/home',
 	homeGenre: (genre: string, limit = 50, artistOffset = 0, albumOffset = 0) => {
@@ -667,6 +672,8 @@ export const API = {
 	settingsLocalFilesVerify: () => '/api/v1/settings/local-files/verify',
 	settingsMusicbrainz: () => '/api/v1/settings/musicbrainz',
 	settingsMusicbrainzVerify: () => '/api/v1/settings/musicbrainz/verify',
+	settingsSpotify: () => '/api/v1/settings/spotify',
+	settingsSpotifyRedirectUri: () => '/api/v1/settings/spotify/redirect-uri',
 	settingsGetIt: () => '/api/v1/settings/get-it',
 	settingsFreeMusic: () => '/api/v1/settings/free-music',
 	profile: {

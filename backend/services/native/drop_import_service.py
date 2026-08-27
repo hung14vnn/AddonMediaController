@@ -37,7 +37,7 @@ from core.exceptions import ResourceNotFoundError, ValidationError
 from models.drop_import import DropImportItem, DropImportJob, ItemStatus, JobStatus
 from services.native.album_matcher import AlbumMatch, LocalTrack, MBTrack, _ReleaseMeta, score_release
 from services.native.file_processor import row_covers_track
-from services.native.library_manager import _AUDIO_SUFFIXES
+from infrastructure.audio.metadata_engine import AUDIO_SUFFIXES
 from services.native.naming import NamingTemplateEngine
 from services.native.quality_tiers import tier_for, tier_rank
 from services.native.recycle_bin import recycle, resolve_bin_path
@@ -88,11 +88,48 @@ class _Identified(NamedTuple):
     match: "AlbumMatch"
 
 
+class _Coverage(NamedTuple):
+    """F-NL-05: authoritative release-position coverage for one organised unit.
+
+    ``expected`` counts the canonical mapped positions from ``ident.tracks``;
+    ``covered`` counts the distinct positions accepted for publication by a
+    mapped (authoritative) plan; ``skipped_mapped`` records that at least one
+    mapped position was skipped (equal/worse copy, collision, missing recycle
+    bin). ``ambiguous`` marks a canonical tracklist with duplicated positions,
+    which must never be declared covered."""
+
+    expected: int
+    covered: int
+    skipped_mapped: bool
+    ambiguous: bool
+
+    @property
+    def complete(self) -> bool:
+        return (
+            self.expected > 0
+            and not self.ambiguous
+            and self.covered == self.expected
+            and not self.skipped_mapped
+        )
+
+
+_NO_COVERAGE = _Coverage(expected=0, covered=0, skipped_mapped=False, ambiguous=False)
+
+
+def _position_key(track) -> tuple:  # noqa: ANN001 - MBTrack from album_matcher
+    """Stable identity for an expected canonical position: the release-track
+    MBID when present, else the local ``(disc, position)`` pair."""
+    if track.release_track_mbid:
+        return ("rt", track.release_track_mbid)
+    return ("dp", track.disc, track.position)
+
+
 class _OrganiseResult(NamedTuple):
     imported: int
     upgraded: int
     skipped: int
     bonus: int
+    coverage: _Coverage = _NO_COVERAGE
 
 
 def _strip_stage_prefix(stem: str) -> str:
@@ -141,8 +178,6 @@ class DropImportService:
         self._staging_root = staging_root
         self._native_library = native_library
         self._tasks: dict[str, asyncio.Task] = {}
-
-    # -- public API --
 
     def incoming_dir(self) -> Path:
         """Where the route streams uploads before a job exists. Same filesystem
@@ -469,8 +504,6 @@ class DropImportService:
         if removable:
             await asyncio.to_thread(_cleanup, removable)
 
-    # -- job processing --
-
     def _on_task_done(self, job_id: str, task: asyncio.Task) -> None:
         self._tasks.pop(job_id, None)
         if task.cancelled():
@@ -618,11 +651,11 @@ class DropImportService:
                 audio = sorted(
                     p
                     for p in child.rglob("*")
-                    if p.is_file() and p.suffix.lower() in _AUDIO_SUFFIXES
+                    if p.is_file() and p.suffix.lower() in AUDIO_SUFFIXES
                 )
                 if audio:
                     units[child.name] = audio
-            elif child.is_file() and child.suffix.lower() in _AUDIO_SUFFIXES:
+            elif child.is_file() and child.suffix.lower() in AUDIO_SUFFIXES:
                 units.setdefault(_LOOSE_UNIT_NAME, []).append(child)
         return list(units.items()), notes
 
@@ -651,7 +684,7 @@ class DropImportService:
                 if raw.is_absolute() or ".." in raw.parts:
                     skipped += 1
                     continue
-                if raw.suffix.lower() not in _AUDIO_SUFFIXES:
+                if raw.suffix.lower() not in AUDIO_SUFFIXES:
                     skipped += 1
                     continue
                 safe = target_dir.joinpath(*(_safe_component(p) for p in raw.parts))
@@ -773,6 +806,14 @@ class DropImportService:
             status = ItemStatus.SKIPPED
         else:
             status = ItemStatus.FAILED
+        # F-NL-05: request fulfillment requires complete authoritative coverage -
+        # every expected canonical position published, no unreadable file, and no
+        # skipped mapped position. Bonus files never count toward coverage.
+        fulfills_request = (
+            result.imported > 0
+            and result.coverage.complete
+            and unreadable == 0
+        )
         parts: list[str] = []
         if result.imported:
             parts.append(f"imported {result.imported}")
@@ -786,6 +827,17 @@ class DropImportService:
             parts.append(
                 f"{unreadable} unreadable {'file' if unreadable == 1 else 'files'} ignored"
             )
+        if (
+            not fulfills_request
+            and result.coverage.expected > 0
+            and result.coverage.covered < result.coverage.expected
+        ):
+            parts.append(
+                f"covers {result.coverage.covered} of {result.coverage.expected} "
+                "album tracks"
+            )
+        elif not fulfills_request and result.coverage.expected > 0:
+            parts.append("album tracks are incomplete in this import")
         await self._store.update_item(
             item_id,
             status=status,
@@ -809,7 +861,7 @@ class DropImportService:
 
         await asyncio.to_thread(_tidy)
 
-    # -- identification (mirrors the scanner's tiers) --
+    # identification mirrors the scanner's tiers
 
     async def _read_entries(self, paths: list[Path]) -> tuple[list[_Entry], int]:
         entries: list[_Entry] = []
@@ -1171,7 +1223,7 @@ class DropImportService:
             enriched.append(local)
         return enriched, seeds
 
-    # -- organisation (mirrors the download import) --
+    # organisation mirrors the download import
 
     def _require_library_root(self) -> Path:
         lib = self._prefs.get_typed_library_settings_raw()
@@ -1452,6 +1504,11 @@ class DropImportService:
             )
         except Exception:  # noqa: BLE001 - invalidation is best-effort
             logger.warning("Import invalidation failed for %s", rg)
+
+        # F-NL-05: a partial import keeps the catalog fresh but leaves the
+        # durable request and wanted watch open for normal recovery.
+        if not fulfills_request:
+            return
 
         record = None
         try:

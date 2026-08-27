@@ -321,28 +321,44 @@ class TargetNativeLibraryService:
     async def resolve_tracks(
         self, items: list[TrackResolveItem], *, user_id: str | None = None
     ) -> TrackResolveResponse:
-        resolved: list[ResolvedTrack] = []
-        album_cache: dict[str, dict[tuple[int, int], TargetNativeTrack]] = {}
-        for item in items[:200]:
+        bounded = items[:200]
+        resolved: list[ResolvedTrack] = [
+            ResolvedTrack(
+                release_group_mbid=item.release_group_mbid,
+                disc_number=item.disc_number,
+                track_number=item.track_number,
+            )
+            for item in bounded
+        ]
+
+        # F-TARGETCATALOG-06: one provider-aware canonical batch lookup and
+        # one batch album-track read serve the whole request. Items without a
+        # release-group ID / track number keep their base result and never
+        # trigger a lookup.
+        pending_indices: list[int] = []
+        unique_album_ids: list[str] = []
+        seen_album_ids: set[str] = set()
+        for index, item in enumerate(bounded):
             album_id = item.release_group_mbid
             if album_id is None or item.track_number is None:
-                resolved.append(
-                    ResolvedTrack(
-                        release_group_mbid=album_id,
-                        disc_number=item.disc_number,
-                        track_number=item.track_number,
-                    )
-                )
                 continue
-            canonical = await self.canonical_id("album", album_id)
+            pending_indices.append(index)
+            if album_id not in seen_album_ids:
+                seen_album_ids.add(album_id)
+                unique_album_ids.append(album_id)
+
+        if not unique_album_ids:
+            return TrackResolveResponse(items=resolved)
+
+        canonical_map = await self._store.resolve_canonical_target_ids(
+            "album", unique_album_ids
+        )
+        canonical_by_item: dict[int, str] = {}
+        unique_canonical: list[str] = []
+        seen_canonical: set[str] = set()
+        for index in pending_indices:
+            canonical = canonical_map.get(bounded[index].release_group_mbid or "")
             if canonical is None:
-                resolved.append(
-                    ResolvedTrack(
-                        release_group_mbid=album_id,
-                        disc_number=item.disc_number,
-                        track_number=item.track_number,
-                    )
-                )
                 continue
             if canonical not in album_cache:
                 album_cache[canonical] = {
@@ -410,7 +426,7 @@ class TargetNativeLibraryService:
             else (await self.canonical_id("album", album_id) or album_id)
         )
         for track in tracks:
-            track.current_tier = tier_for(track.format, track.bit_rate)
+            track.current_tier = tier_for(track.format, track.bit_rate, track.bit_depth)
             track.below_cutoff = bool(
                 upgrade_allowed
                 and quality_cutoff

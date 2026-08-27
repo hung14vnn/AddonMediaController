@@ -12,7 +12,7 @@
 	import { libraryStore } from '$lib/stores/library';
 	import { integrationStore } from '$lib/stores/integration';
 	import { downloadsActivity } from '$lib/stores/downloadsActivity.svelte';
-	import { initCacheTTLs } from '$lib/stores/cacheTtl';
+	import { initCacheTTLs } from '$lib/stores/cacheTtl.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { launchYouTubePlayback } from '$lib/player/launchYouTubePlayback';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
@@ -189,10 +189,11 @@
 	});
 
 	$effect(() => {
-		if (!authStore.isAuthenticated) return;
+		const sessionUserId = authStore.user?.id;
+		if (!authStore.isAuthenticated || !sessionUserId) return;
 		untrack(() => {
 			followingEvents.start();
-			libraryActivityEvents.start(authStore.isAdmin);
+			libraryActivityEvents.start(authStore.isAdmin, sessionUserId);
 			// presence is server-driven now (the backend polls upstream servers itself),
 			// so it no longer waits on integration status
 			nowPlayingStore.start();

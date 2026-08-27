@@ -19,8 +19,10 @@
 		() => !data.preferProvider
 	);
 	const localArtist = $derived(localQuery.data);
-	const canonicalLocalId = $derived(data.preferProvider ? null : (localArtist?.id ?? null));
-	const shouldRedirect = $derived(canonicalLocalId !== null && canonicalLocalId !== data.artistId);
+	const providerArtistId = $derived(localArtist?.musicbrainz_artist_id ?? null);
+	const shouldRedirect = $derived(
+		!data.preferProvider && providerArtistId !== null && providerArtistId !== data.artistId
+	);
 
 	$effect(() => {
 		if (localArtist && shouldRedirect) {
@@ -40,7 +42,7 @@
 			</div>
 		</div>
 	</div>
-{:else if localArtist && !data.preferProvider}
+{:else if localArtist && !providerArtistId && !data.preferProvider}
 	<LocalArtistPage artistId={localArtist.id} />
 {:else}
 	<ProviderArtistPage {data} />

@@ -58,7 +58,7 @@ export type SuggestResult = {
 	local_id?: string | null;
 };
 
-export type SearchRemoteStatus = 'ok' | 'partial' | 'timeout' | 'error';
+export type SearchRemoteStatus = 'ok' | 'partial' | 'timeout' | 'error' | 'stale';
 
 export type SearchBucketResponse<T extends Artist | Album> = {
 	bucket: 'artists' | 'albums';
@@ -184,6 +184,10 @@ export type ArtistReleases = {
 	next_offset: number | null;
 	has_more: boolean;
 	source_total_count: number | null;
+	/** A3: true while the backend background walker is still completing the catalog;
+	 * page-1 slices served mid-warm carry source_total_count=null. Absent (undefined)
+	 * on pre-A3 payloads - treat as false. */
+	warming?: boolean;
 };
 
 export type UserPreferences = {
@@ -1177,6 +1181,7 @@ export type SpotifySettings = {
 	client_id: string;
 	client_secret: string;
 	enabled: boolean;
+	spotify_redirect_origin: string;
 };
 
 // mirrors backend api/v1/schemas/settings.py (FreeMusicSettings)
@@ -1188,6 +1193,7 @@ export type FreeMusicSettings = {
 // mirrors backend api/v1/schemas/settings.py (GetItSettings)
 export type GetItSettings = {
 	store_region: string; // ISO 3166-1 alpha-2, feeds the iTunes storefront
+	support_droppedneedle: boolean;
 };
 
 // mirrors backend api/v1/schemas/get_it.py
@@ -1203,6 +1209,7 @@ export type PurchaseOptionsResponse = {
 	physical: PurchaseLink[];
 	free: PurchaseLink[];
 	bandcamp_search_url: string;
+	disclosure?: boolean;
 };
 
 export type ArtistPurchaseOptionsResponse = {
@@ -1613,7 +1620,7 @@ export interface LibraryAlbumSummary {
 	year: number | null;
 	is_compilation: boolean;
 	cover_available: boolean;
-	cover_url: string | null;
+	cover_url?: string | null;
 	date_added: number | null;
 	sort_name: string | null;
 	original_release_date: string | null;

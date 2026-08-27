@@ -9,7 +9,7 @@
 	import { errorModal } from '$lib/stores/errorModal';
 	import { libraryStore } from '$lib/stores/library';
 	import { integrationStore } from '$lib/stores/integration';
-	import { initCacheTTLs } from '$lib/stores/cacheTtl';
+	import { initCacheTTLs } from '$lib/stores/cacheTtl.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { launchYouTubePlayback } from '$lib/player/launchYouTubePlayback';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
@@ -199,11 +199,10 @@
 		return () => unregisterPlaylistModal(ref);
 	});
 
-	// Everything auth-gated must track the session reactively, not be checked once at
-	// mount: an in-app login/logout is a goto() that never remounts this layout, so a
-	// mount-time check left integrations disabled (and these services stopped) until a
-	// hard refresh (#155). The bodies run untracked so only the auth flag re-triggers
-	// them - nowPlayingReporter.start() synchronously reads player $state, which would
+	// auth-gated work must track the session reactively: an in-app login/logout is a
+	// goto() that never remounts this layout, so mount-time checks left integrations
+	// disabled until hard refresh (#155). bodies run untracked so only the auth flag
+	// re-triggers them - nowPlayingReporter.start() reads player $state and would
 	// otherwise restart every service on each play/pause.
 	$effect(() => {
 		const sessionUserId = authStore.user?.id ?? null;
@@ -426,7 +425,7 @@
 	<div class="drawer-side hidden md:block is-drawer-close:overflow-visible">
 		<label for="main-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
 		<div
-			class="is-drawer-close:w-16 is-drawer-open:w-64 bg-base-200 flex flex-col items-start min-h-full"
+			class="is-drawer-close:w-16 is-drawer-open:w-64 bg-base-200 flex flex-col items-start min-h-full max-h-dvh overflow-y-auto overflow-x-hidden"
 		>
 			<ul class="menu w-full grow p-2 [&_li>*]:py-3">
 				<li>

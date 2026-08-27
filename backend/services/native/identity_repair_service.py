@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
+
 from collections.abc import Awaitable, Callable
 
 from api.v1.schemas.library_operations import (
@@ -13,11 +14,21 @@ from api.v1.schemas.library_operations import (
     RepairFindingListResponse,
     RepairFindingResponse,
 )
-from core.exceptions import ExternalServiceError, ResourceNotFoundError, ValidationError
+from core.exceptions import (
+    ExternalServiceError,
+    ResourceNotFoundError,
+    StaleRevisionError,
+    ValidationError,
+)
 from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 from models.identification import IdentificationAttempt, IdentificationEvidenceRecord
 from models.library_work import OperationJob, RepairFinding
+from repositories.edition_policy import (
+    AUTO_ACCEPT_EVIDENCE_REASONS,
+    auto_accept_decision,
+    edition_date_key,
+)
 from repositories.protocols.identification import IdentificationProviderProtocol
 from services.native.album_evidence_engine import MATCHER_VERSION, AlbumEvidenceEngine
 from services.native.album_identification_service import (
@@ -92,11 +103,37 @@ class IdentityRepairService:
             )
             if controlled is not None and controlled["state"] != "running":
                 return self._operations._response(controlled)
-            work = await self._store.claim_operation_work(
-                str(job["id"]), worker_id, now=timestamp
-            )
-            if work is None:
-                await self._store.mark_repair_ready(
+            if (
+                self._wal_checkpoint is not None
+                and self._wal_checkpoint.background_suspended
+            ):
+                return self._operations._response(
+                    await self._store.yield_operation_job(
+                        str(job["id"]),
+                        worker_id,
+                        now=timestamp,
+                        reason_code="WAL_BACKPRESSURE",
+                    )
+                )
+            if time.monotonic() - started >= BACKGROUND_TIMESLICE_SECONDS:
+                return self._operations._response(
+                    await self._store.yield_operation_job(
+                        str(job["id"]),
+                        worker_id,
+                        now=timestamp,
+                        reason_code="BACKGROUND_TIMESLICE_EXPIRED",
+                    )
+                )
+            # One bounded pass of subjects; control is probed read-only between
+            # units and transitioned at pass cadence.
+            control_pending = False
+            while time.monotonic() - started < BACKGROUND_TIMESLICE_SECONDS:
+                if await self._store.probe_operation_control(
+                    str(job["id"]), worker_id
+                ):
+                    control_pending = True
+                    break
+                work = await self._store.claim_operation_work(
                     str(job["id"]), worker_id, now=timestamp
                 )
                 return await self._operations.get(str(job["id"]))
@@ -154,15 +191,63 @@ class IdentityRepairService:
             )
             if controlled is not None and controlled["state"] != "running":
                 return self._operations._response(controlled)
-            work = await self._store.claim_operation_work(
-                str(job["id"]), worker_id, now=timestamp
-            )
-            if work is None:
-                done = await self._store.finish_operation_job(
+            if (
+                self._wal_checkpoint is not None
+                and self._wal_checkpoint.background_suspended
+            ):
+                return self._operations._response(
+                    await self._store.yield_operation_job(
+                        str(job["id"]),
+                        worker_id,
+                        now=timestamp,
+                        reason_code="WAL_BACKPRESSURE",
+                    )
+                )
+            if time.monotonic() - started >= BACKGROUND_TIMESLICE_SECONDS:
+                return self._operations._response(
+                    await self._store.yield_operation_job(
+                        str(job["id"]),
+                        worker_id,
+                        now=timestamp,
+                        reason_code="BACKGROUND_TIMESLICE_EXPIRED",
+                    )
+                )
+            # One bounded pass of subjects; control is probed read-only between
+            # units and transitioned at pass cadence.
+            control_pending = False
+            while time.monotonic() - started < BACKGROUND_TIMESLICE_SECONDS:
+                if await self._store.probe_operation_control(
+                    str(job["id"]), worker_id
+                ):
+                    control_pending = True
+                    break
+                work = await self._store.claim_operation_work(
+                    str(job["id"]), worker_id, now=timestamp
+                )
+                if work is None:
+                    done = await self._store.finish_sealed_repair_operation_job(
+                        str(job["id"]),
+                        worker_id,
+                        state="succeeded",
+                        terminal_code="APPLY_COMPLETED",
+                        now=timestamp,
+                    )
+                    return self._operations._response(done)
+                timestamp = time.time() if now is None else now
+                renewed = await self._store.heartbeat_operation_job(
                     str(job["id"]),
                     worker_id,
-                    state="succeeded",
-                    terminal_code="APPLY_COMPLETED",
+                    now=timestamp,
+                    lease_seconds=LEASE_SECONDS,
+                )
+                if not renewed:
+                    raise ResourceNotFoundError("The identity check lease changed.")
+                result = await self._store.apply_repair_work(
+                    str(job["id"]),
+                    int(work["ordinal"]),
+                    worker_id=worker_id,
+                    expected_work_revision=int(work["row_revision"]),
+                    actor_user_id=actor_user_id,
                     now=timestamp,
                 )
                 return self._operations._response(done)
@@ -411,4 +496,24 @@ class IdentityRepairService:
             confidence="complete" if apply_eligible else "bounded",
             apply_eligible=apply_eligible,
             evidence_id=evidence_id,
+        )
+
+    async def undo_automatic_edition(
+        self,
+        album_id: str,
+        request: AutomaticEditionUndoRequest,
+        actor_user_id: str,
+    ) -> AutomaticEditionUndoResponse:
+        """S-2: one revisioned catalog-identity undo of an auto-accept."""
+        result = await self._store.undo_automatic_edition_acceptance(
+            album_id,
+            expected_album_revision=request.expected_album_revision,
+            expected_identity_revision=request.expected_identity_revision,
+            actor_user_id=actor_user_id,
+            now=time.time(),
+        )
+        return AutomaticEditionUndoResponse(
+            local_album_id=album_id,
+            outcome=result["outcome"],
+            review_id=result["review_id"],
         )

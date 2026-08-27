@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from infrastructure.cache.cache_keys import (
     library_raw_albums_key,
@@ -18,6 +18,7 @@ from infrastructure.cache.cache_keys import (
     LIBRARY_ALBUM_DETAILS_PREFIX,
     library_identification_prefixes,
 )
+from infrastructure.cache.catalog_invalidation import invalidate_catalog_scope
 from infrastructure.persistence.request_history import RequestHistoryRecord
 
 from ._registry import singleton
@@ -30,7 +31,6 @@ from .cache_providers import (
     get_youtube_store,
     get_mbid_store,
     get_sync_state_store,
-    get_scan_state_store,
     get_discovery_snapshot_store,
     get_preferences_service,
     get_library_management_blob_store,
@@ -84,6 +84,22 @@ def get_background_workload_gate() -> "BackgroundWorkloadGate":
     from services.native.background_workload_gate import BackgroundWorkloadGate
 
     return BackgroundWorkloadGate()
+
+
+@singleton
+def get_bootstrap_demand_signal() -> "BootstrapDemandSignal":
+    from services.native.bootstrap_demand_signal import BootstrapDemandSignal
+
+    return BootstrapDemandSignal()
+
+
+@singleton
+def get_wal_checkpoint_service() -> "WalCheckpointService":
+    from core.config import get_settings
+
+    from services.native.wal_checkpoint_service import WalCheckpointService
+
+    return WalCheckpointService(get_settings().library_db_path)
 
 
 @singleton
@@ -509,13 +525,46 @@ def get_target_album_identification_service() -> "AlbumIdentificationService":
     store = get_native_library_store()
     cache = get_cache()
 
-    async def invalidate(_domains: set[str]) -> None:
-        await asyncio.gather(
-            *(
-                cache.clear_prefix(prefix)
-                for prefix in library_identification_prefixes()
+    async def invalidate(
+        domains: set[str], local_album_ids: Sequence[str] | None = None
+    ) -> None:
+        # ST1: resolve entity ids from the committed rows and delete exactly
+        # the touched identity-bearing keys; lists still sweep wholesale.
+        rg_ids: set[str] = set()
+        artist_ids: set[str] = set()
+        resolved_any = False
+        for local_album_id in local_album_ids or ():
+            try:
+                rg_scope, artist_scope = store.album_catalog_scope_ids(
+                    str(local_album_id)
+                )
+            except Exception:  # noqa: BLE001 - resolution failure falls back to bulk sweep
+                logger.warning(
+                    "Failed to resolve catalog scope ids for %s",
+                    str(local_album_id)[:8],
+                    exc_info=True,
+                )
+                continue
+            resolved_any = True
+            rg_ids |= rg_scope
+            artist_ids |= artist_scope
+
+        if not resolved_any:
+            # Defensive fallback: a commit with no resolvable identity keeps
+            # the old bulk behavior rather than deleting nothing.
+            await asyncio.gather(
+                *(
+                    cache.clear_prefix(prefix)
+                    for prefix in library_identification_prefixes()
+                )
             )
-        )
+        else:
+            await invalidate_catalog_scope(
+                cache,
+                album_mbids=rg_ids,
+                artist_mbids=artist_ids,
+                include_lists=True,
+            )
         await get_discovery_snapshot_store().mark_discover_stale()
 
     return AlbumIdentificationService(
@@ -601,6 +650,8 @@ def get_artist_identity_reconciliation_service() -> (
         get_musicbrainz_repository(),
         get_background_workload_gate(),
         _invalidate_artist_reconciliation_catalog,
+        get_bootstrap_demand_signal(),
+        get_wal_checkpoint_service(),
     )
 
 
@@ -991,6 +1042,42 @@ def get_target_import_library_service() -> "TargetImportLibraryService":
     )
 
 
+def _build_file_processor(
+    library_manager,
+    library_paths,
+    *,
+    library_root_ids=None,
+    publish_import_bundle=None,
+    policy_revision_getter=None,
+) -> "FileProcessor":
+    from core.config import get_settings
+    from pathlib import Path
+
+    from services.native.file_processor import FileProcessor
+    from services.native.recycle_bin import resolve_bin_path
+
+    from .repo_providers import get_download_client_repository, get_download_store
+
+    policy = get_preferences_service().get_download_policy()
+    settings = get_settings()
+    return FileProcessor(
+        get_audio_tagger(),
+        naming_engine=get_naming_template_engine(),
+        library_manager=library_manager,
+        library_paths=[Path(path) for path in library_paths],
+        client=get_download_client_repository(),
+        slskd_downloads_path=Path(settings.slskd_downloads_path),
+        fingerprinter=get_audio_fingerprinter(),
+        verify_downloads=policy.verify_downloads,
+        download_store=get_download_store(),
+        held_dir=Path(get_settings().cache_dir) / "held",
+        recycle_bin=resolve_bin_path(policy.recycle_bin_path, library_paths),
+        library_root_ids=library_root_ids,
+        publish_import_bundle=publish_import_bundle,
+        policy_revision_getter=policy_revision_getter,
+    )
+
+
 @singleton
 def get_target_file_processor() -> "FileProcessor":
     resolver = get_library_policy_resolver()
@@ -1328,6 +1415,7 @@ def _build_wanted_watcher_service(
         mb_repo=get_musicbrainz_repository(),
         sse_publisher=get_sse_publisher(),
         preferences=get_preferences_service(),
+        provider_available=get_mb_provider_availability(),
     )
 
 
@@ -1731,7 +1819,7 @@ def get_playlist_service() -> "PlaylistService":
 def get_library_service() -> "LibraryService":
     from services.library_service import LibraryService
 
-    library_repo = get_library_repository()
+    library_repo = get_target_library_repository()
     library_db = get_library_db()
     cover_repo = get_coverart_repository()
     preferences_service = get_preferences_service()
@@ -1818,7 +1906,15 @@ def _build_home_service(
 
 @singleton
 def get_home_service() -> "HomeService":
-    return _build_home_service(get_library_repository(), get_play_history_store())
+    from .compat_providers import get_target_consumer_composition
+
+    target = get_target_consumer_composition()
+    return _build_home_service(
+        target.repository,
+        target.history,
+        target.ownership,
+        get_genre_artwork_service(),
+    )
 
 
 @singleton
@@ -2078,19 +2174,28 @@ def get_per_user_client_factory() -> "PerUserClientFactory":
 
 @singleton
 def get_spotify_import_service() -> "SpotifyImportService":
-    from services.spotify_import_service import SpotifyImportService
+    from infrastructure.http.client import get_spotify_cover_http_client
+    from services.spotify_import_service import (
+        SpotifyImportService,
+        cover_fetcher_for,
+    )
 
     return SpotifyImportService(
         client_factory=get_per_user_client_factory(),
         playlist_repo=get_playlist_repository(),
         mb_repo=get_musicbrainz_repository(),
         playlist_service=get_playlist_service(),
+        cover_fetcher=cover_fetcher_for(get_spotify_cover_http_client()),
     )
 
 
 @singleton
 def get_target_spotify_import_service() -> "SpotifyImportService":
-    from services.spotify_import_service import SpotifyImportService
+    from infrastructure.http.client import get_spotify_cover_http_client
+    from services.spotify_import_service import (
+        SpotifyImportService,
+        cover_fetcher_for,
+    )
     from .compat_providers import get_target_consumer_composition
 
     target = get_target_consumer_composition()
@@ -2100,6 +2205,7 @@ def get_target_spotify_import_service() -> "SpotifyImportService":
         mb_repo=get_musicbrainz_repository(),
         playlist_service=target.playlists,
         async_playlist_repo=target.playlist_repository,
+        cover_fetcher=cover_fetcher_for(get_spotify_cover_http_client()),
     )
 
 
@@ -2290,7 +2396,7 @@ def get_jellyfin_playback_service() -> "JellyfinPlaybackService":
 def get_local_files_service() -> "LocalFilesService":
     from services.local_files_service import LocalFilesService
 
-    library_repo = get_library_repository()
+    library_repo = get_target_library_repository()
     preferences_service = get_preferences_service()
     cache = get_cache()
     return LocalFilesService(library_repo, preferences_service, cache)

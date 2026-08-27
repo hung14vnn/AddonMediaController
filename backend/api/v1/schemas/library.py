@@ -168,13 +168,3 @@ class UnmatchedBatchFailure(AppStruct):
 class UnmatchedBatchResolveResponse(AppStruct):
     resolved: int = 0
     failed: list[UnmatchedBatchFailure] = []
-
-
-class LibraryScanStatusResponse(AppStruct):
-    status: str = "idle"
-    total_files: int = 0
-    processed_files: int = 0
-    matched_files: int = 0
-    failed_files: int = 0
-    started_at: float | None = None
-    updated_at: float | None = None

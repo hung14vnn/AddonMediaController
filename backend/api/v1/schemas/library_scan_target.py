@@ -111,9 +111,3 @@ class ScanEstimateResponse(AppStruct):
     approximate: bool = True
     estimated_file_count: int | None = None
     estimated_at: float | None = None
-
-
-class LegacyScanShimResponse(AppStruct):
-    status: str
-    message: str
-    run_id: str | None = None

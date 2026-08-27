@@ -23,7 +23,7 @@ from api.v1.schemas.library import (
     TrackResolveResponse,
     TrackTagUpdateRequest,
 )
-from api.v1.schemas.library_scan_target import LegacyScanShimResponse
+from api.v1.schemas.library_scan_target import ScanRunRequestedResponse
 from core.exceptions import ResourceNotFoundError, ValidationError
 from core.dependencies.type_aliases import (
     LibraryPolicyResolverDep,
@@ -440,7 +440,7 @@ async def update_target_track_tags(
 
 @router.post(
     "/albums/{album_id}/rescan",
-    response_model=LegacyScanShimResponse,
+    response_model=ScanRunRequestedResponse,
     status_code=202,
 )
 async def rescan_target_album(
@@ -449,7 +449,7 @@ async def rescan_target_album(
     service: TargetNativeLibraryServiceDep,
     coordinator: TargetLibraryScanCoordinatorDep,
     resolver: LibraryPolicyResolverDep,
-) -> LegacyScanShimResponse:
+) -> ScanRunRequestedResponse:
     scopes = await service.album_rescan_scopes(album_id, resolver)
     if not scopes:
         raise ResourceNotFoundError("Library album not found.")
@@ -462,8 +462,11 @@ async def rescan_target_album(
             policy_revision=resolver.policy_revision,
         )
     )
-    return LegacyScanShimResponse(
-        status=result.disposition,
-        message="Album file rescan requested.",
+    return ScanRunRequestedResponse(
         run_id=result.run_id,
+        disposition=result.disposition,
+        state=result.state,
+        row_revision=result.row_revision,
+        queued_reason=result.queued_reason,
+        conflicting_kind=result.conflicting_kind,
     )

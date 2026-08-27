@@ -122,6 +122,7 @@ from .repo_providers import (
 )
 from .service_providers import (
     get_library_policy_service,
+    get_target_library_policy_reconciliation_service,
     get_legacy_pending_migration_service,
     get_library_administrative_work_service,
     get_target_album_edition_finder_service,
@@ -230,6 +231,10 @@ LibraryPolicyResolverDep = Annotated[
 ]
 TargetLibraryScanCoordinatorDep = Annotated[
     LibraryScanCoordinator, Depends(get_target_library_scan_coordinator)
+]
+LibraryPolicyReconciliationServiceDep = Annotated[
+    LibraryPolicyReconciliationService,
+    Depends(get_target_library_policy_reconciliation_service),
 ]
 TargetLibraryOwnershipServiceDep = Annotated[
     LibraryOwnershipService, Depends(get_target_library_ownership_service)
