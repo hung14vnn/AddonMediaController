@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 
 from infrastructure.cache.cache_keys import (
     library_raw_albums_key,
@@ -24,6 +25,7 @@ from .cache_providers import (
     get_cache,
     get_disk_cache,
     get_library_db,
+    get_native_library_store,
     get_genre_index,
     get_youtube_store,
     get_mbid_store,
@@ -31,6 +33,7 @@ from .cache_providers import (
     get_scan_state_store,
     get_discovery_snapshot_store,
     get_preferences_service,
+    get_library_management_blob_store,
 )
 from .repo_providers import (
     get_preview_repository,
@@ -39,6 +42,7 @@ from .repo_providers import (
     get_musicbrainz_identification_repository,
     get_wikidata_repository,
     get_listenbrainz_repository,
+    get_lrclib_repository,
     get_jellyfin_repository,
     get_navidrome_repository,
     get_plex_repository,
@@ -60,11 +64,151 @@ from .repo_providers import (
 logger = logging.getLogger(__name__)
 
 
+async def _invalidate_artist_reconciliation_catalog() -> None:
+    """Invalidate projections after an artist identity reconciliation commit."""
+    from services.search_service import SearchService
+
+    SearchService.clear_cached_results()
+    results = await asyncio.gather(
+        *(get_cache().clear_prefix(prefix) for prefix in library_identification_prefixes()),
+        get_discovery_snapshot_store().mark_discover_stale(),
+        return_exceptions=True,
+    )
+    for result in results:
+        if isinstance(result, Exception):
+            logger.warning("Artist reconciliation cache invalidation failed")
+
+
 @singleton
 def get_background_workload_gate() -> "BackgroundWorkloadGate":
     from services.native.background_workload_gate import BackgroundWorkloadGate
 
     return BackgroundWorkloadGate()
+
+
+@singleton
+def get_library_filesystem_coordinator() -> "LibraryFilesystemCoordinator":
+    from services.native.library_filesystem_coordinator import (
+        LibraryFilesystemCoordinator,
+    )
+
+    return LibraryFilesystemCoordinator()
+
+
+@singleton
+def get_audio_metadata_engine() -> "AudioMetadataEngine":
+    from infrastructure.audio.metadata_engine import AudioMetadataEngine
+
+    return AudioMetadataEngine()
+
+
+@singleton
+def get_audio_write_planning_service() -> "AudioWritePlanningService":
+    from services.native.audio_write_planning_service import AudioWritePlanningService
+
+    return AudioWritePlanningService(get_audio_metadata_engine())
+
+
+@singleton
+def get_canonical_release_metadata_service() -> "CanonicalReleaseMetadataService":
+    from services.native.canonical_release_metadata_service import (
+        CanonicalReleaseMetadataService,
+    )
+
+    return CanonicalReleaseMetadataService(
+        get_native_library_store(), get_musicbrainz_repository()
+    )
+
+
+@singleton
+def get_effective_metadata_projection_service() -> "EffectiveMetadataProjectionService":
+    from services.native.effective_metadata_projection_service import (
+        EffectiveMetadataProjectionService,
+    )
+
+    return EffectiveMetadataProjectionService()
+
+
+@singleton
+def get_genre_normalizer() -> "GenreNormalizer":
+    from services.native.genre_normalizer import GenreNormalizer
+
+    return GenreNormalizer()
+
+
+@singleton
+def get_genre_projection_service() -> "GenreProjectionService":
+    from services.native.genre_projection_service import GenreProjectionService
+
+    return GenreProjectionService(
+        get_genre_normalizer(),
+        listenbrainz=get_listenbrainz_repository(),
+        lastfm=get_lastfm_repository(),
+    )
+
+
+@singleton
+def get_lyrics_projection_service() -> "LyricsProjectionService":
+    from services.native.lyrics_projection_service import LyricsProjectionService
+
+    return LyricsProjectionService(get_lrclib_repository())
+
+
+@singleton
+def get_replaygain_analysis_service() -> "ReplayGainAnalysisService":
+    from services.native.replaygain_analysis_service import ReplayGainAnalysisService
+
+    return ReplayGainAnalysisService()
+
+
+@singleton
+def get_artwork_processor() -> "ArtworkProcessor":
+    from infrastructure.audio.artwork_processor import ArtworkProcessor
+
+    return ArtworkProcessor()
+
+
+@singleton
+def get_cover_delivery_thumbnailer() -> "CoverDeliveryThumbnailer":
+    from infrastructure.images.cover_delivery_thumbnailer import (
+        CoverDeliveryThumbnailer,
+    )
+
+    return CoverDeliveryThumbnailer()
+
+
+@singleton
+def get_artwork_projection_service() -> "ArtworkProjectionService":
+    from services.native.artwork_projection_service import ArtworkProjectionService
+
+    return ArtworkProjectionService(
+        get_target_coverart_repository(), get_artwork_processor()
+    )
+
+
+@singleton
+def get_tagging_script_engine() -> "TaggingScriptEngine":
+    from services.native.tagging_scripts import TaggingScriptEngine
+
+    return TaggingScriptEngine()
+
+
+@singleton
+def get_library_management_profile_service() -> "LibraryManagementProfileService":
+    from services.native.library_management_profile_service import (
+        LibraryManagementProfileService,
+    )
+
+    return LibraryManagementProfileService(get_preferences_service())
+
+
+@singleton
+def get_library_management_override_service() -> "LibraryManagementOverrideService":
+    from services.native.library_management_override_service import (
+        LibraryManagementOverrideService,
+    )
+
+    return LibraryManagementOverrideService(get_native_library_store())
 
 
 @singleton
@@ -226,6 +370,18 @@ def get_library_policy_service() -> "LibraryPolicyService":
 
 
 @singleton
+def get_legacy_pending_migration_service() -> "LegacyPendingMigrationService":
+    from services.native.legacy_pending_migration_service import (
+        LegacyPendingMigrationService,
+    )
+    from .cache_providers import get_native_library_store
+
+    return LegacyPendingMigrationService(
+        get_native_library_store(), get_library_policy_resolver
+    )
+
+
+@singleton
 def get_target_library_policy_reconciliation_service() -> (
     "LibraryPolicyReconciliationService"
 ):
@@ -323,6 +479,23 @@ def get_target_identification_queue() -> "IdentificationQueueService":
 
 
 @singleton
+def get_library_administrative_work_service() -> "LibraryAdministrativeWorkService":
+    from services.native.library_administrative_work_service import (
+        LibraryAdministrativeWorkService,
+    )
+    from .cache_providers import get_native_library_store
+
+    return LibraryAdministrativeWorkService(get_native_library_store())
+
+
+def get_mb_provider_availability() -> Callable[[], bool]:
+    """Return whether the MusicBrainz circuit breaker currently allows work."""
+    from repositories.musicbrainz_base import mb_circuit_breaker
+
+    return lambda: not mb_circuit_breaker.is_open()
+
+
+@singleton
 def get_target_album_identification_service() -> "AlbumIdentificationService":
     from services.native.album_candidate_service import AlbumCandidateService
     from services.native.album_evidence_engine import AlbumEvidenceEngine
@@ -376,6 +549,16 @@ def get_target_reidentification_service() -> "ReidentificationService":
 
 
 @singleton
+def get_target_album_edition_finder_service() -> "AlbumEditionFinderService":
+    from services.native.album_edition_finder_service import AlbumEditionFinderService
+    from .cache_providers import get_native_library_store
+
+    return AlbumEditionFinderService(
+        get_native_library_store(), get_musicbrainz_identification_repository()
+    )
+
+
+@singleton
 def get_target_library_review_service() -> "LibraryReviewService":
     from services.native.library_review_service import LibraryReviewService
 
@@ -402,6 +585,23 @@ def get_target_catalog_correction_service() -> "CatalogCorrectionService":
     from .cache_providers import get_native_library_store
 
     return CatalogCorrectionService(get_native_library_store())
+
+
+@singleton
+def get_artist_identity_reconciliation_service() -> (
+    "ArtistIdentityReconciliationService"
+):
+    from services.native.artist_identity_reconciliation_service import (
+        ArtistIdentityReconciliationService,
+    )
+    from .cache_providers import get_native_library_store
+
+    return ArtistIdentityReconciliationService(
+        get_native_library_store(),
+        get_musicbrainz_repository(),
+        get_background_workload_gate(),
+        _invalidate_artist_reconciliation_catalog,
+    )
 
 
 @singleton
@@ -447,6 +647,213 @@ def get_target_explicit_reidentification_worker() -> "ExplicitReidentificationWo
         AlbumEvidenceEngine(),
         ConditionalFingerprintService(store, get_audio_fingerprinter()),
         get_background_workload_gate(),
+    )
+
+
+@singleton
+def get_library_management_planner() -> "LibraryManagementPlanner":
+    from services.native.library_management_planner import LibraryManagementPlanner
+
+    return LibraryManagementPlanner(
+        get_native_library_store(),
+        get_preferences_service(),
+        get_canonical_release_metadata_service(),
+        get_effective_metadata_projection_service(),
+        get_genre_projection_service(),
+        get_artwork_projection_service(),
+        get_audio_metadata_engine(),
+        get_audio_write_planning_service(),
+        get_naming_template_engine(),
+        get_tagging_script_engine(),
+        get_library_management_blob_store(),
+        get_background_workload_gate(),
+        lyrics=get_lyrics_projection_service(),
+        replaygain=get_replaygain_analysis_service(),
+    )
+
+
+@singleton
+def get_library_management_preview_service() -> "LibraryManagementPreviewService":
+    from services.native.library_management_preview_service import (
+        LibraryManagementPreviewService,
+    )
+
+    return LibraryManagementPreviewService(
+        get_native_library_store(),
+        get_preferences_service(),
+        get_library_management_profile_service(),
+        get_library_management_planner(),
+        get_audio_metadata_engine(),
+    )
+
+
+@singleton
+def get_automatic_scan_management_service() -> "AutomaticScanManagementService":
+    from services.native.automatic_scan_management_service import (
+        AutomaticScanManagementService,
+    )
+
+    return AutomaticScanManagementService(
+        get_native_library_store(),
+        get_library_management_profile_service(),
+        get_library_management_planner(),
+    )
+
+
+@singleton
+def get_automatic_import_management_service() -> "AutomaticImportManagementService":
+    from services.native.automatic_import_management_service import (
+        AutomaticImportManagementService,
+    )
+
+    return AutomaticImportManagementService(
+        get_library_management_profile_service(),
+        get_library_management_planner(),
+        get_canonical_release_metadata_service(),
+        get_effective_metadata_projection_service(),
+        get_genre_projection_service(),
+        get_artwork_projection_service(),
+        get_audio_metadata_engine(),
+        get_audio_write_planning_service(),
+        get_naming_template_engine(),
+        get_tagging_script_engine(),
+        lyrics=get_lyrics_projection_service(),
+        replaygain=get_replaygain_analysis_service(),
+    )
+
+
+@singleton
+def get_library_management_publisher() -> "LibraryManagementPublisher":
+    from services.native.library_management_publisher import LibraryManagementPublisher
+
+    return LibraryManagementPublisher(
+        get_native_library_store(),
+        get_preferences_service(),
+        get_audio_metadata_engine(),
+        get_audio_write_planning_service(),
+        get_library_management_blob_store(),
+        get_library_filesystem_coordinator(),
+        on_commit=get_library_management_post_commit_service().after_commit,
+    )
+
+
+@singleton
+def get_library_management_post_commit_service() -> "LibraryManagementPostCommitService":
+    from services.native.library_management_post_commit_service import (
+        LibraryManagementPostCommitService,
+    )
+
+    return LibraryManagementPostCommitService(
+        get_native_library_store(),
+        get_preferences_service(),
+        get_cache(),
+        get_disk_cache(),
+        get_discovery_snapshot_store(),
+        get_jellyfin_repository,
+    )
+
+
+@singleton
+def get_library_management_undo_service() -> "LibraryManagementUndoService":
+    from services.native.library_management_undo_service import (
+        LibraryManagementUndoService,
+    )
+
+    return LibraryManagementUndoService(
+        get_native_library_store(),
+        get_preferences_service(),
+        get_audio_metadata_engine(),
+        get_library_management_blob_store(),
+        get_library_filesystem_coordinator(),
+    )
+
+
+@singleton
+def get_library_management_baseline_service() -> "LibraryManagementBaselineService":
+    from services.native.library_management_baseline_service import (
+        LibraryManagementBaselineService,
+    )
+
+    return LibraryManagementBaselineService(
+        get_native_library_store(),
+        get_preferences_service(),
+        get_audio_metadata_engine(),
+        get_library_management_blob_store(),
+        get_library_filesystem_coordinator(),
+        get_library_management_undo_service(),
+    )
+
+
+@singleton
+def get_library_management_duplicate_service() -> "LibraryManagementDuplicateService":
+    from services.native.library_management_duplicate_service import (
+        LibraryManagementDuplicateService,
+    )
+
+    return LibraryManagementDuplicateService(
+        get_native_library_store(),
+        get_preferences_service(),
+        get_library_filesystem_coordinator(),
+    )
+
+
+@singleton
+def get_library_management_recovery_service() -> "LibraryManagementRecoveryService":
+    from services.native.library_management_recovery_service import (
+        LibraryManagementRecoveryService,
+    )
+
+    return LibraryManagementRecoveryService(
+        get_native_library_store(),
+        get_library_management_publisher(),
+        get_library_filesystem_coordinator(),
+    )
+
+
+@singleton
+def get_library_management_notification_service() -> "LibraryManagementNotificationService":
+    from services.native.library_management_notification_service import (
+        LibraryManagementNotificationService,
+    )
+
+    return LibraryManagementNotificationService(
+        get_native_library_store(),
+        get_jellyfin_repository,
+    )
+
+
+@singleton
+def get_library_management_worker() -> "LibraryManagementWorker":
+    from services.native.library_management_worker import LibraryManagementWorker
+
+    return LibraryManagementWorker(
+        get_native_library_store(),
+        get_library_management_planner(),
+        get_library_management_publisher(),
+        get_library_management_undo_service(),
+        get_library_management_baseline_service(),
+        get_library_management_duplicate_service(),
+    )
+
+
+@singleton
+def get_edition_conversion_service() -> "EditionConversionService":
+    from core.config import get_settings
+    from services.native.edition_conversion_service import EditionConversionService
+    from .repo_providers import get_download_store
+
+    return EditionConversionService(
+        store=get_native_library_store(),
+        album_service=get_target_album_service(),
+        preferences=get_preferences_service(),
+        acquisition=get_target_acquisition_dispatcher(),
+        download_store=get_download_store(),
+        get_download_service=get_target_download_service,
+        get_free_music_service=get_target_free_music_service,
+        automatic_management=get_automatic_import_management_service(),
+        fingerprinter=get_audio_fingerprinter(),
+        held_dir=get_settings().cache_dir / "held",
+        import_library=get_target_import_library_service(),
     )
 
 

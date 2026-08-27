@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 from typing import TYPE_CHECKING
 
@@ -17,6 +18,10 @@ if TYPE_CHECKING:
 def _dominant_genre(rows: list[dict]) -> str | None:
     counts = Counter(row.get("genre") for row in rows if row.get("genre"))
     return counts.most_common(1)[0][0] if counts else None
+
+
+def _library_user_id(user: "UserRecord | None") -> str | None:
+    return None if user is None or user.role == "admin" else user.id
 
 
 class TargetLibraryViewService:
@@ -69,6 +74,7 @@ class TargetLibraryViewService:
             search=q,
             sort_order=sort_order,
             scope=scope,
+            user_id=_library_user_id(user),
         )
         artists = [self._artist(row) for row in rows]
         await self._overlay_favorites(artists, "artist", user)
@@ -117,6 +123,7 @@ class TargetLibraryViewService:
             from_year=from_year,
             to_year=to_year,
             genre=genre,
+            user_id=_library_user_id(user),
         )
         albums = [self._album(row) for row in rows]
         await self._overlay_favorites(albums, "album", user)
@@ -130,7 +137,11 @@ class TargetLibraryViewService:
         if not requested:
             return []
         rows, _ = await self._store.list_target_albums(
-            limit=len(requested), offset=0, sort="name", album_ids=requested
+            limit=len(requested),
+            offset=0,
+            sort="name",
+            album_ids=requested,
+            user_id=_library_user_id(user),
         )
         by_id = {row["release_group_mbid"]: self._album(row) for row in rows}
         resolved = await self._store.resolve_target_ids("album", requested)
@@ -159,6 +170,7 @@ class TargetLibraryViewService:
             offset=0,
             sort="name",
             artist_id=artist_id,
+            user_id=_library_user_id(user),
         )
         albums = [self._album(row) for row in rows]
         await self._overlay_favorites(albums, "album", user)
@@ -177,6 +189,7 @@ class TargetLibraryViewService:
             sort_order="asc",
             artist_ids=[resolved],
             scope="all",
+            user_id=_library_user_id(user),
         )
         if not rows:
             return None
@@ -189,7 +202,9 @@ class TargetLibraryViewService:
     async def get_album(
         self, album_id: str, *, user: "UserRecord | None" = None
     ) -> ViewAlbum | None:
-        rows = await self._store.get_target_album_tracks(album_id)
+        rows = await self._store.get_target_album_tracks(
+            album_id, user_id=_library_user_id(user)
+        )
         if not rows:
             return None
         album = self._album_from_tracks(rows)
@@ -201,13 +216,18 @@ class TargetLibraryViewService:
         self, album_id: str, *, user: "UserRecord | None" = None
     ) -> list[ViewTrack]:
         return await self.tracks_from_rows(
-            await self._store.get_target_album_tracks(album_id), user=user
+            await self._store.get_target_album_tracks(
+                album_id, user_id=_library_user_id(user)
+            ),
+            user=user,
         )
 
     async def get_track(
         self, file_id: str, *, user: "UserRecord | None" = None
     ) -> ViewTrack | None:
-        row = await self._store.get_target_track(file_id)
+        row = await self._store.get_target_track(
+            file_id, user_id=_library_user_id(user)
+        )
         if row is None or row["availability"] != "indexed":
             return None
         tracks = await self.tracks_from_rows([row], user=user)
@@ -216,7 +236,21 @@ class TargetLibraryViewService:
     async def get_tracks_by_file_ids(
         self, file_ids: list[str], *, user: "UserRecord | None" = None
     ) -> dict[str, ViewTrack]:
-        rows = await self._store.get_target_tracks_by_ids(file_ids)
+        scoped_user = _library_user_id(user)
+        if scoped_user is None:
+            rows = await self._store.get_target_tracks_by_ids(file_ids)
+        else:
+            visible = await asyncio.gather(
+                *(
+                    self._store.get_target_track(file_id, user_id=scoped_user)
+                    for file_id in file_ids
+                )
+            )
+            rows = {
+                file_id: row
+                for file_id, row in zip(file_ids, visible)
+                if row is not None
+            }
         tracks = await self.tracks_from_rows(
             [rows[file_id] for file_id in file_ids if file_id in rows], user=user
         )
@@ -233,7 +267,10 @@ class TargetLibraryViewService:
     ) -> tuple[list[ViewTrack], int]:
         del sort
         rows, total = await self._store.list_target_tracks(
-            limit=limit, offset=offset, search=q
+            limit=limit,
+            offset=offset,
+            search=q,
+            user_id=_library_user_id(user),
         )
         return await self.tracks_from_rows(rows, user=user), total
 
@@ -256,7 +293,10 @@ class TargetLibraryViewService:
         user: "UserRecord | None" = None,
     ) -> list[ViewTrack]:
         rows, _ = await self._store.list_target_tracks(
-            limit=limit, offset=offset, genre=genre
+            limit=limit,
+            offset=offset,
+            genre=genre,
+            user_id=_library_user_id(user),
         )
         return await self.tracks_from_rows(rows, user=user)
 
@@ -268,7 +308,10 @@ class TargetLibraryViewService:
         limit: int = 500,
     ) -> list[ViewTrack]:
         rows, _ = await self._store.list_target_tracks(
-            limit=limit, offset=0, artist_ids=mbids
+            limit=limit,
+            offset=0,
+            artist_ids=mbids,
+            user_id=_library_user_id(user),
         )
         return await self.tracks_from_rows(rows, user=user)
 
@@ -284,6 +327,7 @@ class TargetLibraryViewService:
             offset=0,
             artist_ids=mbids,
             album_artist_only=True,
+            user_id=_library_user_id(user),
         )
         return await self.tracks_from_rows(rows, user=user)
 

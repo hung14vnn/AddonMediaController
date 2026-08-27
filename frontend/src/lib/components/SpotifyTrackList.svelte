@@ -50,7 +50,7 @@
 						</div>
 					</a>
 					<button
-						class="btn btn-square btn-md absolute bottom-2 right-2 z-20 border-none bg-accent text-accent-content opacity-0 shadow-lg transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100"
+						class="btn btn-square btn-md absolute bottom-2 right-2 z-20 border-none bg-accent text-accent-content opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 shadow-lg transition-opacity duration-200"
 						onclick={() => request(track)}
 						disabled={download.isPending || requested.has(track.spotify_id)}
 						aria-label="Request this track"

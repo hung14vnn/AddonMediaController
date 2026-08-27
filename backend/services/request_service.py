@@ -122,13 +122,31 @@ class RequestService:
         musicbrainz_id, release_mbid = await self._resolve_album_identity(
             musicbrainz_id
         )
-
+        if self._ownership is not None and user_id:
+            globally_owned = await self._ownership.existing_provider_album_ids(
+                [musicbrainz_id]
+            )
+            if musicbrainz_id.casefold() in globally_owned:
+                # The bytes/catalog row already exist.  This is only a personal
+                # library association, so it needs neither approval nor a new
+                # request/download record.
+                await self._ownership.select_album(user_id, musicbrainz_id)
+                return RequestAcceptedResponse(
+                    success=True,
+                    message="Album is already in the library",
+                    musicbrainz_id=musicbrainz_id,
+                    status="pending",
+                )
         needs_approval = user_role == "user"
         initial_status = "awaiting_approval" if needs_approval else "pending"
 
         try:
             existing = await self._request_history.async_get_record(musicbrainz_id)
             if existing and existing.status in ("pending", "downloading"):
+                if self._ownership is not None and user_id:
+                    # Join the one in-flight global download without creating a
+                    # second task or replacing its request-history owner.
+                    await self._ownership.select_album(user_id, musicbrainz_id)
                 if monitor_artist and not existing.monitor_artist:
                     await self._request_history.async_update_monitoring_flags(
                         musicbrainz_id,
@@ -142,6 +160,8 @@ class RequestService:
                     status=existing.status,
                 )
             if existing and existing.status == "awaiting_approval":
+                if self._ownership is not None and user_id:
+                    await self._ownership.select_album(user_id, musicbrainz_id)
                 return RequestAcceptedResponse(
                     success=True,
                     message="Request is awaiting admin approval",
@@ -158,6 +178,8 @@ class RequestService:
             if self._quota is not None:
                 await self._quota.check_request_quota(user_id, user_role)
                 await self._quota.check_storage_admission(user_id or "", "user")
+            if self._ownership is not None and user_id:
+                await self._ownership.select_album(user_id, musicbrainz_id)
             await self._request_history.async_record_request(
                 musicbrainz_id=musicbrainz_id,
                 artist_name=artist or "Unknown",
@@ -290,6 +312,18 @@ class RequestService:
             new_items = [
                 item for item in items if item["musicbrainz_id"].lower() not in active
             ]
+            shared_items = [
+                item for item in items if item["musicbrainz_id"].lower() in active
+            ]
+            if self._ownership is not None and user_id and shared_items:
+                await asyncio.gather(
+                    *(
+                        self._ownership.select_album(
+                            user_id, str(item["musicbrainz_id"])
+                        )
+                        for item in shared_items
+                    )
+                )
             skipped = duplicate_count + len(items) - len(new_items)
 
             if not new_items:
@@ -308,6 +342,16 @@ class RequestService:
                     user_id, user_role, len(new_items)
                 )
                 await self._quota.check_storage_admission(user_id or "", "user")
+
+            if self._ownership is not None and user_id:
+                await asyncio.gather(
+                    *(
+                        self._ownership.select_album(
+                            user_id, str(item["musicbrainz_id"])
+                        )
+                        for item in new_items
+                    )
+                )
 
             await self._request_history.async_bulk_record_requests(
                 new_items,

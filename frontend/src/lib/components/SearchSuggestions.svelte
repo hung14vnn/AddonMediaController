@@ -327,7 +327,7 @@
 									Track
 								</span>
 								<button
-									class="btn btn-ghost btn-xs absolute left-1/2 top-1/2 size-5 min-h-0 -translate-x-1/2 -translate-y-1/2 p-0 opacity-0 transition-opacity duration-150 group-hover/track-badge:opacity-100 focus:opacity-100"
+									class="btn btn-ghost btn-xs absolute left-1/2 top-1/2 size-5 min-h-0 -translate-x-1/2 -translate-y-1/2 p-0 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/track-badge:opacity-100 focus-visible:opacity-100 transition-opacity duration-150"
 									onclick={(event) => requestTrack(result, event)}
 									disabled={download.isPending || requestedTracks.has(result.spotify_id)}
 									aria-label="Request {result.title}"

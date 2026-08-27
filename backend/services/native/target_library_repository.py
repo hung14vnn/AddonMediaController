@@ -6,6 +6,7 @@ from typing import Any
 
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 from infrastructure.persistence.request_history import RequestHistoryStore
+from infrastructure.cover_urls import prefer_release_group_cover_url
 from models.common import ServiceStatus
 from models.library import LibraryAlbum
 from services.native.library_manager import (
@@ -146,9 +147,19 @@ class TargetLibraryRepository:
         """Return the stable cursor page expected by the discovery warmer."""
         cursor = after_mbid.casefold()
         mbids = sorted(
-            mbid for mbid in await self.get_artist_mbids() if mbid.casefold() > cursor
+            mbid.casefold()
+            for mbid in await self.get_artist_mbids()
+            if mbid.casefold() > cursor
         )
         return mbids[: max(1, limit)]
+
+    async def get_enrichment_candidates(
+        self, *, after_mbid: str | None, limit: int
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        """Expose the AudioDB sweep projection from the active target catalog."""
+        return await self._store.get_target_enrichment_candidates(
+            after_mbid=after_mbid, limit=limit
+        )
 
     async def existing_album_mbids(self, identifiers: list[str]) -> set[str]:
         normalized = {
@@ -567,13 +578,16 @@ class TargetLibraryRepository:
     @staticmethod
     def _to_library_album(row: dict[str, Any]) -> LibraryAlbum:
         imported_at = row.get("last_imported_at")
+        cover_url = prefer_release_group_cover_url(
+            row.get("provider_release_group_mbid"), row.get("cover_url"), size=500
+        )
         return LibraryAlbum(
             artist=str(row.get("album_artist_name") or "Unknown Artist"),
             album=str(row.get("album_title") or "Unknown Album"),
             local_id=str(row["release_group_mbid"]),
             year=row.get("year"),
             quality=row.get("file_format"),
-            cover_url=row.get("cover_url"),
+            cover_url=cover_url,
             musicbrainz_id=row.get("provider_release_group_mbid"),
             artist_mbid=row.get("provider_artist_mbid"),
             date_added=int(imported_at) if imported_at is not None else None,
@@ -581,6 +595,9 @@ class TargetLibraryRepository:
 
     @staticmethod
     def _to_album_summary(row: dict[str, Any]) -> LibraryAlbumSummary:
+        cover_url = prefer_release_group_cover_url(
+            row.get("provider_release_group_mbid"), row.get("cover_url"), size=500
+        )
         return LibraryAlbumSummary(
             release_group_mbid=str(row["release_group_mbid"]),
             album_title=str(row.get("album_title") or ""),
@@ -590,7 +607,7 @@ class TargetLibraryRepository:
             quality_format=row.get("file_format"),
             year=row.get("year"),
             is_compilation=bool(row.get("is_compilation")),
-            cover_url=row.get("cover_url"),
+            cover_url=cover_url,
             last_imported_at=row.get("last_imported_at"),
             album_artist_mbid=str(row["album_artist_mbid"]),
             album_sort_name=row.get("album_sort_name"),

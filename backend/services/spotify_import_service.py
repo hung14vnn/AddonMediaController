@@ -100,9 +100,6 @@ class SpotifyImportService:
         artist_name = ", ".join(a.get("name", "") for a in artists if a.get("name"))
         track_title = track.get("name") or ""
         album_title = album.get("name") or ""
-        # Keep Spotify artwork independently of MusicBrainz resolution.  A
-        # MusicBrainz match supplies identity only; it must not discard the
-        # image URL that SpotiFLAC needs when the track is imported.
         spotify_cover_url = _best_image_url(album.get("images") or [])
 
         recording_ids: list[tuple[str, str | None]] = []

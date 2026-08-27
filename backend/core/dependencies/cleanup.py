@@ -55,6 +55,63 @@ def clear_library_policy_dependent_caches() -> None:
         provider.cache_clear()
 
 
+def clear_library_management_provider_graph() -> None:
+    """Clear services that retain Library Management settings or projections."""
+    from .service_providers import (
+        get_artwork_projection_service,
+        get_automatic_import_management_service,
+        get_automatic_scan_management_service,
+        get_download_orchestrator,
+        get_download_service,
+        get_drop_import_service,
+        get_file_processor,
+        get_free_music_service,
+        get_library_management_planner,
+        get_library_management_preview_service,
+        get_library_management_worker,
+        get_target_album_identification_service,
+        get_target_download_orchestrator,
+        get_target_download_service,
+        get_target_drop_import_service,
+        get_target_explicit_reidentification_worker,
+        get_target_file_processor,
+        get_target_free_music_service,
+        get_target_import_library_service,
+        get_target_library_operation_service,
+        get_target_library_operation_supervisor,
+        get_target_library_review_service,
+        get_target_status_service,
+    )
+
+    for provider in (
+        get_download_service,
+        get_target_download_service,
+        get_download_orchestrator,
+        get_target_download_orchestrator,
+        get_drop_import_service,
+        get_target_drop_import_service,
+        get_free_music_service,
+        get_target_free_music_service,
+        get_file_processor,
+        get_target_file_processor,
+        get_target_status_service,
+        get_target_import_library_service,
+        get_target_library_operation_supervisor,
+        get_target_album_identification_service,
+        get_target_library_review_service,
+        get_target_library_operation_service,
+        get_target_explicit_reidentification_worker,
+        get_library_management_worker,
+        get_library_management_preview_service,
+        get_automatic_scan_management_service,
+        get_automatic_import_management_service,
+        get_library_management_planner,
+        get_artwork_projection_service,
+        get_genre_projection_service,
+    ):
+        provider.cache_clear()
+
+
 def clear_lastfm_dependent_caches() -> None:
     """Clear LRU caches for all services that hold a reference to LastFmRepository."""
     get_artist_discovery_service.cache_clear()

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Callable
 
 from core.exceptions import ProviderIdentityRequiredError
 from infrastructure.queue.priority_queue import RequestPriority
+from services.native.download_service import ALREADY_IN_LIBRARY
 
 if TYPE_CHECKING:
     from services.album_service import AlbumService
@@ -92,6 +93,12 @@ class AcquisitionDispatcher:
             release_group_mbid = await self._ownership.provider_album_id(
                 release_group_mbid
             )
+            if origin not in {"upgrade", "edition_conversion"}:
+                await self._ownership.select_album(user_id, release_group_mbid)
+                if await self._ownership.existing_provider_album_ids(
+                    [release_group_mbid]
+                ):
+                    return ALREADY_IN_LIBRARY
             if recording_mbid is not None:
                 recording_mbid = await self._ownership.provider_track_id(recording_mbid)
             if artist_mbid is not None:
@@ -156,6 +163,10 @@ class AcquisitionDispatcher:
     ) -> str:
         if self._ownership is not None:
             recording_mbid = await self._ownership.provider_track_id(recording_mbid)
+            if origin not in {"upgrade", "edition_conversion"}:
+                await self._ownership.select_track(user_id, recording_mbid)
+                if await self._ownership.provider_track_owned(recording_mbid):
+                    return ALREADY_IN_LIBRARY
             if release_group_mbid is not None:
                 release_group_mbid = await self._ownership.provider_album_id(
                     release_group_mbid

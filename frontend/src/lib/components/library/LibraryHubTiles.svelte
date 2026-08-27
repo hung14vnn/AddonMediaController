@@ -16,6 +16,7 @@
 	interface Art {
 		key: string;
 		mbid: string;
+		customUrl: string | null;
 		remoteUrl: string | null;
 		type: 'album' | 'artist';
 		available: boolean;
@@ -28,6 +29,7 @@
 		(recentlyAddedQuery.data?.items ?? []).slice(0, 9).map((a) => ({
 			key: a.id,
 			mbid: a.id,
+			customUrl: a.cover_url ?? null,
 			remoteUrl: null,
 			type: 'album',
 			available: a.cover_available
@@ -37,6 +39,7 @@
 		(artistThumbsQuery.data?.items ?? []).slice(0, 9).map((a) => ({
 			key: a.id,
 			mbid: a.id,
+			customUrl: null,
 			remoteUrl: null,
 			type: 'artist',
 			available: a.musicbrainz_artist_id !== null
@@ -142,6 +145,7 @@
 							mbid={slot.item.mbid}
 							source="local"
 							available={slot.item.available}
+							customUrl={slot.item.customUrl}
 							remoteUrl={slot.item.remoteUrl}
 							alt=""
 							size="full"

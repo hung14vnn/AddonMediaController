@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import PurePosixPath
 from typing import Any
@@ -19,6 +20,7 @@ from api.v1.schemas.library_target import (
 )
 from api.v1.schemas.library import ResolvedTrack, TrackResolveItem, TrackResolveResponse
 from infrastructure.persistence.native_library_store import NativeLibraryStore
+from infrastructure.cover_urls import prefer_release_group_cover_url
 from core.exceptions import ResourceNotFoundError
 from models.edition_management import CustomEditionState
 from services.native.quality_tiers import tier_for, tier_rank
@@ -42,6 +44,7 @@ class TargetNativeLibraryService:
         sort: str,
         search: str | None,
         file_format: str | None,
+        user_id: str | None = None,
     ) -> tuple[list[TargetNativeAlbum], int]:
         rows, total = await self._store.list_target_albums(
             limit=limit,
@@ -49,6 +52,7 @@ class TargetNativeLibraryService:
             sort=sort,
             search=search,
             file_format=file_format,
+            user_id=user_id,
         )
         return [self._album(row) for row in rows], total
 
@@ -61,6 +65,7 @@ class TargetNativeLibraryService:
         sort_by: str = "name",
         sort_order: str,
         scope: str = "album",
+        user_id: str | None = None,
     ) -> tuple[list[TargetNativeArtist], int]:
         rows, total = await self._store.list_target_artists(
             limit=limit,
@@ -69,27 +74,32 @@ class TargetNativeLibraryService:
             sort_by=sort_by,
             sort_order=sort_order,
             scope=scope,
+            user_id=user_id,
         )
         return [self._artist(row) for row in rows], total
 
     async def artist_scope_counts(self) -> tuple[int, int]:
         return await self._store.target_artist_scope_counts()
 
-    async def artist(self, artist_id: str) -> TargetNativeArtist | None:
+    async def artist(
+        self, artist_id: str, *, user_id: str | None = None
+    ) -> TargetNativeArtist | None:
         canonical = await self.canonical_id("artist", artist_id)
         if canonical is None:
             return None
         rows, _ = await self._store.list_target_artists(
-            limit=1, offset=0, artist_ids=[canonical], scope="all"
+            limit=1, offset=0, artist_ids=[canonical], scope="all", user_id=user_id
         )
         return self._artist(rows[0]) if rows else None
 
-    async def artist_albums(self, artist_id: str) -> list[TargetNativeAlbum]:
+    async def artist_albums(
+        self, artist_id: str, *, user_id: str | None = None
+    ) -> list[TargetNativeAlbum]:
         canonical = await self.canonical_id("artist", artist_id)
         if canonical is None:
             return []
         rows, _ = await self._store.list_target_albums(
-            limit=10_000, offset=0, sort="name", artist_id=canonical
+            limit=10_000, offset=0, sort="name", artist_id=canonical, user_id=user_id
         )
         return [self._album(row) for row in rows]
 
@@ -121,24 +131,29 @@ class TargetNativeLibraryService:
         offset: int,
         sort: str,
         search: str | None,
+        user_id: str | None = None,
     ) -> tuple[list[TargetNativeTrack], int]:
         rows, total = await self._store.list_target_tracks(
-            limit=limit, offset=offset, sort=sort, search=search
+            limit=limit, offset=offset, sort=sort, search=search, user_id=user_id
         )
         return [self._track(row) for row in rows], total
 
-    async def album_tracks(self, album_id: str) -> list[TargetNativeTrack]:
+    async def album_tracks(
+        self, album_id: str, *, user_id: str | None = None
+    ) -> list[TargetNativeTrack]:
         return [
             self._track(row)
-            for row in await self._store.get_target_album_tracks(album_id)
+            for row in await self._store.get_target_album_tracks(album_id, user_id=user_id)
         ]
 
-    async def album(self, album_id: str) -> TargetNativeAlbum | None:
+    async def album(
+        self, album_id: str, *, user_id: str | None = None
+    ) -> TargetNativeAlbum | None:
         canonical = await self.canonical_id("album", album_id)
         if canonical is None:
             return None
         rows, _ = await self._store.list_target_albums(
-            limit=1, offset=0, sort="name", album_ids=[canonical]
+            limit=1, offset=0, sort="name", album_ids=[canonical], user_id=user_id
         )
         return self._album(rows[0]) if rows else None
 
@@ -175,14 +190,18 @@ class TargetNativeLibraryService:
         )
         return True
 
-    async def album_copies(self, album_id: str) -> list[TargetNativeAlbum]:
+    async def album_copies(
+        self, album_id: str, *, user_id: str | None = None
+    ) -> list[TargetNativeAlbum]:
         rows, _ = await self._store.list_target_albums(
-            limit=1_000, offset=0, sort="name", album_ids=[album_id]
+            limit=1_000, offset=0, sort="name", album_ids=[album_id], user_id=user_id
         )
         return [self._album(row) for row in rows]
 
-    async def album_detail(self, album_id: str) -> TargetNativeAlbumDetail | None:
-        album = await self.album(album_id)
+    async def album_detail(
+        self, album_id: str, *, user_id: str | None = None
+    ) -> TargetNativeAlbumDetail | None:
+        album = await self.album(album_id, user_id=user_id)
         if album is None:
             return None
         context = await self._store.get_album_identification_context(album.id)
@@ -285,18 +304,22 @@ class TargetNativeLibraryService:
             ),
         )
 
-    async def track(self, track_id: str) -> TargetNativeTrack | None:
-        row = await self._store.get_target_track(track_id)
+    async def track(
+        self, track_id: str, *, user_id: str | None = None
+    ) -> TargetNativeTrack | None:
+        row = await self._store.get_target_track(track_id, user_id=user_id)
         return self._track(row) if row is not None else None
 
-    async def recently_added(self, limit: int) -> list[TargetNativeAlbum]:
+    async def recently_added(
+        self, limit: int, *, user_id: str | None = None
+    ) -> list[TargetNativeAlbum]:
         rows, _ = await self._store.list_target_albums(
-            limit=limit, offset=0, sort="recent"
+            limit=limit, offset=0, sort="recent", user_id=user_id
         )
         return [self._album(row) for row in rows]
 
     async def resolve_tracks(
-        self, items: list[TrackResolveItem]
+        self, items: list[TrackResolveItem], *, user_id: str | None = None
     ) -> TrackResolveResponse:
         resolved: list[ResolvedTrack] = []
         album_cache: dict[str, dict[tuple[int, int], TargetNativeTrack]] = {}
@@ -324,7 +347,7 @@ class TargetNativeLibraryService:
             if canonical not in album_cache:
                 album_cache[canonical] = {
                     (track.disc_number, track.track_number): track
-                    for track in await self.album_tracks(canonical)
+                    for track in await self.album_tracks(canonical, user_id=user_id)
                 }
             match = album_cache[canonical].get(
                 (item.disc_number or 1, item.track_number)
@@ -378,8 +401,9 @@ class TargetNativeLibraryService:
         *,
         quality_cutoff: str | None,
         upgrade_allowed: bool,
+        user_id: str | None = None,
     ) -> TargetNativeAlbumStatusResponse:
-        tracks = await self.album_tracks(album_id)
+        tracks = await self.album_tracks(album_id, user_id=user_id)
         canonical = (
             tracks[0].album_id
             if tracks
@@ -399,8 +423,8 @@ class TargetNativeLibraryService:
             tracks=tracks,
         )
 
-    async def stats(self) -> TargetNativeStatsResponse:
-        row = await self._store.get_target_library_stats()
+    async def stats(self, *, user_id: str | None = None) -> TargetNativeStatsResponse:
+        row = await self._store.get_target_library_stats(user_id=user_id)
         return TargetNativeStatsResponse(
             total_albums=row["total_albums"],
             total_artists=row["total_artists"],
@@ -412,7 +436,21 @@ class TargetNativeLibraryService:
             last_scan_at=row["last_scan_at"],
         )
 
-    async def provider_ids(self) -> TargetNativeProviderIdsResponse:
+    async def provider_ids(
+        self, *, user_id: str | None = None
+    ) -> TargetNativeProviderIdsResponse:
+        if user_id is not None:
+            rows, _ = await self._store.list_target_albums(
+                limit=100_000, offset=0, sort="name", user_id=user_id
+            )
+            values = {
+                str(row["provider_release_group_mbid"])
+                for row in rows
+                if row.get("provider_release_group_mbid")
+            }
+            return TargetNativeProviderIdsResponse(
+                musicbrainz_release_group_ids=sorted(values)
+            )
         _revision, values = await self._store.target_provider_album_snapshot()
         return TargetNativeProviderIdsResponse(
             musicbrainz_release_group_ids=sorted(values)
@@ -492,6 +530,9 @@ class TargetNativeLibraryService:
     def _album(row: dict[str, Any]) -> TargetNativeAlbum:
         release_group_mbid = row.get("provider_release_group_mbid")
         release_mbid = row.get("provider_release_mbid")
+        cover_url = prefer_release_group_cover_url(
+            release_group_mbid, row.get("cover_url"), size=500
+        )
         if row.get("custom_manifest_id"):
             identity_state = "custom_edition"
             release_mbid = None
@@ -516,12 +557,8 @@ class TargetNativeLibraryService:
             format=row.get("file_format"),
             year=row.get("year"),
             is_compilation=bool(row.get("is_compilation")),
-            cover_available=bool(
-                row.get("cover_url")
-                or row.get("artwork_source")
-                or row.get("provider_release_group_mbid")
-            ),
-            cover_url=row.get("cover_url"),
+            cover_available=bool(cover_url or row.get("artwork_source")),
+            cover_url=cover_url,
             date_added=row.get("last_imported_at"),
             sort_name=row.get("album_sort_name"),
             original_release_date=row.get("original_release_date"),
@@ -550,6 +587,9 @@ class TargetNativeLibraryService:
 
     @staticmethod
     def _track(row: dict[str, Any]) -> TargetNativeTrack:
+        cover_url = prefer_release_group_cover_url(
+            row.get("provider_release_group_mbid"), row.get("cover_url"), size=500
+        )
         return TargetNativeTrack(
             id=str(row["id"]),
             title=str(row.get("track_title") or ""),
@@ -577,10 +617,6 @@ class TargetNativeLibraryService:
             channels=row.get("channels"),
             file_size_bytes=int(row.get("file_size_bytes") or 0),
             date_added=row.get("imported_at"),
-            cover_available=bool(
-                row.get("cover_url")
-                or row.get("artwork_source")
-                or row.get("provider_release_group_mbid")
-            ),
-            cover_url=row.get("cover_url"),
+            cover_available=bool(cover_url or row.get("artwork_source")),
+            cover_url=cover_url,
         )

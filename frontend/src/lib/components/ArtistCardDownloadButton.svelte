@@ -50,7 +50,7 @@
 </script>
 
 <button
-	class="absolute bottom-2 right-2 z-10 btn btn-circle btn-xs bg-base-100/80 hover:bg-base-100 border-none shadow-md opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+	class="absolute bottom-2 right-2 z-10 btn btn-circle btn-xs bg-base-100/80 hover:bg-base-100 border-none shadow-md opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity duration-200"
 	onclick={handleClick}
 	title="Download discography"
 	aria-label="Download discography for {artistName}"

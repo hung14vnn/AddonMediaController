@@ -101,7 +101,9 @@ class TrackMatcher:
         if not filtered:
             return []
 
-        scored: list[tuple[int, int, int, int, float, DownloadSearchResult]] = []
+        scored: list[
+            tuple[tuple[int | float, ...], float, str, DownloadSearchResult]
+        ] = []
         for file in filtered:
             # strict_title: a track title is directly comparable to a filename, so the
             # containment metric applies (unlike the album path's title-vs-album noise).
@@ -112,30 +114,39 @@ class TrackMatcher:
                 file,
                 strict_title=True,
             )
-            acceptance = (
-                2 if score >= auto_accept_threshold and artist_evidence(target.artist_name, file.filename)
-                else 1 if score >= manual_threshold else 0
-            )
+            if score >= auto_accept_threshold and artist_evidence(
+                target.artist_name, file.filename
+            ):
+                acceptance = "auto"
+            elif score >= manual_threshold:
+                acceptance = "manual"
+            else:
+                acceptance = "rejected"
             quality = file_tier(file)
-            scored.append((
-                acceptance,
+            bit_depth, sample_rate = folder_hires_key([file])
+            queue_known = file.queue_length is not None
+            rank_key = (
+                {"rejected": 0, "manual": 1, "auto": 2}[acceptance],
                 int(is_preferred(quality, self._preferred_quality)),
                 int(score * 20 + 1e-9),
                 tier_rank(quality),
+                bit_depth,
+                sample_rate,
+                int(file.has_free_slot),
+                int(queue_known),
+                -(file.queue_length if file.queue_length is not None else 2**31 - 1),
+                file.upload_speed,
+                -file.size,
                 score,
-                file,
-            ))
-        # No preference preserves the historical highest-quality-first ordering. With a
-        # preference, keep automatic/manual safety ahead of quality, then favour the exact
-        # tier before identity-score and the normal highest-tier fallback.
-        if self._preferred_quality:
-            scored.sort(key=lambda t: t[:-1], reverse=True)
-        else:
-            scored.sort(key=lambda t: (t[3], t[4]), reverse=True)
+            )
+            scored.append((rank_key, score, acceptance, file))
+        # Safety/identity eligibility is absolute. Within an acceptance tier, honour
+        # the configured quality preference, then resolution and peer availability.
+        scored.sort(key=lambda item: item[0], reverse=True)
 
         candidates: list[ScoredCandidate] = []
         seen_peers: set[str] = set()
-        for _acceptance, _preferred, _score_band, _rank, score, file in scored:
+        for _rank, score, acceptance, file in scored:
             if file.username in seen_peers:
                 continue  # one candidate per peer - failover skips same-peer anyway
             seen_peers.add(file.username)

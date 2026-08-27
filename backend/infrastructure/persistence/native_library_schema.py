@@ -118,6 +118,19 @@ CREATE TABLE IF NOT EXISTS library_user_favorites (
     PRIMARY KEY(user_id, item_kind, item_id)
 );
 
+-- A catalog row/file is global, while this table records which users chose to
+-- acquire it.  Provider identities are used instead of local IDs so access
+-- survives rescans, regrouping, and quality replacements.
+CREATE TABLE IF NOT EXISTS library_user_selections (
+    user_id TEXT NOT NULL,
+    item_kind TEXT NOT NULL CHECK(item_kind IN ('album','track')),
+    provider_id TEXT NOT NULL COLLATE NOCASE,
+    selected_at REAL NOT NULL,
+    PRIMARY KEY(user_id, item_kind, provider_id)
+);
+CREATE INDEX IF NOT EXISTS idx_library_user_selections_provider
+ON library_user_selections(item_kind, provider_id);
+
 CREATE TABLE IF NOT EXISTS library_play_history (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,

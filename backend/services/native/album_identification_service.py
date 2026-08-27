@@ -74,7 +74,7 @@ def _to_grouping_track(row: dict) -> GroupingTrack:
         release_mbid=row["embedded_release_mbid"],
         release_group_mbid=row["embedded_release_group_mbid"],
         release_track_mbid=(
-            row["embedded_release_track_mbid"] or row.get("release_track_mbid")
+            row.get("embedded_release_track_mbid") or row.get("release_track_mbid")
         ),
         is_compilation=bool(row["is_compilation"]),
         tags_readable=not bool(row["metadata_incomplete"]),
@@ -93,7 +93,7 @@ def _embedded_decision(
             row["embedded_release_group_mbid"],
             row["embedded_release_mbid"],
             row["embedded_recording_mbid"],
-            row["embedded_release_track_mbid"],
+            row.get("embedded_release_track_mbid"),
             row["embedded_artist_mbid"],
             row["embedded_album_artist_mbid"],
         )
@@ -117,9 +117,9 @@ def _embedded_decision(
         if row["embedded_recording_mbid"]
     ]
     release_tracks = [
-        str(row["embedded_release_track_mbid"])
+        str(row.get("embedded_release_track_mbid"))
         for row in raw_tracks
-        if row["embedded_release_track_mbid"]
+        if row.get("embedded_release_track_mbid")
     ]
     if (
         len(groups) > 1
@@ -157,7 +157,7 @@ def _embedded_decision(
                         "embedded_recording_mbid",
                         *(
                             ["embedded_release_track_mbid"]
-                            if row["embedded_release_track_mbid"]
+                            if row.get("embedded_release_track_mbid")
                             else []
                         ),
                     ]
@@ -165,7 +165,7 @@ def _embedded_decision(
                     else ["embedded_album_identity_only"]
                 ),
                 recording_mbid=row["embedded_recording_mbid"],
-                release_track_mbid=row["embedded_release_track_mbid"],
+                release_track_mbid=row.get("embedded_release_track_mbid"),
                 candidate_disc_number=track.disc_number,
                 candidate_track_position=track.track_number,
             )
@@ -192,8 +192,8 @@ def _stored_track_identity_decision(
             ("embedded_recording_mbid", "recording_mbid"),
             ("embedded_release_track_mbid", "release_track_mbid"),
         ):
-            embedded = row[embedded_key]
-            current = row[current_key]
+            embedded = row.get(embedded_key)
+            current = row.get(current_key)
             if embedded and current and embedded != current:
                 return IdentificationDecision(
                     outcome="contradictory",
@@ -300,8 +300,8 @@ def _enforce_raw_track_identities(
             release_track_values = {
                 str(value)
                 for value in (
-                    row["embedded_release_track_mbid"],
-                    row["release_track_mbid"],
+                    row.get("embedded_release_track_mbid"),
+                    row.get("release_track_mbid"),
                 )
                 if value
             }

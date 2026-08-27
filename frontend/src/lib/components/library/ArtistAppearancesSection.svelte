@@ -100,6 +100,7 @@
 								mbid={appearance.album.id}
 								source="local"
 								available={appearance.album.cover_available}
+								customUrl={appearance.album.cover_url}
 								alt={`Cover for ${appearance.album.title}`}
 								size="full"
 								requestSize={250}

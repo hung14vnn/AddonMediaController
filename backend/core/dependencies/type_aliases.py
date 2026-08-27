@@ -9,6 +9,7 @@ from fastapi import Depends
 from core.config import Settings, get_settings
 from infrastructure.cache.memory_cache import CacheInterface
 from infrastructure.cache.disk_cache import DiskMetadataCache
+from infrastructure.library_management_blob_store import LibraryManagementBlobStore
 from infrastructure.persistence.request_history import RequestHistoryStore
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 from infrastructure.persistence.wanted_store import WantedStore
@@ -31,8 +32,19 @@ from repositories.plex_repository import PlexRepository
 from repositories.github_repository import GitHubRepository
 from services.preferences_service import PreferencesService
 from services.native.library_policy_service import LibraryPolicyService
+from services.native.library_management_profile_service import LibraryManagementProfileService
+from services.native.library_management_preview_service import LibraryManagementPreviewService
+from services.native.library_management_undo_service import LibraryManagementUndoService
+from services.native.library_management_baseline_service import LibraryManagementBaselineService
+from services.native.library_management_duplicate_service import LibraryManagementDuplicateService
+from services.native.library_management_recovery_service import LibraryManagementRecoveryService
 from services.native.target_library_policy_service import TargetLibraryPolicyService
 from services.native.library_policy_resolver import LibraryPolicyResolver
+from services.native.legacy_pending_migration_service import LegacyPendingMigrationService
+from services.native.library_administrative_work_service import LibraryAdministrativeWorkService
+from services.native.album_edition_finder_service import AlbumEditionFinderService
+from services.native.artist_identity_reconciliation_service import ArtistIdentityReconciliationService
+from services.native.edition_conversion_service import EditionConversionService
 from services.native.library_scan_coordinator import LibraryScanCoordinator
 from services.native.library_ownership_service import LibraryOwnershipService
 from services.native.identification_queue_service import IdentificationQueueService
@@ -86,6 +98,7 @@ from .cache_providers import (
     get_cache,
     get_disk_cache,
     get_native_library_store,
+    get_library_management_blob_store,
     get_preferences_service,
     get_cache_service,
     get_cache_status_service,
@@ -95,6 +108,7 @@ from .repo_providers import (
     get_musicbrainz_repository,
     get_wikidata_repository,
     get_listenbrainz_repository,
+    get_lrclib_repository,
     get_jellyfin_repository,
     get_coverart_repository,
     get_youtube_repo,
@@ -108,6 +122,17 @@ from .repo_providers import (
 )
 from .service_providers import (
     get_library_policy_service,
+    get_legacy_pending_migration_service,
+    get_library_administrative_work_service,
+    get_target_album_edition_finder_service,
+    get_artist_identity_reconciliation_service,
+    get_edition_conversion_service,
+    get_library_management_profile_service,
+    get_library_management_preview_service,
+    get_library_management_undo_service,
+    get_library_management_baseline_service,
+    get_library_management_duplicate_service,
+    get_library_management_recovery_service,
     get_target_library_policy_service,
     get_library_policy_resolver,
     get_target_library_scan_coordinator,
@@ -161,12 +186,41 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 CacheDep = Annotated[CacheInterface, Depends(get_cache)]
 DiskCacheDep = Annotated[DiskMetadataCache, Depends(get_disk_cache)]
 NativeLibraryStoreDep = Annotated[NativeLibraryStore, Depends(get_native_library_store)]
+LibraryManagementBlobStoreDep = Annotated[
+    LibraryManagementBlobStore, Depends(get_library_management_blob_store)
+]
 CachedLocalArtworkServiceDep = Annotated[
     CachedLocalArtworkService, Depends(get_cached_local_artwork_service)
 ]
 PreferencesServiceDep = Annotated[PreferencesService, Depends(get_preferences_service)]
 LibraryPolicyServiceDep = Annotated[
     LibraryPolicyService, Depends(get_library_policy_service)
+]
+LegacyPendingMigrationServiceDep = Annotated[
+    LegacyPendingMigrationService, Depends(get_legacy_pending_migration_service)
+]
+LibraryAdministrativeWorkServiceDep = Annotated[
+    LibraryAdministrativeWorkService, Depends(get_library_administrative_work_service)
+]
+LibraryManagementProfileServiceDep = Annotated[
+    LibraryManagementProfileService, Depends(get_library_management_profile_service)
+]
+LibraryManagementPreviewServiceDep = Annotated[
+    LibraryManagementPreviewService, Depends(get_library_management_preview_service)
+]
+LibraryManagementUndoServiceDep = Annotated[
+    LibraryManagementUndoService, Depends(get_library_management_undo_service)
+]
+LibraryManagementBaselineServiceDep = Annotated[
+    LibraryManagementBaselineService, Depends(get_library_management_baseline_service)
+]
+LibraryManagementDuplicateServiceDep = Annotated[
+    LibraryManagementDuplicateService,
+    Depends(get_library_management_duplicate_service),
+]
+LibraryManagementRecoveryServiceDep = Annotated[
+    LibraryManagementRecoveryService,
+    Depends(get_library_management_recovery_service),
 ]
 TargetLibraryPolicyServiceDep = Annotated[
     TargetLibraryPolicyService, Depends(get_target_library_policy_service)
@@ -192,6 +246,9 @@ TargetAlbumCoverageServiceDep = Annotated[
 TargetReidentificationServiceDep = Annotated[
     ReidentificationService, Depends(get_target_reidentification_service)
 ]
+TargetAlbumEditionFinderServiceDep = Annotated[
+    AlbumEditionFinderService, Depends(get_target_album_edition_finder_service)
+]
 LibraryReviewServiceDep = Annotated[
     LibraryReviewService, Depends(get_target_library_review_service)
 ]
@@ -200,6 +257,12 @@ LibraryOperationServiceDep = Annotated[
 ]
 CatalogCorrectionServiceDep = Annotated[
     CatalogCorrectionService, Depends(get_target_catalog_correction_service)
+]
+ArtistIdentityReconciliationServiceDep = Annotated[
+    ArtistIdentityReconciliationService, Depends(get_artist_identity_reconciliation_service)
+]
+EditionConversionServiceDep = Annotated[
+    EditionConversionService, Depends(get_edition_conversion_service)
 ]
 IdentityRepairServiceDep = Annotated[
     IdentityRepairService, Depends(get_target_identity_repair_service)

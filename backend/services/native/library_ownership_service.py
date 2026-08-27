@@ -50,15 +50,42 @@ class LibraryOwnershipService:
         _revision, values = await self._store.target_provider_album_snapshot()
         return {value.casefold() for value in values}
 
-    async def existing_provider_album_ids(self, identifiers: list[str]) -> set[str]:
+    async def select_album(self, user_id: str, provider_id: str) -> None:
+        """Add an album to a user's library without duplicating catalog data."""
+        if user_id and provider_id:
+            await self._store.select_target_library_item(user_id, "album", provider_id)
+
+    async def select_track(self, user_id: str, provider_id: str) -> None:
+        """Add one track to a user's library without duplicating its file row."""
+        if user_id and provider_id:
+            await self._store.select_target_library_item(user_id, "track", provider_id)
+
+    async def provider_track_owned(self, provider_id: str) -> bool:
+        return bool(await self._store.get_target_recording_tracks(provider_id))
+
+    async def existing_provider_album_ids(
+        self, identifiers: list[str], *, user_id: str | None = None
+    ) -> set[str]:
         normalized = {
             value.strip().casefold() for value in identifiers if value.strip()
         }
-        rows = await self._store.target_album_ownership_rows(provider_ids=normalized)
+        if user_id is not None:
+            rows, _ = await self._store.list_target_albums(
+                limit=max(1, len(normalized)),
+                offset=0,
+                sort="name",
+                album_ids=list(normalized),
+                user_id=user_id,
+            )
+        else:
+            rows = await self._store.target_album_ownership_rows(provider_ids=normalized)
         return {
-            str(row["release_group_mbid"]).casefold()
+            str(
+                row.get("provider_release_group_mbid")
+                or row["release_group_mbid"]
+            ).casefold()
             for row in rows
-            if row.get("release_group_mbid")
+            if row.get("provider_release_group_mbid") or row.get("release_group_mbid")
         }
 
     async def provider_album_id(self, identifier: str) -> str:

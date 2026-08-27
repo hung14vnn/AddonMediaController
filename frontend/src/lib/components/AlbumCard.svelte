@@ -176,7 +176,7 @@
 
 	{#if $integrationStore.download_client && !inLibrary && !isRequested}
 		<button
-			class="absolute bottom-2 right-2 z-20 btn btn-square btn-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 border-none shadow-lg"
+			class="absolute bottom-2 right-2 z-20 btn btn-square btn-md opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity duration-200 border-none shadow-lg"
 			style="background-color: {colors.accent};"
 			onclick={handleRequest}
 			disabled={requesting}

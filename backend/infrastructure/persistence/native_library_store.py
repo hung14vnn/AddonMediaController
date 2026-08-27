@@ -75,6 +75,10 @@ AUTOMATIC_SAFE_EVIDENCE_REASONS = frozenset(
 )
 BULK_PREVIEW_BATCH_SIZE = 500
 BULK_PREVIEW_CLEANUP_BATCH_SIZE = 5_000
+# Keep management reads/writes bounded so one request cannot materialize an
+# unbounded number of tracks or metadata snapshots in memory.  The management
+# services import this value as their shared persistence page/batch limit.
+MANAGEMENT_PERSISTENCE_BATCH_SIZE = 500
 _T = TypeVar("_T")
 logger = logging.getLogger(__name__)
 
@@ -146,6 +150,28 @@ LEFT JOIN local_artist_external_identities tae
     AND tae.provider = 'musicbrainz'
 LEFT JOIN local_album_artwork artwork ON artwork.local_album_id = a.id
 """
+
+
+def _user_track_access_clause(track_alias: str = "t") -> str:
+    """SQL predicate for a user's selected albums/tracks.
+
+    Keep the entitlement keyed by MusicBrainz identity: local rows may be
+    replaced or regrouped while the user's library membership must remain.
+    """
+    return (
+        "EXISTS (SELECT 1 FROM library_user_selections access "
+        "WHERE access.user_id = ? AND ((access.item_kind = 'album' AND ("
+        f"LOWER(COALESCE({track_alias}.embedded_release_group_mbid, '')) = access.provider_id "
+        "OR EXISTS ("
+        "SELECT 1 FROM local_album_external_identities access_album "
+        f"WHERE access_album.local_album_id = {track_alias}.local_album_id "
+        "AND LOWER(access_album.release_group_mbid) = access.provider_id))) "
+        "OR (access.item_kind = 'track' AND ("
+        f"LOWER(COALESCE({track_alias}.embedded_recording_mbid, '')) = access.provider_id "
+        "OR EXISTS (SELECT 1 FROM local_track_external_identities access_track "
+        f"WHERE access_track.local_track_id = {track_alias}.id "
+        "AND LOWER(access_track.recording_mbid) = access.provider_id)))))"
+    )
 
 _LEGACY_MIGRATION_TABLE_ORDER = {
     "auth_users": "id",
@@ -587,7 +613,11 @@ class NativeLibraryStore(PersistenceBase):
                 "ALTER TABLE local_tracks ADD COLUMN embedded_release_group_mbid TEXT",
                 "ALTER TABLE local_tracks ADD COLUMN embedded_release_mbid TEXT",
                 "ALTER TABLE local_tracks ADD COLUMN embedded_recording_mbid TEXT",
+                "ALTER TABLE local_tracks ADD COLUMN embedded_release_track_mbid TEXT",
                 "ALTER TABLE local_tracks ADD COLUMN embedded_artist_mbid TEXT",
+                "ALTER TABLE local_track_external_identities ADD COLUMN release_track_mbid TEXT",
+                "ALTER TABLE local_track_external_identities ADD COLUMN medium_position INTEGER",
+                "ALTER TABLE local_track_external_identities ADD COLUMN release_track_position INTEGER",
                 "ALTER TABLE local_tracks ADD COLUMN embedded_album_artist_mbid TEXT",
                 "ALTER TABLE audio_fingerprint_outcomes ADD COLUMN release_group_ids_json TEXT NOT NULL DEFAULT '[]'",
                 "ALTER TABLE local_artists ADD COLUMN normalized_name TEXT NOT NULL DEFAULT ''",
@@ -1350,16 +1380,40 @@ class NativeLibraryStore(PersistenceBase):
             if 1 <= count < max(1, threshold) and genre not in known
         ]
 
-    async def get_target_track(self, track_id: str) -> dict[str, Any] | None:
+    async def select_target_library_item(
+        self, user_id: str, item_kind: str, provider_id: str
+    ) -> None:
+        if item_kind not in {"album", "track"}:
+            raise ValueError("Library selection kind must be album or track")
+        normalized = provider_id.strip().casefold()
+        if not user_id or not normalized:
+            return
+
+        def operation(connection: sqlite3.Connection) -> None:
+            connection.execute(
+                "INSERT INTO library_user_selections "
+                "(user_id, item_kind, provider_id, selected_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(user_id, item_kind, provider_id) DO NOTHING",
+                (user_id, item_kind, normalized, time.time()),
+            )
+
+        await self._write(operation)
+
+    async def get_target_track(
+        self, track_id: str, *, user_id: str | None = None
+    ) -> dict[str, Any] | None:
         def operation(connection: sqlite3.Connection) -> dict[str, Any] | None:
             resolved = self._resolve_target_id(
                 connection, kind="track", identifier=track_id
             )
             if resolved is None:
                 return None
-            row = connection.execute(
-                _TARGET_TRACK_SELECT + " WHERE t.id = ?", (resolved,)
-            ).fetchone()
+            where = " WHERE t.id = ?"
+            parameters: list[Any] = [resolved]
+            if user_id is not None:
+                where += " AND " + _user_track_access_clause()
+                parameters.append(user_id)
+            row = connection.execute(_TARGET_TRACK_SELECT + where, parameters).fetchone()
             return _row(row)
 
         return await self._read(operation)
@@ -1468,7 +1522,9 @@ class NativeLibraryStore(PersistenceBase):
         ) -> dict[str, dict[str, Any]]:
             placeholders = ",".join("?" for _ in track_ids)
             rows = connection.execute(
-                _TARGET_TRACK_SELECT + f" WHERE t.id IN ({placeholders})", track_ids
+                _TARGET_TRACK_SELECT
+                + f" WHERE t.id IN ({placeholders}) AND t.availability = 'indexed'",
+                track_ids,
             ).fetchall()
             return {str(row["id"]): dict(row) for row in rows}
 
@@ -1835,7 +1891,11 @@ class NativeLibraryStore(PersistenceBase):
         return await self._write(operation)
 
     async def get_target_album_tracks(
-        self, album_identifier: str, *, include_unavailable: bool = False
+        self,
+        album_identifier: str,
+        *,
+        include_unavailable: bool = False,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         def operation(connection: sqlite3.Connection) -> list[dict[str, Any]]:
             direct = connection.execute(
@@ -1870,12 +1930,18 @@ class NativeLibraryStore(PersistenceBase):
                 "" if include_unavailable else " AND t.availability = 'indexed'"
             )
             placeholders = ",".join("?" for _ in album_ids)
+            access = ""
+            parameters: list[Any] = list(album_ids)
+            if user_id is not None:
+                access = " AND " + _user_track_access_clause()
+                parameters.append(user_id)
             rows = connection.execute(
                 _TARGET_TRACK_SELECT
                 + f" WHERE a.id IN ({placeholders})"
                 + availability
+                + access
                 + " ORDER BY a.id, t.disc_number, t.track_number, t.id",
-                album_ids,
+                parameters,
             ).fetchall()
             return [dict(row) for row in rows]
 
@@ -1931,12 +1997,16 @@ class NativeLibraryStore(PersistenceBase):
         artist_id: str | None = None,
         album_ids: list[str] | None = None,
         file_format: str | None = None,
+        user_id: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         def operation(
             connection: sqlite3.Connection,
         ) -> tuple[list[dict[str, Any]], int]:
             clauses = ["a.retired_into_album_id IS NULL", "t.availability = 'indexed'"]
             parameters: list[Any] = []
+            if user_id is not None:
+                clauses.append(_user_track_access_clause())
+                parameters.append(user_id)
             if search:
                 folded = f"%{_fold(search) or ''}%"
                 clauses.append(
@@ -2050,6 +2120,7 @@ class NativeLibraryStore(PersistenceBase):
         sort_order: str = "asc",
         artist_ids: list[str] | None = None,
         scope: str = "album",
+        user_id: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         def operation(
             connection: sqlite3.Connection,
@@ -2074,6 +2145,9 @@ class NativeLibraryStore(PersistenceBase):
                     "WHERE scope_contributor.local_artist_id = ar.id)"
                 )
             parameters: list[Any] = []
+            if user_id is not None:
+                clauses.append(_user_track_access_clause())
+                parameters.append(user_id)
             if search:
                 clauses.append("ar.folded_name LIKE ?")
                 parameters.append(f"%{_fold(search) or ''}%")
@@ -2186,12 +2260,16 @@ class NativeLibraryStore(PersistenceBase):
         artist_name: str | None = None,
         artist_ids: list[str] | None = None,
         album_artist_only: bool = False,
+        user_id: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         def operation(
             connection: sqlite3.Connection,
         ) -> tuple[list[dict[str, Any]], int]:
             clauses = ["t.availability = 'indexed'", "a.retired_into_album_id IS NULL"]
             parameters: list[Any] = []
+            if user_id is not None:
+                clauses.append(_user_track_access_clause())
+                parameters.append(user_id)
             if search:
                 folded = f"%{_fold(search) or ''}%"
                 clauses.append(
@@ -2336,6 +2414,84 @@ class NativeLibraryStore(PersistenceBase):
                 "ORDER BY identity.provider_artist_id"
             ).fetchall()
             return {str(row["provider_artist_id"]) for row in rows}
+
+        return await self._read(operation)
+
+    async def get_target_enrichment_candidates(
+        self, *, after_mbid: str | None, limit: int
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        """Return a stable keyset page of identified target-catalog entities.
+
+        The AudioDB sweep historically read this projection from ``LibraryDB``.
+        The target-catalog migration replaced that dependency with
+        ``TargetLibraryRepository``, so expose the equivalent projection directly
+        from the native catalog without loading the whole library into memory.
+        """
+        cursor_type = ""
+        cursor_mbid = ""
+        legacy_cursor = after_mbid or ""
+        if after_mbid and ":" in after_mbid:
+            candidate_type, candidate_mbid = after_mbid.split(":", 1)
+            if candidate_type in {"artist", "album"}:
+                cursor_type = candidate_type
+                cursor_mbid = candidate_mbid.casefold()
+                legacy_cursor = ""
+
+        def operation(
+            connection: sqlite3.Connection,
+        ) -> list[tuple[str, str, dict[str, Any]]]:
+            projection = (
+                "SELECT entity_type, mbid, display_name, artist_name FROM ("
+                "SELECT 'album' AS entity_type, LOWER(identity.release_group_mbid) AS mbid, "
+                "MIN(album.title) AS display_name, MIN(album.album_artist_name) AS artist_name "
+                "FROM local_album_external_identities identity "
+                "JOIN local_albums album ON album.id = identity.local_album_id "
+                "WHERE identity.provider = 'musicbrainz' "
+                "AND album.retired_into_album_id IS NULL "
+                "AND EXISTS (SELECT 1 FROM local_tracks track "
+                "WHERE track.local_album_id = album.id AND track.availability = 'indexed') "
+                "GROUP BY LOWER(identity.release_group_mbid) "
+                "UNION ALL "
+                "SELECT 'artist', LOWER(identity.provider_artist_id), "
+                "MIN(artist.display_name), NULL "
+                "FROM local_artist_external_identities identity "
+                "JOIN local_artists artist ON artist.id = identity.local_artist_id "
+                "WHERE identity.provider = 'musicbrainz' "
+                "AND artist.retired_into_artist_id IS NULL "
+                "AND (EXISTS (SELECT 1 FROM local_album_artists credit "
+                "JOIN local_tracks track ON track.local_album_id = credit.local_album_id "
+                "WHERE credit.local_artist_id = artist.id AND track.availability = 'indexed') "
+                "OR EXISTS (SELECT 1 FROM local_track_artists credit "
+                "JOIN local_tracks track ON track.id = credit.local_track_id "
+                "WHERE credit.local_artist_id = artist.id AND track.availability = 'indexed')) "
+                "GROUP BY LOWER(identity.provider_artist_id)) "
+            )
+            if legacy_cursor:
+                rows = connection.execute(
+                    projection + "WHERE mbid > ? ORDER BY mbid, entity_type LIMIT ?",
+                    (legacy_cursor.casefold(), max(1, limit)),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    projection
+                    + "WHERE entity_type > ? OR (entity_type = ? AND mbid > ?) "
+                    "ORDER BY entity_type, mbid LIMIT ?",
+                    (cursor_type, cursor_type, cursor_mbid, max(1, limit)),
+                ).fetchall()
+
+            candidates: list[tuple[str, str, dict[str, Any]]] = []
+            for row in rows:
+                entity_type = str(row["entity_type"])
+                data = (
+                    {"name": row["display_name"]}
+                    if entity_type == "artist"
+                    else {
+                        "title": row["display_name"],
+                        "artist_name": row["artist_name"],
+                    }
+                )
+                candidates.append((entity_type, str(row["mbid"]), data))
+            return candidates
 
         return await self._read(operation)
 
@@ -2582,32 +2738,45 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
-    async def get_target_library_stats(self) -> dict[str, Any]:
+    async def get_target_library_stats(
+        self, *, user_id: str | None = None
+    ) -> dict[str, Any]:
         def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            access = ""
+            parameters: list[Any] = []
+            if user_id is not None:
+                access = " AND " + _user_track_access_clause()
+                parameters.append(user_id)
             row = connection.execute(
                 "SELECT COUNT(*) AS total_tracks, "
                 "COUNT(DISTINCT local_album_id) AS total_albums, "
                 "COALESCE(SUM(file_size_bytes), 0) AS total_size_bytes "
-                "FROM local_tracks WHERE availability = 'indexed'"
+                "FROM local_tracks t WHERE availability = 'indexed'" + access,
+                parameters,
             ).fetchone()
+            album_artist_sql = (
+                "SELECT aa.local_artist_id FROM local_album_artists aa "
+                "JOIN local_tracks t ON t.local_album_id = aa.local_album_id "
+                "WHERE t.availability = 'indexed'" + access
+            )
+            track_artist_sql = (
+                "SELECT ta.local_artist_id FROM local_track_artists ta "
+                "JOIN local_tracks t ON t.id = ta.local_track_id "
+                "WHERE t.availability = 'indexed'" + access
+            )
             artist_count = int(
                 connection.execute(
-                    "SELECT COUNT(*) FROM ("
-                    "SELECT aa.local_artist_id FROM local_album_artists aa "
-                    "JOIN local_tracks t ON t.local_album_id = aa.local_album_id "
-                    "WHERE t.availability = 'indexed' "
-                    "UNION "
-                    "SELECT ta.local_artist_id FROM local_track_artists ta "
-                    "JOIN local_tracks t ON t.id = ta.local_track_id "
-                    "WHERE t.availability = 'indexed'"
-                    ")"
+                    "SELECT COUNT(*) FROM (" + album_artist_sql + " UNION "
+                    + track_artist_sql + ")",
+                    (*parameters, *parameters),
                 ).fetchone()[0]
             )
             formats = connection.execute(
                 "SELECT file_format, COUNT(*) AS count FROM local_tracks "
-                "WHERE availability = 'indexed' GROUP BY file_format"
+                "t WHERE availability = 'indexed'" + access + " GROUP BY file_format",
+                parameters,
             ).fetchall()
-            unmatched = int(
+            unmatched = 0 if user_id is not None else int(
                 connection.execute(
                     "SELECT COUNT(*) FROM library_identification_reviews "
                     "WHERE state = 'needs_review'"
@@ -2619,6 +2788,8 @@ class NativeLibraryStore(PersistenceBase):
                     "LEFT JOIN local_album_external_identities i "
                     "ON i.local_album_id = t.local_album_id "
                     "WHERE t.availability = 'indexed' AND i.local_album_id IS NULL"
+                    + access,
+                    parameters,
                 ).fetchone()[0]
             )
             last_scan = connection.execute(
@@ -2654,8 +2825,7 @@ class NativeLibraryStore(PersistenceBase):
         def operation(connection: sqlite3.Connection) -> int:
             row = connection.execute(
                 "SELECT COALESCE(SUM(t.file_size_bytes), 0) FROM local_tracks t "
-                "JOIN download_tasks d ON d.id = t.download_task_id "
-                "WHERE t.availability = 'indexed' AND d.user_id = ?",
+                "WHERE t.availability = 'indexed' AND " + _user_track_access_clause(),
                 (user_id,),
             ).fetchone()
             return int(row[0])
@@ -6135,6 +6305,7 @@ class NativeLibraryStore(PersistenceBase):
                 return None
             tracks = connection.execute(
                 "SELECT t.*, i.recording_mbid, i.release_mbid AS identity_release_mbid, "
+                "i.release_track_mbid, "
                 "i.decision_source AS track_identity_source, i.row_revision AS identity_row_revision "
                 "FROM local_tracks t LEFT JOIN local_track_external_identities i "
                 "ON i.local_track_id = t.id AND i.provider = 'musicbrainz' "
@@ -6272,6 +6443,7 @@ class NativeLibraryStore(PersistenceBase):
         worker_id: str,
         expected_job_revision: int,
         expected_album_revision: int,
+        expected_input_revision: str | None = None,
         attempt: IdentificationAttempt,
         evidence: list[IdentificationEvidenceRecord],
         outcome: str,
@@ -6306,6 +6478,16 @@ class NativeLibraryStore(PersistenceBase):
                 raise StaleRevisionError(
                     "The album changed before its identification result could be applied."
                 )
+            if expected_input_revision is not None:
+                current_tracks = connection.execute(
+                    "SELECT id, tag_revision, stat_revision, applied_policy_revision, "
+                    "applied_policy FROM local_tracks WHERE local_album_id = ?",
+                    (attempt.local_album_id,),
+                ).fetchall()
+                if _album_input_revision(list(current_tracks)) != expected_input_revision:
+                    raise StaleRevisionError(
+                        "The album files changed before its identification result could be applied."
+                    )
             connection.execute(
                 "INSERT INTO library_identification_attempts "
                 "(id, local_album_id, local_track_id, trigger, requested_by_user_id, "
@@ -6393,9 +6575,13 @@ class NativeLibraryStore(PersistenceBase):
                     connection.execute(
                         "INSERT INTO local_track_external_identities "
                         "(local_track_id, provider, recording_mbid, release_mbid, decision_source, "
-                        "attempt_id, selected_at) VALUES (?, 'musicbrainz', ?, ?, ?, ?, ?) "
+                        "release_track_mbid, medium_position, release_track_position, "
+                        "attempt_id, selected_at) VALUES (?, 'musicbrainz', ?, ?, ?, ?, ?, ?, ?, ?) "
                         "ON CONFLICT(local_track_id, provider) DO UPDATE SET "
                         "recording_mbid = excluded.recording_mbid, release_mbid = excluded.release_mbid, "
+                        "release_track_mbid = excluded.release_track_mbid, "
+                        "medium_position = excluded.medium_position, "
+                        "release_track_position = excluded.release_track_position, "
                         "decision_source = excluded.decision_source, attempt_id = excluded.attempt_id, "
                         "selected_at = excluded.selected_at, row_revision = row_revision + 1",
                         (
@@ -6403,6 +6589,9 @@ class NativeLibraryStore(PersistenceBase):
                             track.recording_mbid,
                             selected.release_mbid,
                             decision_source,
+                            track.release_track_mbid,
+                            track.candidate_disc_number,
+                            track.candidate_track_position,
                             attempt.id,
                             completed_at,
                         ),
@@ -17740,6 +17929,77 @@ class NativeLibraryStore(PersistenceBase):
             }
 
         return await self._write(operation)
+
+    async def list_library_management_operations(
+        self,
+        *,
+        limit: int,
+        before_created_at: float | None = None,
+        before_id: str | None = None,
+        origin: str | None = None,
+        profile_id: str | None = None,
+        root_id: str | None = None,
+        state: str | None = None,
+        mode: str | None = None,
+        created_from: float | None = None,
+        created_to: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return a bounded, filterable management operation history page."""
+
+        def operation(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+            clauses = ["job.kind='library_management'"]
+            parameters: list[Any] = []
+            if before_created_at is not None and before_id is not None:
+                clauses.append(
+                    "(job.created_at < ? OR (job.created_at = ? AND job.id < ?))"
+                )
+                parameters.extend((before_created_at, before_created_at, before_id))
+            if origin is not None:
+                clauses.append("snapshot.origin=?")
+                parameters.append(origin)
+            if profile_id is not None:
+                clauses.append(
+                    "json_extract(snapshot.profile_snapshot_json,'$.profile.id')=?"
+                )
+                parameters.append(profile_id)
+            if root_id is not None:
+                clauses.append(
+                    "EXISTS (SELECT 1 FROM library_management_plan_items scoped_item "
+                    "WHERE scoped_item.job_id=job.id AND "
+                    "(scoped_item.expected_root_id=? OR scoped_item.destination_root_id=?))"
+                )
+                parameters.extend((root_id, root_id))
+            if state is not None:
+                clauses.append("job.state=?")
+                parameters.append(state)
+            if mode is not None:
+                clauses.append("snapshot.mode=?")
+                parameters.append(mode)
+            if created_from is not None:
+                clauses.append("job.created_at>=?")
+                parameters.append(created_from)
+            if created_to is not None:
+                clauses.append("job.created_at<=?")
+                parameters.append(created_to)
+            rows = connection.execute(
+                "SELECT job.*, snapshot.mode management_mode, "
+                "snapshot.origin management_origin, snapshot.phase management_phase, "
+                "snapshot.selection_json management_selection_json, "
+                "snapshot.profile_revision management_profile_revision, "
+                "snapshot.profile_snapshot_json management_profile_snapshot_json, "
+                "snapshot.target_root_id management_target_root_id, "
+                "snapshot.proposed_settings_revision "
+                "management_proposed_settings_revision "
+                "FROM library_operation_jobs job JOIN "
+                "library_management_job_snapshots snapshot ON snapshot.job_id=job.id "
+                "WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY job.created_at DESC,job.id DESC LIMIT ?",
+                (*parameters, min(max(limit, 1), 51)),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+        return await self._read(operation)
 
     async def explain_query_plan(
         self, sql: str, parameters: tuple[Any, ...] = ()

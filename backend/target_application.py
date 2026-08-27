@@ -50,6 +50,7 @@ from api.v1.routes import (
     karaoke,
     library_operations_target,
     library_contributions,
+    library_management,
     library_policies_target,
     library_scan_target,
     library_target,
@@ -297,6 +298,7 @@ def create_isolated_target_application(
         status.router,
         covers.router,
         library_policies_target.router,
+        library_management.router,
         home.router,
         discover.router,
         library_operations_target.router,
@@ -397,6 +399,7 @@ def _include_complete_target_routes(app: FastAPI) -> None:
     v1.include_router(albums.router, dependencies=[Depends(_require_provider_album_id)])
     for router in (
         library_policies_target.router,
+        library_management.router,
         home.router,
         wrapped.router,
         discovery_batches.router,
