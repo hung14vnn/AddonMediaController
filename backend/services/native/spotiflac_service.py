@@ -9,7 +9,7 @@ from core.exceptions import PermissionDeniedError, ResourceNotFoundError, Valida
 logger = logging.getLogger(__name__)
 
 _PROVIDER_FALLBACKS = ["ext:tidal-web", "ext:qobuz-web", "ext:deezer", "ext:amazon"]
-_SPOTIFLAC_PROVIDER_TIMEOUT_SECONDS = 30
+_SPOTIFLAC_PROVIDER_TIMEOUT_SECONDS = 150
 
 _AUDIO_EXTENSIONS = {
     ".flac",
