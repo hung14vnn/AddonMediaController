@@ -53,6 +53,7 @@ services:
     environment:
       VPN_SERVICE_PROVIDER: protonvpn
       VPN_TYPE: wireguard
+      SERVER_COUNTRIES: Singapore
       WIREGUARD_PRIVATE_KEY: ${PROTONVPN_WIREGUARD_PRIVATE_KEY:?Set PROTONVPN_WIREGUARD_PRIVATE_KEY in .env.proton}
       FREE_ONLY: "on"
       # Keep Docker-internal calls (for example addonify -> slskd) off the VPN.
