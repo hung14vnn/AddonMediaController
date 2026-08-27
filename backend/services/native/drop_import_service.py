@@ -34,8 +34,15 @@ from typing import TYPE_CHECKING, Awaitable, Callable, NamedTuple
 import msgspec
 
 from core.exceptions import ResourceNotFoundError, ValidationError
+from infrastructure.validators import validate_spotify_cover_url
 from models.drop_import import DropImportItem, DropImportJob, ItemStatus, JobStatus
-from services.native.album_matcher import AlbumMatch, LocalTrack, MBTrack, _ReleaseMeta, score_release
+from services.native.album_matcher import (
+    AlbumMatch,
+    LocalTrack,
+    MBTrack,
+    _ReleaseMeta,
+    score_release,
+)
 from services.native.file_processor import row_covers_track
 from infrastructure.audio.metadata_engine import AUDIO_SUFFIXES
 from services.native.naming import NamingTemplateEngine
@@ -70,6 +77,11 @@ _MAX_ARCHIVE_TOTAL_BYTES = 64 * 2**30
 _SOURCE = "drop"
 _LOOSE_UNIT_NAME = "Loose tracks"
 _SPOTIFY_LOCAL_ALBUM_PREFIX = "spotify:album:"
+_YOUTUBE_LOCAL_ALBUM_PREFIX = "youtube:album:"
+_PROVIDER_LOCAL_ALBUM_PREFIXES = (
+    _SPOTIFY_LOCAL_ALBUM_PREFIX,
+    _YOUTUBE_LOCAL_ALBUM_PREFIX,
+)
 
 # Callback the DI layer wires to the canonical import invalidation (cache bust +
 # album-row materialisation) so a dropped album surfaces in the UI immediately.
@@ -263,11 +275,13 @@ class DropImportService:
         item_id: int,
         release_group_mbid: str | None = None,
         *,
+        recording_mbid: str | None = None,
         library_album_id: str | None = None,
         library_track_id: str | None = None,
         artist_name: str | None = None,
         album_title: str | None = None,
         track_title: str | None = None,
+        cover_url: str | None = None,
         user_id: str,
         is_admin: bool,
     ) -> DropImportItem:
@@ -284,10 +298,25 @@ class DropImportService:
         if not entries:
             raise ValidationError("The staged files no longer exist on disk")
 
-        if rg:
+        if rg.startswith(_PROVIDER_LOCAL_ALBUM_PREFIXES):
+            if rg.startswith(_SPOTIFY_LOCAL_ALBUM_PREFIX) and cover_url:
+                cover_url = cover_url.strip()
+                if not validate_spotify_cover_url(cover_url):
+                    raise ValidationError("Spotify artwork URL is invalid")
+            ident = self._identify_provider_local_download(
+                entries,
+                release_group_mbid=rg,
+                recording_mbid=recording_mbid,
+                artist_name=artist_name,
+                album_title=album_title,
+                track_title=track_title,
+            )
+        elif rg:
             picked = await self._identifier.release_tracks(rg, len(entries))
             if picked is None:
-                raise ValidationError("Could not load that release group from MusicBrainz")
+                raise ValidationError(
+                    "Could not load that release group from MusicBrainz"
+                )
             meta, tracks = picked
             match = score_release([self._to_local(e) for e in entries], tracks, meta)
             ident = _Identified(meta=meta, tracks=tracks, match=match)
@@ -303,8 +332,18 @@ class DropImportService:
 
         # the user's explicit choice is authoritative: full confidence, so the
         # scanner's sticky-anchor guard protects it from later re-attribution
-        result = await self._organise(entries, ident, confidence_override=1.0)
-        await self._finish_item(job, item.id, ident, result, unreadable, staged=entries)
+        result = await self._organise(
+            entries, ident, confidence_override=1.0, cover_url=cover_url
+        )
+        await self._finish_item(
+            job,
+            item.id,
+            ident,
+            result,
+            unreadable,
+            staged=entries,
+            cover_url=cover_url,
+        )
         await self._publish_job(job)
         refreshed = await self._store.get_item(item.id)
         assert refreshed is not None
@@ -359,7 +398,9 @@ class DropImportService:
                 if selected_track is None:
                     raise ValidationError("The selected library track no longer exists")
                 if library_album_id and selected_track.album_id != library_album_id:
-                    raise ValidationError("The selected track does not belong to that album")
+                    raise ValidationError(
+                        "The selected track does not belong to that album"
+                    )
                 library_album_id = selected_track.album_id
             if library_album_id:
                 album = await self._native_library.album(library_album_id)
@@ -389,18 +430,28 @@ class DropImportService:
         if selected_track is not None:
             title = selected_track.title
         if not title:
-            title = selected_track.title if selected_track else (entries[0].tag.title or "").strip()
+            title = (
+                selected_track.title
+                if selected_track
+                else (entries[0].tag.title or "").strip()
+            )
         if not title:
             raise ValidationError("A track name is required")
 
         if selected_track is None and album_tracks:
             folded = " ".join(title.casefold().split())
             selected_track = next(
-                (track for track in album_tracks if " ".join(track.title.casefold().split()) == folded),
+                (
+                    track
+                    for track in album_tracks
+                    if " ".join(track.title.casefold().split()) == folded
+                ),
                 None,
             )
 
-        next_position = max((track.track_number for track in album_tracks), default=0) + 1
+        next_position = (
+            max((track.track_number for track in album_tracks), default=0) + 1
+        )
         tracks: list[MBTrack] = []
         assignments: dict[str, str] = {}
         for index, entry in enumerate(entries):
@@ -412,7 +463,11 @@ class DropImportService:
                 if existing and existing.musicbrainz_recording_id
                 else f"manual:track:{existing.id if existing else uuid.uuid4().hex}"
             )
-            current_title = (title if index == 0 else None) or entry.tag.title or f"Track {position}"
+            current_title = (
+                (title if index == 0 else None)
+                or entry.tag.title
+                or f"Track {position}"
+            )
             tracks.append(
                 MBTrack(
                     title=current_title,
@@ -473,7 +528,10 @@ class DropImportService:
                 try:
                     Path(raw).resolve().relative_to(root)
                 except ValueError:
-                    logger.warning("Refusing to remove import staging directory outside root: %s", raw)
+                    logger.warning(
+                        "Refusing to remove import staging directory outside root: %s",
+                        raw,
+                    )
                     continue
                 shutil.rmtree(raw, ignore_errors=True)
 
@@ -810,9 +868,7 @@ class DropImportService:
         # every expected canonical position published, no unreadable file, and no
         # skipped mapped position. Bonus files never count toward coverage.
         fulfills_request = (
-            result.imported > 0
-            and result.coverage.complete
-            and unreadable == 0
+            result.imported > 0 and result.coverage.complete and unreadable == 0
         )
         parts: list[str] = []
         if result.imported:
@@ -849,7 +905,12 @@ class DropImportService:
             staging_paths=[],
         )
         if result.imported > 0:
-            await self._after_import(job, ident, cover_url=cover_url)
+            await self._after_import(
+                job,
+                ident,
+                cover_url=cover_url,
+                fulfills_request=fulfills_request,
+            )
 
         # staged sources are consumed by the moves; clear any cross-mount leftovers
         def _tidy() -> None:
@@ -962,8 +1023,8 @@ class DropImportService:
         treating a completed provider download as an anonymous loose file just
         because the provider chose an opaque filename.
         """
-        if (release_group_mbid or "").startswith(_SPOTIFY_LOCAL_ALBUM_PREFIX):
-            return self._identify_spotify_local_download(
+        if (release_group_mbid or "").startswith(_PROVIDER_LOCAL_ALBUM_PREFIXES):
+            return self._identify_provider_local_download(
                 entries,
                 release_group_mbid=release_group_mbid,
                 recording_mbid=recording_mbid,
@@ -972,8 +1033,10 @@ class DropImportService:
                 track_title=requested_track_title,
             )
         if not release_group_mbid and recording_mbid:
-            release_group_mbid = await self._mb_matcher.resolve_recording_to_release_group(
-                recording_mbid
+            release_group_mbid = (
+                await self._mb_matcher.resolve_recording_to_release_group(
+                    recording_mbid
+                )
             )
         if not release_group_mbid:
             return None
@@ -998,7 +1061,9 @@ class DropImportService:
             meta = msgspec.structs.replace(
                 meta,
                 artist=artist or meta.artist,
-                album_title=(album if recording_mbid and len(entries) == 1 else meta.album_title),
+                album_title=(
+                    album if recording_mbid and len(entries) == 1 else meta.album_title
+                ),
                 is_various=False,
                 artist_mbid=requested_artist_mbid,
             )
@@ -1026,7 +1091,9 @@ class DropImportService:
             if len(entries) == 1:
                 assignments[str(entries[0].path)] = recording_mbid
         else:
-            scored = score_release([self._to_local(entry) for entry in entries], tracks, meta)
+            scored = score_release(
+                [self._to_local(entry) for entry in entries], tracks, meta
+            )
             assignments = scored.assignments
         return _Identified(
             meta=meta,
@@ -1043,7 +1110,7 @@ class DropImportService:
         )
 
     @staticmethod
-    def _identify_spotify_local_download(
+    def _identify_provider_local_download(
         entries: list[_Entry],
         *,
         release_group_mbid: str,
@@ -1052,15 +1119,24 @@ class DropImportService:
         album_title: str | None,
         track_title: str | None,
     ) -> _Identified:
-        """Build a library-only album from a Spotify result that MusicBrainz
-        cannot resolve.  The stable Spotify IDs group and de-duplicate local
-        files, but are deliberately never written as MusicBrainz tags."""
+        """Build a library-only album from a provider result without MusicBrainz.
+
+        Stable provider IDs group and de-duplicate local files, but are never
+        written into MusicBrainz tag fields.
+        """
         first = entries[0]
         artist = (
-            artist_name or first.tag.album_artist or first.tag.artist or "Unknown Artist"
+            artist_name
+            or first.tag.album_artist
+            or first.tag.artist
+            or "Unknown Artist"
         ).strip()
         album = (
-            album_title or first.tag.album or track_title or first.tag.title or "Unknown Album"
+            album_title
+            or first.tag.album
+            or track_title
+            or first.tag.title
+            or "Unknown Album"
         ).strip()
         tracks: list[MBTrack] = []
         assignments: dict[str, str] = {}
@@ -1333,7 +1409,11 @@ class DropImportService:
         target = root / self._naming.format_path(
             template, target_tag, entry.info.file_format
         )
-        if target.exists() and not upgrading:
+        if (
+            target.exists()
+            and not upgrading
+            and not meta.release_group_mbid.startswith(_PROVIDER_LOCAL_ALBUM_PREFIXES)
+        ):
             return "skipped"
         await asyncio.to_thread(self._move_into_library, entry.path, target, target_tag)
         await self._library.upsert_file(
@@ -1389,12 +1469,12 @@ class DropImportService:
         from models.audio import AudioTag
 
         album_artist = "Various Artists" if meta.is_various else (meta.artist or None)
-        is_spotify_local = meta.release_group_mbid.startswith(
-            _SPOTIFY_LOCAL_ALBUM_PREFIX
+        is_provider_local = meta.release_group_mbid.startswith(
+            _PROVIDER_LOCAL_ALBUM_PREFIXES
         )
         is_manual_local = "__manual_local__" in meta.secondary_types
         is_known_track_fallback = "__known_track_fallback__" in meta.secondary_types
-        suppress_provider_ids = is_spotify_local or is_manual_local
+        suppress_provider_ids = is_provider_local or is_manual_local
         return AudioTag(
             title=(track.title if track else None) or file_tag.title or "",
             # A matched non-compilation release has a canonical artist. Keep a
@@ -1418,7 +1498,9 @@ class DropImportService:
                 if suppress_provider_ids or is_known_track_fallback
                 else meta.release_mbid
             ),
-            musicbrainz_recording_id=None if suppress_provider_ids else (
+            musicbrainz_recording_id=None
+            if suppress_provider_ids
+            else (
                 (track.recording_mbid if track else None)
                 or file_tag.musicbrainz_recording_id
             ),
@@ -1475,11 +1557,16 @@ class DropImportService:
     # -- post-import hooks --
 
     async def _after_import(
-        self, job: DropImportJob, ident: _Identified, *, cover_url: str | None = None
+        self,
+        job: DropImportJob,
+        ident: _Identified,
+        *,
+        cover_url: str | None = None,
+        fulfills_request: bool,
     ) -> None:
         meta = ident.meta
         rg = meta.release_group_mbid
-        if cover_url and rg.startswith(_SPOTIFY_LOCAL_ALBUM_PREFIX):
+        if cover_url and rg.startswith(_PROVIDER_LOCAL_ALBUM_PREFIXES):
             try:
                 await self._library.set_album_cover_url(rg, cover_url)
                 # The native catalog powers the album page.  It has a separate
@@ -1493,7 +1580,7 @@ class DropImportService:
                         cover_url=cover_url,
                     )
             except Exception:  # noqa: BLE001 - artwork must not undo an import
-                logger.warning("Could not save Spotify artwork for %s", rg)
+                logger.warning("Could not save provider artwork for %s", rg)
         try:
             await self._on_import(
                 mbid=rg,

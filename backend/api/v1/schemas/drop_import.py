@@ -39,11 +39,13 @@ class DropImportJobsResponse(AppStruct):
 
 class DropImportMatchRequest(AppStruct):
     release_group_mbid: str | None = None
+    recording_mbid: str | None = None
     library_album_id: str | None = None
     library_track_id: str | None = None
     artist_name: str | None = None
     album_title: str | None = None
     track_title: str | None = None
+    cover_url: str | None = None
 
 
 def item_to_response(item: DropImportItem) -> DropImportItemResponse:

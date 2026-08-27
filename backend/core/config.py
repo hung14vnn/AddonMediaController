@@ -30,6 +30,7 @@ _PREFERENCES_OWNED_CONFIG_KEYS = frozenset(
         "jellyfin_settings",
         "lastfm_settings",
         "library_scan_schedule",
+        "library_management",
         "library_settings",
         "library_sync_settings",
         "lidarr_import",

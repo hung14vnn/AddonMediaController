@@ -213,8 +213,10 @@ class IdentificationQueueService:
             now=time.time() if now is None else now
         )
 
-    async def activity_snapshot(self) -> dict:
-        return await self._store.get_identification_activity_snapshot()
+    async def activity_snapshot(self, *, now: float | None = None) -> dict:
+        return await self._store.get_identification_activity_snapshot(
+            now=time.time() if now is None else now
+        )
 
     async def stream_revisions(self) -> dict[str, int]:
         return {

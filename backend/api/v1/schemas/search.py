@@ -13,6 +13,7 @@ class SpotifyTrackResult(AppStruct, kw_only=True):
     artist: str
     album: str
     spotify_id: str
+    spotify_album_id: str | None = None
     spotify_url: str | None = None
     preview_url: str | None = None
     album_image_url: str | None = None

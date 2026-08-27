@@ -104,7 +104,7 @@ export function requestSpotifyTrack() {
 			}),
 		onSuccess: () => {
 			toastStore.show({
-				message: 'Track requested - checking catalog metadata and searching Soulseek',
+				message: 'Track requested - checking catalog metadata and starting download',
 				type: 'success'
 			});
 			void invalidateTasks();

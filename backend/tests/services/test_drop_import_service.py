@@ -125,7 +125,13 @@ def _write_fixture_tag(path: Path, tag: AudioTag) -> None:
 
 
 def _build_service(
-    tmp_path, tagger, *, identifier=None, fingerprinter=None, prefs=None, native_library=None
+    tmp_path,
+    tagger,
+    *,
+    identifier=None,
+    fingerprinter=None,
+    prefs=None,
+    native_library=None,
 ):
     store = DropImportStore(tmp_path / "library.db", threading.Lock())
     library_root = tmp_path / "library"
@@ -254,7 +260,9 @@ async def test_known_single_track_uses_the_requested_artist_and_album(tmp_path):
     assert identified.meta.album_title == "Come My Way"
     assert identified.meta.is_various is False
     assert identified.meta.artist_mbid is None
-    target_tag = service._target_tag(identified.meta, identified.tracks[0], _tag("Song One", 1))
+    target_tag = service._target_tag(
+        identified.meta, identified.tracks[0], _tag("Song One", 1)
+    )
     assert target_tag.artist == "Sơn Tùng M-TP"
     assert target_tag.album_artist == "Sơn Tùng M-TP"
 
@@ -318,7 +326,10 @@ async def test_known_track_imports_without_musicbrainz_release_tracklist(tmp_pat
 
     assert identified is not None
     assert identified.meta.album_title == "On and On"
-    assert identified.match.assignments[str(source)] == "1395e756-bb82-4ffd-ae62-d991e336de85"
+    assert (
+        identified.match.assignments[str(source)]
+        == "1395e756-bb82-4ffd-ae62-d991e336de85"
+    )
     tag = service._target_tag(identified.meta, identified.tracks[0], _tag("Opaque", 0))
     assert tag.musicbrainz_release_group_id == identified.meta.release_group_mbid
     assert tag.musicbrainz_release_id is None
@@ -550,9 +561,7 @@ def _configure_fulfillment_spy(service) -> None:
     record = SimpleNamespace(status="approved", user_id="requester-9")
     service._requests.async_get_record = AsyncMock(return_value=record)
     service._requests.async_update_status = AsyncMock()
-    service._wanted.get_watch = AsyncMock(
-        return_value=SimpleNamespace(id="w-1")
-    )
+    service._wanted.get_watch = AsyncMock(return_value=SimpleNamespace(id="w-1"))
     service._wanted.mark_fulfilled = AsyncMock()
 
 
@@ -671,7 +680,9 @@ async def test_bonus_only_import_never_fulfils_request(tmp_path):
 
     if done.items[0].status == ItemStatus.NEEDS_REVIEW:
         # the auto match was rejected; the user's manual choice is authoritative
-        await service.match_item(done.items[0].id, "rg-1", user_id="user-1", is_admin=False)
+        await service.match_item(
+            done.items[0].id, "rg-1", user_id="user-1", is_admin=False
+        )
 
     refreshed = await store.get_item(done.items[0].id)
     assert refreshed.status == ItemStatus.IMPORTED
@@ -767,7 +778,9 @@ async def test_no_canonical_tracklist_never_fulfils_request(tmp_path):
     done = await _wait_job(store, job.id)
 
     if done.items[0].status == ItemStatus.NEEDS_REVIEW:
-        await service.match_item(done.items[0].id, "rg-1", user_id="user-1", is_admin=False)
+        await service.match_item(
+            done.items[0].id, "rg-1", user_id="user-1", is_admin=False
+        )
 
     refreshed = await store.get_item(done.items[0].id)
     assert refreshed.status == ItemStatus.IMPORTED
@@ -905,6 +918,52 @@ async def test_unidentified_drop_needs_review_then_manual_match(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_spotify_search_match_keeps_provider_identity_and_artwork(tmp_path):
+    service = object.__new__(DropImportService)
+    store = AsyncMock()
+    service._store = store
+    source = tmp_path / "youtube-1.m4a"
+    source.write_bytes(b"audio")
+    item = SimpleNamespace(
+        id=7,
+        status=ItemStatus.NEEDS_REVIEW,
+        staging_paths=[str(source)],
+    )
+    job = SimpleNamespace(user_id="user-1")
+    entry = _Entry(source, _tag("Opaque", 0), _info("m4a"))
+    refreshed = SimpleNamespace(status=ItemStatus.IMPORTED)
+    service._owned_item = AsyncMock(return_value=(item, job))
+    service._read_entries = AsyncMock(return_value=([entry], 0))
+    service._organise = AsyncMock(return_value=object())
+    service._finish_item = AsyncMock()
+    service._publish_job = AsyncMock()
+    store.get_item = AsyncMock(return_value=refreshed)
+
+    result = await service.match_item(
+        item.id,
+        "spotify:album:album-1",
+        recording_mbid="spotify:track:track-1",
+        artist_name="Artist",
+        album_title="Album",
+        track_title="Track",
+        cover_url="https://i.scdn.co/image/cover-1",
+        user_id="user-1",
+        is_admin=False,
+    )
+
+    assert result is refreshed
+    ident = service._organise.await_args.args[1]
+    assert ident.meta.release_group_mbid == "spotify:album:album-1"
+    assert ident.match.assignments[str(source)] == "spotify:track:track-1"
+    assert service._organise.await_args.kwargs["cover_url"] == (
+        "https://i.scdn.co/image/cover-1"
+    )
+    assert service._finish_item.await_args.kwargs["cover_url"] == (
+        "https://i.scdn.co/image/cover-1"
+    )
+
+
+@pytest.mark.asyncio
 async def test_automatic_management_failure_keeps_drop_staging_for_retry(tmp_path):
     from core.exceptions import AutomaticManagementHoldError
 
@@ -1008,9 +1067,13 @@ async def test_discard_removes_failed_item_files(tmp_path):
     staging.mkdir(parents=True)
     failed_file = staging / "broken.flac"
     failed_file.write_bytes(b"not audio")
-    await store.create_job("failed-job", "user-1", "Harvey", "broken.flac", str(staging))
+    await store.create_job(
+        "failed-job", "user-1", "Harvey", "broken.flac", str(staging)
+    )
     item_id = await store.add_item("failed-job", "Loose tracks", [str(failed_file)], 1)
-    await store.update_item(item_id, status=ItemStatus.FAILED, detail="Couldn't import this folder.")
+    await store.update_item(
+        item_id, status=ItemStatus.FAILED, detail="Couldn't import this folder."
+    )
 
     discarded = await service.discard_item(item_id, user_id="user-1", is_admin=False)
 
@@ -1026,7 +1089,9 @@ async def test_clear_discarded_removes_empty_job(tmp_path):
     staging.mkdir(parents=True)
     staged = staging / "discarded.flac"
     staged.write_bytes(b"already deleted")
-    await store.create_job("discarded-job", "user-1", "Harvey", "discarded.flac", str(staging))
+    await store.create_job(
+        "discarded-job", "user-1", "Harvey", "discarded.flac", str(staging)
+    )
     item_id = await store.add_item("discarded-job", "Loose tracks", [str(staged)], 1)
     await store.update_item(item_id, status=ItemStatus.DISCARDED, staging_paths=[])
 

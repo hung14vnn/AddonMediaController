@@ -7034,6 +7034,42 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._write(operation)
 
+    async def set_imported_album_artwork(
+        self, album_id: str, *, cover_url: str, updated_at: float
+    ) -> bool:
+        """Store provider artwork without replacing existing artwork."""
+
+        def operation(connection: sqlite3.Connection) -> bool:
+            existing = connection.execute(
+                "SELECT cover_url FROM local_album_artwork WHERE local_album_id = ?",
+                (album_id,),
+            ).fetchone()
+            if existing is not None and existing[0]:
+                return False
+
+            if existing is None:
+                connection.execute(
+                    "INSERT INTO local_album_artwork "
+                    "(local_album_id, cover_url, source, source_locator, version, updated_at, row_revision) "
+                    "VALUES (?, ?, 'provider', NULL, 1, ?, 1)",
+                    (album_id, cover_url, updated_at),
+                )
+            else:
+                connection.execute(
+                    "UPDATE local_album_artwork SET cover_url = ?, source = 'provider', "
+                    "source_locator = NULL, version = version + 1, updated_at = ?, "
+                    "row_revision = row_revision + 1 WHERE local_album_id = ?",
+                    (cover_url, updated_at, album_id),
+                )
+            connection.execute(
+                "UPDATE local_albums SET updated_at = ? WHERE id = ?",
+                (updated_at, album_id),
+            )
+            self._bump_catalog(connection)
+            return True
+
+        return await self._write(operation)
+
     async def backfill_identified_provider_artwork(self, *, updated_at: float) -> int:
         """Create reproducible provider artwork associations missed by early imports."""
 

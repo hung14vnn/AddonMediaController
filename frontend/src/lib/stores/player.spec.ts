@@ -466,6 +466,20 @@ describe('playerStore queue methods', () => {
 			expect(playerStore.shuffleOrder).toHaveLength(5);
 		});
 
+		it('keeps the current track when shuffling a queue containing it', () => {
+			const items = makeItems(5).map((item, index) => ({
+				...item,
+				playlistTrackId: `playlist-track-${index}`
+			}));
+			playerStore.playQueue(items, 0, false);
+			playerStore.jumpToTrack(3);
+
+			playerStore.playQueue(items, 0, true);
+
+			expect(playerStore.currentIndex).toBe(3);
+			expect(playerStore.shuffleOrder[0]).toBe(3);
+		});
+
 		it('does not create shuffle order when disabled', () => {
 			playerStore.playQueue(makeItems(5), 0, false);
 			expect(playerStore.shuffleEnabled).toBe(false);

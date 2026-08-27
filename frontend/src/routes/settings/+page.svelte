@@ -37,6 +37,7 @@
 	import SettingsGetIt from '$lib/components/settings/SettingsGetIt.svelte';
 	import SettingsPlugins from '$lib/components/settings/SettingsPlugins.svelte';
 	import SettingsWrapped from '$lib/components/settings/SettingsWrapped.svelte';
+	import SettingsDiagnostics from '$lib/components/settings/SettingsDiagnostics.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getUpdateCheckQuery } from '$lib/queries/VersionQuery.svelte';
 	import {
@@ -183,15 +184,15 @@
 	     the tab rail and the content pane each scroll independently, so the wheel
 	     isn't trapped by a hidden sidebar scroller when the tab list grows taller
 	     than the viewport. Mobile keeps natural page flow. -->
-	<div class="container mx-auto p-4 max-w-7xl lg:flex lg:h-[calc(100vh-4rem)] lg:flex-col">
-		<div class="mb-6 lg:shrink-0">
+	<div class="container mx-auto p-4 max-w-7xl md:flex md:h-[calc(100vh-4rem)] md:flex-col">
+		<div class="mb-6 md:shrink-0">
 			<h1 class="text-3xl font-bold">Settings</h1>
 			<p class="text-base-content/70 mt-2">Manage your preferences and app settings.</p>
 		</div>
 
-		<div class="flex flex-col lg:flex-row gap-6 lg:min-h-0 lg:flex-1">
+		<div class="flex flex-col md:flex-row gap-6 md:min-h-0 md:flex-1">
 			<aside
-				class="scrollbar-hide w-full lg:w-80 lg:shrink-0 space-y-3 lg:min-h-0 lg:overflow-y-auto lg:pb-4"
+				class="scrollbar-hide w-full md:w-80 md:shrink-0 space-y-3 md:min-h-0 md:overflow-y-auto md:pb-4"
 			>
 				<label class="relative block">
 					<Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-base-content/40" />
@@ -276,7 +277,7 @@
 				{/if}
 			</aside>
 
-			<main class="flex-1 min-w-0 lg:min-h-0 lg:overflow-y-auto lg:pb-4">
+			<main class="flex-1 min-w-0 md:min-h-0 md:overflow-y-auto md:pb-4">
 				{#if activeTab === 'settings'}
 					<SettingsPreferences />
 				{:else if activeTab === 'home'}
@@ -344,6 +345,8 @@
 					<SettingsSecurity />
 				{:else if activeTab === 'wrapped' && authStore.isAdmin}
 					<SettingsWrapped />
+				{:else if activeTab === 'diagnostics' && authStore.isAdmin}
+					<SettingsDiagnostics />
 				{:else if activeTab === 'users' && authStore.isAdmin}
 					<SettingsUsers />
 				{/if}

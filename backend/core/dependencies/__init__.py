@@ -245,6 +245,7 @@ from .service_providers import (  # noqa: F401
     get_spotiflac_service,
     get_target_spotiflac_service,
     get_youtube_download_service,
+    get_target_youtube_download_service,
     get_target_import_library_service,
     get_target_file_processor,
     get_bootstrap_demand_signal,

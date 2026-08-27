@@ -5,13 +5,15 @@
 		bytesTotal?: number;
 		filesCompleted?: number;
 		filesTotal?: number;
+		indeterminate?: boolean;
 	}
 	let {
 		percent = 0,
 		bytesDownloaded = 0,
 		bytesTotal = 0,
 		filesCompleted = 0,
-		filesTotal = 0
+		filesTotal = 0,
+		indeterminate = false
 	}: Props = $props();
 
 	const clamped = $derived(Math.max(0, Math.min(100, percent)));
@@ -25,7 +27,11 @@
 
 <div class="flex flex-col gap-1" role="status" aria-live="polite" aria-label="Download progress">
 	<div class="dl-track">
-		<div class="dl-fill" style="width:{clamped}%"></div>
+		<div
+			class="dl-fill"
+			class:indeterminate
+			style={indeterminate ? undefined : `width:${clamped}%`}
+		></div>
 	</div>
 	<div class="flex items-center justify-between text-[11px] text-base-content/50 tabular-nums">
 		<span>{clamped.toFixed(0)}%</span>
@@ -54,6 +60,10 @@
 		);
 		transition: width 0.6s var(--ease-spring, ease-out);
 	}
+	.dl-fill.indeterminate {
+		width: 35% !important;
+		animation: dl-indeterminate 1.4s ease-in-out infinite;
+	}
 	.dl-fill::after {
 		content: '';
 		position: absolute;
@@ -74,11 +84,25 @@
 			transform: translateX(100%);
 		}
 	}
+	@keyframes dl-indeterminate {
+		0% {
+			transform: translateX(-120%);
+		}
+		50% {
+			transform: translateX(180%);
+		}
+		100% {
+			transform: translateX(-120%);
+		}
+	}
 	@media (prefers-reduced-motion: reduce) {
 		.dl-fill {
 			transition: none;
 		}
 		.dl-fill::after {
+			animation: none;
+		}
+		.dl-fill.indeterminate {
 			animation: none;
 		}
 	}

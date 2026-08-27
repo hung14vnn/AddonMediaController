@@ -220,3 +220,109 @@ async def test_track_request_preserves_spotify_local_album_identity():
     assert task_id == "task-1"
     assert service._start.await_args.kwargs["release_group_mbid"] == "spotify:album:album-123"
     assert service._start.await_args.kwargs["cover_url"] == "https://i.scdn.co/image/album-cover"
+
+
+@pytest.mark.asyncio
+async def test_progress_watcher_reports_spotiflac_staging_bytes(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "services.native.spotiflac_service._SPOTIFLAC_PROGRESS_INTERVAL_SECONDS",
+        0.001,
+    )
+    staging = tmp_path / ".droppedneedle-task-1"
+    staging.mkdir()
+    (staging / "track.flac").write_bytes(b"audio")
+
+    store = AsyncMock()
+    store.get_task.return_value = SimpleNamespace(
+        download_type="track", track_count=None
+    )
+    service = SpotiflacService(
+        drop_import=AsyncMock(),
+        preferences_service=AsyncMock(),
+        download_store=store,
+        event_bus=AsyncMock(),
+    )
+
+    watcher = asyncio.create_task(service._watch_progress("task-1", staging))
+    try:
+        async with asyncio.timeout(1):
+            while not store.update_status.await_args_list:
+                await asyncio.sleep(0.001)
+    finally:
+        watcher.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await watcher
+
+    assert store.update_status.await_args_list[0].kwargs == {
+        "downloaded_bytes": 5,
+        "files_total": 1,
+        "files_completed": 1,
+        "progress_percent": 99,
+    }
+
+
+@pytest.mark.asyncio
+async def test_start_exposes_queued_task_before_spotiflac_search(monkeypatch, tmp_path):
+    search_started = asyncio.Event()
+    release_search = asyncio.Event()
+
+    class FakeSpotiFLAC:
+        def __init__(self, **_options):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def search(self, _query, limit):
+            assert limit == 5
+            search_started.set()
+            await release_search.wait()
+            return {"tracks": []}
+
+    spotiflac_package = ModuleType("SpotiFLAC")
+    spotiflac_package.__path__ = []
+    spotiflac_client = ModuleType("SpotiFLAC.client")
+    spotiflac_client.AsyncSpotiFLAC = FakeSpotiFLAC
+    monkeypatch.setitem(sys.modules, "SpotiFLAC", spotiflac_package)
+    monkeypatch.setitem(sys.modules, "SpotiFLAC.client", spotiflac_client)
+    monkeypatch.setattr(
+        "services.native.spotiflac_service._patch_spotiflac_cross_loop_lock",
+        lambda: None,
+    )
+
+    store = AsyncMock()
+    store.create_task.return_value = SimpleNamespace(id="task-1")
+    preferences = SimpleNamespace(
+        get_spotiflac_connection=lambda: SimpleNamespace(
+            enabled=True,
+            downloads_mount=str(tmp_path),
+            quality="LOSSLESS",
+        )
+    )
+    bus = AsyncMock()
+    service = SpotiflacService(
+        drop_import=AsyncMock(),
+        preferences_service=preferences,
+        download_store=store,
+        event_bus=bus,
+    )
+
+    task_id = await service._start("user-1", "Artist Track", "tracks")
+    assert task_id == "task-1"
+    store.create_task.assert_awaited_once_with(
+        user_id="user-1",
+        source="spotiflac",
+        download_client="spotiflac",
+        status="queued",
+    )
+
+    await asyncio.wait_for(search_started.wait(), timeout=1)
+    release_search.set()
+    async with asyncio.timeout(1):
+        while not store.update_status.await_args_list:
+            await asyncio.sleep(0.001)
+
+    assert store.update_status.await_args_list[0].args == ("task-1", "failed")

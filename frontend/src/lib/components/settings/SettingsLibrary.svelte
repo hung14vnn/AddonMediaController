@@ -63,11 +63,12 @@
 	$effect(() => {
 		const data = settingsQuery.data;
 		if (data && !seeded) {
-			template = data.naming_template;
-			acoustidKey = data.acoustid_api_key;
-			roots = data.library_roots.map((root) => ({
+			template = data.naming_template ?? '';
+			acoustidKey = data.acoustid_api_key ?? '';
+			const libraryRoots = Array.isArray(data.library_roots) ? data.library_roots : [];
+			roots = libraryRoots.map((root) => ({
 				...root,
-				rules: root.rules.map((rule) => ({ ...rule }))
+				rules: Array.isArray(root.rules) ? root.rules.map((rule) => ({ ...rule })) : []
 			}));
 			libraryEnabled = data.enabled ?? true;
 			seeded = true;

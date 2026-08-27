@@ -1,15 +1,14 @@
-"""Direct YouTube audio downloads using pytubefix."""
+"""Direct YouTube audio downloads using yt-dlp."""
 
 import asyncio
+import hashlib
 import logging
-import os
 import shutil
-import time
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from pytubefix import Playlist, YouTube
-from pytubefix.exceptions import SABRError
+from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 
 from core.exceptions import ValidationError
 
@@ -18,16 +17,8 @@ logger = logging.getLogger(__name__)
 _YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
 _AUDIO_SUFFIXES = {".flac", ".wav", ".m4a", ".mp3", ".aac", ".ogg", ".opus"}
 _METADATA_TIMEOUT_SECONDS = 30
-_PYTUBEFIX_CLIENT = "WEB"
-_POT_PENDING_RETRY_SECONDS = 2
-_YOUTUBE_USE_OAUTH = os.environ.get("YOUTUBE_USE_OAUTH", "").lower() in {
-    "1",
-    "true",
-    "yes",
-}
-_YOUTUBE_OAUTH_TOKEN_FILE = os.environ.get(
-    "YOUTUBE_OAUTH_TOKEN_FILE", "/app/cache/pytubefix-youtube-oauth.json"
-)
+_M4A_FORMAT = "bestaudio[ext=m4a]"
+_YOUTUBE_WATCH_URL = "https://www.youtube.com/watch?v={}"
 
 
 def _validate_url(value: str) -> str:
@@ -37,7 +28,7 @@ def _validate_url(value: str) -> str:
         raise ValidationError("Enter a valid YouTube or youtu.be link")
     query = dict(parse_qsl(parsed.query, keep_blank_values=True))
     # A YouTube Mix is an endless, generated radio queue. Keep its selected
-    # video, but discard generated queue parameters before pytubefix sees them.
+    # video, but discard generated queue parameters before the extractor sees them.
     if query.get("v") and query.get("list", "").startswith("RD"):
         query.pop("list", None)
         query.pop("start_radio", None)
@@ -67,20 +58,24 @@ class YouTubeDownloadService:
                 "YouTube metadata timed out. Check the server's internet connection and try again."
             ) from exc
         except Exception as exc:  # noqa: BLE001
-            logger.info("pytubefix metadata lookup failed: %s", exc)
+            logger.info("yt-dlp metadata lookup failed: %s", exc)
             raise ValidationError("Could not read YouTube metadata") from exc
 
     async def download(self, *, user_id: str, url: str) -> str:
         url = _validate_url(url)
         info = await self.preview(url)
+        release_group_mbid, recording_mbid = _youtube_local_ids(url)
         task = await self._store.create_task(
             user_id=user_id,
             source="youtube",
-            download_client="pytubefix",
+            download_client="yt-dlp",
             download_type="track",
+            release_group_mbid=release_group_mbid,
+            recording_mbid=recording_mbid,
             artist_name=str(info["uploader"] or "YouTube"),
             album_title=str(info["title"]),
             track_title=str(info["title"]),
+            cover_url=str(info.get("thumbnail") or "") or None,
             search_query=url,
             status="downloading",
         )
@@ -122,9 +117,12 @@ class YouTubeDownloadService:
                 user_id=user_id,
                 user_name="YouTube",
                 uploads=[(path.name, path) for path in files],
+                release_group_mbid=task.release_group_mbid if task else None,
+                recording_mbid=task.recording_mbid if task else None,
                 requested_artist_name=task.artist_name if task else None,
                 requested_album_title=task.album_title if task else None,
                 requested_track_title=task.track_title if task else None,
+                requested_cover_url=task.cover_url if task else None,
             )
             await self._store.update_status(
                 task_id,
@@ -152,42 +150,28 @@ class YouTubeDownloadService:
         self, url: str, staging: Path, task_id: str, loop: asyncio.AbstractEventLoop
     ) -> None:
         for index, video_url in enumerate(_video_urls(url), start=1):
-            filename = f"youtube-{index}.m4a"
-            for attempt in range(2):
-                video = _new_video(
-                    video_url,
-                    on_progress_callback=lambda stream,
-                    _chunk,
-                    remaining: _schedule_progress(
+            options = _ydl_options(
+                noplaylist=True,
+                format=_M4A_FORMAT,
+                outtmpl=str(staging / "%(title).200B [%(id)s].%(ext)s"),
+                progress_hooks=[
+                    lambda progress: _schedule_progress(
                         loop,
                         self._publish_progress,
                         task_id,
-                        stream.filesize,
-                        remaining,
-                    ),
-                )
-                stream = (
-                    video.streams.filter(only_audio=True, mime_type="audio/mp4")
-                    .order_by("abr")
-                    .desc()
-                    .first()
-                )
-                if stream is None:
-                    raise RuntimeError("YouTube did not provide an M4A audio stream")
-                try:
-                    # audio/mp4 is M4A-compatible; use .m4a so the importer
-                    # recognizes the native stream without a lossy conversion.
-                    stream.download(output_path=str(staging), filename=filename)
-                    break
-                except SABRError as exc:
-                    if attempt or "PoToken PENDING" not in str(exc):
-                        raise
-                    # pytubefix can return a stream before its automatically
-                    # generated PO token has propagated. Retry once with a
-                    # fresh client/token rather than importing a partial file.
-                    logger.info("PO token is pending; retrying YouTube stream once")
-                    (staging / filename).unlink(missing_ok=True)
-                    time.sleep(_POT_PENDING_RETRY_SECONDS)
+                        progress,
+                    )
+                ],
+            )
+            try:
+                with YoutubeDL(options) as ydl:
+                    ydl.download([video_url])
+            except DownloadError as exc:
+                if "Requested format is not available" in str(exc):
+                    raise RuntimeError(
+                        "YouTube did not provide an M4A audio stream"
+                    ) from exc
+                raise
 
     async def _publish_progress(
         self, task_id: str, total_bytes: int | None, bytes_remaining: int
@@ -205,40 +189,88 @@ class YouTubeDownloadService:
 
 def _preview_for_url(url: str) -> dict[str, object]:
     video_url = next(iter(_video_urls(url)), url)
-    video = _new_video(video_url)
+    with YoutubeDL(_ydl_options(noplaylist=True, skip_download=True)) as ydl:
+        video = ydl.extract_info(video_url, download=False)
+    if not isinstance(video, dict):
+        raise RuntimeError("YouTube metadata was unavailable")
     return {
         "url": url,
-        "title": str(video.title or "Untitled"),
-        "uploader": str(video.author or ""),
-        "duration_seconds": video.length,
-        "thumbnail": str(video.thumbnail_url or "") or None,
+        "title": str(video.get("title") or "Untitled"),
+        "uploader": str(video.get("uploader") or video.get("channel") or ""),
+        "duration_seconds": video.get("duration"),
+        "thumbnail": str(video.get("thumbnail") or "") or None,
     }
 
 
 def _video_urls(url: str) -> list[str]:
     query = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
     if query.get("list") and not query.get("v"):
-        return list(Playlist(url).video_urls)
+        with YoutubeDL(
+            _ydl_options(extract_flat=True, noplaylist=False, skip_download=True)
+        ) as ydl:
+            playlist = ydl.extract_info(url, download=False)
+        entries = playlist.get("entries") if isinstance(playlist, dict) else None
+        urls = [_entry_url(entry) for entry in entries or []]
+        return [entry_url for entry_url in urls if entry_url]
     return [url]
 
 
-def _new_video(url: str, *, on_progress_callback=None):  # noqa: ANN001
-    """Create a pytubefix client with an optional browser-issued PO token."""
-    options = {"client": _PYTUBEFIX_CLIENT}
-    if on_progress_callback is not None:
-        options["on_progress_callback"] = on_progress_callback
-    if _YOUTUBE_USE_OAUTH:
-        options.update(
-            use_oauth=True,
-            allow_oauth_cache=True,
-            token_file=_YOUTUBE_OAUTH_TOKEN_FILE,
-        )
-    return YouTube(url, **options)
+def _entry_url(entry) -> str | None:  # noqa: ANN001
+    if not isinstance(entry, dict):
+        return None
+    webpage_url = entry.get("webpage_url")
+    if isinstance(webpage_url, str) and webpage_url.startswith(("http://", "https://")):
+        return webpage_url
+    video_id = entry.get("id")
+    if isinstance(video_id, str) and video_id:
+        return _YOUTUBE_WATCH_URL.format(video_id)
+    entry_url = entry.get("url")
+    return (
+        entry_url
+        if isinstance(entry_url, str) and entry_url.startswith("http")
+        else None
+    )
+
+
+def _youtube_local_ids(url: str) -> tuple[str, str]:
+    """Build stable library-only IDs without pretending they are MusicBrainz IDs."""
+    parsed = urlparse(url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    video_id = query.get("v")
+    if not video_id and parsed.hostname == "youtu.be":
+        video_id = parsed.path.strip("/").split("/", 1)[0]
+    identity = video_id or query.get("list")
+    if not identity:
+        identity = hashlib.sha256(url.encode("utf-8")).hexdigest()[:20]
+    return f"youtube:album:{identity}", f"youtube:track:{identity}"
+
+
+def _ydl_options(**overrides) -> dict[str, object]:  # noqa: ANN003
+    """Return quiet, server-safe yt-dlp Python API options."""
+    options: dict[str, object] = {
+        "quiet": True,
+        "no_warnings": True,
+        # The production image already includes Node for YouTube's JS challenges.
+        "js_runtimes": {"node": {}},
+    }
+    options.update(overrides)
+    return options
 
 
 def _schedule_progress(
-    loop, callback, task_id: str, total_bytes: int | None, bytes_remaining: int
+    loop, callback, task_id: str, progress: dict[str, object]
 ) -> None:  # noqa: ANN001
+    if progress.get("status") != "downloading":
+        return
+    total_bytes = progress.get("total_bytes") or progress.get("total_bytes_estimate")
+    downloaded_bytes = progress.get("downloaded_bytes")
+    if not isinstance(total_bytes, (int, float)) or not isinstance(
+        downloaded_bytes, (int, float)
+    ):
+        return
     asyncio.run_coroutine_threadsafe(
-        callback(task_id, total_bytes, bytes_remaining), loop
+        callback(
+            task_id, int(total_bytes), max(0, int(total_bytes - downloaded_bytes))
+        ),
+        loop,
     )

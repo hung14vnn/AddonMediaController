@@ -9,7 +9,11 @@ from api.v1.schemas.search import (
     EnrichmentBatchRequest,
     SuggestResponse,
 )
-from core.dependencies import get_search_service, get_coverart_repository, get_search_enrichment_service
+from core.dependencies import (
+    get_search_service,
+    get_coverart_repository,
+    get_search_enrichment_service,
+)
 from infrastructure.degradation import try_get_degradation_context
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 
@@ -32,8 +36,10 @@ async def search(
     current_user: CurrentUserDep,
     q: str = Query(..., min_length=1, description="Search term"),
     limit_per_bucket: int | None = Query(
-        None, ge=1, le=100,
-        description="Max items per bucket (deprecated, use limit_artists/limit_albums)"
+        None,
+        ge=1,
+        le=100,
+        description="Max items per bucket (deprecated, use limit_artists/limit_albums)",
     ),
     limit_artists: int = Query(10, ge=0, le=100, description="Max artists to return"),
     limit_albums: int = Query(10, ge=0, le=100, description="Max albums to return"),
@@ -46,31 +52,27 @@ async def search(
 ):
     if await request.is_disconnected():
         raise ClientDisconnectedError("Client disconnected")
-    
+
     buckets_list = [b.strip().lower() for b in buckets.split(",")] if buckets else None
-    
+
     final_limit_artists = limit_per_bucket if limit_per_bucket else limit_artists
     final_limit_albums = limit_per_bucket if limit_per_bucket else limit_albums
-    
+
     result = await search_service.search(
         query=q,
         limit_artists=final_limit_artists,
         limit_albums=final_limit_albums,
-        buckets=buckets_list
+        buckets=buckets_list,
     )
-    
+
     ctx = try_get_degradation_context()
     if ctx is not None and ctx.has_degradation():
         result = msgspec.structs.replace(result, service_status=ctx.degraded_summary())
-    
+
     album_ids = search_service.schedule_cover_prefetch(result.albums)
     if album_ids:
-        background_tasks.add_task(
-            coverart_repo.batch_prefetch_covers,
-            album_ids,
-            "250"
-        )
-    
+        background_tasks.add_task(coverart_repo.batch_prefetch_covers, album_ids, "250")
+
     if current_user:
         spotify = await client_factory.resolve_spotify_catalog()
         if not spotify:
@@ -78,21 +80,35 @@ async def search(
         if spotify:
             try:
                 from api.v1.schemas.search import SpotifyTrackResult
+
                 spotify_tracks, _ = await spotify.search_tracks(q, limit=10)
                 seen_track_ids: set[str] = set()
-                result = msgspec.structs.replace(result, tracks=[
-                    SpotifyTrackResult(
-                        title=t.get("name", ""),
-                        artist=", ".join(a.get("name", "") for a in t.get("artists", [])),
-                        album=(t.get("album") or {}).get("name", ""),
-                        spotify_id=t.get("id", ""),
-                        spotify_url=(t.get("external_urls") or {}).get("spotify"),
-                        preview_url=t.get("preview_url"),
-                        album_image_url=((t.get("album") or {}).get("images") or [{}])[0].get("url"),
-                        duration_ms=t.get("duration_ms"),
-                    ) for t in spotify_tracks
-                    if t.get("id") and not (t.get("id") in seen_track_ids or seen_track_ids.add(t.get("id")))
-                ])
+                result = msgspec.structs.replace(
+                    result,
+                    tracks=[
+                        SpotifyTrackResult(
+                            title=t.get("name", ""),
+                            artist=", ".join(
+                                a.get("name", "") for a in t.get("artists", [])
+                            ),
+                            album=(t.get("album") or {}).get("name", ""),
+                            spotify_id=t.get("id", ""),
+                            spotify_album_id=(t.get("album") or {}).get("id"),
+                            spotify_url=(t.get("external_urls") or {}).get("spotify"),
+                            preview_url=t.get("preview_url"),
+                            album_image_url=(
+                                (t.get("album") or {}).get("images") or [{}]
+                            )[0].get("url"),
+                            duration_ms=t.get("duration_ms"),
+                        )
+                        for t in spotify_tracks
+                        if t.get("id")
+                        and not (
+                            t.get("id") in seen_track_ids
+                            or seen_track_ids.add(t.get("id"))
+                        )
+                    ],
+                )
             except Exception:
                 logger.exception("Spotify supplemental search failed")
     return result
@@ -125,11 +141,12 @@ async def suggest(
                 ),
                 album=(track.get("album") or {}).get("name", ""),
                 spotify_id=track_id,
+                spotify_album_id=(track.get("album") or {}).get("id"),
                 spotify_url=(track.get("external_urls") or {}).get("spotify"),
                 preview_url=track.get("preview_url"),
-                album_image_url=((track.get("album") or {}).get("images") or [{}])[0].get(
-                    "url"
-                ),
+                album_image_url=((track.get("album") or {}).get("images") or [{}])[
+                    0
+                ].get("url"),
                 duration_ms=track.get("duration_ms"),
             )
             for track in tracks
@@ -148,22 +165,27 @@ async def search_bucket(
     q: str = Query(..., min_length=1, description="Search term"),
     limit: int = Query(50, ge=1, le=100, description="Page size"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
-    search_service: SearchService = Depends(get_search_service)
+    search_service: SearchService = Depends(get_search_service),
 ):
     results, top_result = await search_service.search_bucket(
-        bucket=bucket,
-        query=q,
-        limit=limit,
-        offset=offset
+        bucket=bucket, query=q, limit=limit, offset=offset
     )
-    return SearchBucketResponse(bucket=bucket, limit=limit, offset=offset, results=results, top_result=top_result)
+    return SearchBucketResponse(
+        bucket=bucket,
+        limit=limit,
+        offset=offset,
+        results=results,
+        top_result=top_result,
+    )
 
 
 @router.get("/enrich/batch", response_model=EnrichmentResponse)
 async def enrich_search_results(
     artist_mbids: str = Query("", description="Comma-separated artist MBIDs"),
     album_mbids: str = Query("", description="Comma-separated album MBIDs"),
-    enrichment_service: SearchEnrichmentService = Depends(get_search_enrichment_service)
+    enrichment_service: SearchEnrichmentService = Depends(
+        get_search_enrichment_service
+    ),
 ):
     artist_list = [m.strip() for m in artist_mbids.split(",") if m.strip()]
     album_list = [m.strip() for m in album_mbids.split(",") if m.strip()]
@@ -177,7 +199,8 @@ async def enrich_search_results(
 @router.post("/enrich/batch", response_model=EnrichmentResponse)
 async def enrich_search_results_post(
     body: EnrichmentBatchRequest = MsgSpecBody(EnrichmentBatchRequest),
-    enrichment_service: SearchEnrichmentService = Depends(get_search_enrichment_service),
+    enrichment_service: SearchEnrichmentService = Depends(
+        get_search_enrichment_service
+    ),
 ):
     return await enrichment_service.enrich_batch(body)
-

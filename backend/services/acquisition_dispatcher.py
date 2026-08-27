@@ -112,6 +112,8 @@ class AcquisitionDispatcher:
                 artist_mbid=artist_mbid,
                 cover_url=cover_url,
                 origin=origin,
+                year=year,
+                track_count=track_count,
             )
         if self._use_free_music():
             resolved_track_count = await self._free_music_track_count(

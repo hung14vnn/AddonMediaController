@@ -535,7 +535,7 @@ def get_target_album_identification_service() -> "AlbumIdentificationService":
         resolved_any = False
         for local_album_id in local_album_ids or ():
             try:
-                rg_scope, artist_scope = store.album_catalog_scope_ids(
+                rg_scope, artist_scope = await store.album_catalog_scope_ids(
                     str(local_album_id)
                 )
             except Exception:  # noqa: BLE001 - resolution failure falls back to bulk sweep
@@ -994,32 +994,6 @@ def get_library_scanner() -> "LibraryScanner":
     )
 
 
-def _build_file_processor(library_manager, library_paths) -> "FileProcessor":
-    from pathlib import Path
-
-    from core.config import get_settings
-    from services.native.file_processor import FileProcessor
-    from services.native.recycle_bin import resolve_bin_path
-
-    from .repo_providers import get_download_client_repository, get_download_store
-
-    policy = get_preferences_service().get_download_policy()
-    return FileProcessor(
-        get_audio_tagger(),
-        naming_engine=get_naming_template_engine(),
-        library_manager=library_manager,
-        library_paths=[Path(path) for path in library_paths],
-        client=get_download_client_repository(),
-        slskd_downloads_path=Path(get_settings().slskd_downloads_path),
-        fingerprinter=get_audio_fingerprinter(),
-        verify_downloads=policy.verify_downloads,
-        saving_storage_mode=policy.saving_storage_mode,
-        download_store=get_download_store(),
-        held_dir=Path(get_settings().cache_dir) / "held",
-        recycle_bin=resolve_bin_path(policy.recycle_bin_path, library_paths),
-    )
-
-
 @singleton
 def get_file_processor() -> "FileProcessor":
     lib = get_preferences_service().get_typed_library_settings_raw()
@@ -1039,6 +1013,9 @@ def get_target_import_library_service() -> "TargetImportLibraryService":
         get_library_policy_resolver,
         get_target_identification_queue(),
         policy_transition_lock=get_library_policy_transition_lock(),
+        filesystem_coordinator=get_library_filesystem_coordinator(),
+        management_publisher=get_library_management_publisher(),
+        automatic_management=get_automatic_import_management_service(),
     )
 
 
@@ -1069,6 +1046,7 @@ def _build_file_processor(
         slskd_downloads_path=Path(settings.slskd_downloads_path),
         fingerprinter=get_audio_fingerprinter(),
         verify_downloads=policy.verify_downloads,
+        saving_storage_mode=policy.saving_storage_mode,
         download_store=get_download_store(),
         held_dir=Path(get_settings().cache_dir) / "held",
         recycle_bin=resolve_bin_path(policy.recycle_bin_path, library_paths),
@@ -1081,9 +1059,13 @@ def _build_file_processor(
 @singleton
 def get_target_file_processor() -> "FileProcessor":
     resolver = get_library_policy_resolver()
+    import_library = get_target_import_library_service()
     return _build_file_processor(
-        get_target_import_library_service(),
+        import_library,
         [root.path for root in resolver.settings.library_roots],
+        library_root_ids=[root.id for root in resolver.settings.library_roots],
+        publish_import_bundle=import_library.publish_import_bundle,
+        policy_revision_getter=lambda: get_library_policy_resolver().policy_revision,
     )
 
 
@@ -1151,6 +1133,20 @@ def get_youtube_download_service():
     return YouTubeDownloadService(
         drop_import=get_drop_import_service(), download_store=get_download_store(),
         event_bus=get_sse_publisher(), staging_root=get_settings().cache_dir / "youtube-downloads",
+    )
+
+
+@singleton
+def get_target_youtube_download_service():
+    from core.config import get_settings
+    from services.native.youtube_download_service import YouTubeDownloadService
+    from .repo_providers import get_download_store
+
+    return YouTubeDownloadService(
+        drop_import=get_target_drop_import_service(),
+        download_store=get_download_store(),
+        event_bus=get_sse_publisher(),
+        staging_root=get_settings().cache_dir / "youtube-downloads",
     )
 
 

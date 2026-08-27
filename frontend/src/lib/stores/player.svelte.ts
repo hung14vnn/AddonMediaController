@@ -605,7 +605,17 @@ function createPlayerStore() {
 				radioSession.end();
 			}
 			void resumeAudioEngine();
-			const s = buildPlayQueueState(items, startIndex, shuffle);
+			const currentItem = queue[currentIndex];
+			const matchingCurrentIndex =
+				shuffle && currentItem?.playlistTrackId
+					? items.findIndex((item) => item.playlistTrackId === currentItem.playlistTrackId)
+					: -1;
+			const s = buildPlayQueueState(
+				items,
+				matchingCurrentIndex >= 0 ? matchingCurrentIndex : startIndex,
+				shuffle,
+				matchingCurrentIndex >= 0
+			);
 			queue = s.queue;
 			shuffleEnabled = s.shuffleEnabled;
 			shuffleOrder = s.shuffleOrder;

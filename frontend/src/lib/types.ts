@@ -80,6 +80,7 @@ export type SpotifyTrackResult = {
 	artist: string;
 	album: string;
 	spotify_id: string;
+	spotify_album_id?: string | null;
 	spotify_url?: string | null;
 	preview_url?: string | null;
 	album_image_url?: string | null;
@@ -2469,6 +2470,7 @@ export interface HeldListResponse {
 }
 
 export interface DownloadSourceUpdate {
+	provider?: string | null;
 	candidate_index: number | null;
 	source: string | null;
 	quality_format: string | null;

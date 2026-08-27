@@ -69,6 +69,9 @@
 
 	const progress = $derived(stream.state.progress);
 	const livePct = $derived(progress?.progress_percent ?? task.progress_percent);
+	const isIndeterminate = $derived(
+		task.source === 'spotiflac' && (progress?.bytes_total ?? task.total_size_bytes ?? 0) <= 0
+	);
 	const isOwnedByOther = $derived(authStore.isAdmin && task.user_id !== authStore.user?.id);
 
 	let reviewOpen = $state(false);
@@ -129,6 +132,9 @@
 			</p>
 			<div class="mt-1 flex flex-wrap items-center gap-1.5">
 				<DownloadStatusBadge {task} />
+				{#if task.source === 'spotiflac'}
+					<span class="badge badge-ghost badge-sm">SpotiFLAC</span>
+				{/if}
 				{#if task.source === 'usenet'}
 					<span class="badge badge-ghost badge-sm">Usenet</span>
 				{/if}
@@ -163,6 +169,7 @@
 						bytesTotal={progress?.bytes_total ?? task.total_size_bytes ?? 0}
 						filesCompleted={progress?.files_completed ?? task.files_completed}
 						filesTotal={progress?.files_total ?? task.files_total}
+						indeterminate={isIndeterminate}
 					/>
 				</div>
 			{/if}

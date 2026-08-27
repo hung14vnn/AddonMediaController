@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +32,52 @@ logger = logging.getLogger(__name__)
 # this just caps the fan-out so we don't queue hundreds of coroutines
 # at once for very large playlists.
 _MB_CONCURRENCY = 4
+_MAX_COVER_SIZE = 2 * 1024 * 1024
+CoverFetcher = Callable[[str], Awaitable[tuple[bytes, str] | None]]
+
+
+def _record_degradation(message: str) -> None:
+    context = try_get_degradation_context()
+    if context is not None:
+        context.record(IntegrationResult.error(source="spotify", msg=message))
+
+
+async def fetch_spotify_playlist_cover(
+    url: str, client: httpx.AsyncClient
+) -> tuple[bytes, str] | None:
+    if not validate_spotify_cover_url(url):
+        return None
+
+    try:
+        async with client.stream("GET", url, follow_redirects=False) as response:
+            if response.status_code != 200:
+                return None
+
+            content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+            if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+                return None
+
+            declared_length = response.headers.get("content-length")
+            if declared_length is not None and int(declared_length) > _MAX_COVER_SIZE:
+                return None
+
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in response.aiter_bytes():
+                total += len(chunk)
+                if total > _MAX_COVER_SIZE:
+                    return None
+                chunks.append(chunk)
+            return b"".join(chunks), content_type
+    except (ValueError, httpx.HTTPError):
+        return None
+
+
+def cover_fetcher_for(client: httpx.AsyncClient) -> CoverFetcher:
+    async def fetcher(url: str) -> tuple[bytes, str] | None:
+        return await fetch_spotify_playlist_cover(url, client)
+
+    return fetcher
 
 
 class SpotifyNotLinkedError(Exception):

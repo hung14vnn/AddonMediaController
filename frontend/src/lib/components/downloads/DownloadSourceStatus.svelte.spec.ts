@@ -198,6 +198,28 @@ describe('DownloadSourceStatus.svelte', () => {
 			.not.toBeInTheDocument();
 	});
 
+	it('shows the SpotiFLAC download status and active provider', async () => {
+		renderStatus(task({ source: 'spotiflac', source_username: null, remote_queued: false }), 128, {
+			provider: 'ext:tidal-web',
+			candidate_index: null,
+			source: 'spotiflac',
+			quality_format: null,
+			quality_bit_depth: null,
+			quality_sample_rate: null,
+			advertised_queue_depth: null,
+			queue_position_start: null,
+			queue_position_end: null,
+			remote_queued: false,
+			preferred_quality_fallback_at: null,
+			attempt_number: 0,
+			attempt_total: 0,
+			has_next_source: false
+		});
+
+		await expect.element(page.getByText('Downloading with SpotiFLAC')).toBeVisible();
+		await expect.element(page.getByText('Provider: tidal-web')).toBeVisible();
+	});
+
 	it('does not call a zero-byte connection queued until the peer confirms it', async () => {
 		renderStatus(task({ remote_queued: false }));
 

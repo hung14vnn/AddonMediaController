@@ -120,7 +120,11 @@ def test_suggest_includes_spotify_tracks_when_catalog_is_configured(client):
                 "id": "spotify-track-1",
                 "name": "Come My Way",
                 "artists": [{"name": "Artist"}],
-                "album": {"name": "Album", "images": [{"url": "https://image"}]},
+                "album": {
+                    "id": "spotify-album-1",
+                    "name": "Album",
+                    "images": [{"url": "https://image"}],
+                },
                 "external_urls": {"spotify": "https://open.spotify.com/track/1"},
                 "duration_ms": 180000,
             }
@@ -141,6 +145,7 @@ def test_suggest_includes_spotify_tracks_when_catalog_is_configured(client):
             "artist": "Artist",
             "album": "Album",
             "spotify_id": "spotify-track-1",
+            "spotify_album_id": "spotify-album-1",
             "spotify_url": "https://open.spotify.com/track/1",
             "preview_url": None,
             "album_image_url": "https://image",
@@ -187,7 +192,9 @@ def test_search_response_tolerates_additive_score_field():
     test_app.include_router(router)
     test_app.dependency_overrides[get_search_service] = lambda: mock_search_service
     test_app.dependency_overrides[get_coverart_repository] = lambda: mock_coverart
-    test_app.dependency_overrides[get_search_enrichment_service] = lambda: mock_enrichment
+    test_app.dependency_overrides[get_search_enrichment_service] = (
+        lambda: mock_enrichment
+    )
     test_app.dependency_overrides[get_per_user_client_factory] = lambda: AsyncMock(
         resolve_spotify_catalog=AsyncMock(return_value=None)
     )

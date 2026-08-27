@@ -39,7 +39,9 @@ function parseSourceUpdate(
 	data: Record<string, unknown>,
 	previous: DownloadSourceUpdate | null
 ): DownloadSourceUpdate {
+	const provider = nullableString(data, 'provider', previous?.provider ?? null);
 	return {
+		...(provider !== null || 'provider' in data ? { provider } : {}),
 		candidate_index: nullableNumber(data, 'candidate_index', previous?.candidate_index ?? null),
 		source: nullableString(data, 'source', previous?.source ?? null),
 		quality_format: nullableString(data, 'quality_format', previous?.quality_format ?? null),

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import shutil
 import threading
@@ -10,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 _PROVIDER_FALLBACKS = ["ext:tidal-web", "ext:qobuz-web", "ext:deezer", "ext:amazon"]
 _SPOTIFLAC_PROVIDER_TIMEOUT_SECONDS = 150
+_SPOTIFLAC_PROGRESS_INTERVAL_SECONDS = 1.0
 
 _AUDIO_EXTENSIONS = {
     ".flac",
@@ -149,6 +151,8 @@ class SpotiflacService:
             cover_url=kwargs.get("cover_url"),
             origin=kwargs.get("origin", "user"),
             retry_count=kwargs.get("retry_count", 0),
+            year=kwargs.get("year"),
+            track_count=kwargs.get("track_count"),
         )
 
     async def request_track(
@@ -288,63 +292,95 @@ class SpotiflacService:
                 "SpotiFLAC is not enabled or its downloads mount is unavailable"
             )
 
-        from SpotiFLAC.client import AsyncSpotiFLAC
-
-        _patch_spotiflac_cross_loop_lock()
-
         settings = self._prefs.get_spotiflac_connection()
-
-        async with AsyncSpotiFLAC(
-            **spotiflac_client_options(
-                settings.downloads_mount,
-                settings.quality,
-            )
-        ) as client:
-            results = await client.search(query, limit=5)
-
-        match = next(iter(results.get(result_kind) or []), None)
-
-        if match is None:
-            raise ValidationError(
-                "SpotiFLAC could not find a Spotify match for this request"
-            )
-
-        url = (
-            match.external_url
-            if result_kind == "tracks"
-            else match.get("external_url")
-        )
-
-        if not url:
-            raise ValidationError(
-                "SpotiFLAC returned a result without a Spotify URL"
-            )
-
         task = await self._store.create_task(
             user_id=user_id,
             source="spotiflac",
             download_client="spotiflac",
-            status="downloading",
+            status="queued",
             **task_fields,
         )
 
         await self._bus.publish(
             f"download:{task.id}",
             "status",
-            {"status": "downloading"},
+            {"status": "queued", "source": "spotiflac"},
         )
 
         asyncio.create_task(
-            self._download(
+            self._resolve_and_download(
                 task.id,
                 user_id,
-                url,
+                query,
+                result_kind,
                 settings.quality,
                 Path(settings.downloads_mount),
             )
         )
 
         return task.id
+
+    async def _resolve_and_download(
+        self,
+        task_id: str,
+        user_id: str,
+        query: str,
+        result_kind: str,
+        quality: str,
+        output: Path,
+    ) -> None:
+        """Resolve the Spotify URL after the task is visible in the queue."""
+        try:
+            from SpotiFLAC.client import AsyncSpotiFLAC
+
+            _patch_spotiflac_cross_loop_lock()
+            async with AsyncSpotiFLAC(
+                **spotiflac_client_options(str(output), quality)
+            ) as client:
+                results = await client.search(query, limit=5)
+
+            match = next(iter(results.get(result_kind) or []), None)
+            if match is None:
+                raise ValidationError(
+                    "SpotiFLAC could not find a Spotify match for this request"
+                )
+
+            url = (
+                match.external_url
+                if result_kind == "tracks"
+                else match.get("external_url")
+            )
+            if not url:
+                raise ValidationError(
+                    "SpotiFLAC returned a result without a Spotify URL"
+                )
+
+            task = await self._store.get_task(task_id)
+            if task is not None and task.status == "cancelled":
+                return
+
+            await self._store.update_status(task_id, "downloading")
+            await self._bus.publish(
+                f"download:{task_id}",
+                "status",
+                {"status": "downloading", "source": "spotiflac"},
+            )
+            await self._download(task_id, user_id, url, quality, output)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - surface background lookup failures
+            logger.exception("SpotiFLAC task %s lookup failed", task_id)
+            err_msg = str(exc) or "SpotiFLAC task failed"
+            await self._store.update_status(
+                task_id,
+                "failed",
+                error_message=err_msg,
+            )
+            await self._bus.publish(
+                f"download:{task_id}",
+                "complete",
+                {"status": "failed", "error": err_msg},
+            )
 
     async def _convert_to_m4a(self, source: Path) -> Path:
         """Convert an audio file to AAC 256 kbps M4A."""
@@ -422,11 +458,15 @@ class SpotiflacService:
         _patch_spotiflac_cross_loop_lock()
 
         staging = output / f".droppedneedle-{task_id}"
+        progress_task: asyncio.Task | None = None
 
         try:
             staging.mkdir(
                 parents=True,
                 exist_ok=True,
+            )
+            progress_task = asyncio.create_task(
+                self._watch_progress(task_id, staging)
             )
 
             downloaded_files: list[Path] = []
@@ -437,6 +477,15 @@ class SpotiflacService:
             # the next extension, so isolate each provider behind its own
             # deadline and client lifecycle.
             for provider in _PROVIDER_FALLBACKS:
+                await self._bus.publish(
+                    f"download:{task_id}",
+                    "status",
+                    {
+                        "status": "downloading",
+                        "source": "spotiflac",
+                        "provider": provider,
+                    },
+                )
                 options = spotiflac_client_options(str(staging), quality)
                 options.update(
                     services=[provider],
@@ -566,8 +615,82 @@ class SpotiflacService:
             )
 
         finally:
+            if progress_task is not None:
+                progress_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await progress_task
             await asyncio.to_thread(
                 shutil.rmtree,
                 staging,
                 True,
             )
+
+    async def _watch_progress(self, task_id: str, staging: Path) -> None:
+        """Report best-effort progress while SpotiFLAC writes its output.
+
+        SpotiFLAC does not expose a callback through its async client. The staging
+        directory is private to this task, so its file sizes provide a safe live
+        byte counter even when the provider writes a temporary extension first.
+        The total size is intentionally left unknown; the UI renders this as an
+        indeterminate transfer until the import completes.
+        """
+        previous: tuple[int, int] | None = None
+        while True:
+            await asyncio.sleep(_SPOTIFLAC_PROGRESS_INTERVAL_SECONDS)
+            try:
+                files = [path for path in staging.rglob("*") if path.is_file()]
+                bytes_downloaded = sum(path.stat().st_size for path in files)
+                audio_files = [
+                    path
+                    for path in files
+                    if path.suffix.lower() in _AUDIO_EXTENSIONS
+                ]
+                snapshot = (bytes_downloaded, len(audio_files))
+                if snapshot == previous:
+                    continue
+                previous = snapshot
+
+                task = await self._store.get_task(task_id)
+                files_total = int(
+                    getattr(task, "track_count", None)
+                    or (1 if getattr(task, "download_type", None) == "track" else 0)
+                )
+                progress_percent = (
+                    min(99, int(len(audio_files) * 100 / files_total))
+                    if files_total
+                    else 0
+                )
+                await self._store.update_status(
+                    task_id,
+                    "downloading",
+                    downloaded_bytes=bytes_downloaded,
+                    files_total=files_total,
+                    files_completed=min(len(audio_files), files_total)
+                    if files_total
+                    else len(audio_files),
+                    progress_percent=progress_percent,
+                )
+                await self._bus.publish(
+                    f"download:{task_id}",
+                    "progress",
+                    {
+                        "source": "spotiflac",
+                        "bytes_downloaded": bytes_downloaded,
+                        "bytes_total": 0,
+                        "files_completed": len(audio_files),
+                        "files_total": files_total,
+                        "progress_percent": progress_percent,
+                    },
+                )
+            except (FileNotFoundError, OSError):
+                # A provider can replace a temporary file between the scan and
+                # stat; the next tick will observe the new file.
+                continue
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - progress must never stop the download
+                logger.debug(
+                    "SpotiFLAC progress probe failed for task %s",
+                    task_id,
+                    exc_info=True,
+                )

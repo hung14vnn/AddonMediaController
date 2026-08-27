@@ -38,6 +38,9 @@ from services.native.library_management_undo_service import LibraryManagementUnd
 from services.native.library_management_baseline_service import LibraryManagementBaselineService
 from services.native.library_management_duplicate_service import LibraryManagementDuplicateService
 from services.native.library_management_recovery_service import LibraryManagementRecoveryService
+from services.native.library_policy_reconciliation_service import (
+    LibraryPolicyReconciliationService,
+)
 from services.native.target_library_policy_service import TargetLibraryPolicyService
 from services.native.library_policy_resolver import LibraryPolicyResolver
 from services.native.legacy_pending_migration_service import LegacyPendingMigrationService

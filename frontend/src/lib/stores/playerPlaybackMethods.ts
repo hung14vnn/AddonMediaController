@@ -13,10 +13,14 @@ export interface PlayQueueResult {
 export function buildPlayQueueState(
 	items: QueueItem[],
 	startIndex: number,
-	shuffle: boolean
+	shuffle: boolean,
+	preserveCurrentItem = false
 ): PlayQueueResult {
 	const queue = stampOrigin(items, 'context');
-	const shuffleOrder = shuffle ? shuffleArray(items.length) : [];
+	let shuffleOrder = shuffle ? shuffleArray(items.length) : [];
+	if (shuffle && preserveCurrentItem && startIndex >= 0 && startIndex < items.length) {
+		shuffleOrder = [startIndex, ...shuffleOrder.filter((index) => index !== startIndex)];
+	}
 	const actualStart = shuffle ? shuffleOrder[0] : startIndex;
 	return {
 		queue,

@@ -61,11 +61,17 @@
 	async function submitManual() {
 		if (match.isPending || !trackTitle.trim() || !albumTitle.trim() || !artistName.trim()) return;
 		try {
+			const spotifyAlbumId = selectedSpotifyTrack?.spotify_album_id || selectedSpotifyTrack?.spotify_id;
 			await match.mutateAsync({
 				itemId: item.id,
+				releaseGroupMbid: spotifyAlbumId ? `spotify:album:${spotifyAlbumId}` : undefined,
+				recordingMbid: selectedSpotifyTrack
+					? `spotify:track:${selectedSpotifyTrack.spotify_id}`
+					: undefined,
 				trackTitle: trackTitle.trim(),
 				albumTitle: albumTitle.trim(),
-				artistName: artistName.trim()
+				artistName: artistName.trim(),
+				coverUrl: selectedSpotifyTrack?.album_image_url ?? undefined
 			});
 			onclose();
 		} catch {

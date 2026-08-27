@@ -25,6 +25,7 @@
 
 	const candidateIndex = $derived(live ? live.candidate_index : task.candidate_index);
 	const source = $derived(live?.source ?? task.source);
+	const provider = $derived(live?.provider ?? null);
 	const qualityFormat = $derived(live ? live.quality_format : task.quality_format);
 	const qualityBitDepth = $derived(live ? live.quality_bit_depth : task.quality_bit_depth);
 	const qualitySampleRate = $derived(live ? live.quality_sample_rate : task.quality_sample_rate);
@@ -110,7 +111,25 @@
 	});
 </script>
 
-{#if source === 'soulseek' && task.status === 'downloading' && !task.held_for_review}
+{#if source === 'spotiflac' && task.status === 'downloading' && !task.held_for_review}
+	<div
+		class:source-telemetry-compact={compact}
+		class="source-telemetry mt-2"
+		role="status"
+		aria-live="polite"
+		aria-atomic="true"
+	>
+		<div class="min-w-0">
+			<p class="text-xs font-bold tracking-wide text-base-content/85">SpotiFLAC</p>
+			<p class="mt-0.5 text-xs text-base-content/65">Downloading with SpotiFLAC</p>
+		</div>
+		{#if provider}
+			<div class="source-facts">
+				<span>Provider: {provider.replace(/^ext:/, '')}</span>
+			</div>
+		{/if}
+	</div>
+{:else if source === 'soulseek' && task.status === 'downloading' && !task.held_for_review}
 	<div
 		class:source-telemetry-compact={compact}
 		class="source-telemetry mt-2"

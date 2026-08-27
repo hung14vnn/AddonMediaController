@@ -159,6 +159,8 @@ def test_manual_match_fields_forward_to_service(tmp_path):
             "artist_name": "Artist",
             "album_title": "Album",
             "track_title": "Track",
+            "recording_mbid": "spotify:track:track-1",
+            "cover_url": "https://i.scdn.co/image/cover-1",
         },
     )
 
@@ -167,6 +169,12 @@ def test_manual_match_fields_forward_to_service(tmp_path):
     assert service.match_item.await_args.kwargs["library_album_id"] == "album-1"
     assert service.match_item.await_args.kwargs["library_track_id"] == "track-1"
     assert service.match_item.await_args.kwargs["track_title"] == "Track"
+    assert service.match_item.await_args.kwargs["recording_mbid"] == (
+        "spotify:track:track-1"
+    )
+    assert service.match_item.await_args.kwargs["cover_url"] == (
+        "https://i.scdn.co/image/cover-1"
+    )
 
 
 def test_clear_discarded_forwards_to_service(tmp_path):

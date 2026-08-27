@@ -165,6 +165,19 @@ class TargetLibraryRepository:
     async def get_file_rows_for_album(self, album_id: str) -> list[dict[str, Any]]:
         return await self._store.get_target_album_tracks(album_id)
 
+    async def get_file_at_position(
+        self, release_group_mbid: str, disc_number: int, track_number: int
+    ) -> dict[str, Any] | None:
+        """Return the active file occupying an album track position."""
+        rows = await self._store.get_target_album_tracks(release_group_mbid)
+        for row in rows:
+            if (
+                row.get("disc_number") == disc_number
+                and row.get("track_number") == track_number
+            ):
+                return row
+        return None
+
     async def get_library_mbids(self, include_release_ids: bool = True) -> set[str]:
         _revision, albums = await self._store.target_provider_album_snapshot()
         if not include_release_ids:
