@@ -37,6 +37,28 @@ services:
       - ./downloads:/slskd-downloads
       - ./music:/music
 
+  gluetun:
+    image: qmcgaw/gluetun:v3.41.3
+    container_name: addonify-vpn
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      - music
+    ports:
+      # addonify shares Gluetun's network namespace, so public ports belong here.
+      - "8688:8688"
+    environment:
+      VPN_SERVICE_PROVIDER: protonvpn
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: ${PROTONVPN_WIREGUARD_PRIVATE_KEY:?Set PROTONVPN_WIREGUARD_PRIVATE_KEY in .env.proton}
+      FREE_ONLY: "on"
+      # Keep Docker-internal calls (for example addonify -> slskd) off the VPN.
+      FIREWALL_OUTBOUND_SUBNETS: ${MUSIC_DOCKER_SUBNET:?Set MUSIC_DOCKER_SUBNET in .env.proton}
+      TZ: Asia/Ho_Chi_Minh
+
   addonify:
     build:
       context: .
@@ -45,12 +67,13 @@ services:
     container_name: addonify
     restart: unless-stopped
     depends_on:
-      - slskd
-      - karaoke-worker
-    networks:
-      - music
-    ports:
-      - "8688:8688"
+      slskd:
+        condition: service_started
+      karaoke-worker:
+        condition: service_started
+      gluetun:
+        condition: service_healthy
+    network_mode: "service:gluetun"
     environment:
       TZ: Asia/Ho_Chi_Minh
       PORT: "8688"
