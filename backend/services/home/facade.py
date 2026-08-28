@@ -238,7 +238,9 @@ class HomeService:
             return False
         return time.time() - float(at) <= HOME_STALE_REVALIDATE_SECONDS
 
-    async def warm_cache(self, user_id: str) -> None:
+    async def warm_cache(
+        self, user_id: str, *, library_user_id: str | None = None
+    ) -> None:
         if self._workload_gate is not None:
             await self._workload_gate.wait_until_available()
         if user_id in self._building:
@@ -254,7 +256,9 @@ class HomeService:
             cache_key = self._get_home_cache_key(
                 user_id, music.lb_enabled, music.lfm_enabled
             )
-            response = await self._build_full(user_id, music)
+            response = await self._build_full(
+                user_id, music, library_user_id=library_user_id
+            )
             if self._memory_cache:
                 await self._memory_cache.set(cache_key, response, HOME_CACHE_TTL)
             built_ok = True
@@ -333,7 +337,9 @@ class HomeService:
             genre_names
         )
 
-    def _trigger_warm(self, user_id: str) -> None:
+    def _trigger_warm(
+        self, user_id: str, *, library_user_id: str | None = None
+    ) -> None:
         """Background full rebuild for the user if one isn't already running."""
         from core.task_registry import TaskRegistry
 
@@ -341,20 +347,33 @@ class HomeService:
         task_name = f"home-warm-{user_id}"
         if registry.is_running(task_name):
             return
-        task = asyncio.create_task(self._run_triggered_warm(user_id))
+        task = asyncio.create_task(
+            self._run_triggered_warm(user_id, library_user_id=library_user_id)
+        )
         try:
             registry.register(task_name, task)
         except RuntimeError:
             pass
 
-    async def _run_triggered_warm(self, user_id: str) -> None:
+    async def _run_triggered_warm(
+        self, user_id: str, *, library_user_id: str | None = None
+    ) -> None:
         if self._workload_gate is None:
-            await self.warm_cache(user_id)
+            await self.warm_cache(user_id, library_user_id=library_user_id)
             return
-        await self._workload_gate.run_warmer_unit(lambda: self.warm_cache(user_id))
+        await self._workload_gate.run_warmer_unit(
+            lambda: self.warm_cache(user_id, library_user_id=library_user_id)
+        )
 
-    @deduplicate(lambda self, user_id: f"{HOME_RESPONSE_PREFIX}dedup:{user_id}")
-    async def get_home_data(self, user_id: str) -> HomeResponse:
+    @deduplicate(
+        lambda self, user_id, library_user_id=None: (
+            f"{HOME_RESPONSE_PREFIX}dedup:{user_id}:"
+            f"{library_user_id or 'global'}"
+        )
+    )
+    async def get_home_data(
+        self, user_id: str, *, library_user_id: str | None = None
+    ) -> HomeResponse:
         """Never blocks on external services: a cached copy is served immediately
         (revalidated in the background when stale); a cache miss gets an instant
         library-only response with ``refreshing=true`` while the full build runs
@@ -363,7 +382,9 @@ class HomeService:
 
         if not self._memory_cache:
             # no cache to hand off through (unit tests): build inline
-            return await self._build_full(user_id, music)
+            return await self._build_full(
+                user_id, music, library_user_id=library_user_id
+            )
 
         cache_key = self._get_home_cache_key(
             user_id, music.lb_enabled, music.lfm_enabled
@@ -373,7 +394,7 @@ class HomeService:
         if cached is not None:
             age = time.time() - await self._read_built_at(cache_key)
             if not building and age > HOME_STALE_REVALIDATE_SECONDS:
-                self._trigger_warm(user_id)
+                self._trigger_warm(user_id, library_user_id=library_user_id)
                 building = True
             response = clone_with_updates(cached, {"refreshing": building})
             await self._apply_genre_artwork(response)
@@ -384,12 +405,22 @@ class HomeService:
         # post-restart misses both rebuild immediately.
         recent_failure = await self._recent_failed_attempt(cache_key)
         if not building and not recent_failure:
-            self._trigger_warm(user_id)
+            self._trigger_warm(user_id, library_user_id=library_user_id)
             building = True
-        return await self._build_fast(user_id, music, refreshing=building)
+        return await self._build_fast(
+            user_id,
+            music,
+            refreshing=building,
+            library_user_id=library_user_id,
+        )
 
     async def _build_fast(
-        self, user_id: str, music: _HomeUserMusic, refreshing: bool
+        self,
+        user_id: str,
+        music: _HomeUserMusic,
+        refreshing: bool,
+        *,
+        library_user_id: str | None = None,
     ) -> HomeResponse:
         """Local-only first paint: library shelves, play history, and genre tiles
         come from SQLite; everything external streams in via the background build."""
@@ -398,10 +429,14 @@ class HomeService:
         )
         tasks: dict[str, Any] = {}
         if integration_status.library:
-            tasks["library_albums"] = self._library_repo.get_home_albums(limit=15)
-            tasks["library_artists"] = self._library_repo.get_home_artists(limit=15)
+            tasks["library_albums"] = self._library_repo.get_home_albums(
+                limit=15, user_id=library_user_id
+            )
+            tasks["library_artists"] = self._library_repo.get_home_artists(
+                limit=15, user_id=library_user_id
+            )
             tasks["recently_imported"] = self._library_repo.get_recently_imported(
-                limit=15
+                limit=15, user_id=library_user_id
             )
         results = await self._helpers.execute_tasks(tasks)
 
@@ -439,7 +474,13 @@ class HomeService:
         await self._apply_artist_ownership(response)
         return response
 
-    async def _build_full(self, user_id: str, music: _HomeUserMusic) -> HomeResponse:
+    async def _build_full(
+        self,
+        user_id: str,
+        music: _HomeUserMusic,
+        *,
+        library_user_id: str | None = None,
+    ) -> HomeResponse:
         # primary drives the single-slot sections (trending, popular, favorites,
         # your-top); source-specific sections run whenever their service is linked
         primary = music.resolved_source
@@ -475,10 +516,14 @@ class HomeService:
         # library home sections are driven by the native library (the scanner is
         # always present, D8), not by whether a download client is configured
         if integration_status.library:
-            tasks["library_albums"] = self._library_repo.get_home_albums(limit=15)
-            tasks["library_artists"] = self._library_repo.get_home_artists(limit=15)
+            tasks["library_albums"] = self._library_repo.get_home_albums(
+                limit=15, user_id=library_user_id
+            )
+            tasks["library_artists"] = self._library_repo.get_home_artists(
+                limit=15, user_id=library_user_id
+            )
             tasks["recently_imported"] = self._library_repo.get_recently_imported(
-                limit=15
+                limit=15, user_id=library_user_id
             )
 
         # personalized sections use the requesting user's request-scoped client;

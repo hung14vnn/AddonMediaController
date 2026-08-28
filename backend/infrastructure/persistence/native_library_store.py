@@ -3936,13 +3936,22 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
-    async def target_decades(self) -> list[dict[str, int]]:
+    async def target_decades(
+        self, *, user_id: str | None = None
+    ) -> list[dict[str, int]]:
         def operation(connection: sqlite3.Connection) -> list[dict[str, int]]:
+            access = ""
+            parameters: list[Any] = []
+            if user_id is not None:
+                access = " AND " + _user_track_access_clause()
+                parameters.append(user_id)
             rows = connection.execute(
                 "SELECT (a.year / 10) * 10 AS decade, COUNT(DISTINCT a.id) AS album_count "
                 "FROM local_albums a JOIN local_tracks t ON t.local_album_id = a.id "
-                "WHERE t.availability = 'indexed' AND a.year IS NOT NULL "
-                "GROUP BY decade ORDER BY decade DESC"
+                "WHERE t.availability = 'indexed' AND a.year IS NOT NULL"
+                + access
+                + " GROUP BY decade ORDER BY decade DESC",
+                parameters,
             ).fetchall()
             return [
                 {"decade": int(row["decade"]), "album_count": int(row["album_count"])}

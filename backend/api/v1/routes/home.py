@@ -36,7 +36,12 @@ async def get_home_data(
     home_service: HomeService = Depends(get_home_service),
     section_prefs: UserSectionPrefsStore = Depends(get_user_section_prefs_store),
 ):
-    result = await home_service.get_home_data(user_id=current_user.id)
+    result = await home_service.get_home_data(
+        user_id=current_user.id,
+        library_user_id=(
+            None if current_user.role == "admin" else current_user.id
+        ),
+    )
     disabled = await section_prefs.get_disabled(current_user.id, "home")
     result = apply_section_prefs(result, "home", disabled)
     ctx = try_get_degradation_context()

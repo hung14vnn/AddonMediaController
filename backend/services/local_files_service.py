@@ -312,8 +312,10 @@ class LocalFilesService:
 
         return result, total_size, format_counts
 
-    async def match_album_by_mbid(self, musicbrainz_id: str) -> LocalAlbumMatch:
-        tracks = await self._library_repo.get_tracks(musicbrainz_id)
+    async def match_album_by_mbid(
+        self, musicbrainz_id: str, *, user_id: str | None = None
+    ) -> LocalAlbumMatch:
+        tracks = await self._library_repo.get_tracks(musicbrainz_id, user_id=user_id)
         if not tracks:
             return LocalAlbumMatch(found=False, musicbrainz_id=musicbrainz_id)
 
@@ -486,6 +488,7 @@ class LocalFilesService:
         sort_order: str = "asc",
         search_query: str | None = None,
         decade: int | None = None,
+        user_id: str | None = None,
     ) -> LocalPaginatedResponse:
         page = (offset // max(limit, 1)) + 1
         sort = _LOCAL_SORT_TO_NATIVE.get(sort_by, "recent")
@@ -496,6 +499,7 @@ class LocalFilesService:
             q=search_query,
             file_format=None,
             decade=decade,
+            user_id=user_id,
         )
         summaries = [self._native_album_to_summary(a) for a in albums]
         return LocalPaginatedResponse(
@@ -525,7 +529,11 @@ class LocalFilesService:
         )
 
     async def get_crate_suggestions(
-        self, limit: int = 12, decade: int | None = None
+        self,
+        limit: int = 12,
+        decade: int | None = None,
+        *,
+        user_id: str | None = None,
     ) -> list[CrateTrack]:
         """A shuffled mix of reason-tagged track suggestions for the crate: newest
         imports, rediscoveries (oldest), surprises (random), and - when a decade is
@@ -542,7 +550,9 @@ class LocalFilesService:
         items: list[CrateTrack] = []
         seen: set[str] = set()
         for reason, kwargs in pools:
-            rows = await self._library_repo.get_crate_tracks(limit=per, **kwargs)
+            rows = await self._library_repo.get_crate_tracks(
+                limit=per, user_id=user_id, **kwargs
+            )
             for row in rows:
                 fid = str(row.get("id") or "")
                 if not fid or fid in seen:
@@ -553,9 +563,11 @@ class LocalFilesService:
         random.shuffle(items)
         return items[:limit]
 
-    async def get_decades(self, albums_per_decade: int = 12) -> list[DecadeShelf]:
+    async def get_decades(
+        self, albums_per_decade: int = 12, *, user_id: str | None = None
+    ) -> list[DecadeShelf]:
         """Decade shelves (newest first), each with a preview of its albums."""
-        buckets = await self._library_repo.get_decades()
+        buckets = await self._library_repo.get_decades(user_id=user_id)
         shelves: list[DecadeShelf] = []
         for bucket in buckets:
             decade = int(bucket.get("decade") or 0)
@@ -563,7 +575,11 @@ class LocalFilesService:
             if decade <= 0 or count == 0:
                 continue
             albums, _ = await self._library_repo.get_albums_page(
-                page=1, page_size=albums_per_decade, sort="recent", decade=decade
+                page=1,
+                page_size=albums_per_decade,
+                sort="recent",
+                decade=decade,
+                user_id=user_id,
             )
             shelves.append(
                 DecadeShelf(
@@ -575,24 +591,37 @@ class LocalFilesService:
             )
         return shelves
 
-    async def get_album_tracks_by_id(self, mbid: str) -> list[LocalTrackInfo]:
-        tracks = await self._library_repo.get_tracks(mbid)
+    async def get_album_tracks_by_id(
+        self, mbid: str, *, user_id: str | None = None
+    ) -> list[LocalTrackInfo]:
+        tracks = await self._library_repo.get_tracks(mbid, user_id=user_id)
         return [self._native_track_to_info(t) for t in tracks]
 
-    async def search_tracks(self, query: str, limit: int = 30) -> list[CrateTrack]:
-        rows = await self._library_repo.search_tracks(query, limit=limit)
+    async def search_tracks(
+        self, query: str, limit: int = 30, *, user_id: str | None = None
+    ) -> list[CrateTrack]:
+        rows = await self._library_repo.search_tracks(
+            query, limit=limit, user_id=user_id
+        )
         return [self._row_to_crate_track(row, "surprise") for row in rows]
 
-    async def search(self, query: str) -> LocalSearchResponse:
+    async def search(
+        self, query: str, *, user_id: str | None = None
+    ) -> LocalSearchResponse:
         """Combined library search: matching albums plus matching individual
         tracks (so typing an album name surfaces that album's songs)."""
-        album_result = await self.get_albums(limit=20, offset=0, search_query=query)
-        tracks = await self.search_tracks(query, limit=30)
+        album_result = await self.get_albums(
+            limit=20, offset=0, search_query=query, user_id=user_id
+        )
+        tracks = await self.search_tracks(query, limit=30, user_id=user_id)
         return LocalSearchResponse(albums=album_result.items, tracks=tracks)
 
-    async def get_recently_added(self, limit: int = 20) -> list[LocalAlbumSummary]:
+    async def get_recently_added(
+        self, limit: int = 20, *, user_id: str | None = None
+    ) -> list[LocalAlbumSummary]:
         ttl_seconds = self._get_recently_added_ttl()
-        cache_key = f"{LOCAL_FILES_PREFIX}recently_added:{limit}"
+        scope = user_id or "global"
+        cache_key = f"{LOCAL_FILES_PREFIX}recently_added:{scope}:{limit}"
         cached = await self._cache.get(cache_key)
         if isinstance(cached, list):
             try:
@@ -605,7 +634,7 @@ class LocalFilesService:
                 logger.debug("Ignoring invalid cached recently-added payload")
 
         albums, _ = await self._library_repo.get_albums_page(
-            page=1, page_size=limit, sort="recent"
+            page=1, page_size=limit, sort="recent", user_id=user_id
         )
         summaries = [self._native_album_to_summary(a) for a in albums]
 
@@ -616,7 +645,9 @@ class LocalFilesService:
         )
         return summaries
 
-    async def get_storage_stats(self) -> LocalStorageStats:
+    async def get_storage_stats(
+        self, *, user_id: str | None = None
+    ) -> LocalStorageStats:
         """Counts come from the same library aggregate (``get_stats``) the "Manage
         your Library" card uses, so the two home cards can't disagree and on-disk
         junk (empty/stub dirs, NAS metadata, unsupported formats) can't skew them.
@@ -624,7 +655,7 @@ class LocalFilesService:
         roots = [root for root in self._get_library_roots() if root.exists()]
         if not roots:
             return LocalStorageStats()
-        stats = await self._library_repo.get_stats()
+        stats = await self._library_repo.get_stats(user_id=user_id)
         disk = shutil.disk_usage(roots[0])
         return LocalStorageStats(
             total_tracks=stats.total_tracks,

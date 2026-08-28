@@ -16,6 +16,7 @@ from api.v1.schemas.local_files import (
 from core.dependencies import get_local_files_service
 from core.exceptions import ExternalServiceError
 from infrastructure.msgspec_fastapi import MsgSpecRoute
+from middleware import CurrentUserDep
 from services.local_files_service import LocalFilesService
 
 logger = logging.getLogger(__name__)
@@ -23,8 +24,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(route_class=MsgSpecRoute, prefix="/local", tags=["local-files"])
 
 
+def _library_scope(user) -> str | None:  # noqa: ANN001 - authenticated user model
+    return None if user.role == "admin" else user.id
+
+
 @router.get("/albums", response_model=LocalPaginatedResponse)
 async def get_local_albums(
+    current_user: CurrentUserDep,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     sort_by: Literal["name", "date_added", "year", "random", "rediscover"] = "name",
@@ -36,7 +42,7 @@ async def get_local_albums(
     try:
         return await service.get_albums(
             limit=limit, offset=offset, sort_by=sort_by, sort_order=sort_order,
-            search_query=q, decade=decade,
+            search_query=q, decade=decade, user_id=_library_scope(current_user),
         )
     except ExternalServiceError as e:
         logger.error("Failed to get local albums: %s", e)
@@ -46,10 +52,13 @@ async def get_local_albums(
 @router.get("/albums/match/{musicbrainz_id}", response_model=LocalAlbumMatch)
 async def match_local_album(
     musicbrainz_id: str,
+    current_user: CurrentUserDep,
     service: LocalFilesService = Depends(get_local_files_service),
 ) -> LocalAlbumMatch:
     try:
-        return await service.match_album_by_mbid(musicbrainz_id)
+        return await service.match_album_by_mbid(
+            musicbrainz_id, user_id=_library_scope(current_user)
+        )
     except ExternalServiceError as e:
         logger.error("Failed to match local album %s: %s", musicbrainz_id, e)
         raise HTTPException(status_code=502, detail="Failed to match local album")
@@ -60,10 +69,13 @@ async def match_local_album(
 )
 async def get_local_album_tracks(
     mbid: str,
+    current_user: CurrentUserDep,
     service: LocalFilesService = Depends(get_local_files_service),
 ) -> list[LocalTrackInfo]:
     try:
-        return await service.get_album_tracks_by_id(mbid)
+        return await service.get_album_tracks_by_id(
+            mbid, user_id=_library_scope(current_user)
+        )
     except ExternalServiceError as e:
         logger.error("Failed to get local album tracks %s: %s", mbid, e)
         raise HTTPException(
@@ -73,11 +85,12 @@ async def get_local_album_tracks(
 
 @router.get("/search", response_model=LocalSearchResponse)
 async def search_local(
+    current_user: CurrentUserDep,
     q: str = Query(min_length=1),
     service: LocalFilesService = Depends(get_local_files_service),
 ) -> LocalSearchResponse:
     try:
-        return await service.search(q)
+        return await service.search(q, user_id=_library_scope(current_user))
     except ExternalServiceError as e:
         logger.error("Failed to search local files: %s", e)
         raise HTTPException(
@@ -87,11 +100,14 @@ async def search_local(
 
 @router.get("/recent", response_model=list[LocalAlbumSummary])
 async def get_local_recent(
+    current_user: CurrentUserDep,
     limit: int = Query(default=20, ge=1, le=50),
     service: LocalFilesService = Depends(get_local_files_service),
 ) -> list[LocalAlbumSummary]:
     try:
-        return await service.get_recently_added(limit=limit)
+        return await service.get_recently_added(
+            limit=limit, user_id=_library_scope(current_user)
+        )
     except ExternalServiceError as e:
         logger.error("Failed to get recent local albums: %s", e)
         raise HTTPException(
@@ -101,19 +117,23 @@ async def get_local_recent(
 
 @router.get("/stats", response_model=LocalStorageStats)
 async def get_local_stats(
+    current_user: CurrentUserDep,
     service: LocalFilesService = Depends(get_local_files_service),
 ) -> LocalStorageStats:
-    return await service.get_storage_stats()
+    return await service.get_storage_stats(user_id=_library_scope(current_user))
 
 
 @router.get("/suggestions", response_model=CrateResponse)
 async def get_local_suggestions(
+    current_user: CurrentUserDep,
     limit: int = Query(default=12, ge=1, le=40),
     decade: int | None = Query(default=None),
     service: LocalFilesService = Depends(get_local_files_service),
 ) -> CrateResponse:
     try:
-        items = await service.get_crate_suggestions(limit=limit, decade=decade)
+        items = await service.get_crate_suggestions(
+            limit=limit, decade=decade, user_id=_library_scope(current_user)
+        )
         return CrateResponse(items=items)
     except ExternalServiceError as e:
         logger.error("Failed to get crate suggestions: %s", e)
@@ -122,10 +142,13 @@ async def get_local_suggestions(
 
 @router.get("/decades", response_model=DecadesResponse)
 async def get_local_decades(
+    current_user: CurrentUserDep,
     service: LocalFilesService = Depends(get_local_files_service),
 ) -> DecadesResponse:
     try:
-        return DecadesResponse(items=await service.get_decades())
+        return DecadesResponse(
+            items=await service.get_decades(user_id=_library_scope(current_user))
+        )
     except ExternalServiceError as e:
         logger.error("Failed to get decades: %s", e)
         raise HTTPException(status_code=502, detail="Failed to get decades")

@@ -242,10 +242,11 @@
 
 	$effect(() => {
 		const sessionUserId = authStore.user?.id;
+		const isAdmin = authStore.isAdmin;
 		if (!sessionUserId) return;
 		untrack(() => {
 			followingEvents.start();
-			libraryActivityEvents.start(authStore.isAdmin, sessionUserId);
+			if (isAdmin) libraryActivityEvents.start(true, sessionUserId);
 			// presence is server-driven now (the backend polls upstream servers itself),
 			// so it no longer waits on integration status
 			nowPlayingStore.start();
@@ -424,7 +425,9 @@
 			</div>
 		</div>
 
-		<LibraryActivityStrip />
+		{#if authStore.isAdmin}
+			<LibraryActivityStrip />
+		{/if}
 
 		<div
 			class="droppedneedle-main-content flex-1"

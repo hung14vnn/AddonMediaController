@@ -228,10 +228,10 @@ class TargetLibraryRepository:
     async def get_user_library_bytes(self, user_id: str) -> int:
         return await self._store.get_target_user_library_bytes(user_id)
 
-    async def get_stats(self) -> LibraryStats:
-        stats = await self._store.get_target_library_stats()
+    async def get_stats(self, *, user_id: str | None = None) -> LibraryStats:
+        stats = await self._store.get_target_library_stats(user_id=user_id)
         recently_added, _ = await self.get_albums_page(
-            page=1, page_size=10, sort="recent"
+            page=1, page_size=10, sort="recent", user_id=user_id
         )
         return LibraryStats(
             total_albums=int(stats["total_albums"]),
@@ -343,21 +343,33 @@ class TargetLibraryRepository:
         )
         return [self._to_library_album(row) for row in rows]
 
-    async def get_recently_imported(self, limit: int = 20) -> list[LibraryAlbum]:
+    async def get_recently_imported(
+        self, limit: int = 20, *, user_id: str | None = None
+    ) -> list[LibraryAlbum]:
         rows, _ = await self._store.list_target_albums(
-            limit=limit, offset=0, sort="recent"
+            limit=limit, offset=0, sort="recent", user_id=user_id
         )
         return [self._to_library_album(row) for row in rows]
 
-    async def get_home_albums(self, limit: int = 15) -> list[LibraryAlbum]:
+    async def get_home_albums(
+        self, limit: int = 15, *, user_id: str | None = None
+    ) -> list[LibraryAlbum]:
         rows, _ = await self._store.list_target_albums(
-            limit=min(max(limit, 1), 500), offset=0, sort="recent"
+            limit=min(max(limit, 1), 500),
+            offset=0,
+            sort="recent",
+            user_id=user_id,
         )
         return [self._to_library_album(row) for row in rows]
 
-    async def get_home_artists(self, limit: int = 15) -> list[dict[str, Any]]:
+    async def get_home_artists(
+        self, limit: int = 15, *, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         rows, _ = await self._store.list_target_artists(
-            limit=min(max(limit, 1), 500), offset=0, sort_order="asc"
+            limit=min(max(limit, 1), 500),
+            offset=0,
+            sort_order="asc",
+            user_id=user_id,
         )
         return [
             {
@@ -378,6 +390,7 @@ class TargetLibraryRepository:
         q: str | None = None,
         file_format: str | None = None,
         decade: int | None = None,
+        user_id: str | None = None,
     ) -> tuple[list[LibraryAlbumSummary], int]:
         rows, total = await self._store.list_target_albums(
             limit=page_size,
@@ -387,24 +400,39 @@ class TargetLibraryRepository:
             from_year=decade,
             to_year=decade + 9 if decade is not None else None,
             file_format=file_format,
+            user_id=user_id,
         )
         return [self._to_album_summary(row) for row in rows], total
 
-    async def get_tracks(self, album_id: str) -> list[LibraryTrack]:
-        rows = await self._store.get_target_album_tracks(album_id)
+    async def get_tracks(
+        self, album_id: str, *, user_id: str | None = None
+    ) -> list[LibraryTrack]:
+        rows = await self._store.get_target_album_tracks(album_id, user_id=user_id)
         return [self._to_track(row) for row in rows]
 
-    async def get_album_by_id(self, album_id: str | int) -> dict[str, Any] | None:
+    async def get_album_by_id(
+        self, album_id: str | int, *, user_id: str | None = None
+    ) -> dict[str, Any] | None:
         rows, _ = await self._store.list_target_albums(
-            limit=1, offset=0, sort="name", album_ids=[str(album_id)]
+            limit=1,
+            offset=0,
+            sort="name",
+            album_ids=[str(album_id)],
+            user_id=user_id,
         )
         return self._to_legacy_album(rows[0]) if rows else None
 
-    async def get_album_by_mbid(self, mbid: str) -> dict[str, Any] | None:
-        return await self.get_album_by_id(mbid)
+    async def get_album_by_mbid(
+        self, mbid: str, *, user_id: str | None = None
+    ) -> dict[str, Any] | None:
+        return await self.get_album_by_id(mbid, user_id=user_id)
 
-    async def get_album_tracks(self, album_id: str | int) -> list[dict[str, Any]]:
-        rows = await self._store.get_target_album_tracks(str(album_id))
+    async def get_album_tracks(
+        self, album_id: str | int, *, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        rows = await self._store.get_target_album_tracks(
+            str(album_id), user_id=user_id
+        )
         return [
             {
                 "id": row["id"],
@@ -419,9 +447,11 @@ class TargetLibraryRepository:
         ]
 
     async def get_track_files_by_album(
-        self, album_id: str | int
+        self, album_id: str | int, *, user_id: str | None = None
     ) -> list[dict[str, Any]]:
-        rows = await self._store.get_target_album_tracks(str(album_id))
+        rows = await self._store.get_target_album_tracks(
+            str(album_id), user_id=user_id
+        )
         return [
             {
                 "id": row["id"],
@@ -517,7 +547,12 @@ class TargetLibraryRepository:
         )
 
     async def get_crate_tracks(
-        self, *, order: str, limit: int, decade: int | None = None
+        self,
+        *,
+        order: str,
+        limit: int,
+        decade: int | None = None,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         rows, _ = await self._store.list_target_tracks(
             limit=limit,
@@ -525,20 +560,27 @@ class TargetLibraryRepository:
             sort="random" if order == "random" else "recent",
             from_year=decade,
             to_year=decade + 9 if decade is not None else None,
+            user_id=user_id,
         )
         return rows
 
-    async def search_tracks(self, q: str, *, limit: int) -> list[dict[str, Any]]:
+    async def search_tracks(
+        self, q: str, *, limit: int, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         rows, _ = await self._store.list_target_tracks(
-            limit=limit, offset=0, sort="title", search=q
+            limit=limit, offset=0, sort="title", search=q, user_id=user_id
         )
         return rows
 
-    async def get_decades(self) -> list[dict[str, int]]:
-        return await self._store.target_decades()
+    async def get_decades(
+        self, *, user_id: str | None = None
+    ) -> list[dict[str, int]]:
+        return await self._store.target_decades(user_id=user_id)
 
-    async def get_library_stats(self) -> dict[str, Any]:
-        return await self._store.get_target_library_stats()
+    async def get_library_stats(
+        self, *, user_id: str | None = None
+    ) -> dict[str, Any]:
+        return await self._store.get_target_library_stats(user_id=user_id)
 
     async def existing_compat_ids(
         self,
