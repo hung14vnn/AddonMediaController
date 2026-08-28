@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { page } from '$app/state';
 	import { fly } from 'svelte/transition';
+	import { onMount } from 'svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { deckFocus } from '$lib/stores/deckFocus.svelte';
 	import { eqStore } from '$lib/stores/eq.svelte';
@@ -25,6 +25,8 @@
 	import { getNavidromeFolderScopeRevision } from '$lib/utils/navidromeLibraryCache';
 	import {
 		X,
+		Eye,
+		EyeOff,
 		Music,
 		Disc3,
 		Shuffle,
@@ -46,23 +48,44 @@
 
 	let eqPanelOpen = $state(false);
 	let queueDrawerOpen = $state(false);
+	let queuePinned = $state(false);
 
 	let lyricsPanelOpen = $state(false);
 	const karaokeStatus = $derived(karaokeController.status);
 	const karaokeError = $derived(karaokeController.error);
-	const isListeningRoom = $derived(page.url.pathname === '/library/local');
-
 	const lyricsQuery = getLyricsQuery(
 		() => playerStore.nowPlaying,
 		() => authStore.user?.id,
 		() => getNavidromeFolderScopeRevision(authStore.user?.id ?? '')
 	);
 
-	const supportsLyrics = $derived(lyricsQuery.isSuccess && lyricsQuery.data !== null);
+	const supportsLyrics = $derived(
+		Boolean(playerStore.nowPlaying?.trackName?.trim() && playerStore.nowPlaying?.artistName?.trim())
+	);
 
 	$effect(() => {
 		if (!playerStore.nowPlaying) lyricsPanelOpen = false;
 	});
+
+	onMount(() => {
+		const handleOpenQueue = () => {
+			queueDrawerOpen = true;
+		};
+		window.addEventListener('droppedneedle:open-queue', handleOpenQueue);
+		return () => window.removeEventListener('droppedneedle:open-queue', handleOpenQueue);
+	});
+
+	$effect(() => {
+		if (queuePinned) queueDrawerOpen = true;
+	});
+
+	function toggleQueueDrawer(): void {
+		if (queuePinned) {
+			queueDrawerOpen = true;
+			return;
+		}
+		queueDrawerOpen = !queueDrawerOpen;
+	}
 
 	$effect(() => {
 		karaokeController.syncTrack(playerStore.nowPlaying?.trackSourceId);
@@ -121,7 +144,7 @@
 	});
 </script>
 
-{#if playerStore.isPlayerVisible && playerStore.nowPlaying && !deckFocus.inView && !isListeningRoom}
+{#if playerStore.isPlayerVisible && playerStore.nowPlaying && !deckFocus.inView}
 	<div
 		class="droppedneedle-player-bar fixed left-0 right-0 z-50 bg-base-300/95 backdrop-blur-md shadow-[0_-4px_20px_rgba(0,0,0,0.3)] transition-transform duration-300"
 		transition:fly={{ y: 96, duration: 220 }}
@@ -129,9 +152,17 @@
 		<button
 			class="btn btn-ghost btn-xs btn-circle absolute top-1.5 right-1.5 opacity-60 hover:opacity-100"
 			onclick={() => playerStore.stop()}
-			aria-label="Close player"
+			aria-label="Stop playback and close player"
 		>
 			<X class="h-3.5 w-3.5" />
+		</button>
+		<button
+			class="btn btn-ghost btn-xs btn-circle absolute top-1.5 right-9 opacity-60 hover:opacity-100"
+			onclick={() => playerStore.hidePlayer()}
+			aria-label="Hide player"
+			title="Hide player"
+		>
+			<EyeOff class="h-3.5 w-3.5" />
 		</button>
 
 		<div
@@ -172,16 +203,19 @@
 								<p class="text-sm font-semibold truncate">{playerStore.nowPlaying.trackName}</p>
 								<p class="text-xs opacity-60 truncate">
 									{#if isAlbumLinkable(playerStore.nowPlaying.albumId)}
-										<a href={withBasePath(`/album/${playerStore.nowPlaying.albumId}`)} class="hover:underline"
-											>{playerStore.nowPlaying.albumName}</a
+										<a
+											href={withBasePath(`/album/${playerStore.nowPlaying.albumId}`)}
+											class="hover:underline">{playerStore.nowPlaying.albumName}</a
 										>
 									{:else}
 										{playerStore.nowPlaying.albumName}
 									{/if}
 									-
 									{#if playerStore.nowPlaying.artistId}
-										<a href={withBasePath(`/artist/${playerStore.nowPlaying.artistId}`)} class="hover:underline"
-										>{formatArtistCredit(playerStore.nowPlaying.artistName)}</a
+										<a
+											href={withBasePath(`/artist/${playerStore.nowPlaying.artistId}`)}
+											class="hover:underline"
+											>{formatArtistCredit(playerStore.nowPlaying.artistName)}</a
 										>
 									{:else}
 										{formatArtistCredit(playerStore.nowPlaying.artistName)}
@@ -190,8 +224,9 @@
 							{:else}
 								<p class="text-sm font-semibold truncate">
 									{#if isAlbumLinkable(playerStore.nowPlaying.albumId)}
-										<a href={withBasePath(`/album/${playerStore.nowPlaying.albumId}`)} class="hover:underline"
-											>{playerStore.nowPlaying.albumName}</a
+										<a
+											href={withBasePath(`/album/${playerStore.nowPlaying.albumId}`)}
+											class="hover:underline">{playerStore.nowPlaying.albumName}</a
 										>
 									{:else}
 										{playerStore.nowPlaying.albumName}
@@ -199,8 +234,10 @@
 								</p>
 								<p class="text-xs opacity-60 truncate">
 									{#if playerStore.nowPlaying.artistId}
-										<a href={withBasePath(`/artist/${playerStore.nowPlaying.artistId}`)} class="hover:underline"
-										>{formatArtistCredit(playerStore.nowPlaying.artistName)}</a
+										<a
+											href={withBasePath(`/artist/${playerStore.nowPlaying.artistId}`)}
+											class="hover:underline"
+											>{formatArtistCredit(playerStore.nowPlaying.artistName)}</a
 										>
 									{:else}
 										{formatArtistCredit(playerStore.nowPlaying.artistName)}
@@ -267,7 +304,7 @@
 					</button>
 
 					<button
-						class="btn btn-circle btn-accent shadow-md w-10 h-10"
+						class="btn btn-circle btn-accent shadow-md w-8 h-8"
 						onclick={() =>
 							playerStore.playbackState === 'error' ? playerStore.stop() : playerStore.togglePlay()}
 						aria-label={playerStore.playbackState === 'error'
@@ -277,13 +314,13 @@
 								: 'Play'}
 					>
 						{#if playerStore.playbackState === 'error'}
-							<AlertCircle class="h-5 w-5" />
+							<AlertCircle class="h-4 w-4" />
 						{:else if playerStore.isBuffering}
 							<span class="loading loading-spinner loading-sm"></span>
 						{:else if playerStore.isPlaying}
-							<Pause class="h-5 w-5 fill-current" />
+							<Pause class="h-4 w-4 fill-current" />
 						{:else}
-							<Play class="h-5 w-5 ml-0.5 fill-current" />
+							<Play class="h-4 w-4 ml-0.5 fill-current" />
 						{/if}
 					</button>
 
@@ -350,7 +387,7 @@
 					<button
 						class="btn btn-ghost btn-sm btn-circle relative"
 						class:text-accent={queueDrawerOpen}
-						onclick={() => (queueDrawerOpen = !queueDrawerOpen)}
+						onclick={toggleQueueDrawer}
 						aria-label="Toggle queue"
 					>
 						<ListMusic class="h-4 w-4" />
@@ -486,7 +523,6 @@
 		</div>
 	</div>
 
-	<QueueDrawer bind:open={queueDrawerOpen} onclose={() => (queueDrawerOpen = false)} />
 	<EqPanel bind:open={eqPanelOpen} onclose={() => (eqPanelOpen = false)} />
 	<LyricsPanel
 		bind:open={lyricsPanelOpen}
@@ -501,11 +537,16 @@
 		ontoggleplay={() => playerStore.togglePlay()}
 		onprevious={() => playerStore.previousTrack()}
 		onnext={() => playerStore.nextTrack()}
+		onopenqueue={toggleQueueDrawer}
 		isLoading={lyricsQuery.isFetching}
 		hasError={lyricsQuery.isError}
 		currentTime={playerStore.progress}
 		trackName={playerStore.nowPlaying?.trackName ?? ''}
 		artistName={formatArtistCredit(playerStore.nowPlaying?.artistName)}
+		albumName={playerStore.nowPlaying?.albumName ?? ''}
+		trackKey={`${playerStore.nowPlaying?.sourceType ?? ''}:${playerStore.nowPlaying?.trackSourceId ?? ''}:${playerStore.nowPlaying?.trackName ?? ''}:${playerStore.nowPlaying?.artistName ?? ''}:${playerStore.nowPlaying?.albumName ?? ''}`}
+		coverUrl={nowPlayingCoverUrl}
+		duration={playerStore.nowPlaying?.duration ?? playerStore.duration}
 		onclose={() => (lyricsPanelOpen = false)}
 		{karaokeStatus}
 		karaokeAvailable={playerStore.currentQueueItem?.sourceType === 'local'}
@@ -515,6 +556,24 @@
 		ontogglekaraoke={toggleKaraoke}
 		onvocalchange={(level) => playerStore.setKaraokeVocalLevel(level)}
 	/>
+{/if}
+
+<QueueDrawer
+	bind:open={queueDrawerOpen}
+	bind:pinned={queuePinned}
+	pinnable
+	onclose={() => (queueDrawerOpen = false)}
+/>
+
+{#if playerStore.nowPlaying && !playerStore.isPlayerVisible && !deckFocus.inView}
+	<button
+		class="fixed bottom-[calc(var(--ms-bottom-nav-offset)+1rem)] right-4 z-[70] btn btn-sm btn-primary gap-1.5 shadow-lg"
+		onclick={() => playerStore.showPlayer()}
+		aria-label="Show player"
+	>
+		<Eye class="h-4 w-4" />
+		<span class="hidden sm:inline">Show player</span>
+	</button>
 {/if}
 
 <style>

@@ -16,14 +16,13 @@ describe('LyricsPanel', () => {
 			],
 			isSynced: true,
 			currentTime: 7,
+			preferWordSynced: false,
 			onclose: vi.fn()
 		});
 
-		await expect
-			.element(page.getByText('Second line', { exact: true }))
-			.toHaveClass(/text-primary/);
-		await expect.element(page.getByText('First line', { exact: true })).toHaveClass(/opacity-80/);
-		await expect.element(page.getByText('Third line', { exact: true })).toHaveClass(/opacity-40/);
+		await expect.element(page.getByText('Second line', { exact: true })).toHaveClass(/text-accent/);
+		await expect.element(page.getByText('First line', { exact: true })).toHaveClass(/opacity-45/);
+		await expect.element(page.getByText('Third line', { exact: true })).toHaveClass(/opacity-30/);
 		await expect.element(page.getByText('Synced', { exact: true })).toBeVisible();
 	});
 
@@ -36,6 +35,7 @@ describe('LyricsPanel', () => {
 				{ text: 'Plain second line', start_seconds: null }
 			],
 			isSynced: false,
+			preferWordSynced: false,
 			onclose: vi.fn()
 		});
 

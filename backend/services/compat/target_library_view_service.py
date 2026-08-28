@@ -414,6 +414,7 @@ class TargetLibraryViewService:
             or row.get("album_title")
             or "",
             rg_mbid=row.get("release_group_mbid"),
+            cover_url=row.get("cover_url"),
             artist_name=row.get("artist_name") or "",
             artist_mbid=row.get("artist_mbid"),
             album_artist_name=row.get("album_artist_name"),

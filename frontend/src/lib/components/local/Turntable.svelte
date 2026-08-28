@@ -3,17 +3,13 @@
 	import { eqStore } from '$lib/stores/eq.svelte';
 	import { scrobbleManager } from '$lib/stores/scrobble.svelte';
 	import EqPanel from '$lib/components/EqPanel.svelte';
-	import LyricsPanel from '$lib/components/LyricsPanel.svelte';
+	import WordSyncedLyrics from '$lib/components/WordSyncedLyrics.svelte';
 	import AudioQualityBadge from '$lib/components/AudioQualityBadge.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { openGlobalPlaylistModal } from '$lib/components/AddToPlaylistModal.svelte';
-	import { getLyricsQuery } from '$lib/queries/lyrics/LyricsQuery.svelte';
-	import { authStore } from '$lib/stores/authStore.svelte';
 	import { karaokeController } from '$lib/stores/karaoke.svelte';
 	import { slide } from 'svelte/transition';
-	import { getNavidromeFolderScopeRevision } from '$lib/utils/navidromeLibraryCache';
 	import { formatArtistCredit } from '$lib/utils/formatting';
-	import { activeLyricWordIndex, parseWordTimedLyricLine } from '$lib/utils/lyrics';
 	import type { CrateTrack, LocalAlbumSummary } from '$lib/types';
 	import {
 		Play,
@@ -52,12 +48,9 @@
 	const isPlaying = $derived(playerStore.isPlaying);
 	const format = $derived(playerStore.currentQueueItem?.format ?? null);
 	const isYouTube = $derived(np?.sourceType === 'youtube');
-	const lyricsQuery = getLyricsQuery(
-		() => playerStore.nowPlaying,
-		() => authStore.user?.id,
-		() => getNavidromeFolderScopeRevision(authStore.user?.id ?? '')
+	const supportsLyrics = $derived(
+		Boolean(np?.trackName?.trim() && formatArtistCredit(np?.artistName).trim())
 	);
-	const hasLyrics = $derived(lyricsQuery.isSuccess && lyricsQuery.data !== null);
 	const karaokeBusy = $derived(
 		karaokeController.status === 'preparing' ||
 			karaokeController.status === 'queued' ||
@@ -68,25 +61,6 @@
 	let eqPanelOpen = $state(false);
 	let lyricsOpen = $state(false);
 	let karaokePanelOpen = $state(false);
-	let lyricsViewport: HTMLDivElement | undefined = $state();
-	let lyricsManualScroll = $state(false);
-	let lyricsScrollTimeout: ReturnType<typeof setTimeout> | undefined;
-
-	const timedLines = $derived(
-		lyricsQuery.data?.is_synced
-			? (lyricsQuery.data.lines ?? [])
-					.map((line) => ({ ...line, words: parseWordTimedLyricLine(line.text) }))
-					.filter((line) => line.start_seconds !== null)
-			: []
-	);
-	const activeLineIndex = $derived.by(() => {
-		let active = -1;
-		for (let index = 0; index < timedLines.length; index += 1) {
-			if ((timedLines[index].start_seconds ?? 0) <= playerStore.progress) active = index;
-			else break;
-		}
-		return active;
-	});
 
 	$effect(() => {
 		karaokeController.syncTrack(np?.trackSourceId);
@@ -96,32 +70,7 @@
 		}
 		void np.trackSourceId;
 		karaokePanelOpen = false;
-		lyricsManualScroll = false;
-		clearTimeout(lyricsScrollTimeout);
 	});
-
-	$effect(() => {
-		if (!lyricsOpen || lyricsManualScroll || activeLineIndex < 0 || !lyricsViewport) return;
-		const line = lyricsViewport.querySelector(`[data-lyric-line="${activeLineIndex}"]`);
-		if (!line) return;
-
-		const viewportBounds = lyricsViewport.getBoundingClientRect();
-		const lineBounds = line.getBoundingClientRect();
-		lyricsViewport.scrollTo({
-			top:
-				lyricsViewport.scrollTop +
-				(lineBounds.top - viewportBounds.top) -
-				lyricsViewport.clientHeight / 2 +
-				lineBounds.height / 2,
-			behavior: 'smooth'
-		});
-	});
-
-	function pauseLyricsFollow() {
-		lyricsManualScroll = true;
-		clearTimeout(lyricsScrollTimeout);
-		lyricsScrollTimeout = setTimeout(() => (lyricsManualScroll = false), 3000);
-	}
 
 	function onVolume(e: Event) {
 		playerStore.setVolume(Number((e.currentTarget as HTMLInputElement).value));
@@ -204,78 +153,25 @@
 	ondrop={handleDrop}
 >
 	<div class="relative aspect-square w-full max-w-[32rem] lg:max-w-[36rem]">
-		{#if lyricsOpen}
-			<div class="absolute inset-0 flex flex-col overflow-hidden">
-				<div class="flex items-center justify-between px-5 py-3">
-					<div class="flex min-w-0 items-center gap-2">
-						<Music2 class="h-4 w-4 shrink-0 text-accent" />
-						<span class="truncate text-sm font-bold">Lyrics</span>
-					</div>
-					{#if lyricsQuery.data?.is_synced}<span class="badge badge-xs badge-accent">Synced</span
-						>{/if}
-				</div>
-				<div
-					bind:this={lyricsViewport}
-					class="flex-1 overflow-y-auto px-7 py-16"
-					onscroll={pauseLyricsFollow}
-				>
-					{#if lyricsQuery.isFetching}
-						<div class="flex h-full items-center justify-center">
-							<span class="loading loading-spinner loading-md text-accent"></span>
-						</div>
-					{:else if lyricsQuery.isError}
-						<p class="text-center text-sm text-base-content/55">Couldn't load the lyrics.</p>
-					{:else if timedLines.length}
-						<div class="space-y-5">
-							{#each timedLines as line, index (index)}
-								<button
-									type="button"
-									data-lyric-line={index}
-									onclick={() => playerStore.seekTo(line.start_seconds ?? 0)}
-									class="block w-full text-left text-xl font-bold leading-tight transition-opacity sm:text-2xl cursor-pointer hover:underline {index ===
-									activeLineIndex
-										? line.words.length > 0
-											? 'text-primary'
-											: 'text-accent'
-										: index < activeLineIndex
-											? 'opacity-35'
-											: 'opacity-55'}"
-								>
-									{#if line.words.length > 0}
-										{@const activeWordIndex =
-											index === activeLineIndex
-												? activeLyricWordIndex(line.words, playerStore.progress)
-												: -1}
-										{#each line.words as word, wordIndex (wordIndex)}
-											<span
-												class="lyrics-word transition-colors duration-150"
-												class:text-primary={index === activeLineIndex &&
-													wordIndex < activeWordIndex}
-												class:text-accent={index === activeLineIndex &&
-													wordIndex === activeWordIndex}
-												class:opacity-40={index === activeLineIndex && wordIndex > activeWordIndex}
-											>
-												{word.text}{#if wordIndex < line.words.length - 1}{' '}{/if}
-											</span>
-										{/each}
-									{:else}
-										{line.text}
-									{/if}
-								</button>
-							{/each}
-						</div>
-					{:else if lyricsQuery.data?.text?.trim()}
-						<pre
-							class="whitespace-pre-wrap font-sans text-sm leading-relaxed text-base-content/80">{lyricsQuery
-								.data.text}</pre>
-					{:else}
-						<p class="text-center text-sm text-base-content/50">
-							Lyrics aren't available for this track.
-						</p>
-					{/if}
+		{#if np && lyricsOpen}
+			<div
+				class="inline-lyrics-surface absolute inset-0 overflow-hidden rounded-3xl bg-transparent text-white"
+			>
+				<div class="absolute inset-0 z-10">
+					{#key `${np.sourceType}:${np.trackSourceId}:${np.trackName}:${np.artistName}:${np.albumName}`}
+						<WordSyncedLyrics
+							title={np.trackName ?? ''}
+							artist={formatArtistCredit(np.artistName)}
+							album={np.albumName ?? ''}
+							durationSeconds={np.duration ?? playerStore.duration}
+							currentTimeSeconds={playerStore.progress}
+							onseek={(seconds) => playerStore.seekTo(seconds)}
+						/>
+					{/key}
 				</div>
 			</div>
-		{:else}
+		{/if}
+		{#if !lyricsOpen}
 			<!-- Glow inset-0 must match the record's edge so the circles align. -->
 			<div
 				class="deck-halo absolute inset-0 -z-10 rounded-full"
@@ -455,13 +351,16 @@
 					<ListMusic class="h-5 w-5" />
 				</button>
 			</div>
-			<div class="tooltip tooltip-top" data-tip={hasLyrics ? 'Lyrics' : 'Lyrics unavailable'}>
+			<div
+				class="tooltip tooltip-top"
+				data-tip={'Lyrics'}
+			>
 				<button
 					class="btn btn-circle btn-ghost"
 					class:text-accent={lyricsOpen}
 					onclick={() => (lyricsOpen = !lyricsOpen)}
-					disabled={!hasLyrics}
-					aria-label={lyricsOpen ? 'Show turntable' : 'Show lyrics'}
+					disabled={!supportsLyrics}
+					aria-label="Toggle lyrics"
 					aria-pressed={lyricsOpen}
 				>
 					<Music2 class="h-5 w-5" />

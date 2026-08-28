@@ -78,6 +78,67 @@ export interface TrackData {
 	plex_rating_key?: string | null;
 }
 
+export type TrackMembershipIdentifier = Pick<
+	TrackData,
+	'track_name' | 'artist_name' | 'album_name'
+> &
+	Partial<
+		Pick<
+			TrackData,
+			'album_id' | 'track_source_id' | 'source_type' | 'track_number' | 'disc_number'
+		>
+	>;
+
+type TrackIdentityInput = Pick<TrackData, 'track_name' | 'artist_name' | 'album_name'> &
+	Partial<
+		Pick<
+			TrackData,
+			'album_id' | 'track_source_id' | 'source_type' | 'track_number' | 'disc_number'
+		>
+	>;
+
+function normaliseTrackText(value: string | null | undefined): string {
+	return (value ?? '').trim().toLowerCase();
+}
+
+function trackIdentityKeys(track: TrackIdentityInput): string[] {
+	const keys = [
+		JSON.stringify([
+			'metadata',
+			normaliseTrackText(track.track_name),
+			normaliseTrackText(track.artist_name),
+			normaliseTrackText(track.album_name)
+		])
+	];
+	const sourceId = track.track_source_id?.trim();
+	if (sourceId) {
+		keys.push(JSON.stringify(['source', normaliseTrackText(track.source_type), sourceId]));
+	}
+	const albumId = track.album_id?.trim();
+	if (albumId && track.track_number != null) {
+		keys.push(
+			JSON.stringify([
+				'album-position',
+				normaliseTrackText(albumId),
+				track.disc_number ?? 1,
+				track.track_number
+			])
+		);
+	}
+	return keys;
+}
+
+/** Remove repeated songs before any add-to-playlist request is sent. */
+export function dedupeTrackData(tracks: TrackData[]): TrackData[] {
+	const seen = new Set<string>();
+	return tracks.filter((track) => {
+		const keys = trackIdentityKeys(track);
+		if (keys.some((key) => seen.has(key))) return false;
+		keys.forEach((key) => seen.add(key));
+		return true;
+	});
+}
+
 export function queueItemToTrackData(item: QueueItem): TrackData {
 	return {
 		track_name: item.trackName,
@@ -94,6 +155,19 @@ export function queueItemToTrackData(item: QueueItem): TrackData {
 		disc_number: item.discNumber ?? null,
 		duration: item.duration ?? null,
 		plex_rating_key: item.plexRatingKey ?? null
+	};
+}
+
+export function trackDataToMembershipIdentifier(track: TrackData): TrackMembershipIdentifier {
+	return {
+		track_name: track.track_name,
+		artist_name: track.artist_name,
+		album_name: track.album_name,
+		album_id: track.album_id,
+		track_source_id: track.track_source_id,
+		source_type: track.source_type,
+		track_number: track.track_number,
+		disc_number: track.disc_number
 	};
 }
 
@@ -130,7 +204,9 @@ export async function addTracksToPlaylist(
 	tracks: TrackData[],
 	position?: number
 ): Promise<PlaylistTrack[]> {
-	const body: { tracks: TrackData[]; position?: number } = { tracks };
+	const uniqueTracks = dedupeTrackData(tracks);
+	if (uniqueTracks.length === 0) return [];
+	const body: { tracks: TrackData[]; position?: number } = { tracks: uniqueTracks };
 	if (position != null) body.position = position;
 	const data = await api.global.post<{ tracks: PlaylistTrack[] }>(
 		API.playlists.addTracks(id),
@@ -145,6 +221,24 @@ export async function removeTrackFromPlaylist(id: string, trackId: string): Prom
 
 export async function removeTracksFromPlaylist(id: string, trackIds: string[]): Promise<void> {
 	await api.global.post(API.playlists.removeTracks(id), { track_ids: trackIds });
+}
+
+/** Remove playlist rows matching the supplied track identities and return the count. */
+export async function removeMatchingTracksFromPlaylist(
+	id: string,
+	tracks: TrackData[]
+): Promise<number> {
+	const detail = await fetchPlaylist(id);
+	if (isRedactedPlaylist(detail)) return 0;
+
+	const wanted = new Set(dedupeTrackData(tracks).flatMap(trackIdentityKeys));
+	const matchingIds = detail.tracks
+		.filter((track) => trackIdentityKeys(track).some((key) => wanted.has(key)))
+		.map((track) => track.id);
+	if (matchingIds.length === 0) return 0;
+
+	await removeTracksFromPlaylist(id, matchingIds);
+	return matchingIds.length;
 }
 
 export async function updatePlaylistTrack(
@@ -177,7 +271,7 @@ export async function deletePlaylistCover(id: string): Promise<void> {
 }
 
 export async function checkTrackMembership(
-	tracks: { track_name: string; artist_name: string; album_name: string }[]
+	tracks: TrackMembershipIdentifier[]
 ): Promise<Record<string, number[]>> {
 	const data = await api.global.post<{ membership: Record<string, number[]> }>(
 		API.playlists.checkTracks(),

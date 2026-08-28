@@ -49,7 +49,8 @@ export const matchDropItemMutation = () =>
 			artistName,
 			albumTitle,
 			trackTitle,
-			coverUrl
+			coverUrl,
+			selectedRecordingMbids
 		}: {
 			itemId: number;
 			releaseGroupMbid?: string;
@@ -60,6 +61,7 @@ export const matchDropItemMutation = () =>
 			albumTitle?: string;
 			trackTitle?: string;
 			coverUrl?: string;
+			selectedRecordingMbids?: string[];
 		}) =>
 			api.global.post<DropImportItem>(API.dropImport.match(itemId), {
 				release_group_mbid: releaseGroupMbid,
@@ -69,7 +71,8 @@ export const matchDropItemMutation = () =>
 				artist_name: artistName,
 				album_title: albumTitle,
 				track_title: trackTitle,
-				cover_url: coverUrl
+				cover_url: coverUrl,
+				selected_recording_mbids: selectedRecordingMbids
 			}),
 		onSuccess: async (item) => {
 			toastStore.show({

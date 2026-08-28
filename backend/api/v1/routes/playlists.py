@@ -194,7 +194,19 @@ async def check_track_membership(
     current_user: CurrentUserDep,
     body: CheckTrackMembershipRequest = MsgSpecBody(CheckTrackMembershipRequest),
 ) -> CheckTrackMembershipResponse:
-    tracks = [(t.track_name, t.artist_name, t.album_name) for t in body.tracks]
+    tracks = [
+        {
+            "track_name": t.track_name,
+            "artist_name": t.artist_name,
+            "album_name": t.album_name,
+            "album_id": t.album_id,
+            "track_source_id": t.track_source_id,
+            "source_type": t.source_type,
+            "track_number": t.track_number,
+            "disc_number": t.disc_number,
+        }
+        for t in body.tracks
+    ]
     membership = await service.check_track_membership(tracks, user_id=current_user.id)
     return CheckTrackMembershipResponse(membership=membership)
 

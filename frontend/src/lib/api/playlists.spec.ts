@@ -65,7 +65,9 @@ import {
 	reorderPlaylistTrack,
 	uploadPlaylistCover,
 	deletePlaylistCover,
-	queueItemToTrackData
+	queueItemToTrackData,
+	checkTrackMembership,
+	removeMatchingTracksFromPlaylist
 } from './playlists';
 import type { QueueItem } from '$lib/player/types';
 
@@ -184,6 +186,56 @@ describe('playlists API client', () => {
 			const body = mockPost.mock.calls[0][1];
 			expect(body).not.toHaveProperty('position');
 		});
+
+		it('does not send duplicate songs in the same request', async () => {
+			const tracks = [
+				{
+					track_name: ' Song ',
+					artist_name: 'Artist',
+					album_name: 'Album',
+					album_id: 'album-1',
+					track_number: 1,
+					source_type: 'local'
+				},
+				{
+					track_name: 'Song',
+					artist_name: 'artist',
+					album_name: 'Album',
+					album_id: 'album-1',
+					track_number: 1,
+					source_type: 'jellyfin'
+				}
+			];
+			mockPost.mockResolvedValue({ tracks: [] });
+
+			await addTracksToPlaylist('p1', tracks);
+
+			expect(mockPost.mock.calls[0][1].tracks).toEqual([tracks[0]]);
+		});
+
+		it('returns without posting for an empty track list', async () => {
+			expect(await addTracksToPlaylist('p1', [])).toEqual([]);
+			expect(mockPost).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('checkTrackMembership', () => {
+		it('sends stable track identities for accurate disabled states', async () => {
+			mockPost.mockResolvedValue({ membership: { p1: [0] } });
+			const track = {
+				track_name: 'Song',
+				artist_name: 'Artist',
+				album_name: 'Album',
+				album_id: 'album-1',
+				track_source_id: 'file-1',
+				source_type: 'local',
+				track_number: 1,
+				disc_number: 1
+			};
+
+			expect(await checkTrackMembership([track])).toEqual({ p1: [0] });
+			expect(mockPost).toHaveBeenCalledWith('/api/v1/playlists/check-tracks', { tracks: [track] });
+		});
 	});
 
 	describe('removeTrackFromPlaylist', () => {
@@ -191,6 +243,43 @@ describe('playlists API client', () => {
 			mockDelete.mockResolvedValue(undefined);
 			await removeTrackFromPlaylist('p1', 't1');
 			expect(mockDelete).toHaveBeenCalledWith('/api/v1/playlists/p1/tracks/t1');
+		});
+	});
+
+	describe('removeMatchingTracksFromPlaylist', () => {
+		it('removes playlist rows matching track identity', async () => {
+			mockGet.mockResolvedValue({
+				is_redacted: false,
+				tracks: [
+					{
+						id: 't1',
+						track_name: 'Song',
+						artist_name: 'Artist',
+						album_name: 'Album',
+						album_id: null,
+						track_source_id: 'file-1',
+						source_type: 'local',
+						track_number: null,
+						disc_number: null
+					}
+				]
+			});
+			mockPost.mockResolvedValue(undefined);
+
+			const removed = await removeMatchingTracksFromPlaylist('p1', [
+				{
+					track_name: ' song ',
+					artist_name: 'ARTIST',
+					album_name: 'Album',
+					source_type: 'local'
+				}
+			]);
+
+			expect(removed).toBe(1);
+			expect(mockPost).toHaveBeenCalledWith(
+				'/api/v1/playlists/p1/tracks/batch-remove',
+				{ track_ids: ['t1'] }
+			);
 		});
 	});
 

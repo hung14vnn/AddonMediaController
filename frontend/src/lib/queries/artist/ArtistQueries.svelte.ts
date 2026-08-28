@@ -21,6 +21,7 @@ import { setQueryDataWithPersister } from '../QueryClient';
 export const getBasicArtistQueryOptions = (artistId: string) =>
 	queryOptions({
 		staleTime: CACHE_TTL.ARTIST_DETAIL_BASIC,
+		refetchOnWindowFocus: false,
 		queryKey: ArtistQueryKeyFactory.basic(artistId),
 		queryFn: async ({ signal }) => {
 			const data = await api.global.get<ArtistInfoBasic>(API.artist.basic(artistId), { signal });
@@ -38,6 +39,7 @@ export const getBasicArtistQuery = (getArtistId: Getter<string>) =>
 export const getExtendedArtistQueryOptions = (artistId: string) =>
 	queryOptions({
 		staleTime: CACHE_TTL.ARTIST_DETAIL_EXTENDED,
+		refetchOnWindowFocus: false,
 		queryKey: ArtistQueryKeyFactory.extended(artistId),
 		// A fast extended query can finish before the provider page observes its lazy fields.
 		notifyOnChangeProps: 'all',
@@ -57,6 +59,7 @@ export const getSimilarArtistsQuery = (
 		const { artistId, source } = getParams();
 		return {
 			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
+			refetchOnWindowFocus: false,
 			queryKey: ArtistQueryKeyFactory.similarArtists(artistId, source),
 			queryFn: ({ signal }) =>
 				api.global.get<SimilarArtistsResponse>(API.artist.similarArtists(artistId, source), {
@@ -72,6 +75,7 @@ export const getArtistTopAlbumsQuery = (
 		const { artistId, source } = getParams();
 		return {
 			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
+			refetchOnWindowFocus: false,
 			queryKey: ArtistQueryKeyFactory.topAlbums(artistId, source),
 			queryFn: ({ signal }) =>
 				api.global.get<TopAlbumsResponse>(API.artist.topAlbums(artistId, source), {
@@ -87,6 +91,7 @@ export const getArtistTopSongsQuery = (
 		const { artistId, source } = getParams();
 		return {
 			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
+			refetchOnWindowFocus: false,
 			queryKey: ArtistQueryKeyFactory.topSongs(artistId, source),
 			queryFn: ({ signal }) =>
 				api.global.get<TopSongsResponse>(API.artist.topSongs(artistId, source), {
@@ -102,6 +107,7 @@ export const getArtistLastFmEnrichmentQuery = (
 		const { artistId, artistName } = getParams();
 		return {
 			staleTime: CACHE_TTL.ARTIST_DETAIL_LASTFM,
+			refetchOnWindowFocus: false,
 			queryKey: ArtistQueryKeyFactory.lastFmEnrichment(artistId, artistName),
 			queryFn: ({ signal }) =>
 				api.global.get<LastFmArtistEnrichment>(API.artist.lastFmEnrichment(artistId, artistName!), {
@@ -121,6 +127,7 @@ const WARMING_POLL_INTERVAL_MS = 2_000;
 export const getArtistReleasesInfiniteQuery = (getArtistId: Getter<string>) =>
 	createInfiniteQuery(() => ({
 		staleTime: CACHE_TTL.ARTIST_DETAIL_BASIC,
+		refetchOnWindowFocus: false,
 		queryKey: ArtistQueryKeyFactory.releases(getArtistId()),
 		initialPageParam: 0,
 		queryFn: async ({ pageParam = 0, signal }) => {

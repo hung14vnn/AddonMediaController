@@ -219,7 +219,13 @@ async def test_task_records_ytdlp_as_download_client(monkeypatch, tmp_path):
     monkeypatch.setattr(asyncio, "create_task", capture_task)
 
     assert (
-        await service.download(user_id="user-1", url="https://youtu.be/abc") == "task-1"
+        await service.download(
+            user_id="user-1",
+            url="https://youtu.be/abc",
+            artist_name="Edited Artist",
+            track_title="Edited Title",
+        )
+        == "task-1"
     )
     assert store.create_task.await_args.kwargs["download_client"] == "yt-dlp"
     assert store.create_task.await_args.kwargs["release_group_mbid"] == (
@@ -229,6 +235,9 @@ async def test_task_records_ytdlp_as_download_client(monkeypatch, tmp_path):
     assert store.create_task.await_args.kwargs["cover_url"] == (
         "https://i.ytimg.com/cover.jpg"
     )
+    assert store.create_task.await_args.kwargs["artist_name"] == "Edited Artist"
+    assert store.create_task.await_args.kwargs["album_title"] == "Edited Title"
+    assert store.create_task.await_args.kwargs["track_title"] == "Edited Title"
     assert len(spawned) == 1
 
 

@@ -17,6 +17,9 @@ from api.v1.schemas.library_target import (
     TargetNativeStatsResponse,
     TargetNativeTrack,
     TargetNativeTracksResponse,
+    TargetTrackOwnershipDetailResponse,
+    TargetTrackOwnershipMutation,
+    TargetTrackOwnershipUser,
     TargetCatalogRemovalResponse,
     ManagementReenableRequest,
     ManagementReenableResponse,
@@ -53,7 +56,7 @@ from core.dependencies.type_aliases import (
     CachedLocalArtworkServiceDep,
     WantedWatcherServiceDep,
 )
-from core.dependencies import get_download_service
+from core.dependencies import get_auth_store, get_download_service
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from middleware import CurrentAdminDep, CurrentCuratorDep, CurrentUserDep
 from models.audio import AudioTag
@@ -192,6 +195,83 @@ async def get_target_tracks(
     return TargetNativeTracksResponse(
         items=items, total=total, offset=normalized_offset, limit=size
     )
+
+
+async def _all_auth_users(auth_store) -> list:
+    total = await auth_store.count_users()
+    users = []
+    offset = 0
+    while offset < total:
+        page = await auth_store.list_users(limit=500, offset=offset)
+        if not page:
+            break
+        users.extend(page)
+        offset += len(page)
+    return users
+
+
+@router.get(
+    "/admin/track-ownership/{track_id}",
+    response_model=TargetTrackOwnershipDetailResponse,
+)
+async def get_admin_track_ownership_detail(
+    track_id: str,
+    _admin: CurrentAdminDep,
+    ownership: TargetLibraryOwnershipServiceDep,
+    auth_store=Depends(get_auth_store),
+) -> TargetTrackOwnershipDetailResponse:
+    users = await _all_auth_users(auth_store)
+    access = await ownership.admin_track_access(
+        [track_id], [user.id for user in users]
+    )
+    track_access = access.get(track_id, {"direct": set(), "album": set()})
+    direct = sorted(track_access.get("direct", set()))
+    album = sorted(track_access.get("album", set()))
+    return TargetTrackOwnershipDetailResponse(
+        users=[
+            TargetTrackOwnershipUser(
+                id=user.id, display_name=user.display_name, role=user.role
+            )
+            for user in users
+        ],
+        direct_user_ids=direct,
+        album_user_ids=album,
+        user_ids=sorted(set(direct) | set(album)),
+    )
+
+
+@router.post(
+    "/admin/track-ownership/{track_id}",
+    status_code=204,
+)
+async def assign_admin_track_ownership(
+    track_id: str,
+    _admin: CurrentAdminDep,
+    ownership: TargetLibraryOwnershipServiceDep,
+    body: TargetTrackOwnershipMutation = MsgSpecBody(TargetTrackOwnershipMutation),
+    auth_store=Depends(get_auth_store),
+) -> None:
+    user = await auth_store.get_user_by_id(body.user_id)
+    if user is None:
+        raise ResourceNotFoundError("The selected user was not found.")
+    await ownership.assign_track(body.user_id, track_id)
+
+
+@router.delete(
+    "/admin/track-ownership/{track_id}",
+    status_code=204,
+)
+async def remove_admin_track_ownership(
+    track_id: str,
+    _admin: CurrentAdminDep,
+    ownership: TargetLibraryOwnershipServiceDep,
+    body: TargetTrackOwnershipMutation = MsgSpecBody(TargetTrackOwnershipMutation),
+    auth_store=Depends(get_auth_store),
+) -> None:
+    user = await auth_store.get_user_by_id(body.user_id)
+    if user is None:
+        raise ResourceNotFoundError("The selected user was not found.")
+    await ownership.remove_track(body.user_id, track_id)
 
 
 @router.get("/stats", response_model=TargetNativeStatsResponse)

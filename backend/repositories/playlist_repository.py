@@ -193,6 +193,43 @@ class PlaylistRepository:
                 conn.commit()
             except sqlite3.OperationalError:
                 pass
+            # Playlist imports and compat clients do not all pass through the
+            # frontend's membership check. Keep the invariant at the storage
+            # boundary as well. The trigger intentionally ignores an attempted
+            # duplicate instead of deleting legacy rows that may already exist.
+            conn.execute("DROP TRIGGER IF EXISTS prevent_duplicate_playlist_tracks")
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS prevent_duplicate_playlist_tracks
+                BEFORE INSERT ON playlist_tracks
+                FOR EACH ROW
+                WHEN EXISTS (
+                    SELECT 1 FROM playlist_tracks
+                    WHERE playlist_id = NEW.playlist_id
+                      AND (
+                          (
+                              LOWER(TRIM(track_name)) = LOWER(TRIM(NEW.track_name))
+                              AND LOWER(TRIM(artist_name)) = LOWER(TRIM(NEW.artist_name))
+                              AND LOWER(TRIM(album_name)) = LOWER(TRIM(NEW.album_name))
+                          )
+                          OR (
+                              NEW.track_source_id IS NOT NULL
+                              AND NEW.track_source_id != ''
+                              AND track_source_id = NEW.track_source_id
+                              AND LOWER(TRIM(source_type)) = LOWER(TRIM(NEW.source_type))
+                          )
+                          OR (
+                              NEW.album_id IS NOT NULL
+                              AND NEW.album_id != ''
+                              AND album_id = NEW.album_id
+                              AND track_number = NEW.track_number
+                              AND COALESCE(disc_number, 1) = COALESCE(NEW.disc_number, 1)
+                          )
+                      )
+                )
+                BEGIN
+                    SELECT RAISE(IGNORE);
+                END
+            """)
             try:
                 conn.execute("ALTER TABLE playlist_tracks ADD COLUMN plex_rating_key TEXT")
                 conn.commit()
@@ -487,6 +524,46 @@ class PlaylistRepository:
         with self._write_lock:
             conn = self._get_connection()
 
+            # Deduplicate both against the playlist and within this request.
+            # This is done while holding the same lock as the inserts so callers
+            # that bypass /check-tracks (imports and compat APIs) get the same
+            # behaviour as the web UI. The trigger above remains the final guard
+            # for writes coming from another repository instance or raw SQL.
+            existing_rows = conn.execute(
+                "SELECT track_name, artist_name, album_name, album_id, "
+                "track_number, disc_number, source_type, track_source_id "
+                "FROM playlist_tracks WHERE playlist_id = ?",
+                (playlist_id,),
+            ).fetchall()
+            seen_keys = {
+                key
+                for row in existing_rows
+                for key in self._track_identity_keys(
+                    row["track_name"], row["artist_name"], row["album_name"],
+                    row["album_id"], row["track_number"], row["disc_number"],
+                    row["source_type"], row["track_source_id"],
+                )
+            }
+            unique_tracks: list[dict] = []
+            for track in tracks:
+                track_keys = self._track_identity_keys(
+                    track.get("track_name"),
+                    track.get("artist_name"),
+                    track.get("album_name"),
+                    track.get("album_id"),
+                    track.get("track_number"),
+                    track.get("disc_number"),
+                    track.get("source_type"),
+                    track.get("track_source_id"),
+                )
+                if seen_keys.intersection(track_keys):
+                    continue
+                seen_keys.update(track_keys)
+                unique_tracks.append(track)
+            if not unique_tracks:
+                return []
+            tracks = unique_tracks
+
             max_row = conn.execute(
                 "SELECT MAX(position) FROM playlist_tracks WHERE playlist_id = ?",
                 (playlist_id,),
@@ -522,7 +599,7 @@ class PlaylistRepository:
                     json.dumps(track["available_sources"])
                     if track.get("available_sources") else None
                 )
-                conn.execute(
+                cursor = conn.execute(
                     "INSERT INTO playlist_tracks "
                     "(id, playlist_id, position, track_name, artist_name, album_name, "
                     "album_id, artist_id, track_source_id, cover_url, source_type, "
@@ -540,6 +617,10 @@ class PlaylistRepository:
                         track.get("library_file_id"), now,
                     ),
                 )
+                # The duplicate-protection trigger can ignore a row inserted
+                # concurrently through another repository instance.
+                if cursor.rowcount == 0:
+                    continue
                 created_records.append(PlaylistTrackRecord(
                     id=track_id, playlist_id=playlist_id, position=pos,
                     track_name=track["track_name"], artist_name=track["artist_name"],
@@ -847,7 +928,7 @@ class PlaylistRepository:
         return self._row_to_track(row)
 
     def check_track_membership(
-        self, tracks: list[tuple[str, str, str]], user_id: Optional[str] = None,
+        self, tracks: list[tuple[str, str, str] | dict], user_id: Optional[str] = None,
     ) -> dict[str, list[int]]:
         """Check which playlists already contain the given tracks.
 
@@ -865,34 +946,89 @@ class PlaylistRepository:
         conn = self._get_connection()
         if user_id is None:
             rows = conn.execute(
-                "SELECT playlist_id, LOWER(track_name) AS tn, "
-                "LOWER(artist_name) AS an, LOWER(album_name) AS aln "
+                "SELECT playlist_id, track_name, artist_name, album_name, album_id, "
+                "track_number, disc_number, source_type, track_source_id "
                 "FROM playlist_tracks"
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT pt.playlist_id, LOWER(pt.track_name) AS tn, "
-                "LOWER(pt.artist_name) AS an, LOWER(pt.album_name) AS aln "
+                "SELECT pt.playlist_id, pt.track_name, pt.artist_name, pt.album_name, "
+                "pt.album_id, pt.track_number, pt.disc_number, pt.source_type, "
+                "pt.track_source_id "
                 "FROM playlist_tracks pt JOIN playlists p ON p.id = pt.playlist_id "
                 "WHERE p.user_id = ?",
                 (user_id,),
             ).fetchall()
 
-        lookup: dict[str, set[tuple[str, str, str]]] = {}
+        lookup: dict[str, set[tuple[str, ...]]] = {}
         for row in rows:
             pid = row["playlist_id"]
-            key = (row["tn"], row["an"], row["aln"])
-            lookup.setdefault(pid, set()).add(key)
+            lookup.setdefault(pid, set()).update(
+                self._track_identity_keys(
+                    row["track_name"], row["artist_name"], row["album_name"],
+                    row["album_id"], row["track_number"], row["disc_number"],
+                    row["source_type"], row["track_source_id"],
+                )
+            )
 
         result: dict[str, list[int]] = {}
-        normalised = [
-            (t[0].lower(), t[1].lower(), t[2].lower()) for t in tracks
-        ]
+        normalised = []
+        for track in tracks:
+            if isinstance(track, dict):
+                normalised.append(
+                    self._track_identity_keys(
+                        track.get("track_name"), track.get("artist_name"),
+                        track.get("album_name"), track.get("album_id"),
+                        track.get("track_number"), track.get("disc_number"),
+                        track.get("source_type"), track.get("track_source_id"),
+                    )
+                )
+            else:
+                normalised.append({("metadata", *self._track_identity(*track))})
         for pid, existing in lookup.items():
-            matched = [i for i, t in enumerate(normalised) if t in existing]
+            matched = [i for i, keys in enumerate(normalised) if existing.intersection(keys)]
             if matched:
                 result[pid] = matched
         return result
+
+    @staticmethod
+    def _track_identity(
+        track_name: object,
+        artist_name: object,
+        album_name: object,
+    ) -> tuple[str, str, str]:
+        """Return the canonical playlist identity used for duplicate checks."""
+        return tuple(
+            str(value or "").strip().casefold()
+            for value in (track_name, artist_name, album_name)
+        )  # type: ignore[return-value]
+
+    @classmethod
+    def _track_identity_keys(
+        cls,
+        track_name: object,
+        artist_name: object,
+        album_name: object,
+        album_id: object = None,
+        track_number: object = None,
+        disc_number: object = None,
+        source_type: object = None,
+        track_source_id: object = None,
+    ) -> set[tuple[str, ...]]:
+        """Return all stable identities that can identify one playlist song."""
+        keys: set[tuple[str, ...]] = {
+            ("metadata", *cls._track_identity(track_name, artist_name, album_name))
+        }
+        source_id = str(track_source_id or "").strip()
+        if source_id:
+            source = str(source_type or "").strip().casefold()
+            keys.add(("source", source, source_id))
+
+        album = str(album_id or "").strip().casefold()
+        if album and track_number is not None:
+            disc = 1 if disc_number is None else disc_number
+            keys.add(("album-position", album, str(disc), str(track_number)))
+        return keys
 
 
     def close(self) -> None:

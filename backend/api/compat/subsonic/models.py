@@ -493,7 +493,7 @@ def to_child(
         track=v.track_number or None,
         year=v.year,
         genre=v.genre,
-        coverArt=alid,
+        coverArt=alid or (encode("track", v.file_id) if v.cover_url else None),
         size=v.file_size_bytes or None,
         contentType=mime_for(v.file_format),
         suffix=v.file_format or None,

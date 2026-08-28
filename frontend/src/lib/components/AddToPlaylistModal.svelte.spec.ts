@@ -8,6 +8,7 @@ const mockFetchPlaylists = vi.fn();
 const mockCreatePlaylist = vi.fn();
 const mockAddTracksToPlaylist = vi.fn();
 const mockCheckTrackMembership = vi.fn();
+const mockRemoveMatchingTracksFromPlaylist = vi.fn();
 const mockQueueItemToTrackData = vi.fn((item: QueueItem) => ({
 	track_name: item.trackName,
 	artist_name: item.artistName,
@@ -20,7 +21,10 @@ vi.mock('$lib/api/playlists', () => ({
 	createPlaylist: (...args: unknown[]) => mockCreatePlaylist(...args),
 	addTracksToPlaylist: (...args: unknown[]) => mockAddTracksToPlaylist(...args),
 	checkTrackMembership: (...args: unknown[]) => mockCheckTrackMembership(...args),
+	removeMatchingTracksFromPlaylist: (...args: unknown[]) =>
+		mockRemoveMatchingTracksFromPlaylist(...args),
 	queueItemToTrackData: (item: QueueItem) => mockQueueItemToTrackData(item),
+	trackDataToMembershipIdentifier: (track: Record<string, unknown>) => track,
 	isRedactedPlaylist: (p: { is_redacted?: boolean } | null | undefined) => p?.is_redacted === true
 }));
 
@@ -85,8 +89,10 @@ describe('AddToPlaylistModal.svelte', () => {
 		mockCreatePlaylist.mockReset();
 		mockAddTracksToPlaylist.mockReset();
 		mockCheckTrackMembership.mockReset();
+		mockRemoveMatchingTracksFromPlaylist.mockReset();
 		mockQueueItemToTrackData.mockClear();
 		mockCheckTrackMembership.mockResolvedValue({});
+		mockRemoveMatchingTracksFromPlaylist.mockResolvedValue(1);
 	});
 
 	it('opening modal fetches playlists and renders list', async () => {
@@ -160,7 +166,7 @@ describe('AddToPlaylistModal.svelte', () => {
 		});
 	});
 
-	it('after adding, button transitions from CirclePlus to Check', async () => {
+	it('after adding, button becomes a remove action', async () => {
 		mockFetchPlaylists.mockResolvedValue(makePlaylists());
 		mockAddTracksToPlaylist.mockResolvedValue([]);
 		const result = renderModal();
@@ -169,20 +175,19 @@ describe('AddToPlaylistModal.svelte', () => {
 		await expect.element(page.getByText('My Playlist')).toBeVisible();
 		await page.getByLabelText('Add to My Playlist').click();
 
-		await expect.element(page.getByLabelText('Already added').first()).toBeVisible();
+		await expect.element(page.getByLabelText('Remove from My Playlist')).toBeVisible();
 	});
 
-	it('clicking add on same playlist twice is a no-op (addedSet guard)', async () => {
+	it('clicking an existing playlist removes the selected tracks', async () => {
 		mockFetchPlaylists.mockResolvedValue(makePlaylists());
-		mockAddTracksToPlaylist.mockResolvedValue([]);
+		mockCheckTrackMembership.mockResolvedValue({ p1: [0] });
 		const result = renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
 		await expect.element(page.getByText('My Playlist')).toBeVisible();
-		await page.getByLabelText('Add to My Playlist').click();
-		await expect.element(page.getByLabelText('Already added').first()).toBeVisible();
+		await page.getByLabelText('Remove from My Playlist').click();
 
-		expect(mockAddTracksToPlaylist).toHaveBeenCalledOnce();
+		expect(mockRemoveMatchingTracksFromPlaylist).toHaveBeenCalledOnce();
 	});
 
 	it('new playlist creation flow: creates, adds tracks, shows in list', async () => {
@@ -236,9 +241,9 @@ describe('AddToPlaylistModal.svelte', () => {
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
 		await expect.element(page.getByText('My Playlist')).toBeVisible();
-		const tickBtn = page.getByLabelText('Already added').first();
+		const tickBtn = page.getByLabelText('Remove from My Playlist');
 		await expect.element(tickBtn).toBeVisible();
-		expect(tickBtn.element().hasAttribute('disabled')).toBe(true);
+		expect(tickBtn.element().hasAttribute('disabled')).toBe(false);
 	});
 
 	it('shows partial indicator when some tracks already exist', async () => {

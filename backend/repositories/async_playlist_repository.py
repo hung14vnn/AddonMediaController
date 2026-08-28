@@ -124,6 +124,6 @@ class AsyncPlaylistRepository:
         return await asyncio.to_thread(self._repo.get_track, playlist_id, track_id)
 
     async def check_track_membership(
-        self, tracks: list[tuple[str, str, str]], user_id: str | None = None,
+        self, tracks: list[tuple[str, str, str] | dict], user_id: str | None = None,
     ) -> dict[str, list[int]]:
         return await asyncio.to_thread(self._repo.check_track_membership, tracks, user_id)

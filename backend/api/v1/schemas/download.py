@@ -354,6 +354,8 @@ class RetryAllResponse(AppStruct):
 
 class YouTubeDownloadRequest(AppStruct):
     url: str
+    artist_name: str | None = None
+    track_title: str | None = None
 
 
 class YouTubePreviewResponse(AppStruct):

@@ -207,6 +207,8 @@ export const API = {
 	library: {
 		mbids: () => '/api/v1/library/mbids',
 		membership: () => '/api/v1/library/membership',
+		adminTrackOwnershipAssignment: (trackId: string) =>
+			`/api/v1/library/admin/track-ownership/${encodeURIComponent(trackId)}`,
 		albums: (page = 1, sort = 'recent', q?: string, format?: string, pageSize = 50) => {
 			let url = `/api/v1/library/albums?page=${page}&page_size=${pageSize}&sort=${sort}`;
 			if (q) url += `&q=${encodeURIComponent(q)}`;
@@ -761,21 +763,6 @@ export const API = {
 		config: () => '/api/v1/download-client/config',
 		test: () => '/api/v1/download-client/test',
 		status: () => '/api/v1/download-client/status'
-	},
-	indexers: {
-		list: () => '/api/v1/indexers',
-		create: () => '/api/v1/indexers',
-		update: (id: string) => `/api/v1/indexers/${id}`,
-		remove: (id: string) => `/api/v1/indexers/${id}`,
-		reorder: () => '/api/v1/indexers/reorder',
-		test: () => '/api/v1/indexers/test'
-	},
-	lidarrImport: {
-		config: () => '/api/v1/lidarr-import/config',
-		test: () => '/api/v1/lidarr-import/test',
-		status: () => '/api/v1/lidarr-import/status',
-		artists: () => '/api/v1/lidarr-import/artists',
-		import: () => '/api/v1/lidarr-import/import'
 	},
 	freeMusic: {
 		tasks: (all: boolean = false) => `/api/v1/free-music/tasks${all ? '?all=true' : ''}`,

@@ -318,7 +318,7 @@ SELECT
     a.original_release_date,
     a.is_compilation,
     COALESCE(ta.local_artist_id, a.album_artist_id) AS artist_mbid,
-    te.recording_mbid,
+    COALESCE(te.recording_mbid, t.embedded_recording_mbid) AS recording_mbid,
     te.release_track_mbid,
     te.medium_position,
     te.release_track_position,
@@ -455,6 +455,40 @@ def _normalize_exact(value: str | None) -> str:
     if value is None:
         return ""
     return " ".join(unicodedata.normalize("NFKC", value).strip().casefold().split())
+
+
+def _playlist_track_identity_keys(
+    track_name: object,
+    artist_name: object,
+    album_name: object,
+    album_id: object = None,
+    track_number: object = None,
+    disc_number: object = None,
+    source_type: object = None,
+    track_source_id: object = None,
+) -> set[tuple[str, ...]]:
+    """Return the stable identities used to reject duplicate playlist tracks."""
+    keys: set[tuple[str, ...]] = {
+        (
+            "metadata",
+            _normalize_exact(str(track_name or "")),
+            _normalize_exact(str(artist_name or "")),
+            _normalize_exact(str(album_name or "")),
+        )
+    }
+    source_id = str(track_source_id or "").strip()
+    if source_id:
+        keys.add(
+            ("source", _normalize_exact(str(source_type or "")), source_id)
+        )
+
+    album = str(album_id or "").strip()
+    if album and track_number is not None:
+        disc = 1 if disc_number is None else disc_number
+        keys.add(
+            ("album-position", _normalize_exact(album), str(disc), str(track_number))
+        )
+    return keys
 
 
 def _disambiguate_history_tracks(
@@ -2269,6 +2303,75 @@ class NativeLibraryStore(PersistenceBase):
                 self._bump_catalog(connection)
 
         await self._write(operation)
+
+    async def remove_target_library_item(
+        self, user_id: str, item_kind: str, provider_id: str
+    ) -> None:
+        if item_kind not in {"album", "track"}:
+            raise ValueError("Library selection kind must be album or track")
+        normalized = provider_id.strip().casefold()
+        if not user_id or not normalized:
+            return
+
+        def operation(connection: sqlite3.Connection) -> None:
+            cursor = connection.execute(
+                "DELETE FROM library_user_selections "
+                "WHERE user_id = ? AND item_kind = ? AND provider_id = ?",
+                (user_id, item_kind, normalized),
+            )
+            if cursor.rowcount:
+                self._bump_catalog(connection)
+
+        await self._write(operation)
+
+    async def get_target_track_user_access(
+        self, track_ids: list[str], user_ids: list[str]
+    ) -> dict[str, dict[str, set[str]]]:
+        """Return direct and album-inherited access for selected tracks."""
+        tracks = list(dict.fromkeys(str(value) for value in track_ids if value))
+        users = list(dict.fromkeys(str(value) for value in user_ids if value))
+        result = {
+            track_id: {"direct": set(), "album": set()}
+            for track_id in tracks
+        }
+        if not tracks or not users:
+            return result
+
+        def operation(
+            connection: sqlite3.Connection,
+        ) -> dict[str, dict[str, set[str]]]:
+            track_placeholders = ",".join("?" for _ in tracks)
+            user_placeholders = ",".join("?" for _ in users)
+            rows = connection.execute(
+                "SELECT DISTINCT t.id AS track_id, access.user_id, access.item_kind "
+                "FROM local_tracks t "
+                "JOIN local_albums a ON a.id = t.local_album_id "
+                "JOIN library_user_selections access "
+                f"ON access.user_id IN ({user_placeholders}) AND ("
+                "(access.item_kind = 'track' AND ("
+                "LOWER(COALESCE(t.embedded_recording_mbid, '')) = access.provider_id "
+                "OR EXISTS (SELECT 1 FROM local_track_external_identities identity "
+                "WHERE identity.local_track_id = t.id "
+                "AND LOWER(identity.recording_mbid) = access.provider_id))) "
+                "OR (access.item_kind = 'album' AND ("
+                "LOWER(COALESCE(t.embedded_release_group_mbid, '')) = access.provider_id "
+                "OR EXISTS (SELECT 1 FROM local_album_external_identities identity "
+                "WHERE identity.local_album_id = t.local_album_id "
+                "AND LOWER(identity.release_group_mbid) = access.provider_id)))) "
+                f"WHERE t.id IN ({track_placeholders}) "
+                "AND t.availability = 'indexed' "
+                "AND a.retired_into_album_id IS NULL",
+                (*users, *tracks),
+            ).fetchall()
+            for row in rows:
+                track_id = str(row["track_id"])
+                if track_id in result:
+                    result[track_id][
+                        "direct" if row["item_kind"] == "track" else "album"
+                    ].add(str(row["user_id"]))
+            return result
+
+        return await self._read(operation)
 
     async def get_target_track(
         self, track_id: str, *, user_id: str | None = None
@@ -5051,6 +5154,45 @@ class NativeLibraryStore(PersistenceBase):
                 is None
             ):
                 return []
+            existing_rows = connection.execute(
+                "SELECT track_name, artist_name, album_name, album_id, "
+                "track_number, disc_number, source_type, track_source_id "
+                "FROM library_playlist_tracks WHERE playlist_id = ?",
+                (playlist_id,),
+            ).fetchall()
+            seen_keys = {
+                key
+                for row in existing_rows
+                for key in _playlist_track_identity_keys(
+                    row["track_name"],
+                    row["artist_name"],
+                    row["album_name"],
+                    row["album_id"],
+                    row["track_number"],
+                    row["disc_number"],
+                    row["source_type"],
+                    row["track_source_id"],
+                )
+            }
+            unique_tracks: list[dict[str, Any]] = []
+            for track in tracks:
+                track_keys = _playlist_track_identity_keys(
+                    track.get("track_name"),
+                    track.get("artist_name"),
+                    track.get("album_name"),
+                    track.get("album_id"),
+                    track.get("track_number"),
+                    track.get("disc_number"),
+                    track.get("source_type"),
+                    track.get("track_source_id"),
+                )
+                if seen_keys.intersection(track_keys):
+                    continue
+                seen_keys.update(track_keys)
+                unique_tracks.append(track)
+            if not unique_tracks:
+                return []
+            tracks = unique_tracks
             current_count = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM library_playlist_tracks WHERE playlist_id = ?",
@@ -5139,7 +5281,7 @@ class NativeLibraryStore(PersistenceBase):
                     local_artist_id,
                     None,
                 )
-                connection.execute(
+                cursor = connection.execute(
                     "INSERT INTO library_playlist_tracks "
                     "(id, playlist_id, position, track_name, artist_name, album_name, "
                     "album_id, artist_id, track_source_id, cover_url, source_type, "
@@ -5149,14 +5291,15 @@ class NativeLibraryStore(PersistenceBase):
                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     values,
                 )
-                created.append(
-                    dict(
-                        connection.execute(
-                            "SELECT * FROM library_playlist_tracks WHERE id = ?",
-                            (track["id"],),
-                        ).fetchone()
-                    )
-                )
+                if cursor.rowcount == 0:
+                    continue
+                inserted = connection.execute(
+                    "SELECT * FROM library_playlist_tracks WHERE id = ?",
+                    (track["id"],),
+                ).fetchone()
+                if inserted is None:
+                    continue
+                created.append(dict(inserted))
             connection.execute(
                 "UPDATE library_playlists SET updated_at = ? WHERE id = ?",
                 (changed_at, playlist_id),
@@ -5469,13 +5612,14 @@ class NativeLibraryStore(PersistenceBase):
 
     async def target_playlist_membership(
         self,
-        tracks: list[tuple[str, str, str]],
+        tracks: list[tuple[str, str, str] | dict[str, Any]],
         user_id: str | None,
     ) -> dict[str, list[int]]:
         def operation(connection: sqlite3.Connection) -> dict[str, list[int]]:
             query = (
-                "SELECT pt.playlist_id, LOWER(pt.track_name) AS track_name, "
-                "LOWER(pt.artist_name) AS artist_name, LOWER(pt.album_name) AS album_name "
+                "SELECT pt.playlist_id, pt.track_name, pt.artist_name, pt.album_name, "
+                "pt.album_id, pt.track_number, pt.disc_number, pt.source_type, "
+                "pt.track_source_id "
                 "FROM library_playlist_tracks pt JOIN library_playlists p "
                 "ON p.id = pt.playlist_id"
             )
@@ -5483,14 +5627,48 @@ class NativeLibraryStore(PersistenceBase):
             if user_id is not None:
                 query += " WHERE p.user_id = ?"
                 parameters = (user_id,)
-            wanted = [
-                (track.casefold(), artist.casefold(), album.casefold())
-                for track, artist, album in tracks
-            ]
+            wanted: list[set[tuple[str, ...]]] = []
+            for track in tracks:
+                if isinstance(track, dict):
+                    wanted.append(
+                        _playlist_track_identity_keys(
+                            track.get("track_name"),
+                            track.get("artist_name"),
+                            track.get("album_name"),
+                            track.get("album_id"),
+                            track.get("track_number"),
+                            track.get("disc_number"),
+                            track.get("source_type"),
+                            track.get("track_source_id"),
+                        )
+                    )
+                else:
+                    wanted.append(
+                        {
+                            (
+                                "metadata",
+                                _normalize_exact(track[0]),
+                                _normalize_exact(track[1]),
+                                _normalize_exact(track[2]),
+                            )
+                        }
+                    )
             result: dict[str, list[int]] = {}
             for row in connection.execute(query, parameters).fetchall():
-                key = (row["track_name"], row["artist_name"], row["album_name"])
-                matches = [index for index, value in enumerate(wanted) if value == key]
+                existing = _playlist_track_identity_keys(
+                    row["track_name"],
+                    row["artist_name"],
+                    row["album_name"],
+                    row["album_id"],
+                    row["track_number"],
+                    row["disc_number"],
+                    row["source_type"],
+                    row["track_source_id"],
+                )
+                matches = [
+                    index for index, keys in enumerate(wanted)
+                    if existing.intersection(keys)
+                ]
                 if matches:
                     result.setdefault(str(row["playlist_id"]), []).extend(matches)
             return result

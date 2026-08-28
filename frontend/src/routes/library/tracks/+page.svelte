@@ -4,7 +4,12 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import { API } from '$lib/constants';
 	import { api } from '$lib/api/client';
-	import { addTracksToPlaylist, checkTrackMembership, queueItemToTrackData } from '$lib/api/playlists';
+	import {
+		addTracksToPlaylist,
+		checkTrackMembership,
+		queueItemToTrackData,
+		trackDataToMembershipIdentifier
+	} from '$lib/api/playlists';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -14,6 +19,7 @@
 	import { createLibraryTrackLoader } from '$lib/utils/libraryTrackLoader.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import TrackAccessModal from '$lib/components/TrackAccessModal.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import { openGlobalPlaylistModal } from '$lib/stores/playlistModal.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
@@ -31,6 +37,7 @@
 		Music2,
 		Search,
 		Trash2,
+		Users,
 		X
 	} from 'lucide-svelte';
 	import type { NativeTrackListItem, NativeTrackPage, TrackSort } from '$lib/types';
@@ -50,6 +57,7 @@
 	let selectedIds = new SvelteSet<string>();
 	let bulkDeleting = $state(false);
 	let addingToPlaylist = $state(false);
+	let accessTrack = $state<NativeTrackListItem | null>(null);
 	let targetSelectionInitialized = false;
 	let targetMembershipGeneration = 0;
 	let existingTargetTrackIds = new SvelteSet<string>();
@@ -103,11 +111,9 @@
 		if (!targetPlaylistId || tracks.length === 0) return;
 		try {
 			const membership = await checkTrackMembership(
-				tracks.map((track) => ({
-					track_name: track.title,
-					artist_name: track.artist_name,
-					album_name: track.album_title
-				}))
+				buildDiscoveryQueueFromLocal(tracks).map((track) =>
+					trackDataToMembershipIdentifier(queueItemToTrackData(track))
+				)
 			);
 			if (generation !== targetMembershipGeneration) return;
 			for (const index of membership[targetPlaylistId] ?? []) {
@@ -190,11 +196,9 @@
 		addingToPlaylist = true;
 		try {
 			const membership = await checkTrackMembership(
-				items.map((item) => ({
-					track_name: item.trackName,
-					artist_name: item.artistName,
-					album_name: item.albumName
-				}))
+				items.map((item) =>
+					trackDataToMembershipIdentifier(queueItemToTrackData(item))
+				)
 			);
 			const existingIndices = new Set(membership[targetPlaylistId] ?? []);
 			const newItems = items.filter((_, index) => !existingIndices.has(index));
@@ -284,6 +288,9 @@
 			},
 			{ label: 'Add to Queue', icon: ListPlus, onclick: () => addTrackToQueue(track) },
 			{ label: 'Play Next', icon: ListStart, onclick: () => playTrackNext(track) },
+			...(authStore.isAdmin
+				? [{ label: 'Track access', icon: Users, onclick: () => (accessTrack = track) }]
+				: []),
 			{
 				label: 'Delete from library',
 				icon: Trash2,
@@ -556,7 +563,8 @@
 
 		{#if selectionEnabled && selectedIds.size > 0}
 			<div
-				class="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-box border border-base-content/10 bg-base-300 px-4 py-3 shadow-xl"
+				class="droppedneedle-selection-toolbar fixed bottom-4 left-1/2 z-[70] flex -translate-x-1/2 items-center gap-3 rounded-box border border-base-content/10 bg-base-300 px-4 py-3 shadow-xl"
+				class:droppedneedle-selection-toolbar--player={playerStore.isPlayerVisible}
 			>
 				<span class="text-sm font-medium">{selectedIds.size} selected</span>
 				<button class="btn btn-ghost btn-sm" onclick={clearSelection}>Clear</button>
@@ -602,3 +610,5 @@
 		{/if}
 	{/if}
 </div>
+
+<TrackAccessModal track={accessTrack} onclose={() => (accessTrack = null)} />

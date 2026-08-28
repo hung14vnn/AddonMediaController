@@ -26,7 +26,9 @@
 		createPlaylist,
 		addTracksToPlaylist,
 		queueItemToTrackData,
-		checkTrackMembership
+		trackDataToMembershipIdentifier,
+		checkTrackMembership,
+		removeMatchingTracksFromPlaylist
 	} from '$lib/api/playlists';
 	import { isRedactedPlaylist, type PlaylistSummary } from '$lib/api/playlists';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -107,13 +109,23 @@
 			playlists = (await fetchPlaylists()).filter(
 				(p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.is_owner && !p.source_ref
 			);
-			if (pendingTracks.length > 0) {
-				const trackIdentifiers = pendingTracks.map((t) => ({
-					track_name: t.trackName,
-					artist_name: t.artistName,
-					album_name: t.albumName
-				}));
-				membership = await checkTrackMembership(trackIdentifiers);
+			if (pendingTracks.length > 0 && playlists.length > 0) {
+				const trackIdentifiers = pendingTracks.map((t) =>
+					trackDataToMembershipIdentifier(queueItemToTrackData(t))
+				);
+				try {
+					membership = await checkTrackMembership(trackIdentifiers);
+				} catch {
+					// Keep compatibility with a backend image that predates the richer
+					// identity fields. The backend add guard still remains authoritative.
+					membership = await checkTrackMembership(
+						pendingTracks.map((t) => ({
+							track_name: t.trackName,
+							artist_name: t.artistName,
+							album_name: t.albumName
+						}))
+					);
+				}
 			}
 		} catch {
 			fetchError = "Couldn't load your playlists.";
@@ -130,15 +142,31 @@
 	}
 
 	async function handleAdd(playlist: PlaylistSummary) {
-		if (addedSet.has(playlist.id) || addingSet.has(playlist.id)) return;
-		if (allTracksExist(playlist.id)) return;
+		if (addingSet.has(playlist.id)) return;
 		if (pendingTracks.length === 0) return;
 		addingSet.add(playlist.id);
 		try {
 			const existingIndices = new Set(membership[playlist.id] ?? []);
 			const tracksToAdd = pendingTracks.filter((_, i) => !existingIndices.has(i));
 			if (tracksToAdd.length === 0) {
-				addedSet.add(playlist.id);
+				const removedCount = await removeMatchingTracksFromPlaylist(
+					playlist.id,
+					pendingTracks.map(queueItemToTrackData)
+				);
+				if (removedCount > 0) {
+					addedSet.delete(playlist.id);
+					membership = { ...membership, [playlist.id]: [] };
+					playlists = playlists.map((p) =>
+						p.id === playlist.id
+							? { ...p, track_count: Math.max(0, p.track_count - removedCount) }
+							: p
+					);
+					invalidatePlaylistList();
+					showStatus(
+						`Removed ${removedCount} track${removedCount === 1 ? '' : 's'} from "${playlist.name}".`,
+						'success'
+					);
+				}
 				return;
 			}
 			const trackData = tracksToAdd.map(queueItemToTrackData);
@@ -204,7 +232,7 @@
 
 	function sleeveAria(p: PlaylistSummary): string {
 		const s = sleeveState(p.id);
-		if (s === 'added') return 'Already added';
+		if (s === 'added') return `Remove from ${p.name}`;
 		if (s === 'adding') return 'Adding tracks';
 		if (s === 'partial') return `Add the remaining tracks to ${p.name}`;
 		return `Add to ${p.name}`;
@@ -310,11 +338,13 @@
 											? 'is-partial'
 											: ''}"
 								onclick={() => handleAdd(playlist)}
-								disabled={state === 'added' || state === 'adding' || !canAdd}
+								disabled={state === 'adding' || !canAdd}
 								aria-label={sleeveAria(playlist)}
 								title={state === 'partial'
 									? `${existingCount(playlist.id)} of ${trackCount} already in "${playlist.name}"`
-									: sleeveAria(playlist)}
+									: state === 'added'
+										? `Click to remove the tracks from "${playlist.name}"`
+										: sleeveAria(playlist)}
 								in:fly={{
 									y: reducedMotion ? 0 : 14,
 									duration: reducedMotion ? 0 : 260,

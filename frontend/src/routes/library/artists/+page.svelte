@@ -227,9 +227,8 @@
 		<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
 			{#each artists as artist (artist.id)}
 				{@const artistName = artist.name?.trim() || 'Unknown artist'}
-				{@const artistRouteId = artist.musicbrainz_artist_id ?? artist.id}
 				<a
-					href={artistHref(artistRouteId)}
+					href={artistHref(artist.id)}
 					class="card group bg-base-100 shadow-sm transition-all hover:-translate-y-1 hover:shadow-lg focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
 					aria-label={`Open ${artistName}`}
 				>

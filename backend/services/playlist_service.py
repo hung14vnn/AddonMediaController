@@ -598,7 +598,7 @@ class PlaylistService:
 
     async def check_track_membership(
         self,
-        tracks: list[tuple[str, str, str]],
+        tracks: list[tuple[str, str, str] | dict],
         user_id: str | None = None,
     ) -> dict[str, list[int]]:
         return await self._repo.check_track_membership(tracks, user_id)

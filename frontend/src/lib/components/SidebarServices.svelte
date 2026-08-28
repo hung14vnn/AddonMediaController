@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { fromStore } from 'svelte/store';
 	import { Headphones, Disc3 } from 'lucide-svelte';
 	import { integrationStore } from '$lib/stores/integration';
@@ -50,6 +51,7 @@
 			<a
 				href={withBasePath('/library/youtube')}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+				class:menu-active={page.url.pathname.startsWith('/library/youtube')}
 				data-tip="YouTube"
 			>
 				<YouTubeIcon class="h-6 w-6 text-error" />
@@ -69,6 +71,7 @@
 			<a
 				href={withBasePath('/library/jellyfin')}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+				class:menu-active={page.url.pathname.startsWith('/library/jellyfin')}
 				data-tip="Jellyfin"
 			>
 				<div class="relative inline-flex">
@@ -99,6 +102,7 @@
 			<a
 				href={withBasePath('/library/navidrome')}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+				class:menu-active={page.url.pathname.startsWith('/library/navidrome')}
 				data-tip="Navidrome"
 			>
 				<div class="relative inline-flex">
@@ -129,6 +133,7 @@
 			<a
 				href={withBasePath('/library/plex')}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+				class:menu-active={page.url.pathname.startsWith('/library/plex')}
 				data-tip="Plex"
 			>
 				<div class="relative inline-flex">
@@ -159,6 +164,7 @@
 			<a
 				href={withBasePath('/library/local')}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+				class:menu-active={page.url.pathname.startsWith('/library/local')}
 				data-tip="Local Files"
 			>
 				<div class="relative inline-flex">

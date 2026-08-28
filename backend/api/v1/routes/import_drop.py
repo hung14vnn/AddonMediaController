@@ -137,6 +137,7 @@ async def match_item(
         album_title=body.album_title,
         track_title=body.track_title,
         cover_url=body.cover_url,
+        selected_recording_mbids=body.selected_recording_mbids,
         user_id=current_user.id,
         is_admin=current_user.role == "admin",
     )

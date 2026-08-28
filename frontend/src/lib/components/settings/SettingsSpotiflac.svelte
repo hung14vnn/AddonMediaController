@@ -21,6 +21,14 @@
 	let seeded = $state(false);
 	let testResult = $state<SpotiflacTestResult | null>(null);
 
+	async function checkInstallation() {
+		try {
+			testResult = await test.mutateAsync();
+		} catch {
+			testResult = { valid: false, message: "Couldn't run SpotiFLAC" };
+		}
+	}
+
 	$effect(() => {
 		const settings = configQuery.data;
 		if (settings && !seeded) {
@@ -28,15 +36,18 @@
 			downloadsMount = settings.downloads_mount || '/spotiflac-downloads';
 			quality = settings.quality || 'LOSSLESS';
 			seeded = true;
+			if (settings.enabled) void checkInstallation();
 		}
 	});
 
-	const connected = $derived(testResult?.valid === true);
+	const connected = $derived(enabled && testResult?.valid === true);
 	const statusText = $derived(
 		connected
 			? `Installed${testResult?.version ? ` · v${testResult.version}` : ''}`
 			: enabled
-				? 'Check installation before enabling downloads'
+				? test.isPending
+					? 'Checking installation...'
+					: testResult?.message || 'Checking installation...'
 				: 'Disabled'
 	);
 
@@ -56,6 +67,11 @@
 	async function onToggle() {
 		try {
 			await save.mutateAsync(current());
+			if (enabled) {
+				await checkInstallation();
+			} else {
+				testResult = null;
+			}
 			toastStore.show({
 				message: `SpotiFLAC ${enabled ? 'enabled' : 'disabled'}`,
 				type: 'success'
@@ -67,11 +83,7 @@
 	}
 
 	async function onTest() {
-		try {
-			testResult = await test.mutateAsync();
-		} catch {
-			testResult = { valid: false, message: "Couldn't run SpotiFLAC" };
-		}
+		await checkInstallation();
 	}
 </script>
 

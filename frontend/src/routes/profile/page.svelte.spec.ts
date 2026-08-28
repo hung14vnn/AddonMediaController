@@ -40,7 +40,6 @@ vi.mock('$lib/queries/profile/ProfileMutations.svelte', () => ({
 // isolation. ProfileConnectApps is left REAL (its queries are mocked below) so the
 // page↔section wiring is actually exercised.
 vi.mock('$lib/components/profile/MediaServerAccountsCard.svelte', emptyComponent);
-vi.mock('$lib/components/profile/NavidromeMusicFoldersCard.svelte', emptyComponent);
 vi.mock('$lib/components/profile/ScrobblingDiscoveryCard.svelte', emptyComponent);
 vi.mock('$lib/components/profile/SpotifyConnectionCard.svelte', emptyComponent);
 
@@ -97,9 +96,7 @@ describe('profile route page', () => {
 		render(ProfilePage);
 		const navigation = page.getByRole('navigation', { name: 'Page sections' });
 		await expect.element(navigation.getByRole('link', { name: 'Account' })).toBeInTheDocument();
-		await expect
-			.element(navigation.getByRole('link', { name: 'Connected Services' }))
-			.toBeInTheDocument();
+		await expect.element(page.getByText('Connected Services')).not.toBeInTheDocument();
 		await expect
 			.element(navigation.getByRole('link', { name: 'Connect Apps' }))
 			.toBeInTheDocument();

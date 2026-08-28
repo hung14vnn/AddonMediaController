@@ -5,7 +5,7 @@
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
-	import { X, GripVertical, ListMusic, Disc3, Shuffle, Trash2 } from 'lucide-svelte';
+	import { X, GripVertical, ListMusic, Disc3, Shuffle, Trash2, Pin } from 'lucide-svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import LocalFilesIcon from '$lib/components/LocalFilesIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
@@ -15,9 +15,16 @@
 	interface Props {
 		open: boolean;
 		onclose: () => void;
+		pinnable?: boolean;
+		pinned?: boolean;
 	}
 
-	let { open = $bindable(), onclose }: Props = $props();
+	let {
+		open = $bindable(),
+		onclose,
+		pinnable = false,
+		pinned = $bindable(false)
+	}: Props = $props();
 
 	let dragOverIndex = $state<number | null>(null);
 	let dragSourceIndex = $state<number | null>(null);
@@ -36,8 +43,14 @@
 	}
 
 	function handleClose() {
+		pinned = false;
 		open = false;
 		onclose();
+	}
+
+	function togglePinned() {
+		pinned = !pinned;
+		if (pinned) open = true;
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -59,7 +72,7 @@
 	function handleClearQueue() {
 		playerStore.clearQueue();
 		playbackToast.show('Upcoming queue cleared', 'info');
-		handleClose();
+		if (!pinned) handleClose();
 	}
 
 	function handleDragStart(e: DragEvent, displayPos: number) {
@@ -156,14 +169,16 @@
 	}
 
 	$effect(() => {
-		if (open) {
+		if (open && !pinned) {
 			document.body.classList.add('overflow-hidden');
-			queueMicrotask(scrollToCurrentTrack);
 		} else {
 			document.body.classList.remove('overflow-hidden');
 		}
+		document.body.classList.toggle('droppedneedle-queue-pinned', open && pinned);
+		if (open) queueMicrotask(scrollToCurrentTrack);
 		return () => {
 			document.body.classList.remove('overflow-hidden');
+			document.body.classList.remove('droppedneedle-queue-pinned');
 		};
 	});
 
@@ -185,21 +200,29 @@
 <svelte:window onkeydown={handleKeydown} />
 
 {#if open}
-	<button
-		class="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm"
-		onclick={handleClose}
-		aria-label="Close queue"
-		transition:fade={{ duration: 200 }}
-	></button>
+	{#if !pinned}
+		<button
+			class="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm"
+			onclick={handleClose}
+			aria-label="Close queue"
+			transition:fade={{ duration: 200 }}
+		></button>
+	{/if}
 
 	<div
-		class="fixed right-0 top-0 bottom-0 z-[61] w-full max-w-md bg-base-200 shadow-2xl flex flex-col"
+		class="fixed right-0 top-0 bottom-0 z-[61] w-full {pinned
+			? 'max-w-[15rem]'
+			: 'max-w-[28rem]'} bg-base-200 shadow-2xl flex flex-col {pinned
+			? 'border-l border-base-content/10'
+			: ''}"
 		transition:fly={{ x: 400, duration: 200 }}
 	>
 		<div class="flex items-center justify-between p-4 border-b border-base-content/10">
 			<div class="flex items-center gap-2">
 				<ListMusic class="h-5 w-5" />
-				<h2 class="text-lg font-bold">Queue</h2>
+				{#if !pinned}
+					<h2 class="text-lg font-bold">Queue</h2>
+				{/if}
 				{#if queue.length > 0}
 					<span class="badge badge-sm badge-neutral">{upcomingCount}</span>
 				{/if}
@@ -215,9 +238,28 @@
 					>
 						<Shuffle class="h-3.5 w-3.5" />
 					</button>
-					<button class="btn btn-ghost btn-sm gap-1 text-error" onclick={handleClearQueue}>
+				{/if}
+				{#if pinnable}
+					<div class="tooltip tooltip-bottom" data-tip={pinned ? 'Unpin queue' : 'Keep queue open'}>
+						<button
+							class="btn btn-ghost btn-sm btn-circle {pinned ? 'bg-accent/10' : ''}"
+							class:text-accent={pinned}
+							onclick={togglePinned}
+							aria-label={pinned ? 'Unpin queue' : 'Pin queue'}
+							aria-pressed={pinned}
+						>
+							<Pin class="h-3.5 w-3.5" />
+						</button>
+					</div>
+				{/if}
+				{#if queue.length > 0}
+					<button
+						class="btn btn-ghost btn-sm {pinned ? 'btn-circle' : 'gap-1'} text-error"
+						onclick={handleClearQueue}
+						aria-label="Clear queue"
+					>
 						<Trash2 class="h-3.5 w-3.5" />
-						Clear
+						{#if !pinned}Clear{/if}
 					</button>
 				{/if}
 				<button
@@ -234,8 +276,10 @@
 			{#if queue.length === 0}
 				<div class="flex flex-col items-center justify-center h-full gap-3 p-8">
 					<ListMusic class="h-12 w-12 opacity-20" />
-					<p class="text-sm opacity-50">Queue is empty</p>
-					<p class="text-xs opacity-30 text-center">Add tracks from album pages or your library</p>
+					<p class="{pinned ? 'text-xs' : 'text-sm'} opacity-50">Queue is empty</p>
+					<p class="{pinned ? 'text-[0.65rem]' : 'text-xs'} opacity-30 text-center">
+						Add tracks from album pages or your library
+					</p>
 				</div>
 			{:else}
 				<div class="flex flex-col" role="group" aria-label="Queue tracks">
@@ -246,8 +290,11 @@
 						{@const isReorderable = displayPosition > currentDisplayPosition}
 						{@const coverUrl = getCoverUrl(item.coverUrl, item.albumId)}
 						{#if displayPosition === currentDisplayPosition + 1}
-							<div class="flex items-center gap-2 px-4 py-1.5">
-								<span class="text-[0.65rem] font-semibold uppercase tracking-wider opacity-40"
+							<div class="flex items-center gap-2 {pinned ? 'px-3' : 'px-4'} py-1.5">
+								<span
+									class="{pinned
+										? 'text-[0.6rem]'
+										: 'text-[0.65rem]'} font-semibold uppercase tracking-wider opacity-40"
 									>Up next</span
 								>
 								<div class="flex-1 border-t border-base-content/5"></div>
@@ -255,7 +302,9 @@
 						{/if}
 						<div
 							use:trackCurrentEl={isCurrent}
-							class="flex items-center gap-2 px-3 py-2 transition-colors cursor-pointer group/item
+							class="flex items-center {pinned
+								? 'gap-1.5 px-1.5'
+								: 'gap-2 px-3'} {pinned ? 'py-1.5' : 'py-2'} transition-colors cursor-pointer group/item
 								{isCurrent
 								? 'bg-accent/10 border-l-2 border-accent'
 								: 'hover:bg-base-300/50 border-l-2 border-transparent'}
@@ -302,14 +351,22 @@
 							</div>
 
 							<div class="flex-1 min-w-0">
-								<p class="text-sm font-medium truncate {isCurrent ? 'text-accent' : ''}">
+								<p
+									class="{pinned ? 'text-xs' : 'text-sm'} font-medium truncate {isCurrent
+										? 'text-accent'
+										: ''}"
+								>
 									{item.trackName || item.albumName}
 								</p>
-								<p class="text-xs opacity-60 truncate">{formatArtistCredit(item.artistName)}</p>
+								<p class="{pinned ? 'text-[0.65rem]' : 'text-xs'} opacity-60 truncate">
+									{formatArtistCredit(item.artistName)}
+								</p>
 							</div>
 
 							{#if item.duration}
-								<span class="text-xs opacity-40 shrink-0">{formatDuration(item.duration)}</span>
+								<span class="{pinned ? 'text-[0.65rem]' : 'text-xs'} opacity-40 shrink-0"
+									>{formatDuration(item.duration)}</span
+								>
 							{/if}
 
 							<div class="shrink-0">
@@ -321,7 +378,7 @@
 									<span title="Navidrome" style="color: rgb(var(--brand-navidrome));">
 										<NavidromeIcon class="h-3.5 w-3.5" />
 									</span>
-								{:else if item.sourceType === 'local'}
+								{:else if item.sourceType === 'local' && !pinned}
 									<span title="Local" style="color: rgb(var(--brand-localfiles));">
 										<LocalFilesIcon class="h-3.5 w-3.5" />
 									</span>
@@ -354,7 +411,11 @@
 		</div>
 
 		{#if queue.length > 0}
-			<div class="p-3 border-t border-base-content/10 text-xs opacity-50 text-center">
+			<div
+				class="p-3 border-t border-base-content/10 {pinned
+					? 'text-[0.65rem]'
+					: 'text-xs'} opacity-50 text-center"
+			>
 				{upcomingCount} track{upcomingCount === 1 ? '' : 's'} upcoming
 			</div>
 		{/if}

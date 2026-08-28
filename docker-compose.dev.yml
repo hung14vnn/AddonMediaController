@@ -20,6 +20,19 @@ services:
       timeout: 5s
       retries: 3
 
+  slskd:
+    image: slskd/slskd:latest
+    container_name: slskd
+    restart: unless-stopped
+    ports:
+      - "5030:5030"
+    environment:
+      SLSKD_REMOTE_CONFIGURATION: "true"
+    volumes:
+      - ./slskd:/app
+      - ./downloads:/slskd-downloads
+      - ./music:/music
+
   droppedneedle:
     build:
       context: .
@@ -31,6 +44,7 @@ services:
     environment:
       - PUID=1000            # User ID - run `id` on your host to find yours
       - PGID=1000            # Group ID - run `id` on your host to find yours
+      - SLSKD_DOWNLOADS_PATH=/slskd-downloads
       #                        Unraid: use 99/100 (nobody:users) unless you changed Unraid's defaults.
       #                        If using Docker --user, PUID/PGID are ignored (user mapping is external).
       - PORT=8688            # Internal port (must match the right side of "ports" below)
@@ -46,6 +60,7 @@ services:
       - imports:/app/imports   # drop-importer staging
       - ./music:/music         # final managed music library
       - ./spotiflac-downloads:/spotiflac-downloads  # SpotiFLAC output; persists on the host
+      - ./downloads:/slskd-downloads:rw
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8688/health"]

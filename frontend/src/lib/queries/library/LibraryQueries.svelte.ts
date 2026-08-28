@@ -326,6 +326,7 @@ export const getLibraryAlbumTracksQuery = (getAlbumId: Getter<string>) =>
 export const getLibraryArtistDetailQueryOptions = (artistId: string) =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
+		refetchOnWindowFocus: false,
 		queryKey: LibraryQueryKeyFactory.artistDetail(artistId),
 		queryFn: ({ signal }) =>
 			api.global.get<LibraryArtistSummary>(API.library.artistDetail(artistId), { signal })

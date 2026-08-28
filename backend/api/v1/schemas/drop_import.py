@@ -46,6 +46,7 @@ class DropImportMatchRequest(AppStruct):
     album_title: str | None = None
     track_title: str | None = None
     cover_url: str | None = None
+    selected_recording_mbids: list[str] | None = None
 
 
 def item_to_response(item: DropImportItem) -> DropImportItemResponse:

@@ -461,6 +461,8 @@
 					<a
 						href={withBasePath('/')}
 						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+						class:menu-active={currentPath === '/'}
+						aria-current={currentPath === '/' ? 'page' : undefined}
 						data-tip="Home"
 					>
 						<House class="h-6 w-6" />
@@ -472,6 +474,8 @@
 					<a
 						href={withBasePath('/discover')}
 						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+						class:menu-active={isNavActive('/discover')}
+						aria-current={isNavActive('/discover') ? 'page' : undefined}
 						data-tip="Discover"
 					>
 						<Compass class="h-6 w-6" />
@@ -504,6 +508,8 @@
 					<a
 						href={withBasePath('/downloads')}
 						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+						class:menu-active={isNavActive('/downloads')}
+						aria-current={isNavActive('/downloads') ? 'page' : undefined}
 						data-tip="Downloads"
 					>
 						<div class="relative">
@@ -558,6 +564,8 @@
 						<a
 							href={withBasePath('/requests')}
 							class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+							class:menu-active={isNavActive('/requests')}
+							aria-current={isNavActive('/requests') ? 'page' : undefined}
 							data-tip="Requests"
 						>
 							<Inbox class="h-6 w-6" />
@@ -597,6 +605,8 @@
 						<a
 							href={withBasePath('/requests?tab=approvals')}
 							class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+							class:menu-active={isNavActive('/requests')}
+							aria-current={isNavActive('/requests') ? 'page' : undefined}
 							data-tip="Approvals"
 						>
 							<div class="relative">
@@ -619,6 +629,8 @@
 								? withBasePath('/settings?tab=about')
 								: withBasePath('/settings')}
 							class="btn btn-ghost btn-circle relative"
+							class:menu-active={isNavActive('/settings')}
+							aria-current={isNavActive('/settings') ? 'page' : undefined}
 							aria-label={versionUpdateAvailable ? 'Settings - update available' : 'Settings'}
 						>
 							<Settings class="h-6 w-6" />

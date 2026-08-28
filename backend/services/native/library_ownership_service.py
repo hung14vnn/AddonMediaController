@@ -6,7 +6,7 @@ import unicodedata
 
 import msgspec
 
-from core.exceptions import ProviderIdentityRequiredError
+from core.exceptions import ProviderIdentityRequiredError, ResourceNotFoundError
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 
 
@@ -59,6 +59,30 @@ class LibraryOwnershipService:
         """Add one track to a user's library without duplicating its file row."""
         if user_id and provider_id:
             await self._store.select_target_library_item(user_id, "track", provider_id)
+
+    async def admin_track_access(
+        self, track_ids: list[str], user_ids: list[str]
+    ) -> dict[str, dict[str, set[str]]]:
+        return await self._store.get_target_track_user_access(track_ids, user_ids)
+
+    async def assign_track(self, user_id: str, track_id: str) -> None:
+        provider_id = await self._admin_track_provider_id(track_id)
+        await self.select_track(user_id, provider_id)
+
+    async def remove_track(self, user_id: str, track_id: str) -> None:
+        provider_id = await self._admin_track_provider_id(track_id)
+        await self._store.remove_target_library_item(user_id, "track", provider_id)
+
+    async def _admin_track_provider_id(self, track_id: str) -> str:
+        row = await self._store.get_target_track(track_id)
+        if row is None:
+            raise ResourceNotFoundError("The library track was not found.")
+        provider_id = row.get("recording_mbid")
+        if not provider_id:
+            raise ProviderIdentityRequiredError(
+                "This track has no MusicBrainz recording ID and cannot be assigned."
+            )
+        return str(provider_id)
 
     async def provider_track_owned(self, provider_id: str) -> bool:
         return bool(await self._store.get_target_recording_tracks(provider_id))

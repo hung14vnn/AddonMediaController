@@ -5,15 +5,12 @@
 		Pencil,
 		Check,
 		X,
-		Radio,
-		Music,
 		HardDrive,
 		Database,
 		Disc3,
 		Users,
 		Settings,
 		Camera,
-		ExternalLink,
 		ImagePlus,
 		CircleAlert,
 		RefreshCw,
@@ -40,10 +37,7 @@
 	} from '$lib/queries/profile/ProfileMutations.svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
-	import PlexIcon from '$lib/components/PlexIcon.svelte';
-	import type { ProfileServiceConnection } from '$lib/queries/profile/types';
 	import MediaServerAccountsCard from '$lib/components/profile/MediaServerAccountsCard.svelte';
-	import NavidromeMusicFoldersCard from '$lib/components/profile/NavidromeMusicFoldersCard.svelte';
 	import ScrobblingDiscoveryCard from '$lib/components/profile/ScrobblingDiscoveryCard.svelte';
 	import SpotifyConnectionCard from '$lib/components/profile/SpotifyConnectionCard.svelte';
 	import ProfileConnectApps from '$lib/components/profile/ProfileConnectApps.svelte';
@@ -61,11 +55,6 @@
 	const providers = $derived(profile?.providers ?? authStore.user?.providers ?? []);
 	const hasLocalPassword = $derived(providers.includes('local'));
 
-	// lastfm + listenbrainz are per-user (managed in the scrobbling card), so drop from the read-only grid
-	const HIDDEN_SERVICES = new Set(['ListenBrainz', 'Last.fm']);
-	const visibleServices = $derived(
-		(profile?.services ?? []).filter((s) => !HIDDEN_SERVICES.has(s.name))
-	);
 	const navidromeEnabled = $derived(
 		profile?.services.some((service) => service.name === 'Navidrome' && service.enabled) ?? false
 	);
@@ -85,9 +74,7 @@
 
 		return [
 			{ id: 'account', label: 'Account' },
-			{ id: 'connected-services', label: 'Connected Services' },
 			...(mediaAccountsEnabled ? [{ id: 'media-accounts', label: 'Media Accounts' }] : []),
-			...(navidromeEnabled ? [{ id: 'navidrome-music-folders', label: 'Music Folders' }] : []),
 			{ id: 'connect-apps', label: 'Connect Apps' },
 			{ id: 'scrobbling', label: 'Scrobbling' },
 			{ id: 'spotify', label: 'Spotify' },
@@ -298,46 +285,6 @@
 	function handleEmailKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter') void saveEmail();
 		if (e.key === 'Escape') editingEmail = false;
-	}
-
-	function getServiceIcon(name: string) {
-		if (name === 'Jellyfin') return JellyfinIcon;
-		if (name === 'Navidrome') return NavidromeIcon;
-		if (name === 'Plex') return PlexIcon;
-		if (name === 'ListenBrainz') return Music;
-		if (name === 'Last.fm') return Radio;
-		return Database;
-	}
-
-	function getServiceColor(name: string): string {
-		if (name === 'Jellyfin') return 'text-purple-400';
-		if (name === 'Navidrome') return 'text-green-400';
-		if (name === 'Plex') return 'text-amber-400';
-		if (name === 'ListenBrainz') return 'text-orange-400';
-		if (name === 'Last.fm') return 'text-red-400';
-		return 'text-base-content';
-	}
-
-	function getServiceBorderColor(name: string): string {
-		if (name === 'Jellyfin') return 'border-purple-500/30';
-		if (name === 'Navidrome') return 'border-green-500/30';
-		if (name === 'Plex') return 'border-amber-500/30';
-		if (name === 'ListenBrainz') return 'border-orange-500/30';
-		if (name === 'Last.fm') return 'border-red-500/30';
-		return 'border-base-300';
-	}
-
-	function getServiceProfileUrl(service: ProfileServiceConnection): string | null {
-		if (!service.enabled) return null;
-		if (!service.username && service.name !== 'Plex') return null;
-		if (service.name === 'Last.fm')
-			return `https://www.last.fm/user/${encodeURIComponent(service.username)}`;
-		if (service.name === 'ListenBrainz')
-			return `https://listenbrainz.org/user/${encodeURIComponent(service.username)}`;
-		if (service.name === 'Jellyfin' && service.url) return service.url;
-		if (service.name === 'Navidrome' && service.url) return service.url;
-		if (service.name === 'Plex' && service.url) return service.url;
-		return null;
 	}
 
 	function getSourceIcon(source: string) {
@@ -707,70 +654,8 @@
 					</div>
 				</section>
 
-				<section id="connected-services" class="scroll-mt-24 xl:ml-40">
-					<h2
-						class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
-					>
-						<ExternalLink class="h-4 w-4" />
-						Connected Services
-					</h2>
-					<div class="grid gap-3 sm:grid-cols-3">
-						{#each visibleServices as service (service.name)}
-							{@const Icon = getServiceIcon(service.name)}
-							{@const profileUrl = getServiceProfileUrl(service)}
-							<a
-								href={profileUrl ?? undefined}
-								target={profileUrl ? '_blank' : undefined}
-								rel={profileUrl ? 'noopener noreferrer' : undefined}
-								role={profileUrl ? undefined : 'presentation'}
-								class="crate-card group rounded-xl border {getServiceBorderColor(
-									service.name
-								)} bg-base-200/50 p-4 backdrop-blur-sm transition-all hover:bg-base-200/80 hover:shadow-lg {profileUrl
-									? 'cursor-pointer'
-									: 'cursor-default'} block no-underline text-inherit"
-							>
-								<div class="flex items-center gap-3">
-									<div
-										class="flex h-10 w-10 items-center justify-center rounded-lg bg-base-300/60 {getServiceColor(
-											service.name
-										)}"
-									>
-										<Icon class="h-5 w-5" />
-									</div>
-									<div class="min-w-0 flex-1">
-										<div class="flex items-center gap-2">
-											<span class="text-sm font-semibold">{service.name}</span>
-											{#if service.enabled}
-												<span class="status status-success status-sm"></span>
-											{:else}
-												<span class="status status-error status-sm"></span>
-											{/if}
-											{#if profileUrl}
-												<ExternalLink
-													class="h-3 w-3 text-base-content/30 transition-colors group-hover:text-primary"
-												/>
-											{/if}
-										</div>
-										{#if service.enabled && service.username}
-											<p class="mt-0.5 truncate text-xs text-base-content/50">
-												{service.username}
-											</p>
-										{:else if !service.enabled}
-											<p class="mt-0.5 text-xs text-base-content/30">Not connected</p>
-										{/if}
-									</div>
-								</div>
-							</a>
-						{/each}
-					</div>
-				</section>
-
 				<div id="media-accounts" class="scroll-mt-24 xl:ml-40">
 					<MediaServerAccountsCard services={profile.services} />
-				</div>
-
-				<div id="navidrome-music-folders" class="scroll-mt-24 xl:ml-40">
-					<NavidromeMusicFoldersCard {userId} />
 				</div>
 
 				<div id="connect-apps" class="scroll-mt-24 xl:ml-40">

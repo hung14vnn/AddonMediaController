@@ -91,7 +91,12 @@ async def download_youtube_audio(
     body: YouTubeDownloadRequest = MsgSpecBody(YouTubeDownloadRequest),
     service=Depends(get_youtube_download_service),
 ):
-    task_id = await service.download(user_id=current_user.id, url=body.url)
+    task_id = await service.download(
+        user_id=current_user.id,
+        url=body.url,
+        artist_name=body.artist_name,
+        track_title=body.track_title,
+    )
     return YouTubeDownloadResponse(task_id=task_id)
 
 

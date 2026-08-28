@@ -712,6 +712,10 @@ async def _get_cover_art(c: Ctx) -> Response:
             result = await c.services.coverart.get_release_group_cover(
                 track.rg_mbid, size, is_disconnected=disc
             )
+        elif track.cover_url:
+            result = await c.services.coverart.get_external_cover(
+                track.cover_url, is_disconnected=disc
+            )
     elif kind == "artist":
         if await c.services.view.get_artist_with_albums(internal, user=c.user) is None:
             raise SubsonicError(70, "Artist not found")

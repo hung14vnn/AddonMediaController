@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { createQuery } from '@tanstack/svelte-query';
-	import { Disc3, Library, Search, X } from 'lucide-svelte';
+	import { CheckSquare, Disc3, Library, Search, X } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { api } from '$lib/api/client';
 	import { API } from '$lib/constants';
 	import { getAlbumSearchQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import { fetchAlbumTracks } from '$lib/api/albums';
 	import { matchDropItemMutation } from '$lib/queries/import/DropImportMutations.svelte';
 	import type { DropImportItem } from '$lib/queries/import/types';
 	import type { Album, SpotifyTrackResult } from '$lib/types';
@@ -30,6 +31,9 @@
 	let albumTitle = $state(untrack(() => item.album_title ?? ''));
 	let artistName = $state(untrack(() => item.artist_name ?? ''));
 	let selectedSpotifyTrack = $state<SpotifyTrackResult | null>(null);
+	let selectedCatalogAlbum = $state<Album | null>(null);
+	let selectedRecordingMbids = $state<string[]>([]);
+	let loadedTrackKey = $state('');
 
 	const spotifySearch = createQuery(() => {
 		const term = searchTerm.trim();
@@ -46,7 +50,25 @@
 		};
 	});
 	const catalogSearch = getAlbumSearchQuery(() => searchTerm);
+	const albumTracksQuery = createQuery(() => {
+		const albumId = selectedCatalogAlbum?.musicbrainz_id ?? item.release_group_mbid;
+		return {
+			enabled: mode === 'catalog' && Boolean(albumId),
+			queryKey: ['drop-import', 'album-tracks', albumId],
+			queryFn: ({ signal }: { signal: AbortSignal }) => fetchAlbumTracks(albumId!, signal)
+		};
+	});
 	const match = matchDropItemMutation();
+
+	$effect(() => {
+		const albumId = selectedCatalogAlbum?.musicbrainz_id ?? item.release_group_mbid;
+		const tracks = albumTracksQuery.data?.tracks ?? [];
+		if (!albumId || !tracks.length || loadedTrackKey === albumId) return;
+		loadedTrackKey = albumId;
+		selectedRecordingMbids = tracks
+			.map((track) => track.recording_id)
+			.filter((id): id is string => Boolean(id));
+	});
 
 	$effect(() => {
 		dialogEl?.showModal();
@@ -61,7 +83,8 @@
 	async function submitManual() {
 		if (match.isPending || !trackTitle.trim() || !albumTitle.trim() || !artistName.trim()) return;
 		try {
-			const spotifyAlbumId = selectedSpotifyTrack?.spotify_album_id || selectedSpotifyTrack?.spotify_id;
+			const spotifyAlbumId =
+				selectedSpotifyTrack?.spotify_album_id || selectedSpotifyTrack?.spotify_id;
 			await match.mutateAsync({
 				itemId: item.id,
 				releaseGroupMbid: spotifyAlbumId ? `spotify:album:${spotifyAlbumId}` : undefined,
@@ -80,8 +103,24 @@
 	}
 	async function pickCatalog(album: Album) {
 		if (match.isPending) return;
+		selectedCatalogAlbum = album;
+		selectedRecordingMbids = [];
+		loadedTrackKey = '';
+	}
+	function toggleRecording(recordingId: string, checked: boolean) {
+		selectedRecordingMbids = checked
+			? [...new Set([...selectedRecordingMbids, recordingId])]
+			: selectedRecordingMbids.filter((id) => id !== recordingId);
+	}
+	async function confirmCatalogImport() {
+		const releaseGroupMbid = selectedCatalogAlbum?.musicbrainz_id ?? item.release_group_mbid;
+		if (match.isPending || !releaseGroupMbid || selectedRecordingMbids.length === 0) return;
 		try {
-			await match.mutateAsync({ itemId: item.id, releaseGroupMbid: album.musicbrainz_id });
+			await match.mutateAsync({
+				itemId: item.id,
+				releaseGroupMbid,
+				selectedRecordingMbids
+			});
 			onclose();
 		} catch {
 			/* mutation owns the error toast */
@@ -93,7 +132,7 @@
 	<div class="modal-box max-w-2xl">
 		<div class="flex items-start justify-between gap-3">
 			<div class="min-w-0">
-				<h3 class="text-lg font-bold">Review import metadata</h3>
+				<h3 class="text-lg font-bold">Review import</h3>
 				<p class="truncate text-xs text-base-content/50" title={item.folder_name}>
 					{item.folder_name} · {item.files_total} file{item.files_total === 1 ? '' : 's'}
 				</p>
@@ -188,6 +227,64 @@
 				>
 			</div>
 		{:else}
+			{#if selectedCatalogAlbum || item.release_group_mbid}
+				<div class="mt-3 rounded-lg border border-base-300 bg-base-100/30 p-3">
+					<div class="flex items-center justify-between gap-2">
+						<div class="min-w-0">
+					<p class="truncate text-sm font-medium">
+								{selectedCatalogAlbum?.title ?? item.album_title}
+							</p>
+							<p class="truncate text-xs opacity-55">{selectedCatalogAlbum?.artist ?? item.artist_name}</p>
+						</div>
+						<span class="badge badge-ghost badge-sm">{selectedRecordingMbids.length} selected</span>
+					</div>
+				</div>
+				{#if albumTracksQuery.isFetching}
+					<div class="flex items-center gap-2 p-4 text-sm opacity-60">
+						<span class="loading loading-spinner loading-sm"></span>Loading tracks…
+					</div>
+				{:else}
+					<div class="mt-2 max-h-72 overflow-y-auto rounded-lg border border-base-300">
+						{#each albumTracksQuery.data?.tracks ?? [] as track (
+							track.recording_id ?? track.release_track_id ?? track.position
+						)}
+							<label class="flex cursor-pointer items-center gap-3 p-2 hover:bg-base-200">
+								<input
+									class="checkbox checkbox-primary checkbox-sm"
+									type="checkbox"
+									disabled={!track.recording_id}
+									checked={Boolean(
+										track.recording_id && selectedRecordingMbids.includes(track.recording_id)
+									)}
+									onchange={(event) =>
+										track.recording_id &&
+										toggleRecording(track.recording_id, event.currentTarget.checked)}
+								/>
+								<span class="text-xs text-base-content/60">{track.position}.</span>
+								<span class="min-w-0 flex-1 truncate text-sm">{track.title}</span>
+							</label>
+						{:else}
+							<p class="p-3 text-sm opacity-50">No tracks found for this album.</p>
+						{/each}
+					</div>
+				{/if}
+				<p class="mt-2 text-xs opacity-55">
+					Choose the tracks to copy into your library. Nothing is imported until you confirm.
+				</p>
+				<div class="modal-action">
+					<button
+						class="btn btn-primary"
+						disabled={
+							match.isPending ||
+							albumTracksQuery.isFetching ||
+							selectedRecordingMbids.length === 0
+						}
+						onclick={confirmCatalogImport}
+					>
+						{#if match.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}<CheckSquare class="h-4 w-4" /> Import selected ({selectedRecordingMbids.length})
+					</button>
+				</div>
+			{:else}
 			<div class="mt-3 max-h-72 space-y-1 overflow-y-auto">
 				{#each catalogSearch.data ?? [] as album (album.musicbrainz_id)}
 					<button
@@ -215,6 +312,7 @@
 					{/if}
 				{/each}
 			</div>
+			{/if}
 		{/if}
 	</div>
 	<form method="dialog" class="modal-backdrop"><button aria-label="Close">close</button></form>

@@ -621,6 +621,14 @@ function createPlayerStore() {
 			shuffleOrder = s.shuffleOrder;
 			isPlayerVisible = s.isPlayerVisible;
 			consecutiveErrors = 0;
+			if (matchingCurrentIndex >= 0) {
+				// Reordering a queue around the track that is already playing must not
+				// reload it, otherwise shuffle restarts the current song from 0:00.
+				currentIndex = s.startIndex;
+				updateMediaSessionControls();
+				persist();
+				return;
+			}
 			void loadQueueItem(s.startIndex);
 		},
 
@@ -920,6 +928,14 @@ function createPlayerStore() {
 		setKaraokeVocalLevel(level: number): void {
 			karaokeVocalLevel = Math.max(0, Math.min(100, level));
 			currentSource?.setVocalLevel?.(karaokeVocalLevel);
+		},
+
+		hidePlayer(): void {
+			isPlayerVisible = false;
+		},
+
+		showPlayer(): void {
+			if (nowPlaying) isPlayerVisible = true;
 		},
 
 		stop(): void {

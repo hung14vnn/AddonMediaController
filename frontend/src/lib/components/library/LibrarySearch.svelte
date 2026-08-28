@@ -204,7 +204,7 @@
 						</div>
 						{#each results.artists as artist (artist.id)}
 							<a
-								href={artistHref(artist.musicbrainz_artist_id ?? artist.id)}
+								href={artistHref(artist.id)}
 								class="flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-base-content/5"
 							>
 								<div class="h-10 w-10 shrink-0 overflow-hidden rounded-full">

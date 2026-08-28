@@ -185,6 +185,39 @@ CREATE TABLE IF NOT EXISTS library_playlist_tracks (
     UNIQUE(playlist_id, position)
 );
 
+-- The application filters duplicates before insert, while this trigger protects
+-- imports and other writers that do not use the playlist repository.
+CREATE TRIGGER IF NOT EXISTS prevent_duplicate_library_playlist_tracks
+BEFORE INSERT ON library_playlist_tracks
+FOR EACH ROW
+WHEN EXISTS (
+    SELECT 1 FROM library_playlist_tracks
+    WHERE playlist_id = NEW.playlist_id
+      AND (
+          (
+              LOWER(TRIM(track_name)) = LOWER(TRIM(NEW.track_name))
+              AND LOWER(TRIM(artist_name)) = LOWER(TRIM(NEW.artist_name))
+              AND LOWER(TRIM(album_name)) = LOWER(TRIM(NEW.album_name))
+          )
+          OR (
+              NEW.track_source_id IS NOT NULL
+              AND NEW.track_source_id != ''
+              AND track_source_id = NEW.track_source_id
+              AND LOWER(TRIM(source_type)) = LOWER(TRIM(NEW.source_type))
+          )
+          OR (
+              NEW.album_id IS NOT NULL
+              AND NEW.album_id != ''
+              AND album_id = NEW.album_id
+              AND track_number = NEW.track_number
+              AND COALESCE(disc_number, 1) = COALESCE(NEW.disc_number, 1)
+          )
+      )
+)
+BEGIN
+    SELECT RAISE(IGNORE);
+END;
+
 CREATE TABLE IF NOT EXISTS library_album_release_pins (
     local_album_id TEXT PRIMARY KEY REFERENCES local_albums(id) ON DELETE RESTRICT,
     release_group_mbid TEXT NOT NULL,

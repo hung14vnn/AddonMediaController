@@ -6,9 +6,10 @@ const homeCache = createLocalStorageCache<HomeResponse>(CACHE_KEYS.HOME_CACHE, C
 
 export const updateHomeCacheTTL = homeCache.updateTTL;
 
-export function getGreeting(): string {
+export function getGreeting(userName?: string | null): string {
+	const name = userName?.trim() || 'there';
 	const hour = new Date().getHours();
-	if (hour < 12) return 'morning, sunshine!';
-	if (hour < 18) return 'Rise and shine… oh wait, it is already afternoon';
-	return 'night night, sleepy owl!';
+	if (hour < 12) return `morning, ${name}!`;
+	if (hour < 18) return `halfway there, ${name}!`;
+	return `night night, ${name}!`;
 }

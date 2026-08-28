@@ -138,6 +138,11 @@ class TrackIdentifier(AppStruct):
     track_name: str
     artist_name: str
     album_name: str
+    album_id: str | None = None
+    track_source_id: str | None = None
+    source_type: str = ""
+    track_number: int | None = None
+    disc_number: int | None = None
 
 
 class CheckTrackMembershipRequest(AppStruct):

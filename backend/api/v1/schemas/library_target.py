@@ -194,6 +194,23 @@ class TargetNativeTracksResponse(AppStruct):
     limit: int = 0
 
 
+class TargetTrackOwnershipUser(AppStruct):
+    id: str
+    display_name: str
+    role: str
+
+
+class TargetTrackOwnershipDetailResponse(AppStruct):
+    users: list[TargetTrackOwnershipUser] = []
+    direct_user_ids: list[str] = []
+    album_user_ids: list[str] = []
+    user_ids: list[str] = []
+
+
+class TargetTrackOwnershipMutation(AppStruct):
+    user_id: str
+
+
 class TargetNativeStatsResponse(AppStruct):
     total_albums: int = 0
     total_artists: int = 0

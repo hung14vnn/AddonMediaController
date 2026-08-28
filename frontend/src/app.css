@@ -881,8 +881,32 @@ textarea {
 	height: var(--ms-player-height);
 }
 
+/* Keep bulk track actions accessible when the player is docked at the bottom. */
+.droppedneedle-selection-toolbar {
+	bottom: 1rem;
+}
+
+.droppedneedle-selection-toolbar--player {
+	bottom: calc(var(--ms-bottom-nav-offset) + var(--ms-player-height) + 1rem);
+}
+
 .droppedneedle-player-inner {
 	height: 100%;
+}
+
+/* A pinned queue becomes a desktop rail instead of covering the app. */
+@media (min-width: 80rem) {
+	body.droppedneedle-queue-pinned .drawer-content {
+		margin-right: 15rem;
+		transition: margin-right 200ms ease;
+	}
+
+	body.droppedneedle-queue-pinned .droppedneedle-player-bar {
+		right: 15rem;
+		transition:
+			right 200ms ease,
+			transform 300ms ease;
+	}
 }
 
 .droppedneedle-playback-toast {
@@ -966,6 +990,10 @@ textarea {
 
 	.droppedneedle-player-bar {
 		bottom: 0;
+	}
+
+	.droppedneedle-selection-toolbar--player {
+		bottom: calc(var(--ms-player-height) + 1rem);
 	}
 
 	.droppedneedle-playback-toast {

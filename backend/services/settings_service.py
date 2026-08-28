@@ -686,7 +686,12 @@ class SettingsService:
             )
         except AppValidationError as e:
             return MusicBrainzVerifyResult(valid=False, message=str(e))
-        except httpx.ConnectError:
+        except httpx.TimeoutException:
+            return MusicBrainzVerifyResult(
+                valid=False, message="MusicBrainz connection timed out"
+            )
+        except httpx.RequestError as e:
+            logger.warning("MusicBrainz connection test failed: %s", e)
             return MusicBrainzVerifyResult(
                 valid=False, message="Could not connect to the specified endpoint"
             )

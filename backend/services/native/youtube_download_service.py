@@ -61,10 +61,21 @@ class YouTubeDownloadService:
             logger.info("yt-dlp metadata lookup failed: %s", exc)
             raise ValidationError("Could not read YouTube metadata") from exc
 
-    async def download(self, *, user_id: str, url: str) -> str:
+    async def download(
+        self,
+        *,
+        user_id: str,
+        url: str,
+        artist_name: str | None = None,
+        track_title: str | None = None,
+    ) -> str:
         url = _validate_url(url)
         info = await self.preview(url)
         release_group_mbid, recording_mbid = _youtube_local_ids(url)
+        resolved_artist_name = (artist_name or "").strip() or str(
+            info["uploader"] or "YouTube"
+        )
+        resolved_track_title = (track_title or "").strip() or str(info["title"])
         task = await self._store.create_task(
             user_id=user_id,
             source="youtube",
@@ -72,9 +83,9 @@ class YouTubeDownloadService:
             download_type="track",
             release_group_mbid=release_group_mbid,
             recording_mbid=recording_mbid,
-            artist_name=str(info["uploader"] or "YouTube"),
-            album_title=str(info["title"]),
-            track_title=str(info["title"]),
+            artist_name=resolved_artist_name,
+            album_title=resolved_track_title,
+            track_title=resolved_track_title,
             cover_url=str(info.get("thumbnail") or "") or None,
             search_query=url,
             status="downloading",
@@ -90,7 +101,12 @@ class YouTubeDownloadService:
             raise ValidationError(
                 "The original YouTube link is unavailable for this task"
             )
-        return await self.download(user_id=task.user_id, url=task.search_query)
+        return await self.download(
+            user_id=task.user_id,
+            url=task.search_query,
+            artist_name=task.artist_name,
+            track_title=task.track_title,
+        )
 
     async def _run(self, task_id: str, user_id: str, url: str) -> None:
         staging = self._staging_root / f"youtube-{task_id}"

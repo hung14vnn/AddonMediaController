@@ -76,7 +76,7 @@ describe('Turntable lyrics', () => {
 		};
 	});
 
-	it('opens the shared lyrics panel for a local track', async () => {
+	it('shows word-synced lyrics inside the turntable area', async () => {
 		playLocalTrack();
 		render(Turntable, callbacks);
 
@@ -84,15 +84,15 @@ describe('Turntable lyrics', () => {
 		await expect.element(toggle).toBeInTheDocument();
 		await toggle.click();
 
-		await expect.element(page.getByRole('dialog', { name: 'Lyrics' })).toBeInTheDocument();
-		await expect.element(page.getByText('First line')).toBeInTheDocument();
+		await expect.element(page.getByRole('dialog', { name: 'Lyrics' })).not.toBeInTheDocument();
+		await expect.element(page.getByLabelText('Word-synced lyrics')).toBeInTheDocument();
 	});
 
-	it('hides the lyrics action when the local file has none', async () => {
+	it('keeps word-synced lyrics available when the local file has none', async () => {
 		mockQueryState.data = null;
 		playLocalTrack();
 		render(Turntable, callbacks);
 
-		await expect.element(page.getByLabelText('Toggle lyrics')).not.toBeInTheDocument();
+		await expect.element(page.getByLabelText('Toggle lyrics')).toBeEnabled();
 	});
 });

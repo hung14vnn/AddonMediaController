@@ -51,6 +51,9 @@ class ViewTrack(AppStruct):
     title: str
     album_title: str
     rg_mbid: str | None = None
+    # Provider/local artwork URL for tracks that do not have a MusicBrainz
+    # release-group identity (for example imported Spotify tracks).
+    cover_url: str | None = None
     artist_name: str = ""
     artist_mbid: str | None = None
     album_artist_name: str | None = None

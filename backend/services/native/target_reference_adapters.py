@@ -337,7 +337,9 @@ class TargetPlaylistRepository:
         return _playlist_track_record(row) if row is not None else None
 
     async def check_track_membership(
-        self, tracks: list[tuple[str, str, str]], user_id: str | None = None
+        self,
+        tracks: list[tuple[str, str, str] | dict[str, Any]],
+        user_id: str | None = None,
     ) -> dict[str, list[int]]:
         return await self._store.target_playlist_membership(tracks, user_id)
 

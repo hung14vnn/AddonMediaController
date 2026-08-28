@@ -282,6 +282,7 @@ class DropImportService:
         album_title: str | None = None,
         track_title: str | None = None,
         cover_url: str | None = None,
+        selected_recording_mbids: list[str] | None = None,
         user_id: str,
         is_admin: bool,
     ) -> DropImportItem:
@@ -329,6 +330,22 @@ class DropImportService:
                 album_title=album_title,
                 track_title=track_title,
             )
+
+        if selected_recording_mbids is not None:
+            selected = {
+                value.strip() for value in selected_recording_mbids if value.strip()
+            }
+            if not selected:
+                raise ValidationError("Select at least one track to import")
+            entries = [
+                entry
+                for entry in entries
+                if ident.match.assignments.get(str(entry.path)) in selected
+            ]
+            if not entries:
+                raise ValidationError(
+                    "The selected tracks could not be matched to the uploaded files"
+                )
 
         # the user's explicit choice is authoritative: full confidence, so the
         # scanner's sticky-anchor guard protects it from later re-attribution
@@ -835,15 +852,20 @@ class DropImportService:
             )
             return
 
-        result = await self._organise(entries, ident, cover_url=requested_cover_url)
-        await self._finish_item(
-            job,
+        # Hold identified albums for explicit track selection.
+        detail = (
+            f"{len(entries)} files identified. Review the album and choose which tracks to import."
+        )
+        if unreadable:
+            plural = "file" if unreadable == 1 else "files"
+            detail += f" ({unreadable} unreadable {plural} ignored)"
+        await self._store.update_item(
             item_id,
-            ident,
-            result,
-            unreadable,
-            staged=entries,
-            cover_url=requested_cover_url,
+            status=ItemStatus.NEEDS_REVIEW,
+            release_group_mbid=ident.meta.release_group_mbid,
+            album_title=ident.meta.album_title,
+            artist_name=ident.meta.artist,
+            detail=detail,
         )
 
     async def _finish_item(

@@ -56,7 +56,6 @@ async def update_config(
         get_download_orchestrator,
         get_download_service,
         get_file_processor,
-        get_newznab_release_scorer,
         get_slskd_client,
         get_slskd_indexer,
         get_slskd_repository,
@@ -75,7 +74,6 @@ async def update_config(
         _dc,
         get_album_preflight_scorer,
         get_track_matcher,
-        get_newznab_release_scorer,
         # FileProcessor + StatusService capture the slskd repo (mount/URL) at construction,
         # so they must be cleared too - else the rebuilt orchestrator reuses a stale one.
         get_file_processor,

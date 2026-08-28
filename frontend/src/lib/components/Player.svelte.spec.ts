@@ -100,7 +100,7 @@ describe('Player.svelte lyrics button', () => {
 		await expect.element(page.getByLabelText('Toggle lyrics')).toBeInTheDocument();
 	});
 
-	it('hides lyrics button when query succeeds with null (no lyrics)', async () => {
+	it('keeps word-synced lyrics available when library lyrics are missing', async () => {
 		mockQueryState = {
 			isSuccess: true,
 			isError: false,
@@ -112,10 +112,10 @@ describe('Player.svelte lyrics button', () => {
 		playerStore.playQueue([makeTrack('navidrome')]);
 		render(Player);
 
-		await expect.element(page.getByLabelText('Toggle lyrics')).not.toBeInTheDocument();
+		await expect.element(page.getByLabelText('Toggle lyrics')).toBeEnabled();
 	});
 
-	it('hides lyrics button when query is loading', async () => {
+	it('keeps word-synced lyrics available while library lyrics load', async () => {
 		mockQueryState = {
 			isSuccess: false,
 			isError: false,
@@ -127,10 +127,10 @@ describe('Player.svelte lyrics button', () => {
 		playerStore.playQueue([makeTrack('navidrome')]);
 		render(Player);
 
-		await expect.element(page.getByLabelText('Toggle lyrics')).not.toBeInTheDocument();
+		await expect.element(page.getByLabelText('Toggle lyrics')).toBeEnabled();
 	});
 
-	it('hides lyrics button when query errors', async () => {
+	it('keeps word-synced lyrics available when the library query errors', async () => {
 		mockQueryState = {
 			isSuccess: false,
 			isError: true,
@@ -142,10 +142,10 @@ describe('Player.svelte lyrics button', () => {
 		playerStore.playQueue([makeTrack('navidrome')]);
 		render(Player);
 
-		await expect.element(page.getByLabelText('Toggle lyrics')).not.toBeInTheDocument();
+		await expect.element(page.getByLabelText('Toggle lyrics')).toBeEnabled();
 	});
 
-	it('hides lyrics button for youtube source', async () => {
+	it('offers word-synced lyrics for a YouTube track', async () => {
 		mockQueryState = {
 			isSuccess: false,
 			isError: false,
@@ -157,10 +157,10 @@ describe('Player.svelte lyrics button', () => {
 		playerStore.playQueue([makeTrack('youtube')]);
 		render(Player);
 
-		await expect.element(page.getByLabelText('Toggle lyrics')).not.toBeInTheDocument();
+		await expect.element(page.getByLabelText('Toggle lyrics')).toBeEnabled();
 	});
 
-	it('hides lyrics button for plex source', async () => {
+	it('offers word-synced lyrics for a Plex track', async () => {
 		mockQueryState = {
 			isSuccess: false,
 			isError: false,
@@ -172,7 +172,7 @@ describe('Player.svelte lyrics button', () => {
 		playerStore.playQueue([makeTrack('plex')]);
 		render(Player);
 
-		await expect.element(page.getByLabelText('Toggle lyrics')).not.toBeInTheDocument();
+		await expect.element(page.getByLabelText('Toggle lyrics')).toBeEnabled();
 	});
 
 	it('shows lyrics button for local source when embedded lyrics exist', async () => {

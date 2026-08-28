@@ -46,7 +46,7 @@
 	import { mergeArtistReleasePages } from '$lib/queries/artist/artistReleasePages';
 
 	interface Props {
-		data: { artistId: string; primarySource: MusicSource };
+		data: { artistId: string; primarySource: MusicSource; preferProvider?: boolean };
 	}
 
 	let { data }: Props = $props();
@@ -122,7 +122,10 @@
 	// locally known artist still renders (and plays) when the provider fetch
 	// fails. The service_status stamp on the degraded payload drives the
 	// global banner; this branch covers cold caches and restarts.
-	const localArtistDetailQuery = getLibraryArtistDetailQuery(() => data.artistId);
+	const localArtistDetailQuery = getLibraryArtistDetailQuery(
+		() => data.artistId,
+		() => !data.preferProvider
+	);
 	const degradedLocalArtist = $derived(localArtistDetailQuery.data ?? null);
 	const artist = $derived.by(() => {
 		if (!artistBasic) return null;

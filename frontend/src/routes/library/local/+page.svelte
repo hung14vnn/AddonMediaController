@@ -17,7 +17,6 @@
 	import { slide } from 'svelte/transition';
 	import Turntable from '$lib/components/local/Turntable.svelte';
 	import Crate from '$lib/components/local/Crate.svelte';
-	import QueueDrawer from '$lib/components/QueueDrawer.svelte';
 	import SearchCard from '$lib/components/local/SearchCard.svelte';
 	import DeckVisualiser from '$lib/components/local/DeckVisualiser.svelte';
 	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
@@ -35,9 +34,12 @@
 	const isMbid = (id?: string | null): id is string => !!id && MBID_RE.test(id);
 
 	let reducedMotion = $state(false);
-	let queueDrawerOpen = $state(false);
 	// biases the crate toward the era of whatever was last dropped on the deck
 	let eraDecade = $state<number | undefined>(undefined);
+
+	function openPlayerQueue() {
+		window.dispatchEvent(new CustomEvent('droppedneedle:open-queue'));
+	}
 
 	const CRATE_REFRESH_MS = 35_000;
 	let crateDeadline = $state(0);
@@ -69,7 +71,15 @@
 	const openShelf = $derived(decades.find((d) => d.decade === openDecade) ?? null);
 
 	const isPlaying = $derived(playerStore.isPlaying);
-	const heroCover = $derived(playerStore.nowPlaying?.coverUrl ?? null);
+	const heroCover = $derived.by(() => {
+		const track = playerStore.nowPlaying;
+		if (!track) return null;
+		return (
+			track.coverUrl ??
+			track.coverRemoteUrl ??
+			(track.albumId ? getCoverUrl(null, track.albumId) : null)
+		);
+	});
 	const upcomingCount = $derived(playerStore.upcomingQueueLength);
 
 	// measured because the deck is content-sized, so a fixed rem value can't track it
@@ -202,7 +212,11 @@
 		mq.addEventListener('change', onMq);
 
 		observer = new IntersectionObserver(
-			([entry]) => deckFocus.set(entry.isIntersecting && entry.intersectionRatio > 0.45),
+			([entry]) => {
+				const deckInView = entry.isIntersecting && entry.intersectionRatio > 0.45;
+				deckFocus.set(deckInView);
+				if (!deckInView) playerStore.showPlayer();
+			},
 			{ threshold: [0, 0.45, 0.8] }
 		);
 		if (heroEl) observer.observe(heroEl);
@@ -241,19 +255,17 @@
 <div class="listening-room relative isolate">
 	{#if heroCover}
 		<div
-			class="pointer-events-none fixed inset-0 -z-10 bg-cover bg-center transition-opacity duration-1000"
-			style="background-image:url({heroCover}); opacity:{dimmed
-				? 0.22
-				: 0.1}; filter:blur(64px) saturate(1.1);"
+			class="pointer-events-none fixed inset-0 z-0 bg-cover bg-center transition-opacity duration-1000"
+			style="background-image:url({heroCover}); opacity:0.2; filter:blur(48px) saturate(1.15);"
 		></div>
 	{/if}
 	<div
-		class="pointer-events-none fixed inset-0 -z-10 bg-gradient-to-b from-base-100/60 via-base-100/80 to-base-100"
+		class="pointer-events-none fixed inset-0 z-0 bg-gradient-to-b from-base-100/60 via-base-100/80 to-base-100"
 	></div>
 
 	<section
 		bind:this={heroEl}
-		class="relative isolate flex min-h-[calc(100dvh-4.5rem)] flex-col px-4 pt-5 sm:px-6 lg:px-8"
+		class="relative z-10 isolate flex min-h-[calc(100dvh-4.5rem)] flex-col px-4 pt-5 sm:px-6 lg:px-8"
 	>
 		<DeckVisualiser {reducedMotion} />
 
@@ -275,7 +287,7 @@
 						onPlayAll={playAll}
 						onShuffleAll={shuffleAll}
 						onSurprise={surprise}
-						onOpenQueue={() => (queueDrawerOpen = true)}
+						onOpenQueue={openPlayerQueue}
 					/>
 				</div>
 			</div>
@@ -323,7 +335,7 @@
 	</section>
 
 	<section
-		class="space-y-10 px-4 pb-24 pt-6 transition-opacity duration-700 sm:px-6 lg:px-8 {dimmed
+		class="relative z-10 space-y-10 px-4 pb-24 pt-6 transition-opacity duration-700 sm:px-6 lg:px-8 {dimmed
 			? 'opacity-60'
 			: 'opacity-100'}"
 	>
@@ -383,7 +395,9 @@
 						title={formatArtistCredit(album.artist_name)}>{formatArtistCredit(album.artist_name)}</a
 					>
 				{:else}
-					<p class="truncate text-xs text-base-content/55">{formatArtistCredit(album.artist_name)}</p>
+					<p class="truncate text-xs text-base-content/55">
+						{formatArtistCredit(album.artist_name)}
+					</p>
 				{/if}
 			</div>
 		{/snippet}
@@ -470,5 +484,3 @@
 		{/if}
 	</section>
 </div>
-
-<QueueDrawer bind:open={queueDrawerOpen} onclose={() => (queueDrawerOpen = false)} />

@@ -25,7 +25,7 @@ from infrastructure.cache.cache_keys import (
 )
 from infrastructure.resilience.retry import with_retry, CircuitBreaker, CircuitOpenError
 from infrastructure.resilience.rate_limiter import TokenBucketRateLimiter
-from infrastructure.validators import validate_mbid
+from infrastructure.validators import validate_mbid, validate_spotify_cover_url
 from infrastructure.audio.tagger import AudioTagger
 from infrastructure.queue.priority_queue import RequestPriority, get_priority_queue
 from infrastructure.http.deduplication import RequestDeduplicator
@@ -303,6 +303,36 @@ class CoverArtRepository:
     @property
     def disk_cache(self) -> CoverDiskCache:
         return self._disk_cache
+
+    async def get_external_cover(
+        self,
+        url: str,
+        *,
+        is_disconnected: DisconnectCallable | None = None,
+    ) -> Optional[tuple[bytes, str, str]]:
+        """Fetch an already-resolved provider artwork URL for compatibility APIs.
+
+        This is intentionally restricted to Spotify's HTTPS CDN.  The URL is
+        supplied by imported metadata, so allowing arbitrary URLs here would
+        turn the cover endpoint into an SSRF proxy.
+        """
+        if not validate_spotify_cover_url(url):
+            return None
+        await check_disconnected(is_disconnected)
+        try:
+            response = await self._http_get(
+                url, RequestPriority.IMAGE_FETCH, source="generic"
+            )
+            if response.status_code != 200:
+                return None
+            content_type = response.headers.get("content-type", "")
+            if not self._is_successful_image_payload(response.content, content_type):
+                return None
+            return response.content, content_type.split(";", 1)[0].strip(), "spotify"
+        except ClientDisconnectedError:
+            raise
+        except Exception:  # noqa: BLE001 - artwork is an optional fallback
+            return None
 
     async def delete_covers_for_album(self, album_mbid: str) -> int:
         identifiers = [

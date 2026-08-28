@@ -33,6 +33,12 @@
 	const loading = $derived(homeQuery.isLoading);
 	const isUpdating = $derived(homeQuery.isRefetching);
 	const lastUpdated = $derived(homeQuery.dataUpdatedAt ? new Date(homeQuery.dataUpdatedAt) : null);
+	const greetingName = $derived(
+		authStore.user?.display_name?.trim() ||
+			authStore.user?.username_display?.trim() ||
+			authStore.user?.username?.trim() ||
+			'there'
+	);
 
 	type PreGenreBlock =
 		| {
@@ -161,7 +167,7 @@
 	>
 		{#snippet title()}
 			<Music class="inline h-8 w-8 sm:h-8 sm:w-8 lg:h-10 lg:w-10 mr-2 mb-1 align-text-bottom" />
-			<span class="text-xl sm:text-2xl lg:text-3xl">{getGreeting()}</span>
+			<span class="text-xl sm:text-2xl lg:text-3xl">{getGreeting(greetingName)}</span>
 		{/snippet}
 	</PageHeader>
 
