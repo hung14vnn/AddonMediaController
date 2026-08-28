@@ -13,12 +13,14 @@
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import type { SourceType } from '$lib/player/types';
-	import { formatDurationSec } from '$lib/utils/formatting';
+	import { formatArtistCredit, formatDurationSec } from '$lib/utils/formatting';
+	import { withBasePath } from '$lib/utils/basePath';
+	import { getApiUrl } from '$lib/api/api-utils';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import SourcePickerDropdown from '$lib/components/SourcePickerDropdown.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
-	import { Music, Trash2, ListPlus, ListStart, GripVertical, Play, X } from 'lucide-svelte';
+	import { Music, Trash2, ListPlus, ListStart, GripVertical, Play, Search, X } from 'lucide-svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 
 	interface Props {
@@ -53,13 +55,43 @@
 	let lastClickedIndex = $state<number | null>(null);
 	let bulkRemoving = $state(false);
 	let selectionMode = $derived(selectedIds.size > 0);
+	let searchQuery = $state('');
+
+	function normalizeSearchValue(value: string | null | undefined): string {
+		return (value ?? '')
+			.normalize('NFKD')
+			.replace(/\p{Diacritic}/gu, '')
+			.toLocaleLowerCase();
+	}
+
+	let normalizedSearchQuery = $derived(normalizeSearchValue(searchQuery.trim()));
+	let isSearching = $derived(normalizedSearchQuery.length > 0);
+	let visibleTracks = $derived.by(() => {
+		const indexedTracks = playlist.tracks.map((track, originalIndex) => ({
+			track,
+			originalIndex
+		}));
+		if (!normalizedSearchQuery) return indexedTracks;
+
+		return indexedTracks.filter(({ track }) =>
+			[track.track_name, track.artist_name, track.album_name].some((value) =>
+				normalizeSearchValue(value).includes(normalizedSearchQuery)
+			)
+		);
+	});
+	let allVisibleSelected = $derived(
+		visibleTracks.length > 0 && visibleTracks.every(({ track }) => selectedIds.has(track.id))
+	);
+	let someVisibleSelected = $derived(
+		visibleTracks.some(({ track }) => selectedIds.has(track.id)) && !allVisibleSelected
+	);
 
 	function toggleTrackSelection(trackId: string, index: number, shiftKey: boolean) {
 		if (shiftKey && lastClickedIndex !== null) {
 			const from = Math.min(lastClickedIndex, index);
 			const to = Math.max(lastClickedIndex, index);
 			for (let j = from; j <= to; j++) {
-				selectedIds.add(playlist.tracks[j].id);
+				selectedIds.add(visibleTracks[j].track.id);
 			}
 		} else if (selectedIds.has(trackId)) {
 			selectedIds.delete(trackId);
@@ -70,16 +102,28 @@
 	}
 
 	function toggleSelectAll() {
-		if (selectedIds.size === playlist.tracks.length) {
-			selectedIds.clear();
+		if (allVisibleSelected) {
+			visibleTracks.forEach(({ track }) => selectedIds.delete(track.id));
 		} else {
-			playlist.tracks.forEach((t) => selectedIds.add(t.id));
+			visibleTracks.forEach(({ track }) => selectedIds.add(track.id));
 		}
 	}
 
 	function clearSelection() {
 		selectedIds.clear();
 		lastClickedIndex = null;
+	}
+
+	function handleSearchInput() {
+		clearSelection();
+		clearReorderState();
+		dragIndex = null;
+		dragOverIndex = null;
+	}
+
+	function clearSearch() {
+		searchQuery = '';
+		handleSearchInput();
 	}
 
 	async function removeSelectedTracks() {
@@ -359,166 +403,222 @@
 		{/if}
 	</div>
 {:else}
-	<ul class="list bg-base-200 rounded-box overflow-visible">
-		{#if playlist.tracks.length > 1 && !readonly}
-			<li class="px-3 sm:px-4 py-2 border-b border-base-300/50">
-				<label class="flex items-center gap-2 cursor-pointer text-xs text-base-content/50">
-					<input
-						type="checkbox"
-						class="checkbox checkbox-xs"
-						checked={selectedIds.size === playlist.tracks.length}
-						indeterminate={selectedIds.size > 0 && selectedIds.size < playlist.tracks.length}
-						onchange={toggleSelectAll}
-					/>
-					Select all
-				</label>
-			</li>
+	<div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+		<div class="relative min-w-0 flex-1">
+			<Search
+				class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-base-content/40"
+				aria-hidden="true"
+			/>
+			<input
+				type="search"
+				class="input input-sm w-full rounded-full border-base-content/10 bg-base-200/60 pl-9 pr-10 placeholder:text-base-content/35 focus:border-primary"
+				placeholder="Search tracks, artists, or albums..."
+				aria-label="Search within playlist"
+				bind:value={searchQuery}
+				oninput={handleSearchInput}
+			/>
+			{#if isSearching}
+				<button
+					type="button"
+					class="btn btn-ghost btn-circle btn-xs absolute right-2 top-1/2 -translate-y-1/2"
+					onclick={clearSearch}
+					aria-label="Clear playlist search"
+				>
+					<X class="h-3.5 w-3.5" />
+				</button>
+			{/if}
+		</div>
+		{#if isSearching}
+			<span class="text-xs tabular-nums text-base-content/50" aria-live="polite">
+				{visibleTracks.length} of {playlist.tracks.length} tracks
+			</span>
 		{/if}
-		{#each playlist.tracks as track, i (track.id)}
-			{@const isCurrentlyPlaying =
-				playerStore.isPlaying &&
-				(playerStore.currentQueueItem?.playlistTrackId
-					? playerStore.currentQueueItem.playlistTrackId === track.id
-					: playerStore.currentQueueItem?.trackSourceId === track.track_source_id &&
-						playerStore.currentQueueItem?.sourceType === track.source_type)}
-			<li
-				transition:slide={{ duration: 200 }}
-				class="group transition-colors p-3 sm:p-4 {selectedIds.has(track.id)
-					? 'bg-primary/5'
-					: isCurrentlyPlaying
-						? 'bg-accent/10'
-						: 'hover:bg-base-300/50'}"
-				class:opacity-50={dragIndex === i}
-				class:border-t-2={dragOverIndex === i && dragIndex !== null && dragIndex !== i}
-				class:border-accent={dragOverIndex === i && dragIndex !== null && dragIndex !== i}
-				draggable={!selectionMode && !readonly}
-				ondragstart={(e) => handleDragStart(e, i)}
-				ondragover={(e) => handleDragOver(e, i)}
-				ondragleave={handleDragLeave}
-				ondrop={(e) => void handleDrop(e, i)}
-				ondragend={handleDragEnd}
-				role="listitem"
-				aria-roledescription="sortable"
-			>
-				<div class="flex items-center gap-4 w-full">
-					{#if !readonly}
-						<button
-							class="cursor-grab active:cursor-grabbing p-1 touch-none shrink-0 transition-opacity {selectionMode
-								? 'pointer-events-none opacity-0'
-								: '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100'}"
-							aria-label="Drag to reorder"
-							onkeydown={(e) => void handleTrackKeydown(e, i)}
-							tabindex={selectionMode ? -1 : 0}
-							aria-hidden={selectionMode ? 'true' : undefined}
-						>
-							<GripVertical class="h-4 w-4 text-base-content/30" />
-						</button>
+	</div>
 
+	{#if visibleTracks.length === 0}
+		<div
+			class="flex flex-col items-center justify-center gap-3 rounded-box bg-base-200 py-12 text-center"
+		>
+			<Search class="h-10 w-10 text-base-content/20" aria-hidden="true" />
+			<h2 class="text-base font-semibold text-base-content/60">No matching tracks</h2>
+			<p class="text-sm text-base-content/40">Try another track, artist, or album name.</p>
+			<button type="button" class="btn btn-ghost btn-sm" onclick={clearSearch}>Clear search</button>
+		</div>
+	{:else}
+		<ul class="list bg-base-200 rounded-box overflow-visible">
+			{#if visibleTracks.length > 1 && !readonly}
+				<li class="px-3 sm:px-4 py-2 border-b border-base-300/50">
+					<label class="flex items-center gap-2 cursor-pointer text-xs text-base-content/50">
 						<input
 							type="checkbox"
-							class="checkbox checkbox-sm shrink-0 transition-opacity {selectionMode
-								? ''
-								: '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100'}"
-							checked={selectedIds.has(track.id)}
-							onclick={(e: MouseEvent) => {
-								e.stopPropagation();
-								toggleTrackSelection(track.id, i, e.shiftKey);
-							}}
-							aria-label="Select {track.track_name}"
+							class="checkbox checkbox-xs"
+							checked={allVisibleSelected}
+							indeterminate={someVisibleSelected}
+							onchange={toggleSelectAll}
 						/>
-					{/if}
+						Select all{isSearching ? ' matches' : ''}
+					</label>
+				</li>
+			{/if}
+			{#each visibleTracks as item, visibleIndex (item.track.id)}
+				{@const track = item.track}
+				{@const i = item.originalIndex}
+				{@const isCurrentlyPlaying =
+					playerStore.isPlaying &&
+					(playerStore.currentQueueItem?.playlistTrackId
+						? playerStore.currentQueueItem.playlistTrackId === track.id
+						: playerStore.currentQueueItem?.trackSourceId === track.track_source_id &&
+							playerStore.currentQueueItem?.sourceType === track.source_type)}
+				<li
+					transition:slide={{ duration: 200 }}
+					class="group transition-colors p-3 sm:p-4 {selectedIds.has(track.id)
+						? 'bg-primary/5'
+						: isCurrentlyPlaying
+							? 'bg-accent/10'
+							: 'hover:bg-base-300/50'}"
+					class:opacity-50={dragIndex === i}
+					class:border-t-2={dragOverIndex === i && dragIndex !== null && dragIndex !== i}
+					class:border-accent={dragOverIndex === i && dragIndex !== null && dragIndex !== i}
+					draggable={!isSearching && !selectionMode && !readonly}
+					ondragstart={(e) => handleDragStart(e, i)}
+					ondragover={(e) => handleDragOver(e, i)}
+					ondragleave={handleDragLeave}
+					ondrop={(e) => void handleDrop(e, i)}
+					ondragend={handleDragEnd}
+					role="listitem"
+					aria-roledescription={isSearching ? undefined : 'sortable'}
+				>
+					<div class="flex items-center gap-4 w-full">
+						{#if !readonly}
+							<button
+								class="cursor-grab active:cursor-grabbing p-1 touch-none shrink-0 transition-opacity {selectionMode
+									? 'pointer-events-none opacity-0'
+									: isSearching
+										? 'pointer-events-none opacity-0'
+										: '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100'}"
+								aria-label="Drag to reorder"
+								onkeydown={(e) => void handleTrackKeydown(e, i)}
+								tabindex={selectionMode || isSearching ? -1 : 0}
+								aria-hidden={selectionMode || isSearching ? 'true' : undefined}
+							>
+								<GripVertical class="h-4 w-4 text-base-content/30" />
+							</button>
 
-					{#if playable && isCurrentlyPlaying}
-						<div class="w-6 flex items-center justify-center shrink-0">
-							<NowPlayingIndicator />
-						</div>
-					{:else if playable}
-						<span
-							class="text-base-content/40 text-sm w-6 text-center tabular-nums shrink-0 group-hover:hidden"
-							>{i + 1}</span
-						>
-						<button
-							class="w-6 text-center shrink-0 hidden group-hover:flex items-center justify-center cursor-pointer"
-							aria-label="Play {track.track_name}"
-							onclick={(e) => {
-								e.stopPropagation();
-								onplaytrack?.(i);
-							}}
-						>
-							<Play class="h-4 w-4 fill-current text-primary" />
-						</button>
-					{:else}
-						<span class="text-base-content/40 text-sm w-6 text-center tabular-nums shrink-0"
-							>{i + 1}</span
-						>
-					{/if}
+							<input
+								type="checkbox"
+								class="checkbox checkbox-sm shrink-0 transition-opacity {selectionMode
+									? ''
+									: '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100'}"
+								checked={selectedIds.has(track.id)}
+								onclick={(e: MouseEvent) => {
+									e.stopPropagation();
+									toggleTrackSelection(track.id, visibleIndex, e.shiftKey);
+								}}
+								aria-label="Select {track.track_name}"
+							/>
+						{/if}
 
-					<div class="w-10 h-10 rounded-md overflow-hidden shrink-0 bg-base-300">
-						{#if track.cover_url}
-							<img src={track.cover_url} alt="" class="w-full h-full object-cover" loading="lazy" />
+						{#if playable && isCurrentlyPlaying}
+							<div class="w-6 flex items-center justify-center shrink-0">
+								<NowPlayingIndicator />
+							</div>
+						{:else if playable}
+							<span
+								class="text-base-content/40 text-sm w-6 text-center tabular-nums shrink-0 group-hover:hidden"
+								>{i + 1}</span
+							>
+							<button
+								class="w-6 text-center shrink-0 hidden group-hover:flex items-center justify-center cursor-pointer"
+								aria-label="Play {track.track_name}"
+								onclick={(e) => {
+									e.stopPropagation();
+									onplaytrack?.(i);
+								}}
+							>
+								<Play class="h-4 w-4 fill-current text-primary" />
+							</button>
 						{:else}
-							<div class="w-full h-full flex items-center justify-center">
-								<Music class="h-4 w-4 text-base-content/30" />
+							<span class="text-base-content/40 text-sm w-6 text-center tabular-nums shrink-0"
+								>{i + 1}</span
+							>
+						{/if}
+
+						<div class="w-10 h-10 rounded-md overflow-hidden shrink-0 bg-base-300">
+							{#if track.cover_url}
+								<img
+									src={getApiUrl(track.cover_url)}
+									alt=""
+									class="w-full h-full object-cover"
+									loading="lazy"
+								/>
+							{:else}
+								<div class="w-full h-full flex items-center justify-center">
+									<Music class="h-4 w-4 text-base-content/30" />
+								</div>
+							{/if}
+						</div>
+
+						<div class="flex-1 min-w-0">
+							{#if track.album_id}
+								<a
+									href={withBasePath(`/album/${track.album_id}`)}
+									class="font-medium truncate text-sm block hover:underline {isCurrentlyPlaying
+										? 'text-accent'
+										: ''}">{track.track_name}</a
+								>
+							{:else}
+								<span
+									class="font-medium truncate text-sm block {isCurrentlyPlaying
+										? 'text-accent'
+										: ''}">{track.track_name}</span
+								>
+							{/if}
+							<span class="text-xs text-base-content/60 truncate block">
+								{#if track.artist_id}
+									<a href={withBasePath(`/artist/${track.artist_id}`)} class="hover:underline"
+										>{formatArtistCredit(track.artist_name)}</a
+									>
+								{:else}
+									{formatArtistCredit(track.artist_name)}
+								{/if}
+								{#if track.album_name}
+									<span class="text-base-content/30"> · </span>
+									{#if track.album_id}
+										<a
+											href={withBasePath(`/album/${track.album_id}`)}
+											class="text-base-content/40 hover:underline">{track.album_name}</a
+										>
+									{:else}
+										<span class="text-base-content/40">{track.album_name}</span>
+									{/if}
+								{/if}
+							</span>
+						</div>
+
+						<span class="text-sm text-base-content/40 tabular-nums shrink-0">
+							{formatDurationSec(track.duration)}
+						</span>
+
+						{#if !readonly && playable}
+							<SourcePickerDropdown
+								currentSource={track.source_type}
+								availableSources={track.available_sources ?? [track.source_type]}
+								onchange={(src) => void handleSourceChange(track, src)}
+							/>
+						{/if}
+
+						{#if playable || !readonly}
+							<div
+								class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shrink-0"
+							>
+								<ContextMenu items={getTrackMenuItems(track)} position="end" size="xs" />
 							</div>
 						{/if}
 					</div>
-
-					<div class="flex-1 min-w-0">
-						{#if track.album_id}
-							<a
-								href="/album/{track.album_id}"
-								class="font-medium truncate text-sm block hover:underline {isCurrentlyPlaying
-									? 'text-accent'
-									: ''}">{track.track_name}</a
-							>
-						{:else}
-							<span
-								class="font-medium truncate text-sm block {isCurrentlyPlaying ? 'text-accent' : ''}"
-								>{track.track_name}</span
-							>
-						{/if}
-						<span class="text-xs text-base-content/60 truncate block">
-							{#if track.artist_id}
-								<a href="/artist/{track.artist_id}" class="hover:underline">{track.artist_name}</a>
-							{:else}
-								{track.artist_name}
-							{/if}
-							{#if track.album_name}
-								<span class="text-base-content/30"> · </span>
-								{#if track.album_id}
-									<a href="/album/{track.album_id}" class="text-base-content/40 hover:underline"
-										>{track.album_name}</a
-									>
-								{:else}
-									<span class="text-base-content/40">{track.album_name}</span>
-								{/if}
-							{/if}
-						</span>
-					</div>
-
-					<span class="text-sm text-base-content/40 tabular-nums shrink-0">
-						{formatDurationSec(track.duration)}
-					</span>
-
-					{#if !readonly && playable}
-						<SourcePickerDropdown
-							currentSource={track.source_type}
-							availableSources={track.available_sources ?? [track.source_type]}
-							onchange={(src) => void handleSourceChange(track, src)}
-						/>
-					{/if}
-
-					{#if playable || !readonly}
-						<div
-							class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shrink-0"
-						>
-							<ContextMenu items={getTrackMenuItems(track)} position="end" size="xs" />
-						</div>
-					{/if}
-				</div>
-			</li>
-		{/each}
-	</ul>
+				</li>
+			{/each}
+		</ul>
+	{/if}
 
 	{#if selectionMode}
 		<div

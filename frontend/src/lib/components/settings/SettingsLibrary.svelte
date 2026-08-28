@@ -9,6 +9,7 @@
 		previewLibraryPolicyApply,
 		previewLibraryPolicyImpact,
 		restoreLibraryRoots,
+		cleanupRemovedLibraryRoots,
 		saveTargetLibrarySettings
 	} from '$lib/queries/library/LibraryPolicyMutations.svelte';
 	import { requestLibraryRun } from '$lib/queries/library/LibraryOperationMutations.svelte';
@@ -22,6 +23,7 @@
 	import LibraryScanScheduleControl from '$lib/components/library/LibraryScanScheduleControl.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
+	import { withBasePath } from '$lib/utils/basePath';
 	import type {
 		LibraryRootSettings,
 		TargetLibrarySettingsResponse,
@@ -33,6 +35,7 @@
 	const impact = previewLibraryPolicyImpact();
 	const save = saveTargetLibrarySettings();
 	const restore = restoreLibraryRoots();
+	const cleanup = cleanupRemovedLibraryRoots();
 	const applyPreview = previewLibraryPolicyApply();
 	const requestRun = requestLibraryRun();
 	const policyQuery = getDownloadPolicyQuery(() => authStore.isAdmin);
@@ -59,6 +62,13 @@
 	let capSeeded = $state(false);
 
 	const restorableRoots = $derived(restorableQuery.data?.restorable_roots ?? []);
+	const cleanupRoots = $derived(restorableQuery.data?.cleanup_roots ?? []);
+	const removedRoots = $derived(
+		[...restorableRoots, ...cleanupRoots].filter(
+			(entry, index, all) =>
+				all.findIndex((candidate) => candidate.root_id === entry.root_id) === index
+		)
+	);
 
 	$effect(() => {
 		const data = settingsQuery.data;
@@ -180,6 +190,19 @@
 		} catch {
 			return;
 		}
+	}
+
+	async function cleanupRemovedRoots(): Promise<void> {
+		const revision = restorableQuery.data?.policy_revision;
+		if (!revision || !cleanupRoots.length) return;
+		if (
+			!window.confirm(
+				`Clean ${cleanupRoots.length} removed library root${cleanupRoots.length === 1 ? '' : 's'} from the catalog? Music files will not be deleted.`
+			)
+		) {
+			return;
+		}
+		await cleanup.mutateAsync({ expected_policy_revision: revision });
 	}
 
 	async function previewApply(
@@ -307,24 +330,33 @@
 			</div>
 		{/if}
 
-		{#if restorableRoots.length > 0}
+		{#if removedRoots.length > 0}
 			<div class="alert alert-warning items-start">
 				<AlertTriangle class="mt-0.5 h-5 w-5" />
 				<div class="min-w-0 flex-1">
 					<strong>Library roots were removed</strong>
 					<p class="text-sm">
-						This page is missing {restorableRoots.length} library
-						{restorableRoots.length === 1 ? 'root' : 'roots'} that the catalog still uses. Restore
-						{restorableRoots.length === 1 ? 'it' : 'them'} to keep your library working without a rescan.
+						This page has {removedRoots.length} library
+						{removedRoots.length === 1 ? 'root' : 'roots'} that are no longer configured but remain in the catalog.
 					</p>
 				</div>
+				{#if restorableRoots.length > 0}
 				<button
 					class="btn btn-warning btn-sm"
-					disabled={restore.isPending}
+					disabled={restore.isPending || cleanup.isPending}
 					onclick={(event) => openRestore(event)}
 					>{#if restore.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
 					Restore roots...</button
 				>
+				{/if}
+				<button
+					class="btn btn-outline btn-error btn-sm"
+					disabled={cleanup.isPending || restore.isPending || !cleanupRoots.length}
+					onclick={() => void cleanupRemovedRoots()}
+				>
+					{#if cleanup.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
+					Clean up old roots
+				</button>
 			</div>
 		{/if}
 
@@ -363,7 +395,10 @@
 					<p class="text-xs text-base-content/60">
 						Fallback for downloaded imports that file organization does not handle. Once
 						organization is enabled, its assigned profile controls managed paths. Variables:
-						{'{albumartist} {album} {year} {disc} {track} {title} {ext}'}.
+						{'{initial} {albumartist} {album} {year} {disc} {track} {title} {ext}'}.
+						{'{initial}'} uses the effective album artist, ignores leading Unicode whitespace and a case-insensitive
+						"The" plus following Unicode whitespace, then returns one uppercase letter; empty or nonletter
+						leads return "#".
 					</p>
 					<input
 						class="input input-bordered w-full bg-base-100 font-mono text-sm"
@@ -495,7 +530,9 @@
 						workspace under the Automation tab.
 					</p>
 				</div>
-				<a href="/library/management?tab=automation" class="btn management-btn btn-sm"
+				<a
+					href={withBasePath('/library/management?tab=automation')}
+					class="btn management-btn btn-sm"
 					>Open Organize files settings <ArrowRight class="h-4 w-4" /></a
 				>
 			</section>

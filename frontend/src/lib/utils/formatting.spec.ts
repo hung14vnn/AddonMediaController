@@ -3,9 +3,10 @@ import { formatArtistCredit, formatListenCount } from './formatting';
 
 describe('formatArtistCredit', () => {
 	it('renders semicolon-separated artist credits with commas', () => {
-		expect.assertions(3);
+		expect.assertions(4);
 		expect(formatArtistCredit('Artist A; Artist B')).toBe('Artist A, Artist B');
 		expect(formatArtistCredit('Artist A ;  Artist B')).toBe('Artist A, Artist B');
+		expect(formatArtistCredit('Artist A,Artist B')).toBe('Artist A, Artist B');
 		expect(formatArtistCredit(null)).toBe('');
 	});
 });

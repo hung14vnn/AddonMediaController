@@ -165,6 +165,7 @@ AUTOMATIC_SAFE_EVIDENCE_REASONS = frozenset(
     {"SUPPORTED", "ACCEPTED", "SUPPORTED_EMBEDDED_IDS"}
 )
 ATTENTION_FAILURE_CODES = frozenset({"MAX_DEFERRALS_EXCEEDED", "SUBJECT_NOT_AVAILABLE"})
+_ACTIVITY_DEFERRED_JOB_LIMIT = 20
 BULK_PREVIEW_BATCH_SIZE = 500
 BULK_PREVIEW_CLEANUP_BATCH_SIZE = 5_000
 MANAGEMENT_PERSISTENCE_BATCH_SIZE = 500
@@ -8610,6 +8611,63 @@ class NativeLibraryStore(PersistenceBase):
         self.work_wakeups.notify("identification")
         return result
 
+    async def cancel_identification_queue(
+        self,
+        *,
+        requested_by_user_id: str | None,
+        requested_at: float,
+        expected_revision: int | None = None,
+    ) -> int:
+        """Cancel all queued identification work without changing library files.
+
+        Running claims are invalidated by the row-revision bump; their worker
+        finishes are rejected by the existing compare-and-swap guard. New work
+        can still be queued normally after the cancellation.
+        """
+
+        def operation(connection: sqlite3.Connection) -> int:
+            revision_clause = (
+                "" if expected_revision is None else "AND row_revision = ? "
+            )
+            parameters: tuple[Any, ...] = (
+                requested_at,
+                requested_by_user_id,
+                MAX_REVISION,
+                *(() if expected_revision is None else (expected_revision,)),
+            )
+            row = connection.execute(
+                "UPDATE library_work_control SET state = 'running', requested_at = ?, "
+                "requested_by_user_id = ?, high_priority_claim_count = 0, "
+                "row_revision = row_revision + 1 WHERE queue_kind = 'identification' "
+                "AND row_revision < ? "
+                + revision_clause
+                + "RETURNING row_revision",
+                parameters,
+            ).fetchone()
+            if row is None:
+                if expected_revision is not None:
+                    raise StaleRevisionError(
+                        "Identification controls changed before Cancel was requested."
+                    )
+                raise RevisionOverflowError(
+                    "The identification control revision reached its maximum value."
+                )
+            connection.execute(
+                "UPDATE library_identification_jobs SET state = 'cancelled', "
+                "terminal_at = ?, updated_at = ?, lease_owner = NULL, "
+                "lease_expires_at = NULL, heartbeat_at = NULL, "
+                "row_revision = row_revision + 1, event_revision = event_revision + 1 "
+                "WHERE state IN ('queued', 'running', 'paused') "
+                "AND row_revision < ? AND event_revision < ?",
+                (requested_at, requested_at, MAX_REVISION, MAX_REVISION),
+            )
+            self._bump_stream(connection, "identification")
+            return int(row["row_revision"])
+
+        result = await self._write(operation)
+        self.work_wakeups.notify("identification")
+        return result
+
     async def get_identification_control(self) -> dict[str, Any]:
         def operation(connection: sqlite3.Connection) -> dict[str, Any]:
             return dict(
@@ -8623,7 +8681,7 @@ class NativeLibraryStore(PersistenceBase):
     async def get_identification_activity_snapshot(
         self, *, now: float
     ) -> dict[str, Any]:
-        """Return redacted aggregate queue state for activity and admin progress UI."""
+        """Return redacted aggregate queue state plus bounded deferred-job summaries."""
 
         def operation(connection: sqlite3.Connection) -> dict[str, Any]:
             control = dict(
@@ -8689,6 +8747,19 @@ class NativeLibraryStore(PersistenceBase):
                     "AND last_failure_code IS NOT NULL GROUP BY last_failure_code"
                 ).fetchall()
             }
+            deferred_job_rows = connection.execute(
+                "SELECT j.id AS job_id, j.local_album_id AS local_album_id, "
+                "a.title AS album_title, ar.display_name AS artist_name, "
+                "j.last_failure_code AS last_failure_code, j.attempt_count AS attempt_count, "
+                "j.not_before AS not_before, j.updated_at AS updated_at "
+                "FROM library_identification_jobs j "
+                "LEFT JOIN local_albums a ON a.id = j.local_album_id "
+                "LEFT JOIN local_artists ar ON ar.id = a.album_artist_id "
+                "WHERE j.state IN ('queued','running','paused') "
+                "AND j.last_failure_code IS NOT NULL "
+                "ORDER BY j.priority ASC, j.enqueue_sequence ASC LIMIT ?",
+                (_ACTIVITY_DEFERRED_JOB_LIMIT,),
+            ).fetchall()
             return {
                 "control_state": str(control["state"]),
                 "control_revision": int(control["row_revision"]),
@@ -8708,6 +8779,7 @@ class NativeLibraryStore(PersistenceBase):
                 "failure_event_id": str(failure["id"]) if failure else None,
                 "failure_at": float(failure["terminal_at"]) if failure else None,
                 "foreground_operation_count": foreground_operation_count,
+                "deferred_jobs": [dict(row) for row in deferred_job_rows],
             }
 
         return await self._read(operation)
@@ -32232,6 +32304,70 @@ class NativeLibraryStore(PersistenceBase):
             }
 
         return await self._read(operation)
+
+    async def get_catalog_root_ids(self) -> set[str]:
+        """Return every root still represented in the target catalog."""
+
+        def operation(connection: sqlite3.Connection) -> set[str]:
+            rows = connection.execute(
+                "SELECT root_id FROM local_tracks "
+                "UNION SELECT root_id FROM local_albums"
+            ).fetchall()
+            return {str(row[0]) for row in rows if row[0]}
+
+        return await self._read(operation)
+
+    async def cleanup_removed_roots(
+        self, root_ids: list[str], *, now: float
+    ) -> dict[str, object]:
+        """Hide catalog rows owned by roots that are no longer configured.
+
+        This is deliberately a catalog cleanup rather than a filesystem delete:
+        the files remain on disk and can be discovered again if the root is
+        restored later. Tracks are marked missing so foreign-keyed history,
+        reviews, and identity evidence remain valid; the root migration
+        provenance is removed so it no longer appears as restorable.
+        """
+        cleaned = sorted({str(root_id) for root_id in root_ids if str(root_id)})
+        if not cleaned:
+            return {
+                "cleaned_root_ids": [],
+                "cleaned_track_count": 0,
+                "cleaned_album_count": 0,
+            }
+
+        def operation(connection: sqlite3.Connection) -> dict[str, object]:
+            placeholders = ",".join("?" for _ in cleaned)
+            album_count = int(
+                connection.execute(
+                    "SELECT COUNT(DISTINCT t.local_album_id) "
+                    "FROM local_tracks t JOIN local_albums a ON a.id=t.local_album_id "
+                    f"WHERE t.root_id IN ({placeholders}) AND t.availability != 'missing'",
+                    tuple(cleaned),
+                ).fetchone()[0]
+            )
+            updated = connection.execute(
+                "UPDATE local_tracks SET availability='missing', "
+                "missing_since=COALESCE(missing_since, ?), excluded_at=NULL, "
+                "row_revision=row_revision+1 "
+                f"WHERE root_id IN ({placeholders}) AND availability != 'missing'",
+                (now, *cleaned),
+            ).rowcount
+            provenance_deleted = connection.execute(
+                "DELETE FROM library_migration_provenance "
+                "WHERE source_kind='root' AND target_kind='library_root' "
+                f"AND target_id IN ({placeholders})",
+                tuple(cleaned),
+            ).rowcount
+            if updated or provenance_deleted:
+                self._bump_catalog(connection)
+            return {
+                "cleaned_root_ids": cleaned,
+                "cleaned_track_count": int(updated),
+                "cleaned_album_count": album_count,
+            }
+
+        return await self._write(operation)
 
     async def get_migrated_legacy_source_keys(
         self, kinds: set[str] | None = None

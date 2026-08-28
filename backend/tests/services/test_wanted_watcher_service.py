@@ -25,6 +25,7 @@ from services.native.download_orchestrator import (
     _IMPORT_FAILED_MSG,
     _NO_MATCH_MSG,
     _NO_SOURCE_MSG,
+    _TAG_MISMATCH_MSG,
     DownloadOrchestrator,
 )
 from services.native.download_service import ALREADY_IN_LIBRARY, DownloadService
@@ -43,6 +44,7 @@ def _record(
     task_id: str | None = "task-1",
     requested_at: str | None = None,
     year: int | None = 2026,
+    request_kind: str = "album",
 ) -> RequestHistoryRecord:
     return RequestHistoryRecord(
         musicbrainz_id=mbid,
@@ -53,6 +55,7 @@ def _record(
         user_id=user_id,
         download_task_id=task_id,
         year=year,
+        request_kind=request_kind,
     )
 
 
@@ -172,12 +175,19 @@ def env(tmp_path) -> _Env:
 
 
 def _serve_history(env: _Env, failed=(), incomplete=()):
-    async def retrying_page(status_filter=None, page_size=200, cursor=None, owner_id=None):
+    async def retrying_page(
+        status_filter=None,
+        page_size=200,
+        cursor=None,
+        owner_id=None,
+        request_kind=None,
+    ):
         by_status = {"failed": list(failed), "incomplete": list(incomplete)}
         records = [
             record
             for record in by_status.get(status_filter, [])
-            if owner_id is None or record.user_id == owner_id
+            if (request_kind is None or record.request_kind == request_kind)
+            and (owner_id is None or record.user_id == owner_id)
         ]
         return records, None
 
@@ -231,8 +241,8 @@ async def test_library_removal_opt_out_does_not_revive_a_stopped_watch(env):
 
 
 def test_orchestrator_messages_start_with_the_imported_constants(tmp_path):
-    """The tie-test: the classifier prefix-matches _NO_SOURCE_MSG/_NO_MATCH_MSG,
-    so the strings the orchestrator ACTUALLY writes must start with them."""
+    """The tie-test: the classifier prefix-matches the imported availability
+    constants, so the strings the orchestrator ACTUALLY writes must start with them."""
     orch = DownloadOrchestrator(
         client=Mock(),
         indexer=Mock(),
@@ -257,6 +267,7 @@ def test_orchestrator_messages_start_with_the_imported_constants(tmp_path):
         f"{_NO_SOURCE_MSG} on Soulseek",
         f"{_NO_SOURCE_MSG} on Soulseek or Usenet",
         f"{_NO_MATCH_MSG} on Usenet",
+        _TAG_MISMATCH_MSG,
     ],
 )
 async def test_availability_failures_enrol_as_missing(env, message):
@@ -272,6 +283,24 @@ async def test_availability_failures_enrol_as_missing(env, message):
     # first check lands one age-curve interval out (13-day-old release -> 2 d ± 20 %)
     delta = watch.next_check_at - time.time()
     assert 0.8 * 2 * _DAY * 0.95 <= delta <= 1.2 * 2 * _DAY
+
+
+@pytest.mark.asyncio
+async def test_track_failures_are_excluded_from_album_wanted_enrolment(env):
+    album_record = _record(mbid="rg-album")
+    track_record = _record(mbid="recording-1", request_kind="track")
+    _serve_history(env, failed=[track_record, album_record])
+    env.download_store.get_task.return_value = _task(error=_NO_MATCH_MSG)
+
+    summary = await env.watcher.run_sweep()
+
+    assert summary.enrolled == 1
+    assert await env.store.get_watch("rg-album") is not None
+    assert await env.store.get_watch("recording-1") is None
+    assert all(
+        call.kwargs["request_kind"] == "album"
+        for call in env.requests.async_get_retrying_page.await_args_list
+    )
 
 
 @pytest.mark.asyncio
@@ -881,6 +910,23 @@ async def test_list_retrying_returns_requests_with_a_pending_retry(env):
 
 
 @pytest.mark.asyncio
+async def test_list_retrying_excludes_track_requests(env):
+    album_record = _record(mbid="rg-album")
+    track_record = _record(mbid="recording-1", request_kind="track")
+    _serve_history(env, failed=[track_record, album_record])
+    env.download_store.get_task.return_value = _task()
+    env.ds.next_retry_at = Mock(return_value=time.time() + 60)
+
+    items = await env.watcher.list_retrying_for("user-a", "user")
+
+    assert [item.release_group_mbid for item in items] == ["rg-album"]
+    assert all(
+        call.kwargs["request_kind"] == "album"
+        for call in env.requests.async_get_retrying_page.await_args_list
+    )
+
+
+@pytest.mark.asyncio
 async def test_list_retrying_excludes_exhausted_and_taskless_requests(env):
     _serve_history(
         env,
@@ -1197,7 +1243,14 @@ async def test_list_retrying_uses_one_task_batch_per_page_never_per_row(env):
     env.download_store.get_tasks = AsyncMock(side_effect=batch)
     env.ds.next_retry_at = Mock(return_value=time.time() + 60)
 
-    async def paged(status_filter=None, page_size=200, cursor=None, owner_id=None):
+    async def paged(
+        status_filter=None,
+        page_size=200,
+        cursor=None,
+        owner_id=None,
+        request_kind=None,
+    ):
+        assert request_kind == "album"
         if cursor is None:
             return list(page_one), ("2026-01-01T00:00:00+00:00", "rg-000")
         return list(page_two), None
@@ -1217,17 +1270,26 @@ async def test_list_retrying_uses_one_task_batch_per_page_never_per_row(env):
 async def test_list_retrying_pushes_owner_scope_into_the_history_query(env):
     captured: dict[str, object] = {}
 
-    async def paged(status_filter=None, page_size=200, cursor=None, owner_id=None):
+    async def paged(
+        status_filter=None,
+        page_size=200,
+        cursor=None,
+        owner_id=None,
+        request_kind=None,
+    ):
         captured["owner_id"] = owner_id
+        captured["request_kind"] = request_kind
         return [], None
 
     env.requests.async_get_retrying_page.side_effect = paged
 
     await env.watcher.list_retrying_for("user-a", "user")
     assert captured["owner_id"] == "user-a"
+    assert captured["request_kind"] == "album"
 
     await env.watcher.list_retrying_for("admin-1", "admin")
     assert captured["owner_id"] is None
+    assert captured["request_kind"] == "album"
 
 
 @pytest.mark.asyncio

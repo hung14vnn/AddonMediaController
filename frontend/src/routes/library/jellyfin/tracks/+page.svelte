@@ -5,12 +5,13 @@
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { createLibraryTrackLoader } from '$lib/utils/libraryTrackLoader.svelte';
+	import { withBasePath } from '$lib/utils/basePath';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import LibraryFilterBar from '$lib/components/LibraryFilterBar.svelte';
-	import { formatDurationSec } from '$lib/utils/formatting';
+	import { formatArtistCredit, formatDurationSec } from '$lib/utils/formatting';
 	import { reveal } from '$lib/actions/reveal';
 	import {
 		ChevronLeft,
@@ -172,7 +173,7 @@
 		class="mb-6 rounded-xl bg-base-200/30 backdrop-blur-sm border border-base-content/5 px-5 py-4 shadow-sm flex items-center gap-3"
 	>
 		<a
-			href="/library/jellyfin"
+			href={withBasePath('/library/jellyfin')}
 			class="btn btn-ghost btn-sm gap-1"
 			aria-label="Back to Jellyfin library"
 		>
@@ -300,14 +301,14 @@
 									{track.title}
 								</div>
 								<div class="text-xs text-base-content/50 md:hidden truncate">
-									{track.artist_name}
+									{formatArtistCredit(track.artist_name)}
 								</div>
 							</td>
 							<td class="hidden md:table-cell overflow-hidden">
 								<span
 									class="text-sm text-base-content/60 truncate block {playing
 										? 'text-accent/70'
-										: ''}">{track.artist_name}</span
+										: ''}">{formatArtistCredit(track.artist_name)}</span
 								>
 							</td>
 							<td class="hidden lg:table-cell overflow-hidden">

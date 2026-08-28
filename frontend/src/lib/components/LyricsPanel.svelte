@@ -13,6 +13,7 @@
 	} from 'lucide-svelte';
 	import { fade, slide } from 'svelte/transition';
 	import type { LyricLine } from '$lib/types';
+	import { activeLyricWordIndex, parseWordTimedLyricLine } from '$lib/utils/lyrics';
 
 	interface Props {
 		open: boolean;
@@ -74,9 +75,12 @@
 	let userScrolling = $state(false);
 	let scrollTimeout: ReturnType<typeof setTimeout> | undefined;
 
-	const timedLines = $derived(
-		isSynced && lines.length > 0 ? lines.filter((l) => l.start_seconds !== null) : []
-	);
+	const timedLines = $derived.by(() => {
+		if (!isSynced || lines.length === 0) return [];
+		return lines
+			.map((line) => ({ ...line, words: parseWordTimedLyricLine(line.text) }))
+			.filter((line) => line.start_seconds !== null);
+	});
 
 	const activeLineIndex = $derived.by(() => {
 		if (timedLines.length === 0) return -1;
@@ -210,12 +214,29 @@
 								type="button"
 								data-line={i}
 								onclick={() => onseek(line.start_seconds ?? 0)}
-								class="block w-full text-left text-2xl sm:text-4xl font-bold leading-tight transition-all duration-300
-									{i === activeLineIndex ? 'text-primary scale-[1.02]' : ''}
+								class="block w-full text-left text-2xl sm:text-4xl font-bold leading-tight transition-all duration-300 cursor-pointer hover:underline
+									{i === activeLineIndex
+									? `${line.words.length > 0 ? 'text-primary' : 'text-accent'} scale-[1.02]`
+									: ''}
 									{i !== activeLineIndex && i < activeLineIndex ? 'opacity-45' : ''}
 									{i > activeLineIndex ? 'opacity-30' : ''}"
 							>
-								{line.text}
+								{#if line.words.length > 0}
+									{@const activeWordIndex =
+										i === activeLineIndex ? activeLyricWordIndex(line.words, currentTime) : -1}
+									{#each line.words as word, wordIndex (wordIndex)}
+										<span
+											class="lyrics-word transition-colors duration-150"
+											class:text-accent={i === activeLineIndex && wordIndex === activeWordIndex}
+											class:text-primary={i === activeLineIndex && wordIndex < activeWordIndex}
+											class:opacity-40={i === activeLineIndex && wordIndex > activeWordIndex}
+										>
+											{word.text}{#if wordIndex < line.words.length - 1}{' '}{/if}
+										</span>
+									{/each}
+								{:else}
+									{line.text}
+								{/if}
 							</button>
 						{/each}
 					</div>

@@ -1,5 +1,6 @@
 <script lang="ts" module>
 	import { browser } from '$app/environment';
+	import { openGlobalPlaylistModal as openFromStore } from '$lib/stores/playlistModal.svelte';
 	import type { QueueItem } from '$lib/player/types';
 
 	let _instance: { open: (items: QueueItem[]) => void } | null = null;
@@ -13,7 +14,7 @@
 	}
 
 	export function openGlobalPlaylistModal(items: QueueItem[]): void {
-		if (browser && _instance) _instance.open(items);
+		if (browser) openFromStore(items);
 	}
 </script>
 

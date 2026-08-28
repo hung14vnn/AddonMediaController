@@ -63,11 +63,23 @@ class LibraryRestorableRootsResponse(AppStruct):
     restorable_roots: list[LibraryRestorableRoot] = msgspec.field(
         default_factory=list
     )
+    cleanup_roots: list[LibraryRestorableRoot] = msgspec.field(default_factory=list)
 
 
 class LibraryRestoreRootsRequest(AppStruct):
     expected_policy_revision: str
     paths: dict[str, str] | None = None
+
+
+class LibraryCleanupRemovedRootsRequest(AppStruct):
+    expected_policy_revision: str
+
+
+class LibraryCleanupRemovedRootsResponse(AppStruct):
+    policy_revision: str
+    cleaned_root_ids: list[str] = msgspec.field(default_factory=list)
+    cleaned_track_count: int = 0
+    cleaned_album_count: int = 0
 
 
 class LibraryPolicyTreeNode(AppStruct):

@@ -124,7 +124,18 @@ async def get_artist_releases(
         )
 
     try:
-        return await artist_service.get_artist_releases(artist_id, offset, limit)
+        result = await artist_service.get_artist_releases(
+            artist_id,
+            offset,
+            limit,
+            is_disconnected=request.is_disconnected,
+        )
+        ctx = try_get_degradation_context()
+        if ctx is not None and ctx.has_degradation():
+            result = msgspec.structs.replace(
+                result, service_status=ctx.degraded_summary()
+            )
+        return result
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid artist request"

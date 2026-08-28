@@ -21,6 +21,7 @@
 	import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
 	import { getApiUrl } from '$lib/api/api-utils';
+	import { withBasePath } from '$lib/utils/basePath';
 	import { Music, Lock, Download, Loader2 } from 'lucide-svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
@@ -246,7 +247,7 @@
 				queryKey: PlaylistQueryKeyFactory.list(authStore.user?.id)
 			});
 			toastStore.show({ message: 'Playlist deleted', type: 'success' });
-			await goto('/playlists');
+			await goto(withBasePath('/playlists'));
 		} catch {
 			toastStore.show({ message: "Couldn't delete the playlist", type: 'error' });
 		} finally {
@@ -313,7 +314,7 @@
 				<button class="btn btn-sm btn-accent" onclick={() => void detailQuery.refetch()}>
 					Retry
 				</button>
-				<BackButton fallback="/playlists" />
+				<BackButton fallback={withBasePath('/playlists')} />
 			</div>
 		</div>
 	{:else if redacted}
@@ -327,13 +328,13 @@
 					? ` · owned by ${redacted.owner_name}`
 					: ''}
 			</p>
-			<BackButton fallback="/playlists" />
+			<BackButton fallback={withBasePath('/playlists')} />
 		</div>
 	{:else if !playlist}
 		<div class="flex flex-col items-center justify-center py-20 gap-4">
 			<Music class="h-16 w-16 text-base-content/20" />
 			<h2 class="text-lg font-semibold text-base-content/60">Playlist not found</h2>
-			<BackButton fallback="/playlists" />
+			<BackButton fallback={withBasePath('/playlists')} />
 		</div>
 	{:else}
 		<div class="space-y-6 sm:space-y-8">
@@ -358,7 +359,7 @@
 
 				<div class="relative z-10 p-4 sm:p-6 lg:p-8">
 					<div class="mb-4">
-						<BackButton fallback="/playlists" />
+						<BackButton fallback={withBasePath('/playlists')} />
 					</div>
 
 					<PlaylistHeader

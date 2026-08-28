@@ -28,6 +28,7 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import type { DownloadTask } from '$lib/types';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
+	import { EMPTY_STATE_COPY, classifyEmptyState } from '$lib/utils/acquisitionLabels';
 
 	import DownloadProgressBar from './DownloadProgressBar.svelte';
 	import DownloadSourceStatus from './DownloadSourceStatus.svelte';
@@ -57,6 +58,9 @@
 	const isCompleted = $derived(task.status === 'completed' || task.status === 'partial');
 	const cleanupState = $derived(task.acquisition_cleanup_state);
 	const hasAlbumLink = $derived(Boolean(task.release_group_mbid));
+
+	const emptyState = $derived(task.held_for_review ? null : classifyEmptyState(task));
+	const emptyCopy = $derived(emptyState ? EMPTY_STATE_COPY[emptyState] : null);
 
 	// only stream live progress while the transfer is moving
 	$effect(() => {
@@ -187,6 +191,12 @@
 				>
 					{task.error_message}
 				</p>
+			{/if}
+			{#if emptyCopy}
+				<div class="mt-1 rounded-box border border-base-300 bg-base-100 px-2 py-1.5 text-xs">
+					<p class="font-semibold">{emptyCopy.title}</p>
+					<p class="text-base-content/65">{emptyCopy.detail}</p>
+				</div>
 			{/if}
 		</div>
 

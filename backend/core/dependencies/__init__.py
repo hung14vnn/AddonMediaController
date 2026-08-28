@@ -280,6 +280,7 @@ from .type_aliases import (  # noqa: F401
     TargetLibraryOwnershipServiceDep,
     TargetIdentificationQueueDep,
     TargetAlbumIdentificationServiceDep,
+    MbProviderAvailabilityDep,
     TargetAlbumCoverageServiceDep,
     TargetReidentificationServiceDep,
     TargetAlbumEditionFinderServiceDep,

@@ -491,7 +491,10 @@ def get_target_identification_queue() -> "IdentificationQueueService":
 
     from .cache_providers import get_native_library_store
 
-    return IdentificationQueueService(get_native_library_store())
+    return IdentificationQueueService(
+        get_native_library_store(),
+        provider_available=get_mb_provider_availability(),
+    )
 
 
 @singleton
@@ -666,6 +669,13 @@ def get_target_identity_repair_service() -> "IdentityRepairService":
         get_native_library_store(),
         get_musicbrainz_identification_repository(),
         AlbumEvidenceEngine(),
+        get_musicbrainz_repository(),
+        provider_available=get_mb_provider_availability(),
+        wal_checkpoint=get_wal_checkpoint_service(),
+        # Keep automatic edition acceptance behind the profile-level opt-in.
+        edition_opt_in=(
+            get_library_management_profile_service().automatic_edition_acceptance_enabled
+        ),
     )
 
 
@@ -1087,7 +1097,7 @@ def get_plugin_host() -> "PluginHost":
     )
 
 
-def _build_free_music_service(drop_import) -> "FreeMusicService":
+def _build_free_music_service(drop_import, file_processor) -> "FreeMusicService":
     from services.native.free_music_service import FreeMusicService
 
     from .repo_providers import get_archive_repository, get_free_music_store
@@ -1098,17 +1108,21 @@ def _build_free_music_service(drop_import) -> "FreeMusicService":
         drop_import=drop_import,
         preferences_service=get_preferences_service(),
         sse_publisher=get_sse_publisher(),
+        file_processor=file_processor,
+        probe_tagger=get_audio_tagger(),
     )
 
 
 @singleton
 def get_free_music_service() -> "FreeMusicService":
-    return _build_free_music_service(get_drop_import_service())
+    return _build_free_music_service(get_drop_import_service(), get_file_processor())
 
 
 @singleton
 def get_target_free_music_service() -> "FreeMusicService":
-    return _build_free_music_service(get_target_drop_import_service())
+    return _build_free_music_service(
+        get_target_drop_import_service(), get_target_file_processor()
+    )
 
 
 @singleton
@@ -1162,6 +1176,7 @@ def get_acquisition_dispatcher() -> "AcquisitionDispatcher":
         get_free_music_service=get_free_music_service,
         get_spotiflac_service=get_spotiflac_service,
         preferences_service=get_preferences_service(),
+        get_album_service=get_album_service,
     )
 
 
@@ -1175,6 +1190,7 @@ def get_target_acquisition_dispatcher() -> "AcquisitionDispatcher":
         get_spotiflac_service=get_target_spotiflac_service,
         preferences_service=get_preferences_service(),
         ownership_service=get_target_library_ownership_service(),
+        get_album_service=get_target_album_service,
     )
 
 
@@ -1301,6 +1317,7 @@ def _build_artist_service(
     library_repo, library_db=None, ownership_service=None
 ) -> "ArtistService":
     from services.artist_service import ArtistService
+    from .cache_providers import get_native_library_store
 
     mb_repo = get_musicbrainz_repository()
     wikidata_repo = get_wikidata_repository()
@@ -1320,6 +1337,7 @@ def _build_artist_service(
         browse_queue,
         library_db,
         ownership_service,
+        native_library_store=get_native_library_store(),
     )
 
 
@@ -2519,6 +2537,17 @@ def get_version_service() -> "VersionService":
     return VersionService(github_repo)
 
 
+def _acquisition_snapshot_factory():
+    from services.native.acquisition.quality import build_snapshot
+
+    prefs = get_preferences_service()
+
+    def factory():
+        return build_snapshot(prefs.get_download_policy())
+
+    return factory
+
+
 def _build_spec_policy(policy):
     """Map the API ``DownloadPolicySettings`` onto the decoupled spec ``SpecPolicy`` (the
     composition root is the one place coupling the two is fine). The size/term gates
@@ -2543,12 +2572,9 @@ def get_album_preflight_scorer() -> "AlbumPreflightScorer":
 
     from .repo_providers import get_download_store
 
-    policy = get_preferences_service().get_download_policy()
-    return AlbumPreflightScorer(
-        get_download_store(),
-        flac_mp3_only=policy.flac_mp3_only,
-        policy=_build_spec_policy(policy),
-    )
+    # Quality travels via the task's persisted snapshot at rank() time; the
+    # scorer singleton holds nothing policy-shaped (freshness by construction).
+    return AlbumPreflightScorer(get_download_store())
 
 
 @singleton
@@ -2557,14 +2583,7 @@ def get_track_matcher() -> "TrackMatcher":
 
     from .repo_providers import get_download_store
 
-    policy = get_preferences_service().get_download_policy()
-    return TrackMatcher(
-        get_download_store(),
-        quality_min=policy.quality_min,
-        quality_max=policy.quality_max,
-        preferred_quality=policy.preferred_quality,
-        flac_mp3_only=policy.flac_mp3_only,
-    )
+    return TrackMatcher(get_download_store())
 
 
 @singleton
@@ -2573,12 +2592,7 @@ def get_newznab_release_scorer() -> "NewznabReleaseScorer":
 
     from .repo_providers import get_download_store
 
-    policy = get_preferences_service().get_download_policy()
-    return NewznabReleaseScorer(
-        get_download_store(),
-        flac_mp3_only=policy.flac_mp3_only,
-        policy=_build_spec_policy(policy),
-    )
+    return NewznabReleaseScorer(get_download_store())
 
 
 @singleton
@@ -2586,6 +2600,28 @@ def get_download_manifest_codec() -> "ManifestCodec":
     from models.download_manifest import ManifestCodec
 
     return ManifestCodec()
+
+
+@singleton
+def get_acquisition_cleanup_service() -> "AcquisitionCleanupService":
+    from pathlib import Path
+
+    from services.native.acquisition_cleanup_service import AcquisitionCleanupService
+
+    from .cache_providers import get_native_library_store
+    from .repo_providers import get_download_client_for_source, get_download_store
+
+    return AcquisitionCleanupService(
+        get_download_store(),
+        get_native_library_store(),
+        get_download_client_for_source,
+        lambda: Path(
+            get_preferences_service().get_sabnzbd_connection_raw().downloads_mount
+        ),
+        sab_category_getter=lambda: (
+            get_preferences_service().get_sabnzbd_connection_raw().category
+        ),
+    )
 
 
 def _build_download_orchestrator(
@@ -2619,6 +2655,10 @@ def _build_download_orchestrator(
         else Path(get_settings().cache_dir) / "download-staging"
     )
     return DownloadOrchestrator(
+        spec_policy_extras=lambda: _build_spec_policy(
+            get_preferences_service().get_download_policy()
+        ),
+        probe_tagger=get_audio_tagger(),
         client=get_download_client_repository(),
         indexer=get_slskd_indexer(),
         download_store=get_download_store(),
@@ -2711,6 +2751,7 @@ def _build_download_service(
     # The service is "enabled" if ANY source can act (slskd OR usenet), so a Usenet-only
     # install isn't blocked by the slskd-disabled guard.
     return DownloadService(
+        snapshot_factory=_acquisition_snapshot_factory(),
         download_client=get_download_client_repository(),
         indexer=get_slskd_indexer(),
         scorer=get_album_preflight_scorer(),

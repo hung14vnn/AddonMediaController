@@ -7,6 +7,8 @@ import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import type {
 	LibraryPolicyApplyPreviewResponse,
 	LibraryPolicyImpactResponse,
+	LibraryCleanupRemovedRootsRequest,
+	LibraryCleanupRemovedRootsResponse,
 	LibraryRestoreRootsRequest,
 	TargetLibrarySettingsResponse,
 	TypedLibrarySettings
@@ -61,6 +63,28 @@ export function restoreLibraryRoots() {
 		onError: (error) =>
 			toastStore.show({
 				message: serverErrorMessage(error, 'Could not restore library roots'),
+				type: 'error'
+			})
+	}));
+}
+
+export function cleanupRemovedLibraryRoots() {
+	return createMutation(() => ({
+		mutationFn: (input: LibraryCleanupRemovedRootsRequest) =>
+			api.global.post<LibraryCleanupRemovedRootsResponse>(
+				API.library.cleanupRemovedRoots(),
+				input
+			),
+		onSuccess: async (result) => {
+			await invalidatePolicies();
+			toastStore.show({
+				message: `Cleaned ${result.cleaned_root_ids.length} removed library root${result.cleaned_root_ids.length === 1 ? '' : 's'}`,
+				type: 'success'
+			});
+		},
+		onError: (error) =>
+			toastStore.show({
+				message: serverErrorMessage(error, 'Could not clean removed library roots'),
 				type: 'error'
 			})
 	}));

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 
 from api.v1.schemas.library_scan_target import (
+    DeferredIdentificationJobSummary,
     IdentificationControlRequestBody,
     IdentificationControlResponse,
     LibraryActivityItem,
@@ -18,19 +19,24 @@ from api.v1.schemas.library_scan_target import (
     ScanEstimateResponse,
     ScanRunCurrentResponse,
     ScanRunDetailResponse,
+    ScanRunFailureItem,
+    ScanRunFailuresResponse,
     ScanRunHistoryResponse,
     ScanRunRequestBody,
     ScanRunRequestedResponse,
 )
 from core.dependencies import (
+    LibraryAdministrativeWorkServiceDep,
+    LibraryPolicyReconciliationServiceDep,
     LibraryPolicyResolverDep,
+    MbProviderAvailabilityDep,
     TargetIdentificationQueueDep,
     TargetLibraryScanCoordinatorDep,
 )
 from core.exceptions import ValidationError
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from middleware import CurrentAdminDep, CurrentUserDep
-from models.library_work import ScanRequest, ScanScope
+from models.library_work import LibraryWorkItem, ScanRequest, ScanScope
 from services.native.library_activity_events import activity_events
 
 router = APIRouter(
@@ -109,10 +115,13 @@ def _selected_scopes(
 
 @router.get("/activity", response_model=LibraryActivityResponse)
 async def library_activity(
-    _: CurrentUserDep,
+    current_user: CurrentUserDep,
     coordinator: TargetLibraryScanCoordinatorDep,
     identification: TargetIdentificationQueueDep,
+    administrative_work: LibraryAdministrativeWorkServiceDep,
+    mb_provider_available: MbProviderAvailabilityDep,
 ) -> LibraryActivityResponse:
+    revisions = await identification.stream_revisions()
     runs = await coordinator.current()
     recent_history = await coordinator.history(limit=1)
     latest_failure = next(
@@ -126,7 +135,8 @@ async def library_activity(
         None,
     )
     items: list[LibraryActivityItem] = []
-    for run in runs[:1]:
+    work_items: list[LibraryWorkItem] = []
+    for run_index, run in enumerate(runs):
         snapshot = await coordinator.snapshot(run.id)
         discovering = run.state == "discovering"
         total = (
@@ -138,18 +148,75 @@ async def library_activity(
         processed = snapshot.counters.get(
             "discovered_count" if discovering else "inspected_count", 0
         )
-        items.append(
-            LibraryActivityItem(
+        phase = str(getattr(run, "phase", run.state))
+        work_processed = (
+            total if phase == "reconciling" and total is not None else processed
+        )
+        if run_index == 0:
+            items.append(
+                LibraryActivityItem(
+                    kind="scan",
+                    state=run.state,
+                    label="Updating the local library",
+                    processed=processed,
+                    total=total,
+                    indeterminate=discovering or not bool(total),
+                    updated_at=run.updated_at,
+                    started_at=run.started_at,
+                    failure_event_id=latest_failure.id if latest_failure else None,
+                    failure_at=latest_failure.terminal_at if latest_failure else None,
+                )
+            )
+        work_items.append(
+            LibraryWorkItem(
+                id=str(run.id),
                 kind="scan",
-                state=run.state,
-                label="Updating the local library",
-                processed=processed,
-                total=total,
+                state=str(run.state),
+                phase=phase,
+                effect="catalog_only",
+                processed=int(work_processed or 0),
+                total=int(total) if total is not None else None,
+                unit="files",
                 indeterminate=discovering or not bool(total),
-                updated_at=run.updated_at,
                 started_at=run.started_at,
-                failure_event_id=latest_failure.id if latest_failure else None,
-                failure_at=latest_failure.terminal_at if latest_failure else None,
+                updated_at=float(run.updated_at),
+                scope_label=(
+                    "Whole library"
+                    if current_user.role == "admin"
+                    and str(getattr(run, "aggregate_scope", "")) == "all"
+                    else "Selected library scopes"
+                    if current_user.role == "admin"
+                    else None
+                ),
+                new_count=int(snapshot.counters.get("new_count", 0)),
+                changed_count=int(snapshot.counters.get("changed_count", 0)),
+                missing_count=int(snapshot.counters.get("missing_count", 0)),
+                failed_count=int(snapshot.counters.get("errored_count", 0)),
+                priority=20 if run_index == 0 and run.state != "queued" else 70,
+            )
+        )
+    if runs and latest_failure is not None:
+        failed_snapshot = await coordinator.snapshot(latest_failure.id)
+        failed_total = failed_snapshot.counters.get(
+            "total_count"
+        ) or failed_snapshot.counters.get("discovered_count")
+        work_items.append(
+            LibraryWorkItem(
+                id=str(latest_failure.id),
+                kind="scan",
+                state="failed",
+                phase=str(getattr(latest_failure, "phase", "failed")),
+                effect="attention",
+                processed=int(failed_snapshot.counters.get("inspected_count", 0)),
+                total=int(failed_total) if failed_total is not None else None,
+                unit="files",
+                indeterminate=not bool(failed_total),
+                started_at=latest_failure.started_at,
+                updated_at=float(latest_failure.updated_at),
+                failed_count=int(failed_snapshot.counters.get("errored_count", 0)),
+                priority=0,
+                failure_event_id=str(latest_failure.id),
+                failure_at=float(latest_failure.terminal_at),
             )
         )
     if not runs and latest_failure is not None:
@@ -171,6 +238,25 @@ async def library_activity(
                 failure_at=latest_failure.terminal_at,
             )
         )
+        work_items.append(
+            LibraryWorkItem(
+                id=str(latest_failure.id),
+                kind="scan",
+                state="failed",
+                phase=str(getattr(latest_failure, "phase", "failed")),
+                effect="attention",
+                processed=int(snapshot.counters.get("inspected_count", 0)),
+                total=int(total) if total is not None else None,
+                unit="files",
+                indeterminate=not bool(total),
+                started_at=latest_failure.started_at,
+                updated_at=float(latest_failure.updated_at),
+                failed_count=int(snapshot.counters.get("errored_count", 0)),
+                priority=0,
+                failure_event_id=str(latest_failure.id),
+                failure_at=float(latest_failure.terminal_at),
+            )
+        )
     identification_snapshot = await identification.activity_snapshot()
     counts = identification_snapshot["counts"]
     waiting = sum(counts.get(state, 0) for state in ("queued", "running", "paused"))
@@ -188,7 +274,7 @@ async def library_activity(
             state = "pausing"
         elif control_state == "paused":
             state = "paused"
-        elif waiting:
+        elif counts.get("running", 0) or identification_snapshot["claimable_count"]:
             state = "running"
         elif identification_snapshot["failure_event_id"] is not None:
             state = "failed"
@@ -216,20 +302,104 @@ async def library_activity(
                 needs_review_count=counts.get("needs_review", 0),
                 failed_count=counts.get("failed", 0),
                 deferred_count=identification_snapshot["deferred_count"],
+                deferred_reason_counts=identification_snapshot[
+                    "deferred_reason_counts"
+                ],
+                deferred_jobs=[
+                    DeferredIdentificationJobSummary(**row)
+                    for row in identification_snapshot.get("deferred_jobs", [])
+                ],
+                attention_count=identification_snapshot["attention_count"],
                 priority_band=(
                     _IDENTIFICATION_PRIORITY_LABELS.get(active_priority, "Queued work")
                     if active_priority is not None
                     else None
                 ),
                 oldest_backlog_at=identification_snapshot["started_at"],
-                provider_unavailable=bool(identification_snapshot["deferred_count"]),
+                provider_unavailable=not mb_provider_available(),
                 control_revision=identification_snapshot["control_revision"],
                 failure_event_id=identification_snapshot["failure_event_id"],
                 failure_at=identification_snapshot["failure_at"],
                 foreground_operation_count=foreground_operations,
             )
         )
-    return LibraryActivityResponse(items=items)
+        if waiting or identification_snapshot["failure_event_id"] is not None:
+            work_items.append(
+                LibraryWorkItem(
+                    id="identification",
+                    kind="identification",
+                    state=state,
+                    phase="identifying_albums",
+                    mode=(
+                        _IDENTIFICATION_PRIORITY_LABELS.get(
+                            active_priority, "Queued work"
+                        )
+                        if active_priority is not None
+                        else None
+                    ),
+                    effect=(
+                        "attention"
+                        if state == "failed" and not waiting
+                        else "catalog_only"
+                    ),
+                    processed=0,
+                    total=None,
+                    unit="albums",
+                    indeterminate=bool(waiting),
+                    remaining_count=waiting,
+                    started_at=identification_snapshot["started_at"],
+                    updated_at=float(
+                        identification_snapshot["updated_at"]
+                        or identification_snapshot["failure_at"]
+                        or 0.0
+                    ),
+                    warning_count=int(identification_snapshot["deferred_count"]),
+                    failed_count=int(counts.get("failed", 0)),
+                    priority=0 if state == "failed" and not waiting else 90,
+                    failure_event_id=(
+                        identification_snapshot["failure_event_id"]
+                        if state == "failed" and not waiting
+                        else None
+                    ),
+                    failure_at=(
+                        identification_snapshot["failure_at"]
+                        if state == "failed" and not waiting
+                        else None
+                    ),
+                )
+            )
+            if waiting and identification_snapshot["failure_event_id"] is not None:
+                work_items.append(
+                    LibraryWorkItem(
+                        id=(
+                            "identification-failure:"
+                            + str(identification_snapshot["failure_event_id"])
+                        ),
+                        kind="identification",
+                        state="failed",
+                        phase="identifying_albums",
+                        effect="attention",
+                        processed=0,
+                        total=None,
+                        unit="albums",
+                        indeterminate=True,
+                        updated_at=float(
+                            identification_snapshot["failure_at"]
+                            or identification_snapshot["updated_at"]
+                            or 0.0
+                        ),
+                        failed_count=int(counts.get("failed", 0)),
+                        priority=0,
+                        failure_event_id=identification_snapshot["failure_event_id"],
+                        failure_at=identification_snapshot["failure_at"],
+                    )
+                )
+    if current_user.role == "admin":
+        work_items.extend(await administrative_work.active())
+    work_items.sort(key=lambda item: (item.priority, -item.updated_at, item.id))
+    return LibraryActivityResponse(
+        items=items, work_items=work_items, revisions=revisions
+    )
 
 
 @router.get("/activity/stream")
@@ -283,6 +453,20 @@ async def resume_identification(
     ),
 ) -> IdentificationControlResponse:
     revision = await identification.resume(expected_revision=body.expected_revision)
+    return await _identification_control_response(identification, revision)
+
+
+@router.post("/identification/cancel", response_model=IdentificationControlResponse)
+async def cancel_identification(
+    admin: CurrentAdminDep,
+    identification: TargetIdentificationQueueDep,
+    body: IdentificationControlRequestBody = MsgSpecBody(
+        IdentificationControlRequestBody
+    ),
+) -> IdentificationControlResponse:
+    revision = await identification.cancel(
+        admin.id, expected_revision=body.expected_revision
+    )
     return await _identification_control_response(identification, revision)
 
 
@@ -385,6 +569,33 @@ async def scan_run_detail(
     coordinator: TargetLibraryScanCoordinatorDep,
 ) -> ScanRunDetailResponse:
     return ScanRunDetailResponse(snapshot=await coordinator.snapshot(run_id))
+
+
+@router.get("/scan-runs/{run_id}/failures", response_model=ScanRunFailuresResponse)
+async def scan_run_failures(
+    run_id: str,
+    _: CurrentAdminDep,
+    coordinator: TargetLibraryScanCoordinatorDep,
+    limit: int = Query(default=50, ge=1, le=200),
+    cursor: int | None = Query(default=None, ge=1),
+) -> ScanRunFailuresResponse:
+    items, next_cursor = await coordinator.scan_run_failures(
+        run_id, limit=limit, cursor_rowid=cursor
+    )
+    return ScanRunFailuresResponse(
+        items=[
+            ScanRunFailureItem(
+                root_id=item.root_id,
+                relative_path=item.relative_path,
+                failure_code=item.failure_code,
+                failure_detail=item.failure_detail,
+                phase=item.phase,
+                recorded_at=item.recorded_at,
+            )
+            for item in items
+        ],
+        next_cursor=next_cursor,
+    )
 
 
 async def _control(

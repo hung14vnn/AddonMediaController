@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -19,6 +20,8 @@ from api.v1.schemas.library_policies import (
     LibraryRootSettings,
     LibrarySettingsResponse,
     LibraryPolicyTreeResponse,
+    LibraryCleanupRemovedRootsRequest,
+    LibraryCleanupRemovedRootsResponse,
     TypedLibrarySettings,
 )
 from core.exceptions import TargetStartupInvariantError, ValidationError
@@ -235,31 +238,41 @@ class TargetLibraryPolicyService:
 
     async def restorable_roots(self) -> LibraryRestorableRootsResponse:
         migrated = await self._store.get_migrated_root_ids()
+        catalog_roots_result = await self._store.get_catalog_root_ids()
+        catalog_roots = (
+            set(catalog_roots_result)
+            if isinstance(catalog_roots_result, (set, frozenset, list, tuple))
+            else set()
+        )
         configured = {
             root.id for root in self._settings.current_settings().library_roots
         }
-        missing = sorted(migrated - configured)
-        known, derived = await self._restorable_paths(missing)
+        restorable_ids = sorted(migrated - configured)
+        cleanup_ids = sorted((migrated | catalog_roots) - configured)
+        known, derived = await self._restorable_paths(cleanup_ids)
         roots = []
-        for root_id in missing:
+        cleanup_roots = []
+        for root_id in cleanup_ids:
             info = derived.get(root_id)
             path = known.get(root_id)
             if path is None and info is None:
                 continue
             path = path if path is not None else str(info["path"])
             count = int(info["indexed_file_count"]) if info is not None else 0
-            roots.append(
-                LibraryRestorableRoot(
-                    root_id=root_id,
-                    path=path,
-                    indexed_file_count=count,
-                )
+            entry = LibraryRestorableRoot(
+                root_id=root_id,
+                path=path,
+                indexed_file_count=count,
             )
+            cleanup_roots.append(entry)
+            if root_id in restorable_ids:
+                roots.append(entry)
         return LibraryRestorableRootsResponse(
             policy_revision=LibraryPolicyResolver(
                 self._settings.current_settings()
             ).policy_revision,
             restorable_roots=roots,
+            cleanup_roots=cleanup_roots,
         )
 
     async def restore_roots(
@@ -304,6 +317,36 @@ class TargetLibraryPolicyService:
                 enabled=current.enabled,
             ),
             expected_policy_revision=request.expected_policy_revision,
+        )
+
+    async def cleanup_removed_roots(
+        self, request: LibraryCleanupRemovedRootsRequest
+    ) -> LibraryCleanupRemovedRootsResponse:
+        current = self._settings.current_settings()
+        current_revision = LibraryPolicyResolver(current).policy_revision
+        if request.expected_policy_revision != current_revision:
+            raise ValidationError(
+                "Library settings changed. Reload before cleaning removed roots."
+            )
+        migrated = await self._store.get_migrated_root_ids()
+        catalog_roots_result = await self._store.get_catalog_root_ids()
+        catalog_roots = (
+            set(catalog_roots_result)
+            if isinstance(catalog_roots_result, (set, frozenset, list, tuple))
+            else set()
+        )
+        configured = {root.id for root in current.library_roots}
+        removed = sorted((migrated | catalog_roots) - configured)
+        if not removed:
+            raise ValidationError("There are no removed library roots to clean up.")
+        result = await self._store.cleanup_removed_roots(
+            removed, now=time.time()
+        )
+        return LibraryCleanupRemovedRootsResponse(
+            policy_revision=current_revision,
+            cleaned_root_ids=list(result["cleaned_root_ids"]),
+            cleaned_track_count=int(result["cleaned_track_count"]),
+            cleaned_album_count=int(result["cleaned_album_count"]),
         )
 
     async def policy_tree(self) -> LibraryPolicyTreeResponse:

@@ -166,6 +166,7 @@ export type ArtistInfoBasic = {
 	auto_download?: boolean;
 	auto_download_state?: 'none' | 'pending' | 'approved' | 'rejected' | 'revoked';
 	release_group_count?: number;
+	service_status?: Record<string, string> | null;
 };
 
 export type ArtistInfoExtended = {
@@ -184,11 +185,9 @@ export type ArtistReleases = {
 	returned_count: number;
 	next_offset: number | null;
 	has_more: boolean;
-	source_total_count: number | null;
-	/** A3: true while the backend background walker is still completing the catalog;
-	 * page-1 slices served mid-warm carry source_total_count=null. Absent (undefined)
-	 * on pre-A3 payloads - treat as false. */
+	source_total_count?: number | null;
 	warming?: boolean;
+	service_status?: Record<string, string> | null;
 };
 
 export type UserPreferences = {
@@ -224,6 +223,7 @@ export type AlbumBasicInfo = {
 	requested?: boolean;
 	cover_url?: string | null;
 	album_thumb_url?: string | null;
+	service_status?: Record<string, string> | null;
 };
 
 export type AlbumTracksInfo = {
@@ -663,6 +663,8 @@ export type StatusMessage = {
 	messages: string[];
 };
 
+export type RequestKind = 'album' | 'track';
+
 export type ActiveRequestItem = {
 	musicbrainz_id: string;
 	artist_name: string;
@@ -686,6 +688,10 @@ export type ActiveRequestItem = {
 	download_client?: string | null;
 	user_id?: string | null;
 	requested_by_name?: string | null;
+	request_kind: RequestKind;
+	track_title?: string | null;
+	duration_seconds?: number | null;
+	track_release_group_mbid?: string | null;
 };
 
 export type RequestHistoryItem = {
@@ -705,6 +711,10 @@ export type RequestHistoryItem = {
 	reviewed_at?: string | null;
 	download_task_id?: string | null;
 	can_reimport?: boolean;
+	request_kind: RequestKind;
+	track_title?: string | null;
+	duration_seconds?: number | null;
+	track_release_group_mbid?: string | null;
 };
 
 export type ActiveRequestsResponse = {
@@ -2407,8 +2417,16 @@ export interface DownloadTask {
 		| 'preserved'
 		| 'needs_attention';
 	quality_format: string | null;
+	quality_bitrate?: number | null;
 	quality_bit_depth: number | null;
 	quality_sample_rate: number | null;
+	/** Acquisition-quality projection (Acquisition plan). */
+	quality_snapshot_summary?: string | null;
+	quality_snapshot_hash?: string | null;
+	quality_preference_step?: number | null;
+	quality_certainty?: string | null;
+	quality_provenance?: string | null;
+	manual_quality_override?: boolean;
 	advertised_queue_depth: number | null;
 	queue_position_start: number | null;
 	queue_position_end: number | null;
@@ -2473,8 +2491,9 @@ export interface DownloadSourceUpdate {
 	provider?: string | null;
 	candidate_index: number | null;
 	source: string | null;
-	quality_format: string | null;
-	quality_bit_depth: number | null;
+	quality_format?: string | null;
+	quality_bitrate?: number | null;
+	quality_bit_depth?: number | null;
 	quality_sample_rate: number | null;
 	advertised_queue_depth: number | null;
 	queue_position_start: number | null;
@@ -2486,6 +2505,39 @@ export interface DownloadSourceUpdate {
 	has_next_source: boolean;
 }
 
+// SSE payload on the `download:
+
+// ---------------------------------------------------------------------------
+// Acquisition-quality policy (Acquisition plan, 2026-08-27) - hand-mirrored.
+// ---------------------------------------------------------------------------
+
+export type QualityPreferenceOrder = string[];
+
+export interface PolicySummary {
+	summary: string;
+	source_mode: 'source_first' | 'quality_first' | string;
+	legacy_rollback_compatible: boolean;
+}
+
+export interface PolicyImpactResponse {
+	manual_search_jobs: number;
+	queued_without_attempts: number;
+	awaiting_review: number;
+	remote_queued_zero_byte: number;
+	transferring_immutable: number;
+	held_reviews: number;
+	legacy_representable: boolean;
+}
+
+export interface RestartWithPolicyRequest {
+	expected_snapshot_hash?: string | null;
+}
+
+export interface RestartWithPolicyResponse {
+	accepted: boolean;
+	snapshot_summary: string | null;
+	message?: string | null;
+}
 // SSE payload on the `download:{task_id}` channel `progress` event
 export interface DownloadProgress extends DownloadSourceUpdate {
 	bytes_downloaded: number;
@@ -2496,16 +2548,26 @@ export interface DownloadProgress extends DownloadSourceUpdate {
 }
 
 // mirrors backend RequestAcceptedResponse (api/v1/schemas/request.py)
-// status is one of: "pending" | "awaiting_approval" | "downloading"
+export type RequestAcceptedStatus =
+	| 'pending'
+	| 'awaiting_approval'
+	| 'queued'
+	| 'downloading'
+	| 'cancelling'
+	| 'failed'
+	| 'imported';
+
 export interface RequestAccepted {
 	success: boolean;
 	message: string;
 	musicbrainz_id: string;
-	status: string;
+	status: RequestAcceptedStatus;
 }
 
+export type TrackRequestStatus = 'awaiting_approval' | 'queued' | 'already_in_library';
+
 export interface TrackRequestResponse {
-	status: string;
+	status: TrackRequestStatus;
 	task_id?: string | null;
 }
 
@@ -2552,6 +2614,7 @@ export interface QuarantineListResponse {
 export interface ConnectAppsSettings {
 	subsonic_enabled: boolean;
 	jellyfin_enabled: boolean;
+	exact_track_approval_supported?: boolean;
 	transcoding_enabled: boolean;
 	transcode_default_format: 'mp3' | 'opus';
 	transcode_max_bitrate_kbps: number;

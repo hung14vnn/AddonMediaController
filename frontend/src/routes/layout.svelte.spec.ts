@@ -142,9 +142,9 @@ vi.mock('$lib/utils/requestsApi', () => ({
 	fetchActiveRequests: vi.fn().mockResolvedValue({ items: [] }),
 	fetchRequestHistory: vi.fn().mockResolvedValue({ items: [], total: 0 })
 }));
-vi.mock('$lib/utils/albumRequest', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/utils/albumRequest')>()),
-	requestBatch: batchRequestMock
+vi.mock('$lib/queries/downloads/DownloadMutations.svelte', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/queries/downloads/DownloadMutations.svelte')>()),
+	requestBatch: () => ({ mutateAsync: batchRequestMock })
 }));
 vi.mock('$lib/utils/navigationProgress', () => ({
 	createNavigationProgressController: vi.fn(() => ({

@@ -11,6 +11,7 @@ from api.v1.schemas.settings import (
 )
 from api.v1.schemas.advanced_settings import AdvancedSettings
 from repositories.lastfm_models import LastFmArtist, LastFmAlbum
+from repositories.listenbrainz_models import ListenBrainzReleaseGroup
 from services.discover_service import DiscoverService
 
 
@@ -182,6 +183,50 @@ class TestBuildQueueSourceRouting:
         assert result is not None
         assert result.queue_id
         assert isinstance(result.items, list)
+
+    @pytest.mark.asyncio
+    async def test_anonymous_queue_deduplicates_repeated_listenbrainz_groups(self):
+        service, lb_repo, _, _ = _make_service(
+            lb_enabled=False, lfm_enabled=False, primary_source="listenbrainz"
+        )
+        lb_repo.get_sitewide_top_release_groups.return_value = [
+            ListenBrainzReleaseGroup(
+                release_group_name="First",
+                artist_name="Artist",
+                listen_count=500,
+                release_group_mbid="DUPE-1",
+                artist_mbids=["a-1"],
+            ),
+            ListenBrainzReleaseGroup(
+                release_group_name="Repeated",
+                artist_name="Artist",
+                listen_count=400,
+                release_group_mbid="dupe-1",
+                artist_mbids=["a-1"],
+            ),
+            ListenBrainzReleaseGroup(
+                release_group_name="Ignored",
+                artist_name="Artist",
+                listen_count=300,
+                release_group_mbid="ignored-1",
+                artist_mbids=["a-2"],
+            ),
+            ListenBrainzReleaseGroup(
+                release_group_name="Distinct",
+                artist_name="Artist",
+                listen_count=200,
+                release_group_mbid="distinct-1",
+                artist_mbids=["a-3"],
+            ),
+        ]
+        service._queue._get_wildcard_albums = AsyncMock(return_value=[])
+
+        with patch("services.discover.queue_service.random.shuffle", lambda _: None):
+            items = await service._queue._build_anonymous_queue(
+                5, {"ignored-1"}, set(), resolved_source="listenbrainz"
+            )
+
+        assert [item.release_group_mbid for item in items] == ["DUPE-1", "distinct-1"]
 
 
 class TestBuildQueuePersonalizedSourceRouting:

@@ -18,6 +18,7 @@
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { formatArtistCredit } from '$lib/utils/formatting';
+	import { withBasePath } from '$lib/utils/basePath';
 	import { getLyricsQuery } from '$lib/queries/lyrics/LyricsQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { karaokeController } from '$lib/stores/karaoke.svelte';
@@ -171,7 +172,7 @@
 								<p class="text-sm font-semibold truncate">{playerStore.nowPlaying.trackName}</p>
 								<p class="text-xs opacity-60 truncate">
 									{#if isAlbumLinkable(playerStore.nowPlaying.albumId)}
-										<a href="/album/{playerStore.nowPlaying.albumId}" class="hover:underline"
+										<a href={withBasePath(`/album/${playerStore.nowPlaying.albumId}`)} class="hover:underline"
 											>{playerStore.nowPlaying.albumName}</a
 										>
 									{:else}
@@ -179,7 +180,7 @@
 									{/if}
 									-
 									{#if playerStore.nowPlaying.artistId}
-										<a href="/artist/{playerStore.nowPlaying.artistId}" class="hover:underline"
+										<a href={withBasePath(`/artist/${playerStore.nowPlaying.artistId}`)} class="hover:underline"
 										>{formatArtistCredit(playerStore.nowPlaying.artistName)}</a
 										>
 									{:else}
@@ -189,7 +190,7 @@
 							{:else}
 								<p class="text-sm font-semibold truncate">
 									{#if isAlbumLinkable(playerStore.nowPlaying.albumId)}
-										<a href="/album/{playerStore.nowPlaying.albumId}" class="hover:underline"
+										<a href={withBasePath(`/album/${playerStore.nowPlaying.albumId}`)} class="hover:underline"
 											>{playerStore.nowPlaying.albumName}</a
 										>
 									{:else}
@@ -198,7 +199,7 @@
 								</p>
 								<p class="text-xs opacity-60 truncate">
 									{#if playerStore.nowPlaying.artistId}
-										<a href="/artist/{playerStore.nowPlaying.artistId}" class="hover:underline"
+										<a href={withBasePath(`/artist/${playerStore.nowPlaying.artistId}`)} class="hover:underline"
 										>{formatArtistCredit(playerStore.nowPlaying.artistName)}</a
 										>
 									{:else}

@@ -1,4 +1,5 @@
 import type { MusicSource } from './stores/musicSource';
+import type { RequestKind } from './types';
 
 export const AUTH_FREE_PATHS = ['/login', '/setup', '/auth/callback', '/recover-password'];
 
@@ -129,6 +130,8 @@ export const STATUS_COLORS = {
 } as const;
 
 export const YOUTUBE_PLAYER_ELEMENT_ID = 'yt-player-embed';
+const requestKindQuery = (requestKind: RequestKind = 'album') =>
+	`?request_kind=${encodeURIComponent(requestKind)}`;
 
 export const API = {
 	karaoke: {
@@ -150,6 +153,8 @@ export const API = {
 	auth: {
 		setupStatus: () => '/api/v1/auth/setup/status',
 		me: () => '/api/v1/auth/me',
+		deviceSessions: () => '/api/v1/auth/device-sessions',
+		logout: () => '/api/v1/auth/logout',
 		passwordRecoveryReset: () => '/api/v1/auth/password-recovery/reset',
 		adminPasswordRecovery: (userId: string) =>
 			`/api/v1/auth/admin/users/${encodeURIComponent(userId)}/password-recovery`
@@ -301,13 +306,12 @@ export const API = {
 		trackTags: (fileId: string) => `/api/v1/library/tracks/${fileId}/tags`,
 		removeTrack: (fileId: string) => `/api/v1/library/tracks/${fileId}`,
 		removeTracks: () => '/api/v1/library/tracks/batch-delete',
-		scanCancel: () => '/api/v1/library/scan/cancel',
-		scanStream: () => '/api/v1/library/scan/stream',
 		activity: () => '/api/v1/library/activity',
 		activityStream: () => '/api/v1/library/activity/stream',
 		operationsStream: () => '/api/v1/library/operations/stream',
 		pauseIdentification: () => '/api/v1/library/identification/pause',
 		resumeIdentification: () => '/api/v1/library/identification/resume',
+		cancelIdentification: () => '/api/v1/library/identification/cancel',
 		scanRuns: (limit?: number, cursor?: string) => {
 			const query = new URLSearchParams();
 			if (limit !== undefined) query.set('limit', String(limit));
@@ -480,6 +484,7 @@ export const API = {
 		pathMapping: () => '/api/v1/settings/library/path-mapping',
 		restorableRoots: () => '/api/v1/settings/library/restorable-roots',
 		restoreRoots: () => '/api/v1/settings/library/restore-roots',
+		cleanupRemovedRoots: () => '/api/v1/settings/library/cleanup-removed-roots',
 		addPath: () => '/api/v1/settings/library/paths',
 		removePath: (path: string) => `/api/v1/settings/library/paths?path=${encodeURIComponent(path)}`,
 		removeAlbum: (mbid: string) => `/api/v1/library/album/${mbid}`,
@@ -801,6 +806,9 @@ export const API = {
 		sabnzbd: () => '/api/v1/download-clients/sabnzbd',
 		sabnzbdTest: () => '/api/v1/download-clients/sabnzbd/test',
 		policy: () => '/api/v1/download-clients/policy',
+		policySave: () => '/api/v1/download-clients/policy',
+		policySummary: () => '/api/v1/download-clients/policy-summary',
+		policyImpact: () => '/api/v1/download-clients/policy/impact',
 		sourcePriority: () => '/api/v1/download-clients/source-priority',
 		wanted: () => '/api/v1/download-clients/wanted'
 	},
@@ -815,6 +823,8 @@ export const API = {
 		activitySummary: () => '/api/v1/downloads/activity-summary',
 		searchAlbum: () => '/api/v1/downloads/search/album',
 		searchJob: (jobId: string) => `/api/v1/downloads/search/${jobId}`,
+		restartWithPolicy: (taskId: string) =>
+			`/api/v1/downloads/${taskId}/restart-with-current-policy`,
 		pick: (jobId: string) => `/api/v1/downloads/search/${jobId}/pick`,
 		dismissReview: (jobId: string) => `/api/v1/downloads/search/${jobId}/dismiss`,
 		cancelSearch: (jobId: string) => `/api/v1/downloads/search/${jobId}/cancel`,
@@ -858,6 +868,24 @@ export const API = {
 	},
 	requests: {
 		new: () => '/api/v1/requests/new',
+		active: () => '/api/v1/requests/active',
+		history: (page = 1, pageSize = 20, status?: string, sort?: string) => {
+			const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+			if (status) params.set('status', status);
+			if (sort) params.set('sort', sort);
+			return `/api/v1/requests/history?${params.toString()}`;
+		},
+		pendingApprovals: () => '/api/v1/requests/pending-approvals',
+		cancel: (musicbrainzId: string, requestKind: RequestKind = 'album') =>
+			`/api/v1/requests/active/${encodeURIComponent(musicbrainzId)}${requestKindQuery(requestKind)}`,
+		retry: (musicbrainzId: string, requestKind: RequestKind = 'album') =>
+			`/api/v1/requests/retry/${encodeURIComponent(musicbrainzId)}${requestKindQuery(requestKind)}`,
+		clearHistoryItem: (musicbrainzId: string, requestKind: RequestKind = 'album') =>
+			`/api/v1/requests/history/${encodeURIComponent(musicbrainzId)}${requestKindQuery(requestKind)}`,
+		approve: (musicbrainzId: string, requestKind: RequestKind = 'album') =>
+			`/api/v1/requests/approve/${encodeURIComponent(musicbrainzId)}${requestKindQuery(requestKind)}`,
+		reject: (musicbrainzId: string, requestKind: RequestKind = 'album') =>
+			`/api/v1/requests/reject/${encodeURIComponent(musicbrainzId)}${requestKindQuery(requestKind)}`,
 		pendingApprovalCount: () => '/api/v1/requests/pending-approvals/count',
 		autoDownloadApprovals: () => '/api/v1/requests/auto-download-approvals',
 		approveAutoDownload: (userId: string, mbid: string) =>

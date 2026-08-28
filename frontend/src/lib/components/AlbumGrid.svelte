@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { formatArtistCredit } from '$lib/utils/formatting';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { ChevronRight } from 'lucide-svelte';
 	import { reveal } from '$lib/actions/reveal';
+	import { withBasePath } from '$lib/utils/basePath';
 
 	interface AlbumItem {
 		name: string;
@@ -75,7 +77,7 @@
 					/>
 				</div>
 				<p class="mt-1.5 line-clamp-1 text-sm font-medium">{album.name}</p>
-				<p class="line-clamp-1 text-xs text-base-content/50">{album.artist_name}</p>
+				<p class="line-clamp-1 text-xs text-base-content/50">{formatArtistCredit(album.artist_name)}</p>
 			</button>
 		{/each}
 	</div>
@@ -83,7 +85,7 @@
 	{#if seeAllHref && albums.length > maxItems}
 		<div class="mt-4 flex justify-center">
 			<a
-				href={seeAllHref}
+				href={withBasePath(seeAllHref)}
 				class="btn btn-ghost btn-sm gap-1 text-xs font-medium text-base-content/60 hover:text-base-content"
 			>
 				{seeAllLabel}

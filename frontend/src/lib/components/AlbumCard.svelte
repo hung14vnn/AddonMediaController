@@ -4,8 +4,8 @@
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import { libraryStore } from '$lib/stores/library';
 	import { integrationStore } from '$lib/stores/integration';
-	import { requestAlbum } from '$lib/utils/albumRequest';
-	import { formatListenCount } from '$lib/utils/formatting';
+	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { formatArtistCredit, formatListenCount } from '$lib/utils/formatting';
 	import { getListenTitle } from '$lib/utils/enrichment';
 	import { Download, Music2 } from 'lucide-svelte';
 	import AlbumImage from './AlbumImage.svelte';
@@ -32,6 +32,8 @@
 
 	let requesting = $state(false);
 
+	const albumRequest = requestAlbum();
+
 	let inLibrary = $derived(
 		libraryStore.isInLibrary(album.musicbrainz_id) ||
 			(!$libraryStore.initialized && album.in_library) ||
@@ -46,12 +48,15 @@
 		e.stopPropagation();
 		requesting = true;
 		try {
-			const result = await requestAlbum(album.musicbrainz_id, {
-				artist: album.artist ?? undefined,
-				album: album.title,
-				year: album.year ?? undefined
-			});
-			if (result.success) {
+			const result = await albumRequest
+				.mutateAsync({
+					release_group_mbid: album.musicbrainz_id,
+					artist_name: album.artist ?? undefined,
+					album_title: album.title,
+					year: album.year ?? undefined
+				})
+				.catch(() => null);
+			if (result?.success) {
 				onadded?.();
 			}
 		} finally {
@@ -116,7 +121,7 @@
 				{#if album.year}{album.year}{:else}Unknown{/if}
 				{#if album.artist}
 					<span class="opacity-50 mx-1">•</span>
-					{album.artist}
+					{formatArtistCredit(album.artist)}
 				{/if}
 			</p>
 

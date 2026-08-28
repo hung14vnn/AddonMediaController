@@ -12,11 +12,11 @@ import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import type {
 	AlbumRemoveResponse,
 	TargetCatalogRemovalResponse,
-	LibraryActionResponse,
 	LibraryAlbumStatus,
 	StatusMessageResponse,
 	LibraryScanSchedule
 } from '$lib/types';
+import type { ScanRunRequestedResponse } from './LibraryOperationsTypes';
 
 export function removeLibraryAlbum() {
 	return createMutation(() => ({
@@ -69,15 +69,14 @@ export function removeLibraryAlbum() {
 	}));
 }
 
-// Re-invalidate the album status a few times after a rescan. The rescan endpoint
-// returns 202 and refreshes the rows on a background task with no completion event,
-// so a single immediate invalidation would only re-read the pre-rescan rows.
+// Re-invalidate the album status while the accepted scan run advances. The mutation
+// consumes the scan-run response shape introduced by the target-only scan cutover.
 const RESCAN_REFRESH_DELAYS_MS = [2500, 6000];
 
 export function rescanAlbum() {
 	return createMutation(() => ({
 		mutationFn: (mbid: string) =>
-			api.global.post<LibraryActionResponse>(API.library.rescanAlbum(mbid), {}),
+			api.global.post<ScanRunRequestedResponse>(API.library.rescanAlbum(mbid), {}),
 		onSuccess: (_data, mbid) => {
 			const invalidate = () =>
 				invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.album(mbid) });

@@ -52,11 +52,15 @@ export function controlLibraryRun(action: 'pause' | 'resume' | 'stop') {
 	}));
 }
 
-export function controlIdentification(action: 'pause' | 'resume') {
+export function controlIdentification(action: 'pause' | 'resume' | 'cancel') {
 	return createMutation(() => ({
 		mutationFn: (expectedRevision: number) =>
 			api.global.post<IdentificationControlResponse>(
-				action === 'pause' ? API.library.pauseIdentification() : API.library.resumeIdentification(),
+				action === 'pause'
+					? API.library.pauseIdentification()
+					: action === 'resume'
+						? API.library.resumeIdentification()
+						: API.library.cancelIdentification(),
 				{ expected_revision: expectedRevision }
 			),
 		onSuccess: invalidateWork,

@@ -13,7 +13,7 @@
 		getLibraryArtistDetailQuery
 	} from '$lib/queries/library/LibraryQueries.svelte';
 	import { createLibraryContributionMutation } from '$lib/queries/libraryContributions/LibraryContributionMutations.svelte';
-	import SpotifyArtistTracks from '$lib/components/SpotifyArtistTracks.svelte';
+	import { withBasePath } from '$lib/utils/basePath';
 
 	interface Props {
 		artistId: string;
@@ -31,7 +31,7 @@
 
 	function openContribution(album: LibraryAlbumSummary): void {
 		if (album.contribution_id) {
-			void goto(`/library/contributions/${album.contribution_id}`);
+			void goto(withBasePath(`/library/contributions/${album.contribution_id}`));
 			return;
 		}
 		contributionMutation.mutate(album.id);
@@ -49,7 +49,9 @@
 <svelte:head><title>{artist?.name ?? 'Artist'} · Library</title></svelte:head>
 
 <main class="container mx-auto p-4 md:p-6 lg:p-8">
-	<button class="btn btn-ghost btn-sm mb-5 gap-2" onclick={() => goto('/library/artists')}
+	<button
+		class="btn btn-ghost btn-sm mb-5 gap-2"
+		onclick={() => goto(withBasePath('/library/artists'))}
 		><ChevronLeft class="h-4 w-4" /> Artists</button
 	>
 	{#if artistQuery.isLoading}
@@ -131,7 +133,7 @@
 							<h2 id="musicbrainz-albums-title" class="font-bold">Contribute through an album</h2>
 							<p class="mt-1 max-w-3xl text-sm text-base-content/65">
 								Use one of this artist's local albums to check MusicBrainz. If the release matches,
-								we can also verify and link its artist credit.
+								hify can also verify and link its artist credit.
 							</p>
 						</div>
 					</div>
@@ -142,7 +144,7 @@
 							class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5"
 						>
 							<div class="min-w-0">
-								<a class="font-semibold hover:underline" href={`/album/${album.id}`}
+								<a class="font-semibold hover:underline" href={withBasePath(`/album/${album.id}`)}
 									>{album.title}</a
 								>
 								<p class="mt-0.5 text-xs text-base-content/55">
@@ -186,8 +188,5 @@
 					{#each albumsQuery.data.items as album (album.id)}<LibraryAlbumCard {album} />{/each}
 				</div>{/if}
 		</section>
-		{#if artist?.name}
-			<SpotifyArtistTracks artistId={artistId} artistName={artist.name} />
-		{/if}
 	{/if}
 </main>

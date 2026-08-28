@@ -8,6 +8,8 @@ from api.v1.schemas.library_policies import (
     LibraryPolicyImpactRequest,
     LibraryPolicyImpactResponse,
     LibraryPolicyTreeResponse,
+    LibraryCleanupRemovedRootsRequest,
+    LibraryCleanupRemovedRootsResponse,
     LibraryRestorableRootsResponse,
     LibraryRestoreRootsRequest,
     LibrarySettingsResponse,
@@ -91,3 +93,16 @@ async def restore_library_roots(
     if response.enabled:
         await pending_migration.schedule()
     return response
+
+
+@router.post(
+    "/cleanup-removed-roots",
+    response_model=LibraryCleanupRemovedRootsResponse,
+)
+async def cleanup_removed_library_roots(
+    service: TargetLibraryPolicyServiceDep,
+    request: LibraryCleanupRemovedRootsRequest = MsgSpecBody(
+        LibraryCleanupRemovedRootsRequest
+    ),
+) -> LibraryCleanupRemovedRootsResponse:
+    return await service.cleanup_removed_roots(request)

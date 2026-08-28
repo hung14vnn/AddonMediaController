@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Callable
 
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 from models.library_work import IdentificationJob
@@ -13,12 +14,33 @@ PRIORITY_REVIEW_RETRY = 30
 PRIORITY_HISTORICAL_BACKLOG = 40
 PRIORITY_SUPPORTING_MAINTENANCE = 50
 LEASE_SECONDS = 60.0
-MAX_BACKOFF_SECONDS = 6 * 60 * 60
+# F-IDENT-04 policy (owner-signed): the cap is DERIVED so it always equals the
+# largest delay the doubling formula can actually schedule under the retained
+# ten-attempt terminal bound. Applied sequence: 30, 60, 120, 240, 480, 960,
+# 1,920, 3,840, 7,680 seconds - cumulative 15,330 seconds before attempt ten
+# terminalizes. This is a bounded-retry window, never a provider-health
+# timeout; provider recovery is gated separately by resurrection eligibility.
+MAX_DEFERRAL_ATTEMPTS = 10
+MAX_BACKOFF_SECONDS = 30 * 2 ** min(MAX_DEFERRAL_ATTEMPTS - 2, 10)
+# F-056: attempt caps are monotonic modulo the store's bounded two-wipe
+# provider-reset budget; recovery releases only reset-stale or far-future rows.
+SUBJECT_NOT_AVAILABLE_GRACE_SECONDS = 24 * 60 * 60
 
 
 class IdentificationQueueService:
-    def __init__(self, store: NativeLibraryStore) -> None:
+    def __init__(
+        self,
+        store: NativeLibraryStore,
+        *,
+        provider_available: Callable[[], bool] | None = None,
+    ) -> None:
         self._store = store
+        self._provider_available = provider_available
+
+    def _resurrect_attention(self) -> bool:
+        if self._provider_available is None:
+            return True
+        return self._provider_available()
 
     async def enqueue_album(
         self,
@@ -40,7 +62,9 @@ class IdentificationQueueService:
             now=now,
         )
         return await self._store.enqueue_identification_job(
-            job, expected_policy_revision=expected_policy_revision
+            job,
+            expected_policy_revision=expected_policy_revision,
+            resurrect_attention=self._resurrect_attention(),
         )
 
     async def enqueue_album_with_disposition(
@@ -61,7 +85,9 @@ class IdentificationQueueService:
             requested_by_user_id=requested_by_user_id,
             now=now,
         )
-        return await self._store.enqueue_identification_job_result(job)
+        return await self._store.enqueue_identification_job_result(
+            job, resurrect_attention=self._resurrect_attention()
+        )
 
     async def enqueue_albums_with_disposition(
         self,
@@ -90,6 +116,7 @@ class IdentificationQueueService:
             grouping_context=grouping_context,
             queue_cursor=queue_cursor,
             background=background,
+            resurrect_attention=self._resurrect_attention(),
         )
 
     @staticmethod
@@ -141,6 +168,15 @@ class IdentificationQueueService:
     ) -> int:
         timestamp = time.time() if now is None else now
         attempts = max(1, int(job.get("attempt_count", 1)))
+        if attempts >= MAX_DEFERRAL_ATTEMPTS:
+            return await self._store.terminal_fail_identification_job(
+                str(job["id"]),
+                worker_id=worker_id,
+                expected_job_revision=int(job["row_revision"]),
+                failure_code="MAX_DEFERRALS_EXCEEDED",
+                attention_cause=failure_code,
+                now=timestamp,
+            )
         backoff = min(MAX_BACKOFF_SECONDS, 30 * (2 ** min(attempts - 1, 10)))
         # Use max(existing safe policy 30s+ backoff, exception deadline) per F-PERF-01
         if retry_after_seconds is not None:
@@ -159,6 +195,32 @@ class IdentificationQueueService:
             failure_code=failure_code,
             not_before=timestamp + backoff,
             now=timestamp,
+        )
+
+    async def fail(
+        self,
+        job: dict,
+        worker_id: str,
+        failure_code: str,
+        *,
+        now: float | None = None,
+    ) -> int:
+        """Terminally fail a running job, keeping the row for auditability."""
+        return await self._store.terminal_fail_identification_job(
+            str(job["id"]),
+            worker_id=worker_id,
+            expected_job_revision=int(job["row_revision"]),
+            failure_code=failure_code,
+            attention_cause=failure_code,
+            now=time.time() if now is None else now,
+        )
+
+    async def reset_provider_deferrals(self, *, now: float | None = None) -> int:
+        """F-056: recovery-edge release with preserved failure history; the
+        staleness window is one full backoff quantum."""
+        return await self._store.reset_provider_identification_deferrals(
+            now=time.time() if now is None else now,
+            staleness_seconds=MAX_BACKOFF_SECONDS,
         )
 
     async def pause(
@@ -205,21 +267,41 @@ class IdentificationQueueService:
             expected_revision=expected_revision,
         )
 
+    async def cancel(
+        self,
+        requested_by_user_id: str | None,
+        *,
+        expected_revision: int | None = None,
+        now: float | None = None,
+    ) -> int:
+        return await self._store.cancel_identification_queue(
+            requested_by_user_id=requested_by_user_id,
+            requested_at=time.time() if now is None else now,
+            expected_revision=expected_revision,
+        )
+
     async def is_paused(self) -> bool:
         return (await self._store.get_identification_control())["state"] == "paused"
 
     async def recover(self, *, now: float | None = None) -> int:
-        return await self._store.recover_expired_identification_leases(
-            now=time.time() if now is None else now
+        timestamp = time.time() if now is None else now
+        recovered = await self._store.recover_expired_identification_leases(
+            now=timestamp
         )
+        await self._store.gc_stale_identification_jobs(
+            now=timestamp, grace_seconds=SUBJECT_NOT_AVAILABLE_GRACE_SECONDS
+        )
+        return recovered
 
-    async def activity_snapshot(self, *, now: float | None = None) -> dict:
+    async def activity_snapshot(self) -> dict:
         return await self._store.get_identification_activity_snapshot(
-            now=time.time() if now is None else now
+            now=time.time()
         )
 
     async def stream_revisions(self) -> dict[str, int]:
-        return {
+        revisions = {
             kind: await self._store.get_stream_revision(kind)
             for kind in ("scan", "identification", "operation")
         }
+        revisions["catalog"] = await self._store.get_catalog_revision()
+        return revisions

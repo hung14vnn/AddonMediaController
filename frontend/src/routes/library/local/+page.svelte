@@ -7,6 +7,7 @@
 	import { deckFocus } from '$lib/stores/deckFocus.svelte';
 	import { API } from '$lib/constants';
 	import { api } from '$lib/api/client';
+	import { withBasePath } from '$lib/utils/basePath';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { formatArtistCredit } from '$lib/utils/formatting';
 	import type { CrateTrack, LocalAlbumSummary, LocalAlbumMatch, CrateResponse } from '$lib/types';
@@ -368,7 +369,7 @@
 				</button>
 				{#if isMbid(album.musicbrainz_id)}
 					<a
-						href="/album/{album.musicbrainz_id}"
+						href={withBasePath(`/album/${album.musicbrainz_id}`)}
 						class="mt-2 block truncate text-sm font-semibold transition-colors hover:text-accent hover:underline"
 						title={album.name}>{album.name}</a
 					>
@@ -377,7 +378,7 @@
 				{/if}
 				{#if isMbid(album.artist_mbid)}
 					<a
-						href="/artist/{album.artist_mbid}"
+						href={withBasePath(`/artist/${album.artist_mbid}`)}
 						class="block truncate text-xs text-base-content/55 transition-colors hover:text-accent hover:underline"
 						title={formatArtistCredit(album.artist_name)}>{formatArtistCredit(album.artist_name)}</a
 					>
@@ -459,8 +460,9 @@
 				<div>
 					<p class="font-semibold">No local music yet</p>
 					<p class="text-sm text-base-content/55">
-						Add a music folder in <a href="/settings?tab=library" class="link link-accent"
-							>Settings &rarr; Library</a
+						Add a music folder in <a
+							href={withBasePath('/settings?tab=library')}
+							class="link link-accent">Settings &rarr; Library</a
 						>, then run a scan.
 					</p>
 				</div>

@@ -213,6 +213,49 @@ describe('Playlist detail page', () => {
 		await expect.element(page.getByText('Other Artist')).toBeVisible();
 	});
 
+	it('filters playlist tracks by track, artist, and album names', async () => {
+		detailQuery.data = makePlaylist({
+			tracks: [
+				makeTrack({
+					id: 'trk-1',
+					track_name: 'Midnight City',
+					artist_name: 'M83',
+					album_name: 'Hurry Up, We Are Dreaming'
+				}),
+				makeTrack({
+					id: 'trk-2',
+					track_name: 'Halo',
+					artist_name: 'Beyoncé',
+					album_name: 'I Am... Sasha Fierce'
+				})
+			]
+		});
+		renderDetail('pl-1');
+
+		const search = page.getByRole('searchbox', { name: 'Search within playlist' });
+		await search.fill('dreaming');
+		await expect.element(page.getByText('Midnight City')).toBeVisible();
+		await expect.element(page.getByText('Halo')).not.toBeInTheDocument();
+
+		await search.fill('beyonce');
+		await expect.element(page.getByText('Halo')).toBeVisible();
+		await expect.element(page.getByText('Midnight City')).not.toBeInTheDocument();
+		await expect.element(page.getByText('1 of 2 tracks')).toBeVisible();
+	});
+
+	it('shows a no-match state and can clear the playlist search', async () => {
+		detailQuery.data = makePlaylist();
+		renderDetail('pl-1');
+
+		await page.getByRole('searchbox', { name: 'Search within playlist' }).fill('not here');
+		await expect.element(page.getByText('No matching tracks')).toBeVisible();
+		await expect.element(page.getByText('0 of 2 tracks')).toBeVisible();
+
+		await page.getByRole('button', { name: 'Clear playlist search' }).click();
+		await expect.element(page.getByText('First Track')).toBeVisible();
+		await expect.element(page.getByText('Second Track')).toBeVisible();
+	});
+
 	it('shows error state when playlist is missing', async () => {
 		detailQuery.data = undefined;
 		detailQuery.isError = true;
@@ -405,5 +448,16 @@ describe('Playlist detail page', () => {
 		expect(items).toHaveLength(2);
 		expect(startIdx).toBe(1);
 		expect(shuffle).toBe(false);
+	});
+
+	it('keeps the original playback position while tracks are filtered', async () => {
+		detailQuery.data = makePlaylist();
+		renderDetail('pl-1');
+
+		await page.getByRole('searchbox', { name: 'Search within playlist' }).fill('Second');
+		await page.getByRole('button', { name: 'Play Second Track' }).click();
+
+		expect(mockPlayQueue).toHaveBeenCalledOnce();
+		expect(mockPlayQueue.mock.calls[0][1]).toBe(1);
 	});
 });

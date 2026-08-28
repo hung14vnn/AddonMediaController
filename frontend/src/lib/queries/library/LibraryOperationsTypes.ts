@@ -13,6 +13,17 @@ export type LibraryWorkState =
 	| 'running'
 	| 'idle';
 
+export interface DeferredJobSummary {
+	job_id: string;
+	local_album_id: string | null;
+	album_title: string | null;
+	artist_name: string | null;
+	last_failure_code: string;
+	attempt_count: number;
+	not_before: number | null;
+	updated_at: number;
+}
+
 export interface LibraryActivityItem {
 	kind: 'scan' | 'identification';
 	state: LibraryWorkState;
@@ -29,6 +40,7 @@ export interface LibraryActivityItem {
 	failed_count: number;
 	deferred_count: number;
 	deferred_reason_counts: Record<string, number>;
+	deferred_jobs: DeferredJobSummary[];
 	attention_count: number;
 	priority_band: string | null;
 	oldest_backlog_at: number | null;
@@ -565,11 +577,23 @@ export interface LibraryRestorableRoot {
 export interface LibraryRestorableRootsResponse {
 	policy_revision: string;
 	restorable_roots: LibraryRestorableRoot[];
+	cleanup_roots: LibraryRestorableRoot[];
 }
 
 export interface LibraryRestoreRootsRequest {
 	expected_policy_revision: string;
 	paths: Record<string, string> | null;
+}
+
+export interface LibraryCleanupRemovedRootsRequest {
+	expected_policy_revision: string;
+}
+
+export interface LibraryCleanupRemovedRootsResponse {
+	policy_revision: string;
+	cleaned_root_ids: string[];
+	cleaned_track_count: number;
+	cleaned_album_count: number;
 }
 
 export interface LibraryPolicyImpactResponse {

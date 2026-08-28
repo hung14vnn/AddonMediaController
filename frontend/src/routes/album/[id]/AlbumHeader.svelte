@@ -11,7 +11,7 @@
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import AlbumDownloadStatus from '$lib/components/downloads/AlbumDownloadStatus.svelte';
-	import { formatTotalDuration } from '$lib/utils/formatting';
+	import { formatArtistCredit, formatTotalDuration } from '$lib/utils/formatting';
 	import {
 		Check,
 		Trash2,
@@ -328,7 +328,7 @@
 
 			<div class="flex flex-wrap items-center gap-2 text-sm">
 				<button onclick={onartistclick} class="font-semibold hover:underline cursor-pointer">
-					{album.artist_name}
+					{formatArtistCredit(album.artist_name)}
 				</button>
 
 				{#if album.year}

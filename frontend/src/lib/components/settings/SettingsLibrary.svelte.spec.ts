@@ -195,7 +195,7 @@ describe('SettingsLibrary target policy UI', () => {
 		await expect
 			.element(
 				page.getByText(
-					'Reads files and updates DroppedNeedle. It does not change your music files.'
+					'Reads files and updates hify. It does not change your music files.'
 				)
 			)
 			.toBeVisible();
@@ -209,6 +209,22 @@ describe('SettingsLibrary target policy UI', () => {
 					.getByText(/Index files first, then try to identify albums/)
 			)
 			.toBeVisible();
+	});
+	it('documents the legacy initial bucket and keeps its preview sample-based', async () => {
+		render(SettingsLibrary);
+		await page.getByRole('textbox', { name: 'Naming template' }).fill('{initial}/{albumartist}');
+		await expect.element(page.getByText('R/Radiohead', { exact: true })).toBeVisible();
+
+		await expect.element(page.getByText(/\{initial\}/)).toBeVisible();
+		const initialHelp = page.getByText(/effective album artist/i);
+		await expect.element(initialHelp).toBeVisible();
+		await expect.element(initialHelp).toHaveTextContent(/leading.*The/i);
+		await expect.element(initialHelp).toHaveTextContent(/Unicode whitespace/i);
+		await expect.element(initialHelp).toHaveTextContent(/case-insensitive/i);
+		await expect.element(initialHelp).toHaveTextContent(/one uppercase letter/i);
+		await expect
+			.element(initialHelp)
+			.toHaveTextContent(/empty.*(?:nonletter|non[- ]?alphabetic).*#/i);
 	});
 
 	it('previews consequences, saves without starting work, and leaves reconciliation explicit', async () => {

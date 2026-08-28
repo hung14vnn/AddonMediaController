@@ -1,5 +1,5 @@
-import { API } from '$lib/constants';
 import { getApiUrl } from '$lib/api/api-utils';
+import { API } from '$lib/constants';
 import { invalidateQueriesWithPersister, queryClient } from '$lib/queries/QueryClient';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { invalidateLibraryCatalog } from './LibraryCatalogInvalidation';
@@ -96,14 +96,10 @@ export function createLibraryActivityEvents() {
 		unsubscribeQueryCache = queryClient.getQueryCache().subscribe(() => {
 			reconcilePendingInitialRevisions();
 		});
-		activitySource = new EventSource(getApiUrl(API.library.activityStream()), {
-			withCredentials: true
-		});
+		activitySource = new EventSource(getApiUrl(API.library.activityStream()));
 		activitySource.addEventListener('activity.changed', activityChanged);
 		if (isAdmin) {
-			operationsSource = new EventSource(getApiUrl(API.library.operationsStream()), {
-				withCredentials: true
-			});
+			operationsSource = new EventSource(getApiUrl(API.library.operationsStream()));
 			operationsSource.addEventListener('open', invalidateOperations);
 			operationsSource.addEventListener('activity.changed', activityChanged);
 		}

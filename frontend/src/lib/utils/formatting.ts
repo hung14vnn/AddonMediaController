@@ -9,7 +9,9 @@ export function formatListenCount(count: number | null, compact = false): string
 
 /** Present multi-artist credits consistently without changing the source metadata. */
 export function formatArtistCredit(credit: string | null | undefined): string {
-	return (credit ?? '').replace(/\s*;\s*/g, ', ');
+	return (credit ?? '')
+		.replace(/\s*;\s*/g, ', ')
+		.replace(/\s*,\s*/g, ', ');
 }
 
 export function formatListenedAt(timestamp: string | null): string {

@@ -26,6 +26,7 @@
 	import { getLibraryReviewsQuery } from '$lib/queries/library/LibraryReviewQueries.svelte';
 	import { getArtistReconciliationProgressQuery } from '$lib/queries/artist-reconciliation/ArtistReconciliationQueries.svelte';
 	import { getLibraryScanScheduleQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import { withBasePath } from '$lib/utils/basePath';
 	import LibraryWorkLane from './LibraryWorkLane.svelte';
 	import LibraryWorkDialog from './LibraryWorkDialog.svelte';
 	import LibraryRunHistory from './LibraryRunHistory.svelte';
@@ -43,6 +44,7 @@
 	const stopRun = controlLibraryRun('stop');
 	const pauseIdentification = controlIdentification('pause');
 	const resumeIdentification = controlIdentification('resume');
+	const cancelIdentification = controlIdentification('cancel');
 
 	const scan = $derived(activityQuery.data?.items.find((item) => item.kind === 'scan'));
 	const identification = $derived(
@@ -90,11 +92,16 @@
 			.map(([code, count]) => `${deferredReasonLabel(code)}: ${count.toLocaleString()}`)
 			.join(', ')
 	);
+	const deferredJobs = $derived((identification?.deferred_jobs ?? []).slice(0, 5));
+	const hiddenDeferredJobs = $derived(
+		Math.max(0, (identification?.deferred_jobs?.length ?? 0) - 5)
+	);
 
 	function deferredReasonLabel(code: string): string {
 		const labels: Record<string, string> = {
 			PROVIDER_TEMPORARILY_UNAVAILABLE: 'provider temporarily unavailable',
-			UNMAPPABLE_PROVIDER_PAYLOAD: 'provider response could not be mapped (data problem, not an outage)',
+			UNMAPPABLE_PROVIDER_PAYLOAD:
+				'provider response could not be mapped (data problem, not an outage)',
 			SUBJECT_NOT_AVAILABLE: 'album no longer available',
 			MAX_DEFERRALS_EXCEEDED: 'retry limit reached'
 		};
@@ -163,7 +170,7 @@
 							''}{:else if scheduleQuery.data?.scan_frequency === 'manual'}Automatic scanning off{:else}Schedule:
 						{scheduleQuery.data?.scan_frequency?.replace('_', ' ') ?? 'loading'}{/if}
 				</p>
-				<a href="/settings?tab=library" class="btn btn-ghost btn-sm">
+				<a href={withBasePath('/settings?tab=library')} class="btn btn-ghost btn-sm">
 					<Settings2 class="h-4 w-4" /> Settings
 				</a>
 			</div>
@@ -176,7 +183,8 @@
 					<p class="text-sm">
 						Scanning and identification are paused. Existing catalog data and playback keep working.
 						Enable the library in
-						<a class="link link-primary" href="/settings?tab=library">Settings</a> to start new work.
+						<a class="link link-primary" href={withBasePath('/settings?tab=library')}>Settings</a> to
+						start new work.
 					</p>
 				</div>
 			</div>
@@ -407,6 +415,16 @@
 							><CirclePause class="h-4 w-4" />
 							{identification.state === 'pausing' ? 'Pausing...' : 'Pause'}</button
 						>{/if}
+					{#if identification?.waiting_count && identification.control_revision}
+						<button
+							class="btn btn-ghost btn-sm text-error"
+							disabled={cancelIdentification.isPending}
+							onclick={() =>
+								void cancelIdentification
+									.mutateAsync(identification.control_revision ?? 0)
+									.catch(() => undefined)}
+							aria-label="Cancel identification"><OctagonX class="h-4 w-4" /> Cancel</button>
+					{/if}
 				</div>
 				<div class="space-y-3 p-4">
 					<LibraryWorkLane kind="identification" item={identification} />
@@ -469,12 +487,32 @@
 							{(identification?.deferred_count ?? 0) === 1 ? 'check is' : 'checks are'} deferred{deferredReasonBreakdown
 								? ` (${deferredReasonBreakdown})`
 								: ''}. They retry automatically.
+							{#if deferredJobs.length > 0}
+								<ul class="mt-1 space-y-0.5">
+									{#each deferredJobs as job (job.job_id)}
+										<li class="text-xs">
+											<span class="font-medium">{job.album_title ?? 'Track-level work'}</span
+											>{#if job.artist_name}<span class="text-base-content/55">
+													- {job.artist_name}</span
+												>{/if}
+											<span class="text-base-content/50">
+												· {deferredReasonLabel(job.last_failure_code)} · attempt {job.attempt_count.toLocaleString()}</span
+											>
+										</li>
+									{/each}
+									{#if hiddenDeferredJobs > 0}
+										<li class="text-xs text-base-content/50">
+											and {hiddenDeferredJobs.toLocaleString()} more
+										</li>
+									{/if}
+								</ul>
+							{/if}
 						</div>
 					{/if}
 					<div class="flex flex-wrap items-center justify-between gap-2 text-sm">
 						<span class="text-base-content/55"
 							>Provider work runs in the background without delaying local playback.</span
-						><a class="link link-primary" href="/library/review?state=needs_review"
+						><a class="link link-primary" href={withBasePath('/library/review?state=needs_review')}
 							>Review identification</a
 						>
 					</div>
@@ -482,7 +520,7 @@
 			</article>
 
 			<a
-				href="/library/management/artists"
+				href={withBasePath('/library/management/artists')}
 				class="flex flex-wrap items-center gap-4 rounded-box border border-base-content/15 bg-base-200/40 p-4 hover:bg-base-200"
 			>
 				<div

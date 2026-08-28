@@ -4,6 +4,7 @@ import type { LyricLine, LyricsResponse } from '$lib/types';
 import type { NowPlaying } from '$lib/player/types';
 import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
+import { normalizeWordTimedLyrics } from '$lib/utils/lyrics';
 import { LyricsQueryKeyFactory } from './LyricsQueryKeyFactory';
 
 export interface LyricsData {
@@ -15,10 +16,31 @@ export interface LyricsData {
 
 export async function fetchLyrics(np: NowPlaying, signal: AbortSignal): Promise<LyricsData | null> {
 	try {
-		if (np.sourceType === 'navidrome' || np.sourceType === 'jellyfin' || np.sourceType === 'local') {
-			const url = API.lyrics(np.sourceType, np.trackSourceId!, np.artistName, np.trackName ?? '', np.albumName, np.duration);
+		if (
+			np.sourceType === 'navidrome' ||
+			np.sourceType === 'jellyfin' ||
+			np.sourceType === 'local'
+		) {
+			const url = API.lyrics(
+				np.sourceType,
+				np.trackSourceId!,
+				np.artistName,
+				np.trackName ?? '',
+				np.albumName,
+				np.duration
+			);
 			const data = await api.global.get<LyricsResponse>(url, { signal });
-			return { text: data.text ?? '', is_synced: data.is_synced ?? false, lines: data.lines ?? [], source: data.source ?? '' };
+			const normalized = normalizeWordTimedLyrics(
+				data.text ?? '',
+				data.lines ?? [],
+				data.is_synced ?? false
+			);
+			return {
+				text: data.text ?? '',
+				is_synced: normalized.is_synced,
+				lines: normalized.lines,
+				source: data.source ?? ''
+			};
 		}
 		return null;
 	} catch (e) {

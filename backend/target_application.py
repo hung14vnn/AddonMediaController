@@ -109,6 +109,7 @@ from core.dependencies import (
     get_search_service,
     get_status_service,
     get_settings_service,
+    get_spotiflac_service,
     get_spotify_import_service,
     get_youtube_download_service,
     get_cache_service,
@@ -143,6 +144,7 @@ from core.dependencies import (
     get_target_karaoke_service,
     get_target_request_service,
     get_target_requests_page_service,
+    get_target_spotiflac_service,
     get_target_search_service,
     get_target_status_service,
     get_target_settings_service,
@@ -162,7 +164,9 @@ from core.dependencies import (
     get_library_contribution_verification_worker,
     get_background_workload_gate,
     get_library_policy_resolver,
+    get_library_management_recovery_service,
 )
+from core.base_path import BasePathMiddleware
 from core.config import get_settings
 from core.exception_handlers import (
     circuit_open_error_handler,
@@ -298,6 +302,10 @@ def create_isolated_target_application(
         search.router,
         requests.router,
         requests_page.router,
+        # Register literal library operation paths before the target catalog
+        # router's /artists/{artist_id} route. Otherwise paths such as
+        # /library/artists/reconciliation are interpreted as an artist ID.
+        library_operations_target.router,
         library_target.router,
         library_contributions.router,
         library_scan_target.router,
@@ -307,7 +315,6 @@ def create_isolated_target_application(
         library_management.router,
         home.router,
         discover.router,
-        library_operations_target.router,
         stream.router,
         local_library.router,
         scrobble.router,
@@ -364,6 +371,7 @@ def create_isolated_target_application(
             get_download_service: get_target_download_service,
             get_acquisition_dispatcher: get_target_acquisition_dispatcher,
             get_drop_import_service: get_target_drop_import_service,
+            get_spotiflac_service: get_target_spotiflac_service,
             get_youtube_download_service: get_target_youtube_download_service,
             get_events_watcher_getter: lambda: get_target_events_watcher_service,
             get_free_music_service: get_target_free_music_service,
@@ -392,6 +400,9 @@ def _include_complete_target_routes(app: FastAPI) -> None:
     for router in (
         search.router,
         requests.router,
+        # Keep literal operation paths ahead of /artists/{artist_id} in the
+        # target catalog router.
+        library_operations_target.router,
         library_target.router,
         library_contributions.router,
         library_scan_target.router,
@@ -411,7 +422,6 @@ def _include_complete_target_routes(app: FastAPI) -> None:
         wrapped.router,
         discovery_batches.router,
         discover.router,
-        library_operations_target.router,
         youtube.router,
         cache.router,
         cache_status.router,
@@ -478,6 +488,7 @@ def _install_target_overrides(app: FastAPI) -> None:
             get_download_service: get_target_download_service,
             get_acquisition_dispatcher: get_target_acquisition_dispatcher,
             get_drop_import_service: get_target_drop_import_service,
+            get_spotiflac_service: get_target_spotiflac_service,
             get_youtube_download_service: get_target_youtube_download_service,
             get_events_watcher_getter: lambda: get_target_events_watcher_service,
             get_free_music_service: get_target_free_music_service,
@@ -608,6 +619,28 @@ async def production_target_lifespan(app: FastAPI):
                 "timezone_name": timezone_name,
             }
 
+        work_wakeups = get_native_library_store().work_wakeups
+
+        def library_enabled() -> bool:
+            return get_preferences_service().get_typed_library_settings().enabled
+
+        def mb_provider_state():
+            from repositories.musicbrainz_base import mb_circuit_breaker
+
+            return mb_circuit_breaker.state
+
+        async def probe_mb_provider() -> None:
+            # Resolve HALF_OPEN breaker state even when no foreground request is
+            # using MusicBrainz.
+            from infrastructure.queue.priority_queue import RequestPriority
+            from repositories.musicbrainz_base import mb_api_get
+
+            await mb_api_get(
+                "/artist",
+                params={"query": "test", "limit": 1},
+                priority=RequestPriority.BACKGROUND_SYNC,
+            )
+
         start_target_scan_supervisor(
             get_target_library_scan_coordinator,
             root_paths,
@@ -618,11 +651,21 @@ async def production_target_lifespan(app: FastAPI):
         start_target_identification_worker(
             get_target_identification_queue,
             get_target_album_identification_service,
-            get_background_workload_gate(),
+            work_wakeups,
+            workload_gate=get_background_workload_gate(),
+            provider_state_getter=mb_provider_state,
+            probe_provider=probe_mb_provider,
+            enabled_getter=library_enabled,
         )
-        start_target_operation_worker(get_target_library_operation_supervisor)
+        start_target_operation_worker(
+            get_target_library_operation_supervisor,
+            work_wakeups,
+            recovery_getter=get_library_management_recovery_service,
+            enabled_getter=library_enabled,
+        )
         start_library_contribution_verification_worker(
-            get_library_contribution_verification_worker
+            get_library_contribution_verification_worker,
+            work_wakeups,
         )
         await start_target_operational_runtime(
             settings=settings,
@@ -722,6 +765,8 @@ def create_production_target_application() -> FastAPI:
         CompatPathCaseMiddleware,
         routes=[*subsonic_router.routes, *jellyfin_router.routes],
     )
+    # Legacy settings doubles omit base_path; absence means unprefixed serving.
+    app.add_middleware(BasePathMiddleware, base_path=getattr(get_settings(), "base_path", ""))
     app.add_middleware(
         ProxyHeadersMiddleware, trusted_hosts=get_settings().trusted_proxy_ips
     )

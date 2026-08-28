@@ -13,51 +13,43 @@ of the folder scorer (2026-07-05 wrong-single incident).
 """
 
 from infrastructure.persistence.download_store import DownloadStore
+from models.acquisition_quality import AcquisitionQualitySnapshot
 from models.download import ScoredCandidate, TargetTrack
 from models.download_identity import soulseek_identity
 from repositories.protocols.download_client import DownloadSearchResult
 from services.native.album_preflight_scorer import _file_confidence
 from services.native.title_match import artist_evidence
+from services.native.acquisition import quality as acq_quality
 from services.native.quality_tiers import (
-    DEFAULT_QUALITY_MAX,
-    DEFAULT_QUALITY_MIN,
+    in_range,
     file_tier,
     folder_hires_key,
-    in_range,
     is_audio,
     is_flac_or_mp3,
-    is_preferred,
     tier_rank,
 )
 
 
 class TrackMatcher:
-    def __init__(
-        self,
-        download_store: DownloadStore,
-        *,
-        quality_min: str = DEFAULT_QUALITY_MIN,
-        quality_max: str = DEFAULT_QUALITY_MAX,
-        preferred_quality: str = "",
-        flac_mp3_only: bool = True,
-    ):
+    """Quality flows exclusively through the per-call ``AcquisitionQualitySnapshot``
+    (spec Snapshot rule); non-quality spec gates ride ``spec_extras``."""
+
+    def __init__(self, download_store: DownloadStore):
         self._store = download_store
-        self._quality_min = quality_min
-        self._quality_max = quality_max
-        self._preferred_quality = preferred_quality
-        self._flac_mp3_only = flac_mp3_only
 
     async def match(
         self,
         target: TargetTrack,
         results: list[DownloadSearchResult],
         *,
+        snapshot: AcquisitionQualitySnapshot,
         auto_accept_threshold: float = 0.70,
         manual_threshold: float = 0.50,
     ) -> ScoredCandidate | None:
         ranked = await self.rank(
             target,
             results,
+            snapshot=snapshot,
             auto_accept_threshold=auto_accept_threshold,
             manual_threshold=manual_threshold,
         )
@@ -68,6 +60,7 @@ class TrackMatcher:
         target: TargetTrack,
         results: list[DownloadSearchResult],
         *,
+        snapshot: AcquisitionQualitySnapshot,
         auto_accept_threshold: float = 0.70,
         manual_threshold: float = 0.50,
         limit: int = 20,
@@ -87,13 +80,17 @@ class TrackMatcher:
         ]
         # drop the art/cue/log sidecars a folder search returns alongside the tracks
         filtered = [r for r in filtered if is_audio(r)]
-        if self._flac_mp3_only:
+        if snapshot.flac_mp3_only:
             filtered = [r for r in filtered if is_flac_or_mp3(r)]
-        filtered = [
-            r
-            for r in filtered
-            if in_range(file_tier(r), self._quality_min, self._quality_max)
-        ]
+        order = snapshot.quality_preference_order
+
+        def _inside_range(candidate_result) -> bool:
+            # Snapshot range verdict: the accepted order endpoints define the
+            # same contiguous range (order[0]=quality_max, order[-1]=quality_min).
+            projection = file_tier(candidate_result)
+            return in_range(projection, order[-1], order[0])
+
+        filtered = [r for r in filtered if _inside_range(r)]
         if held_tier is not None:
             filtered = [
                 r for r in filtered if tier_rank(file_tier(r)) > tier_rank(held_tier)
@@ -122,14 +119,11 @@ class TrackMatcher:
                 acceptance = "manual"
             else:
                 acceptance = "rejected"
-            quality = file_tier(file)
             bit_depth, sample_rate = folder_hires_key([file])
             queue_known = file.queue_length is not None
             rank_key = (
                 {"rejected": 0, "manual": 1, "auto": 2}[acceptance],
-                int(is_preferred(quality, self._preferred_quality)),
-                int(score * 20 + 1e-9),
-                tier_rank(quality),
+                tier_rank(file_tier(file)),
                 bit_depth,
                 sample_rate,
                 int(file.has_free_slot),
@@ -140,8 +134,6 @@ class TrackMatcher:
                 score,
             )
             scored.append((rank_key, score, acceptance, file))
-        # Safety/identity eligibility is absolute. Within an acceptance tier, honour
-        # the configured quality preference, then resolution and peer availability.
         scored.sort(key=lambda item: item[0], reverse=True)
 
         candidates: list[ScoredCandidate] = []

@@ -13,6 +13,7 @@
 	import { slide } from 'svelte/transition';
 	import { getNavidromeFolderScopeRevision } from '$lib/utils/navidromeLibraryCache';
 	import { formatArtistCredit } from '$lib/utils/formatting';
+	import { activeLyricWordIndex, parseWordTimedLyricLine } from '$lib/utils/lyrics';
 	import type { CrateTrack, LocalAlbumSummary } from '$lib/types';
 	import {
 		Play,
@@ -73,7 +74,9 @@
 
 	const timedLines = $derived(
 		lyricsQuery.data?.is_synced
-			? (lyricsQuery.data.lines ?? []).filter((line) => line.start_seconds !== null)
+			? (lyricsQuery.data.lines ?? [])
+					.map((line) => ({ ...line, words: parseWordTimedLyricLine(line.text) }))
+					.filter((line) => line.start_seconds !== null)
 			: []
 	);
 	const activeLineIndex = $derived.by(() => {
@@ -229,13 +232,36 @@
 									type="button"
 									data-lyric-line={index}
 									onclick={() => playerStore.seekTo(line.start_seconds ?? 0)}
-									class="block w-full text-left text-xl font-bold leading-tight transition-opacity sm:text-2xl {index ===
+									class="block w-full text-left text-xl font-bold leading-tight transition-opacity sm:text-2xl cursor-pointer hover:underline {index ===
 									activeLineIndex
-										? 'text-accent'
+										? line.words.length > 0
+											? 'text-primary'
+											: 'text-accent'
 										: index < activeLineIndex
 											? 'opacity-35'
-											: 'opacity-55'}">{line.text}</button
+											: 'opacity-55'}"
 								>
+									{#if line.words.length > 0}
+										{@const activeWordIndex =
+											index === activeLineIndex
+												? activeLyricWordIndex(line.words, playerStore.progress)
+												: -1}
+										{#each line.words as word, wordIndex (wordIndex)}
+											<span
+												class="lyrics-word transition-colors duration-150"
+												class:text-primary={index === activeLineIndex &&
+													wordIndex < activeWordIndex}
+												class:text-accent={index === activeLineIndex &&
+													wordIndex === activeWordIndex}
+												class:opacity-40={index === activeLineIndex && wordIndex > activeWordIndex}
+											>
+												{word.text}{#if wordIndex < line.words.length - 1}{' '}{/if}
+											</span>
+										{/each}
+									{:else}
+										{line.text}
+									{/if}
+								</button>
 							{/each}
 						</div>
 					{:else if lyricsQuery.data?.text?.trim()}

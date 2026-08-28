@@ -34,6 +34,12 @@ from models.download import (
     SearchJob,
 )
 from models.download_attempt import DownloadAttempt, DownloadCleanupReconciliation
+from models.download_identity import (
+    SOURCE_SOULSEEK,
+    SOULSEEK_ID_SEPARATOR,
+    canonical_soulseek_identity,
+    soulseek_identity,
+)
 from models.held_import import HeldImport
 from repositories.protocols.download_client import TaskHandle
 
@@ -299,10 +305,18 @@ BEGIN
 END;
 """
 
-# ASCII unit separator joining the two halves of a soulseek identity; mirrors
-# ``models.download_identity.soulseek_identity`` so a legacy (username, filename)
-# quarantine row migrates to the same key the scorer will look up.
-_SOULSEEK_ID_SEP = "\x1f"
+
+# One-shot backfill marker (Acquisition plan): a present singleton row proves
+# the startup acquisition-snapshot backfill already ran, so restarts skip it.
+_ACQUISITION_MIGRATION_DDL = """
+CREATE TABLE IF NOT EXISTS acquisition_snapshot_backfill (
+    id INTEGER PRIMARY KEY CHECK(id=1),
+    completed_at REAL NOT NULL,
+    native_tasks INTEGER NOT NULL,
+    search_jobs INTEGER NOT NULL
+);
+"""
+
 
 # Columns on download_tasks that update_status (and friends) may set directly.
 _TASK_UPDATABLE = frozenset(
@@ -336,6 +350,13 @@ _TASK_UPDATABLE = frozenset(
         "attempt_number",
         "attempt_total",
         "has_next_source",
+        "quality_snapshot_json",
+        "quality_snapshot_hash",
+        "quality_snapshot_summary",
+        "quality_preference_step",
+        "quality_certainty",
+        "quality_provenance",
+        "manual_quality_override",
         "staging_path",
         "final_path",
         "error_message",
@@ -343,6 +364,27 @@ _TASK_UPDATABLE = frozenset(
         "started_at",
         "completed_at",
         "cancelled_at",
+    }
+)
+
+# Whitelists for the dedicated acquisition-quality writers: the immutable
+# creation-time snapshot plus the selected-candidate evidence labels.
+_TASK_QUALITY_UPDATABLE = frozenset(
+    {
+        "quality_snapshot_json",
+        "quality_snapshot_hash",
+        "quality_snapshot_summary",
+        "quality_preference_step",
+        "quality_certainty",
+        "quality_provenance",
+        "manual_quality_override",
+    }
+)
+_SEARCH_JOB_QUALITY_UPDATABLE = frozenset(
+    {
+        "quality_snapshot_json",
+        "quality_snapshot_hash",
+        "quality_snapshot_summary",
     }
 )
 
@@ -394,6 +436,13 @@ _TASK_COLUMNS = (
     "attempt_number",
     "attempt_total",
     "has_next_source",
+    "quality_snapshot_json",
+    "quality_snapshot_hash",
+    "quality_snapshot_summary",
+    "quality_preference_step",
+    "quality_certainty",
+    "quality_provenance",
+    "manual_quality_override",
     "staging_path",
     "final_path",
     "error_message",
@@ -497,6 +546,16 @@ class DownloadStore(PersistenceBase):
                     attempt_number INTEGER NOT NULL DEFAULT 0,
                     attempt_total INTEGER NOT NULL DEFAULT 0,
                     has_next_source INTEGER NOT NULL DEFAULT 0,
+                    -- Immutable acquisition-quality snapshot pinned at task
+                    -- creation: later settings saves never mutate it;
+                    -- restart-with-current-policy is the explicit refresh.
+                    quality_snapshot_json TEXT,
+                    quality_snapshot_hash TEXT,
+                    quality_snapshot_summary TEXT,
+                    quality_preference_step INTEGER,
+                    quality_certainty TEXT,
+                    quality_provenance TEXT,
+                    manual_quality_override INTEGER NOT NULL DEFAULT 0,
                     staging_path TEXT,
                     final_path TEXT,
                     error_message TEXT,
@@ -529,6 +588,11 @@ class DownloadStore(PersistenceBase):
                         CHECK(status IN ('searching','matched','completed','failed','cancelled')),
                     candidates_blob TEXT NOT NULL DEFAULT '[]',
                     error_message TEXT,
+                    -- Immutable acquisition-quality snapshot pinned at creation for
+                    -- manual and task-linked searches.
+                    quality_snapshot_json TEXT,
+                    quality_snapshot_hash TEXT,
+                    quality_snapshot_summary TEXT,
                     created_at REAL NOT NULL,
                     completed_at REAL,
                     updated_at REAL NOT NULL
@@ -558,6 +622,13 @@ class DownloadStore(PersistenceBase):
                 ("attempt_number", "INTEGER NOT NULL DEFAULT 0"),
                 ("attempt_total", "INTEGER NOT NULL DEFAULT 0"),
                 ("has_next_source", "INTEGER NOT NULL DEFAULT 0"),
+                ("quality_snapshot_json", "TEXT"),
+                ("quality_snapshot_hash", "TEXT"),
+                ("quality_snapshot_summary", "TEXT"),
+                ("quality_preference_step", "INTEGER"),
+                ("quality_certainty", "TEXT"),
+                ("quality_provenance", "TEXT"),
+                ("manual_quality_override", "INTEGER NOT NULL DEFAULT 0"),
             ):
                 try:
                     conn.execute(
@@ -565,15 +636,24 @@ class DownloadStore(PersistenceBase):
                     )
                 except sqlite3.OperationalError:
                     pass  # duplicate column - already present
-            try:
-                conn.execute("ALTER TABLE search_jobs ADD COLUMN artist_mbid TEXT")
-            except sqlite3.OperationalError:
-                pass  # duplicate column - already present
+            for statement in (
+                "ALTER TABLE search_jobs ADD COLUMN artist_mbid TEXT",
+                "ALTER TABLE search_jobs ADD COLUMN quality_snapshot_json TEXT",
+                "ALTER TABLE search_jobs ADD COLUMN quality_snapshot_hash TEXT",
+                "ALTER TABLE search_jobs ADD COLUMN quality_snapshot_summary TEXT",
+            ):
+                try:
+                    conn.execute(statement)
+                except sqlite3.OperationalError:
+                    pass  # duplicate column - already present
             self._migrate_quarantine(conn)
             conn.executescript(_HELD_IMPORTS_DDL)
             conn.executescript(_DOWNLOAD_ACTIVITY_DDL)
             conn.executescript(_DOWNLOAD_ATTEMPTS_DDL)
             conn.executescript(_DOWNLOAD_ATTEMPT_ACTIVITY_DDL)
+            # One-shot acquisition-snapshot backfill marker; CREATE IF NOT
+            # EXISTS makes re-running _ensure_tables a no-op after marking.
+            conn.executescript(_ACQUISITION_MIGRATION_DDL)
             _safe_alter(
                 conn,
                 "ALTER TABLE download_attempts ADD COLUMN legacy_reconciled "
@@ -608,15 +688,18 @@ class DownloadStore(PersistenceBase):
     def _migrate_quarantine(self, conn: sqlite3.Connection) -> None:
         """Create the quarantine table, rebuilding the old slskd-shaped schema in
         place (D8). SQLite can't ALTER a UNIQUE/CHECK, so a table that still has the
-        old ``username``/``filename`` columns is rebuilt: rename aside, create the new
-        ``(source, identity, …)`` shape, copy each legacy row encoding its
-        ``(username, filename)`` pair as the soulseek identity (so a previously
-        blocklisted source stays blocklisted), then drop the old table."""
+        old ``username``/``filename`` columns is rebuilt. Legacy pairs are encoded
+        through the canonical identity helper so Unicode and path-separator aliases
+        remain blocklisted after the upgrade."""
         cols = {
             row["name"]
             for row in conn.execute("PRAGMA table_info(download_quarantine)").fetchall()
         }
         if "username" in cols:  # legacy slskd-shaped schema -> rebuild
+            legacy_rows = conn.execute(
+                "SELECT username, filename, release_group_mbid, reason "
+                "FROM download_quarantine"
+            ).fetchall()
             conn.execute(
                 "ALTER TABLE download_quarantine RENAME TO download_quarantine_legacy"
             )
@@ -631,14 +714,20 @@ class DownloadStore(PersistenceBase):
             # now self-heals anything older than ``_QUARANTINE_TTL_SECONDS``. Inheriting the old
             # timestamp would silently expire a still-valid blocklist on upgrade (defeating this
             # migration's purpose); a fresh stamp gives each entry one TTL window post-upgrade.
-            conn.execute(
-                """INSERT OR IGNORE INTO download_quarantine
-                   (source, identity, release_group_mbid, reason, quarantined_at)
-                   SELECT 'soulseek', username || ? || filename,
-                          release_group_mbid, reason, ?
-                   FROM download_quarantine_legacy""",
-                (_SOULSEEK_ID_SEP, time.time()),
-            )
+            now = time.time()
+            for row in legacy_rows:
+                conn.execute(
+                    """INSERT OR IGNORE INTO download_quarantine
+                       (source, identity, release_group_mbid, reason, quarantined_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        SOURCE_SOULSEEK,
+                        soulseek_identity(row["username"], row["filename"]),
+                        row["release_group_mbid"],
+                        row["reason"],
+                        now,
+                    ),
+                )
             conn.execute("DROP TABLE download_quarantine_legacy")
         else:
             conn.executescript(_QUARANTINE_DDL)
@@ -673,6 +762,12 @@ class DownloadStore(PersistenceBase):
         preflight_score: float | None = None,
         status: str = "queued",
         retry_count: int = 0,
+        quality_snapshot_json: str | None = None,
+        quality_snapshot_hash: str | None = None,
+        quality_snapshot_summary: str | None = None,
+        quality_preference_step: int | None = None,
+        quality_certainty: str | None = None,
+        quality_provenance: str | None = None,
     ) -> DownloadTask:
         now = time.time()
         task = DownloadTask(
@@ -706,6 +801,12 @@ class DownloadStore(PersistenceBase):
             retry_count=retry_count,
             created_at=now,
             updated_at=now,
+            quality_snapshot_json=quality_snapshot_json,
+            quality_snapshot_hash=quality_snapshot_hash,
+            quality_snapshot_summary=quality_snapshot_summary,
+            quality_preference_step=quality_preference_step,
+            quality_certainty=quality_certainty,
+            quality_provenance=quality_provenance,
         )
         values = tuple(getattr(task, col) for col in _TASK_COLUMNS)
         placeholders = ", ".join("?" for _ in _TASK_COLUMNS)
@@ -935,6 +1036,27 @@ class DownloadStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def list_tasks_missing_snapshot(
+        self, statuses: Sequence[str], *, limit: int = 500
+    ) -> list[DownloadTask]:
+        """Backfill feed: nonterminal tasks whose policy snapshot was never
+        written (Acquisition startup backfill)."""
+        statuses = [status for status in statuses if status]
+        if not statuses:
+            return []
+
+        def operation(conn: sqlite3.Connection) -> list[DownloadTask]:
+            rows = conn.execute(
+                f"""SELECT * FROM download_tasks
+                    WHERE status IN ({_in_placeholders(statuses)})
+                      AND quality_snapshot_json IS NULL
+                    ORDER BY created_at DESC LIMIT ?""",
+                (*statuses, limit),
+            ).fetchall()
+            return [t for t in (_row_to_task(r) for r in rows) if t is not None]
+
+        return await self._read(operation)
+
     async def get_activity_summary(
         self, user_id: str, user_role: str
     ) -> DownloadActivitySummary:
@@ -1021,6 +1143,46 @@ class DownloadStore(PersistenceBase):
             )
 
         await self._write(operation)
+
+    async def update_task_quality_fields(self, updates: list[dict]) -> None:
+        """Persist acquisition-quality fields onto download tasks in ONE
+        transaction. Each dict carries ``id`` plus any subset of
+        ``_TASK_QUALITY_UPDATABLE``; keys absent from a dict stay untouched, a
+        present key writes its value verbatim (including an explicit None
+        clearing the column). ``manual_quality_override`` is stored as
+        ``int(bool(value))``. Validation completes before any SQL runs."""
+        if not updates:
+            return
+        now = time.time()
+        statements: list[tuple[str, tuple[Any, ...]]] = []
+        for change in updates:
+            task_id = change.get("id")
+            if not isinstance(task_id, str) or not task_id:
+                raise ValueError("each quality-field update needs a task id")
+            sets = ["updated_at = ?"]
+            params: list[Any] = [now]
+            for key, value in change.items():
+                if key == "id":
+                    continue
+                if key not in _TASK_QUALITY_UPDATABLE:
+                    raise ValueError(f"download_tasks column not updatable: {key}")
+                if key == "manual_quality_override":
+                    value = int(bool(value))
+                sets.append(f"{key} = ?")
+                params.append(value)
+            params.append(task_id)
+            statements.append(
+                (
+                    f"UPDATE download_tasks SET {', '.join(sets)} WHERE id = ?",
+                    tuple(params),
+                )
+            )
+
+        def operation(conn: sqlite3.Connection) -> None:
+            for sql, sql_params in statements:
+                conn.execute(sql, sql_params)
+
+        return await self._write(operation)
 
     async def set_source_username(self, task_id: str, username: str) -> None:
         def operation(conn: sqlite3.Connection) -> None:
@@ -1142,6 +1304,110 @@ class DownloadStore(PersistenceBase):
             )
 
         await self._write(operation)
+
+    async def apply_quality_policy_restart(
+        self,
+        task_id: str,
+        *,
+        expected_snapshot_hash: str | None,
+        new_snapshot_json: str,
+        new_snapshot_hash: str,
+        new_snapshot_summary: str,
+        status: str = "queued",
+    ) -> bool:
+        """Atomic restart-with-current-policy (Acquisition plan): verify the
+        EXPECTED hash, then in ONE transaction re-snapshot, clear candidate/search
+        linkage and presentation state, and reset to a fresh 'queued' search.
+        Returns False when the task vanished or the expected-hash guard failed;
+        any failure retains the previous snapshot/state."""
+        now = time.time()
+
+        def operation(conn: sqlite3.Connection) -> bool:
+            row = conn.execute(
+                "SELECT quality_snapshot_hash FROM download_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            stored_hash = row["quality_snapshot_hash"]
+            if (
+                expected_snapshot_hash is not None
+                and (stored_hash or "") != expected_snapshot_hash
+            ):
+                return False
+            conn.execute(
+                """UPDATE download_tasks SET
+                     quality_snapshot_json = ?, quality_snapshot_hash = ?,
+                     quality_snapshot_summary = ?, quality_preference_step = NULL,
+                     quality_certainty = NULL, quality_provenance = NULL,
+                     manual_quality_override = 0,
+                     search_job_id = NULL, candidate_index = NULL,
+                     source_username = NULL, source_directory = NULL,
+                     preflight_score = NULL,
+                     progress_percent = 0, total_size_bytes = NULL,
+                     downloaded_bytes = 0, files_total = 0, files_completed = 0,
+                     files_failed = 0,
+                     remote_queued = 0, preferred_quality_fallback_at = NULL,
+                     quality_pool_key = NULL, attempt_number = 0, attempt_total = 0,
+                     has_next_source = 0,
+                     error_message = NULL, queue_position_start = NULL,
+                     queue_position_end = NULL,
+                     status = ?, updated_at = ?
+                   WHERE id = ?""",
+                (
+                    new_snapshot_json,
+                    new_snapshot_hash,
+                    new_snapshot_summary,
+                    status,
+                    now,
+                    task_id,
+                ),
+            )
+            return True
+
+        return await self._write(operation)
+
+    async def acquisition_policy_impact(self) -> dict:
+        """Persisted-state bucket counts for the admin impact preview (spec).
+        All derived from existing rows - never a new status."""
+        def operation(conn: sqlite3.Connection) -> dict:
+            one = lambda q, p=(): conn.execute(q, p).fetchone()[0]  # noqa: E731
+            return {
+                "manual_search_jobs": one(
+                    """SELECT COUNT(*) FROM search_jobs sj
+                       WHERE sj.status = 'searching'
+                         AND NOT EXISTS (
+                             SELECT 1 FROM download_tasks t
+                             WHERE t.search_job_id = sj.id)"""
+                ),
+                "queued_without_attempts": one(
+                    """SELECT COUNT(*) FROM download_tasks t
+                       WHERE t.status IN ('queued')
+                         AND t.downloaded_bytes = 0
+                         AND NOT EXISTS (
+                             SELECT 1 FROM download_attempts a WHERE a.task_id = t.id)"""
+                ),
+                "awaiting_review": one(
+                    """SELECT COUNT(*) FROM download_tasks t
+                       JOIN search_jobs sj ON sj.id = t.search_job_id
+                       WHERE t.status = 'queued' AND sj.status = 'completed'
+                         AND t.candidate_index IS NULL"""
+                ),
+                "remote_queued_zero_byte": one(
+                    """SELECT COUNT(*) FROM download_tasks t
+                       WHERE t.remote_queued = 1 AND t.downloaded_bytes = 0
+                         AND t.status = 'queued'"""
+                ),
+                "transferring": one(
+                    "SELECT COUNT(*) FROM download_tasks t "
+                    "WHERE t.status IN ('downloading','processing')"
+                ),
+                "held_reviews": one(
+                    "SELECT COUNT(*) FROM held_imports WHERE status = 'held'"
+                ),
+            }
+
+        return await self._read(operation)
 
     async def create_download_attempt(
         self,
@@ -1751,10 +2017,10 @@ class DownloadStore(PersistenceBase):
         reason: str,
         release_group_mbid: str | None = None,
     ) -> None:
-        """Blocklist a release by its source identity (D8). ``identity`` encoding is
-        source-specific (``models.download_identity``): soulseek = username+filename,
-        usenet = title+size."""
+        """Blocklist a release by its source identity (D8)."""
 
+        if source == SOURCE_SOULSEEK:
+            identity = canonical_soulseek_identity(identity)
         now = time.time()
 
         def operation(conn: sqlite3.Connection) -> None:
@@ -1770,16 +2036,14 @@ class DownloadStore(PersistenceBase):
                    VALUES (?, ?, ?, ?, ?)""",
                 (source, identity, release_group_mbid, reason, now),
             )
-
         await self._write(operation)
 
     async def load_quarantine_set(self) -> set[tuple[str, str]]:
         """Return ``{(source, identity), ...}`` for fast O(1) scorer lookup.
 
-        Keyed on the global ``(source, identity)`` (M9): a release that failed is excluded
-        from future scoring for any album - but only for ``_QUARANTINE_TTL_SECONDS``, so a
-        wrongful blocklist self-heals. Expired rows are filtered here and pruned on the next
-        ``record_quarantine`` write (keeping this a pure read)."""
+        Soulseek identities are canonicalized while loading as well as when writing, so
+        rows created by older versions (or direct legacy inserts) cannot evade a match.
+        """
         cutoff = time.time() - _QUARANTINE_TTL_SECONDS
 
         def operation(conn: sqlite3.Connection) -> set[tuple[str, str]]:
@@ -1787,7 +2051,15 @@ class DownloadStore(PersistenceBase):
                 "SELECT source, identity FROM download_quarantine WHERE quarantined_at >= ?",
                 (cutoff,),
             ).fetchall()
-            return {(row["source"], row["identity"]) for row in rows}
+            return {
+                (
+                    row["source"],
+                    canonical_soulseek_identity(row["identity"])
+                    if row["source"] == SOURCE_SOULSEEK
+                    else row["identity"],
+                )
+                for row in rows
+            }
 
         return await self._read(operation)
 
@@ -2343,6 +2615,10 @@ class DownloadStore(PersistenceBase):
         release_group_mbid: str | None,
         search_query: str,
         artist_mbid: str | None = None,
+        *,
+        quality_snapshot_json: str | None = None,
+        quality_snapshot_hash: str | None = None,
+        quality_snapshot_summary: str | None = None,
     ) -> SearchJob:
         now = time.time()
         job = SearchJob(
@@ -2358,6 +2634,9 @@ class DownloadStore(PersistenceBase):
             status="searching",
             created_at=now,
             updated_at=now,
+            quality_snapshot_json=quality_snapshot_json,
+            quality_snapshot_hash=quality_snapshot_hash,
+            quality_snapshot_summary=quality_snapshot_summary,
         )
 
         def operation(conn: sqlite3.Connection) -> None:
@@ -2365,8 +2644,10 @@ class DownloadStore(PersistenceBase):
                 """INSERT INTO search_jobs
                    (id, user_id, artist_name, album_title, year, track_count,
                     release_group_mbid, artist_mbid, search_query, status, candidates_blob,
-                    error_message, created_at, completed_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, ?, NULL, ?)""",
+                    error_message, created_at, completed_at, updated_at,
+                    quality_snapshot_json, quality_snapshot_hash, quality_snapshot_summary)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, ?, NULL, ?,
+                           ?, ?, ?)""",
                 (
                     job.id,
                     job.user_id,
@@ -2380,6 +2661,9 @@ class DownloadStore(PersistenceBase):
                     job.status,
                     job.created_at,
                     job.updated_at,
+                    job.quality_snapshot_json,
+                    job.quality_snapshot_hash,
+                    job.quality_snapshot_summary,
                 ),
             )
 
@@ -2418,6 +2702,42 @@ class DownloadStore(PersistenceBase):
 
         await self._write(operation)
 
+    async def update_search_job_quality_snapshots(self, updates: list[dict]) -> None:
+        """Persist immutable acquisition-quality snapshots onto search jobs in
+        ONE transaction. Same provided-key-writes-value contract as
+        :meth:`update_task_quality_fields` (keys absent from a dict stay
+        untouched; a present key writes verbatim, including an explicit None)."""
+        if not updates:
+            return
+        now = time.time()
+        statements: list[tuple[str, tuple[Any, ...]]] = []
+        for change in updates:
+            job_id = change.get("id")
+            if not isinstance(job_id, str) or not job_id:
+                raise ValueError("each snapshot update needs a search job id")
+            sets = ["updated_at = ?"]
+            params: list[Any] = [now]
+            for key, value in change.items():
+                if key == "id":
+                    continue
+                if key not in _SEARCH_JOB_QUALITY_UPDATABLE:
+                    raise ValueError(f"search_jobs column not updatable: {key}")
+                sets.append(f"{key} = ?")
+                params.append(value)
+            params.append(job_id)
+            statements.append(
+                (
+                    f"UPDATE search_jobs SET {', '.join(sets)} WHERE id = ?",
+                    tuple(params),
+                )
+            )
+
+        def operation(conn: sqlite3.Connection) -> None:
+            for sql, sql_params in statements:
+                conn.execute(sql, sql_params)
+
+        return await self._write(operation)
+
     async def get_search_job(self, job_id: str) -> SearchJob | None:
         def operation(conn: sqlite3.Connection) -> SearchJob | None:
             row = conn.execute(
@@ -2439,6 +2759,22 @@ class DownloadStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def list_search_jobs_missing_snapshot(
+        self, *, limit: int = 500
+    ) -> list[SearchJob]:
+        """Backfill feed: search jobs created before snapshot pinning."""
+
+        def operation(conn: sqlite3.Connection) -> list[SearchJob]:
+            rows = conn.execute(
+                """SELECT * FROM search_jobs
+                   WHERE quality_snapshot_json IS NULL
+                   ORDER BY created_at DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+            return [j for j in (_row_to_search_job(r) for r in rows) if j is not None]
+
+        return await self._read(operation)
+
     async def delete_expired_search_jobs(self, max_age_seconds: float = 604800) -> int:
         """Delete search jobs older than ``max_age_seconds`` (default 7 days).
         Run at startup; returns the number of rows removed."""
@@ -2449,6 +2785,34 @@ class DownloadStore(PersistenceBase):
                 "DELETE FROM search_jobs WHERE created_at < ?", (cutoff,)
             )
             return cursor.rowcount
+
+        return await self._write(operation)
+
+    async def acquisition_backfill_completed(self) -> bool:
+        """True once the startup acquisition-snapshot backfill stamped its
+        singleton marker row (restart-idempotent gate for the one-shot sweep)."""
+
+        def operation(conn: sqlite3.Connection) -> bool:
+            row = conn.execute(
+                "SELECT 1 FROM acquisition_snapshot_backfill WHERE id = 1"
+            ).fetchone()
+            return row is not None
+
+        return await self._read(operation)
+
+    async def mark_acquisition_backfill(
+        self, *, native_tasks: int, search_jobs: int
+    ) -> None:
+        """Stamp the backfill marker. ``INSERT OR REPLACE`` keeps exactly one
+        singleton row (``CHECK(id=1)``) even when marked twice."""
+
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                """INSERT OR REPLACE INTO acquisition_snapshot_backfill
+                   (id, completed_at, native_tasks, search_jobs)
+                   VALUES (1, ?, ?, ?)""",
+                (time.time(), native_tasks, search_jobs),
+            )
 
         return await self._write(operation)
 
@@ -2718,14 +3082,13 @@ _SOURCE_CLIENT_TYPE = {"soulseek": "slskd", "usenet": "sabnzbd"}
 def _quarantine_row_to_admin(row: dict[str, Any]) -> dict[str, Any]:
     """Project a ``(source, identity, …)`` quarantine row onto the legacy admin API
     shape (``client_id``/``username``/``filename``) so the existing admin list +
-    frontend keep working after the table rebuild (D8). A soulseek identity splits
-    back into ``(username, filename)``; a usenet identity (title+size) has no
-    username, so it surfaces under ``filename`` with an empty ``username`` until the
-    quarantine UI gets a source-aware pass."""
-    source = row.get("source", "soulseek")
+    frontend keep working after the table rebuild (D8)."""
+    source = row.get("source", SOURCE_SOULSEEK)
     identity = row.get("identity", "")
-    username, sep, filename = identity.partition(_SOULSEEK_ID_SEP)
-    if source == "soulseek" and sep:
+    if source == SOURCE_SOULSEEK:
+        identity = canonical_soulseek_identity(identity)
+    username, sep, filename = identity.partition(SOULSEEK_ID_SEPARATOR)
+    if source == SOURCE_SOULSEEK and sep:
         username, filename = username, filename
     else:
         username, filename = "", identity
