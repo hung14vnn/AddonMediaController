@@ -52,7 +52,7 @@ function mediaSessionTitle(track: MediaSessionTrack): string {
 /**
  * Supplies the operating system's media controls with the active track details.
  * Without this, Chromium falls back to the document title (for example,
- * "Listening Room · Addonify").
+ * "Listening Room · hify").
  */
 export function updateMediaSessionMetadata(track: MediaSessionTrack | null): void {
 	if (typeof navigator === 'undefined' || !navigator.mediaSession) return;

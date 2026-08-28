@@ -85,7 +85,7 @@
 		const editorWindow = window.open('about:blank', target);
 		if (!editorWindow) {
 			toastStore.show({
-				message: 'Allow pop-ups for Addonify, then try again',
+				message: 'Allow pop-ups for hify, then try again',
 				type: 'error'
 			});
 			return;
@@ -211,7 +211,7 @@
 				<div>
 					<h3 class="font-bold">Linked to MusicBrainz</h3>
 					<p class="mt-1 text-sm text-base-content/65">
-						This local album keeps its Addonify identity and now has a verified MusicBrainz
+						This local album keeps its hify identity and now has a verified MusicBrainz
 						match.
 					</p>
 					{#if contribution.result_release_mbid}

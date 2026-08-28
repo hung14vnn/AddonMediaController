@@ -19,9 +19,9 @@
 
 ---
 
-## Addonify fork credit
+## hify fork credit
 
-This repository is **Addonify**, a fork of [DroppedNeedle](https://github.com/DroppedNeedle/DroppedNeedle). DroppedNeedle's original branding, upstream references, and AGPL-3.0 licence notices are intentionally retained.
+This repository is **hify**, a fork of [DroppedNeedle](https://github.com/DroppedNeedle/DroppedNeedle). DroppedNeedle's original branding, upstream references, and AGPL-3.0 licence notices are intentionally retained.
 
 ---
 

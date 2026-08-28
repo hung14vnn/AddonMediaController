@@ -89,7 +89,7 @@ export const MORE_INFO_DISCLOSURES: Record<MusicBrainzSourceMode, string[]> = {
 		'Why the 1 request/second cap? musicbrainz.org is one shared public service with a ' +
 			'provider-enforced limit. Staying under it is both courtesy to every other consumer ' +
 			'and protection against getting your own access throttled.',
-		'This is the recommended default: zero setup, always current, and DroppedNeedle caches ' +
+		'This is the recommended default: zero setup, always current, and hify caches ' +
 			'aggressively so the cap rarely bites.'
 	],
 	mirror: [

@@ -41,10 +41,10 @@
 		try {
 			const result = await importMutation.mutateAsync(playlistId);
 			if (result.already_imported) {
-				toastStore.show({ message: 'This playlist is already in Addonify.', type: 'info' });
+				toastStore.show({ message: 'This playlist is already in hify.', type: 'info' });
 			} else {
 				toastStore.show({
-					message: `Imported ${result.tracks_imported} tracks into Addonify.`,
+					message: `Imported ${result.tracks_imported} tracks into hify.`,
 					type: 'success'
 				});
 			}
@@ -122,8 +122,8 @@
 						<Download class="w-4 h-4" />
 					{/if}
 					{importResult?.already_imported
-						? 'Already in Addonify'
-						: 'Import into Addonify'}
+						? 'Already in hify'
+						: 'Import into hify'}
 				</button>
 				{#if importResult && !importResult.already_imported}
 					<p class="text-sm text-success">

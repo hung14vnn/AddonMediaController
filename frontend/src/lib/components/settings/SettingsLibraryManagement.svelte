@@ -1289,7 +1289,7 @@
 							bind:checked={draft.external_refresh.enabled}
 						/><span
 							><strong>Post-commit refresh</strong><small
-								>Refresh DroppedNeedle and selected media servers.</small
+								>Refresh hify and selected media servers.</small
 							></span
 						></label
 					>

@@ -3,7 +3,7 @@
 	import LibraryReviewBrowser from '$lib/components/library/LibraryReviewBrowser.svelte';
 </script>
 
-<svelte:head><title>Identification review · Addonify</title></svelte:head>
+<svelte:head><title>Identification review · hify</title></svelte:head>
 
 <div class="min-h-[calc(100vh-200px)]">
 	<PageHeader

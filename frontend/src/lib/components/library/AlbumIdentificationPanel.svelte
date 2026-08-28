@@ -653,7 +653,7 @@
 									: 'Find the exact edition'}
 							</h3>
 							<p class="mt-2 text-sm leading-6 text-base-content/60">
-								DroppedNeedle compares album, artist, and per-track evidence. The job continues on
+								hify compares album, artist, and per-track evidence. The job continues on
 								the server if you close this dialog.
 							</p>
 						</div>

@@ -26,7 +26,7 @@
 		jellyfin: 'Jellyfin',
 		navidrome: 'Navidrome',
 		plex: 'Plex',
-		local: 'DroppedNeedle',
+		local: 'hify',
 		youtube: 'YouTube'
 	};
 </script>

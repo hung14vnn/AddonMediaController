@@ -14,7 +14,7 @@ describe('updateMediaSessionMetadata', () => {
 			}
 		}
 		vi.stubGlobal('navigator', { mediaSession });
-		vi.stubGlobal('window', { location: { origin: 'https://addonify.test' } });
+		vi.stubGlobal('window', { location: { origin: 'https://hify.test' } });
 		vi.stubGlobal('MediaMetadata', FakeMediaMetadata);
 
 		updateMediaSessionMetadata({
@@ -28,7 +28,7 @@ describe('updateMediaSessionMetadata', () => {
 			title: 'Ticket to Ride',
 			artist: 'KAWALA',
 			album: 'Ticket to Ride',
-			artwork: [{ src: 'https://addonify.test/api/v1/covers/ticket-to-ride' }]
+			artwork: [{ src: 'https://hify.test/api/v1/covers/ticket-to-ride' }]
 		});
 	});
 
@@ -49,7 +49,7 @@ describe('updateMediaSessionMetadata', () => {
 			}
 		}
 		vi.stubGlobal('navigator', { mediaSession });
-		vi.stubGlobal('window', { location: { origin: 'https://addonify.test' } });
+		vi.stubGlobal('window', { location: { origin: 'https://hify.test' } });
 		vi.stubGlobal('MediaMetadata', FakeMediaMetadata);
 
 		updateMediaSessionMetadata({
@@ -72,7 +72,7 @@ describe('updateMediaSessionMetadata', () => {
 			}
 		}
 		vi.stubGlobal('navigator', { mediaSession });
-		vi.stubGlobal('window', { location: { origin: 'https://addonify.test' } });
+		vi.stubGlobal('window', { location: { origin: 'https://hify.test' } });
 		vi.stubGlobal('MediaMetadata', FakeMediaMetadata);
 
 		updateMediaSessionMetadata({

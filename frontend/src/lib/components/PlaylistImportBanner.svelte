@@ -67,18 +67,18 @@
 		if (totalCount === 0) return `No ${sourceLabel} playlists found for ${accountLabel}`;
 		if (allImported)
 			return `All ${totalCount} ${sourceLabel} playlist${totalCount === 1 ? '' : 's'} imported`;
-		return `Bring your ${totalCount} ${sourceLabel} playlist${totalCount === 1 ? '' : 's'} to Addonify`;
+		return `Bring your ${totalCount} ${sourceLabel} playlist${totalCount === 1 ? '' : 's'} to hify`;
 	});
 
 	let supportingCopy = $derived.by(() => {
 		if (loading) return 'Checking for playlists you can access.';
 		if (relinkRequired)
-			return `Reconnect your ${sourceLabel} account so Addonify can check its playlists.`;
+			return `Reconnect your ${sourceLabel} account so hify can check its playlists.`;
 		if (hasError) return "We couldn't load playlists from this server. Your library is unaffected.";
 		if (accountMode === 'shared') return 'Link your account to see your playlists.';
 		if (totalCount === 0) return `${accountLabel} is connected, but no playlists are available.`;
 		if (allImported)
-			return `Your ${sourceLabel} playlists are now private copies in Addonify.`;
+			return `Your ${sourceLabel} playlists are now private copies in hify.`;
 		if (importedCount === 0) return 'Choose the playlists you want to import.';
 		return `${importedCount} of ${totalCount} imported so far.`;
 	});

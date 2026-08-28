@@ -18,7 +18,7 @@
 <footer class="ms-footer grain" aria-label="Site footer">
 	<div class="ms-footer__inner">
 		<div class="ms-footer__brand">
-			<span class="ms-footer__name">Addonify</span>
+			<span class="ms-footer__name">hify</span>
 		</div>
 
 		<div class="ms-footer__rule" aria-hidden="true"></div>

@@ -337,10 +337,10 @@
 							<a
 								href="/"
 								class="btn btn-ghost px-2 font-display text-base font-bold max-xs:hidden sm:px-4 sm:text-lg"
-								aria-label="Addon Music home"
+								aria-label="Home"
 							>
 								<span
-									><span class="text-primary">Addon</span><span class="text-base-content">ify</span
+									><span class="text-primary">h</span><span class="text-base-content">ify</span
 									></span
 								>
 							</a>

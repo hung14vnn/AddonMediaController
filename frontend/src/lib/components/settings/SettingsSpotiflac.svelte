@@ -146,7 +146,7 @@
 					<FolderDown class="size-4 text-base-content/70" aria-hidden="true" /> Downloads mount
 				</div>
 				<p class="text-xs text-base-content/60">
-					A writable directory mounted into Addonify. SpotiFLAC output will be imported from here.
+					A writable directory mounted into hify. SpotiFLAC output will be imported from here.
 				</p>
 				<input
 					id="spotiflac-mount"
@@ -159,7 +159,7 @@
 		</section>
 
 		<p class="text-xs leading-relaxed text-base-content/60">
-			SpotiFLAC is bundled with the Addonify image. This client configuration prepares its local
+			SpotiFLAC is bundled with the hify image. This client configuration prepares its local
 			output location and requested quality; direct request routing will be enabled with the next
 			acquisition-source update.
 		</p>

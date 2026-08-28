@@ -235,7 +235,7 @@
 	const dimmed = $derived(isPlaying && deckFocus.inView && !reducedMotion);
 </script>
 
-<svelte:head><title>Listening Room &middot; Addonify</title></svelte:head>
+<svelte:head><title>Listening Room &middot; hify</title></svelte:head>
 
 <div class="listening-room relative isolate">
 	{#if heroCover}

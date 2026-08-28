@@ -5,4 +5,4 @@
 	onMount(() => void goto('/library/review', { replaceState: true }));
 </script>
 
-<svelte:head><title>Identification review · Addonify</title></svelte:head>
+<svelte:head><title>Identification review · hify</title></svelte:head>

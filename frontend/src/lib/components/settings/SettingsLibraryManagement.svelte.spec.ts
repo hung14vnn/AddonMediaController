@@ -445,10 +445,10 @@ describe('SettingsLibraryManagement', () => {
 		await profileDialog.getByText('Preservation and format safety').click();
 		await profileDialog.getByText('Post-write notifications').click();
 		await expect
-			.element(profileDialog.getByText('DroppedNeedle catalog updates immediately'))
+			.element(profileDialog.getByText('hify catalog updates immediately'))
 			.toBeVisible();
 		await expect
-			.element(profileDialog.getByRole('checkbox', { name: /Refresh DroppedNeedle/ }))
+			.element(profileDialog.getByRole('checkbox', { name: /Refresh hify/ }))
 			.not.toBeInTheDocument();
 	});
 
