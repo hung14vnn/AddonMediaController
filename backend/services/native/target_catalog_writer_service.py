@@ -50,6 +50,14 @@ class TargetCatalogWriterService:
         row = await self._store.get_target_track(track_id)
         if row is None or row["availability"] != "indexed":
             raise ResourceNotFoundError("Library track not found.")
+        provider_id = str(row.get("recording_mbid") or "").strip()
+        if provider_id and await self._store.target_track_has_other_user_access(
+            track_id, actor_user_id
+        ):
+            # Keep the shared file/catalog alive and hide only this track for the
+            # requesting user. This also handles album-inherited access.
+            await self._store.exclude_target_track_for_user(actor_user_id, provider_id)
+            return [track_id]
         if delete_file:
             try:
                 path = await self._validated_path(track_id)

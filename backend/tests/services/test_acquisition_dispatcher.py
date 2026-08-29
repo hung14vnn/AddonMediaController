@@ -18,6 +18,7 @@ def _dispatcher(
     free_music_ready: bool = True,
     spotiflac_enabled: bool = False,
     spotiflac_ready: bool = True,
+    album_service=None,
 ):
     download = MagicMock()
     download.request_album = AsyncMock(return_value="slskd-album")
@@ -28,6 +29,9 @@ def _dispatcher(
     free_music.request_track = AsyncMock(return_value="free-track")
     prefs = SimpleNamespace(
         is_builtin_download_ready=lambda: builtin_ready,
+        is_soulseek_ready=lambda: builtin_ready,
+        is_usenet_ready=lambda: False,
+        get_source_priority=lambda: ["spotiflac", "soulseek", "usenet"],
         get_spotiflac_connection=lambda: SimpleNamespace(enabled=spotiflac_enabled),
     )
     spotiflac = MagicMock()
@@ -78,7 +82,7 @@ async def test_free_music_resolves_and_forwards_missing_album_track_count():
     album_service.get_album_tracks_info = AsyncMock(
         return_value=SimpleNamespace(total_tracks=10)
     )
-    dispatcher, download, free_music = _dispatcher(
+    dispatcher, download, free_music, _spotiflac = _dispatcher(
         builtin_ready=False, album_service=album_service
     )
 
@@ -103,7 +107,7 @@ async def test_free_music_uses_the_selected_exact_edition_track_count():
     album_service.get_exact_edition_tracks_info = AsyncMock(
         return_value=SimpleNamespace(total_tracks=12)
     )
-    dispatcher, _download, free_music = _dispatcher(
+    dispatcher, _download, free_music, _spotiflac = _dispatcher(
         builtin_ready=False, album_service=album_service
     )
 
@@ -125,7 +129,7 @@ async def test_free_music_uses_the_selected_exact_edition_track_count():
 async def test_free_music_keeps_supplied_track_count_without_provider_lookup():
     album_service = MagicMock()
     album_service.get_album_tracks_info = AsyncMock()
-    dispatcher, _download, free_music = _dispatcher(
+    dispatcher, _download, free_music, _spotiflac = _dispatcher(
         builtin_ready=False, album_service=album_service
     )
 
@@ -145,7 +149,7 @@ async def test_free_music_keeps_supplied_track_count_without_provider_lookup():
 async def test_builtin_client_does_not_resolve_free_music_track_count():
     album_service = MagicMock()
     album_service.get_album_tracks_info = AsyncMock()
-    dispatcher, download, free_music = _dispatcher(
+    dispatcher, download, free_music, _spotiflac = _dispatcher(
         builtin_ready=True, album_service=album_service
     )
 
@@ -159,12 +163,34 @@ async def test_builtin_client_does_not_resolve_free_music_track_count():
 
 
 @pytest.mark.asyncio
+async def test_builtin_track_forwards_provider_cover_url():
+    dispatcher, download, free_music, spotiflac = _dispatcher(builtin_ready=True)
+
+    task_id = await dispatcher.request_track(
+        user_id="u1",
+        recording_mbid="spotify:track:track-123",
+        release_group_mbid="spotify:album:album-123",
+        artist_name="A",
+        track_title="T",
+        cover_url="https://i.scdn.co/image/album-cover",
+    )
+
+    assert task_id == "slskd-track"
+    assert (
+        download.request_track.await_args.kwargs["cover_url"]
+        == "https://i.scdn.co/image/album-cover"
+    )
+    free_music.request_track.assert_not_awaited()
+    spotiflac.request_track.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_free_music_does_not_guess_when_track_count_lookup_fails():
     album_service = MagicMock()
     album_service.get_album_tracks_info = AsyncMock(
         side_effect=RuntimeError("MusicBrainz unavailable")
     )
-    dispatcher, download, free_music = _dispatcher(
+    dispatcher, download, free_music, _spotiflac = _dispatcher(
         builtin_ready=False, album_service=album_service
     )
 
@@ -183,7 +209,7 @@ async def test_free_music_rejects_an_empty_provider_tracklist():
     album_service.get_album_tracks_info = AsyncMock(
         return_value=SimpleNamespace(total_tracks=0)
     )
-    dispatcher, download, free_music = _dispatcher(
+    dispatcher, download, free_music, _spotiflac = _dispatcher(
         builtin_ready=False, album_service=album_service
     )
 

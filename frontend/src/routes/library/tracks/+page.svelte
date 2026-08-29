@@ -41,7 +41,10 @@
 		X
 	} from 'lucide-svelte';
 	import type { NativeTrackListItem, NativeTrackPage, TrackSort } from '$lib/types';
-	import { removeLibraryTrack, removeLibraryTracks } from '$lib/queries/library/LibraryMutations.svelte';
+	import {
+		removeLibraryTrack,
+		removeLibraryTracks
+	} from '$lib/queries/library/LibraryMutations.svelte';
 	import { untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 
@@ -196,9 +199,7 @@
 		addingToPlaylist = true;
 		try {
 			const membership = await checkTrackMembership(
-				items.map((item) =>
-					trackDataToMembershipIdentifier(queueItemToTrackData(item))
-				)
+				items.map((item) => trackDataToMembershipIdentifier(queueItemToTrackData(item)))
 			);
 			const existingIndices = new Set(membership[targetPlaylistId] ?? []);
 			const newItems = items.filter((_, index) => !existingIndices.has(index));
@@ -224,7 +225,12 @@
 	}
 
 	function deleteTrack(track: NativeTrackListItem) {
-		if (!confirm(`Delete "${track.title}" from your library? This permanently removes the audio file and any empty parent folders.`)) return;
+		if (
+			!confirm(
+				`Remove "${track.title}" from your library? The audio file is deleted only if no other user has it.`
+			)
+		)
+			return;
 		remove.mutate(
 			{ fileId: track.id },
 			{
@@ -254,7 +260,8 @@
 
 	function toggleSelectAll() {
 		const selectableTracks = data.items.filter((track) => !existingTargetTrackIds.has(track.id));
-		if (selectableTracks.length > 0 && selectedIds.size === selectableTracks.length) clearSelection();
+		if (selectableTracks.length > 0 && selectedIds.size === selectableTracks.length)
+			clearSelection();
 		else selectableTracks.forEach((track) => selectedIds.add(track.id));
 	}
 
@@ -262,11 +269,19 @@
 		if (bulkDeleting || selectedIds.size === 0) return;
 		const tracks = data.items.filter((track) => selectedIds.has(track.id));
 		const count = tracks.length;
-		if (!confirm(`Delete ${count} track${count === 1 ? '' : 's'} from your library? This permanently removes the audio file and any empty parent folders.`)) return;
+		if (
+			!confirm(
+				`Remove ${count} track${count === 1 ? '' : 's'} from your library? Audio files are deleted only when no other user has them.`
+			)
+		)
+			return;
 		bulkDeleting = true;
 		try {
 			await removeMultiple.mutateAsync({ fileIds: tracks.map((track) => track.id) });
-			toastStore.show({ message: `Deleted ${count} track${count === 1 ? '' : 's'}`, type: 'success' });
+			toastStore.show({
+				message: `Deleted ${count} track${count === 1 ? '' : 's'}`,
+				type: 'success'
+			});
 			clearSelection();
 			await fetchTracks();
 		} catch {
@@ -466,9 +481,11 @@
 							: playing
 								? 'cursor-pointer bg-accent/10'
 								: 'cursor-pointer hover:bg-base-200/50'}"
-					onclick={() => !alreadyInTarget && (selectionEnabled ? toggleTrackSelection(track.id) : playTrack(i))}
+					onclick={() =>
+						!alreadyInTarget && (selectionEnabled ? toggleTrackSelection(track.id) : playTrack(i))}
 					onkeydown={(e) =>
-						(e.key === 'Enter' || e.key === ' ') && !alreadyInTarget &&
+						(e.key === 'Enter' || e.key === ' ') &&
+						!alreadyInTarget &&
 						(e.preventDefault(), selectionEnabled ? toggleTrackSelection(track.id) : playTrack(i))}
 					tabindex={alreadyInTarget ? -1 : 0}
 					role="button"
@@ -503,7 +520,8 @@
 							className="h-12 w-12 ring-1 ring-base-content/10"
 						/>
 						<div
-							class="absolute inset-0 flex items-center justify-center rounded-md bg-black/45 transition-opacity {alreadyInTarget || playing
+							class="absolute inset-0 flex items-center justify-center rounded-md bg-black/45 transition-opacity {alreadyInTarget ||
+							playing
 								? 'opacity-100'
 								: 'opacity-0 group-hover:opacity-100'}"
 						>
@@ -522,7 +540,9 @@
 							{track.title}
 						</div>
 						<div class="truncate text-xs text-base-content/55">
-							{formatArtistCredit(track.artist_name)}{#if track.album_title}<span class="text-base-content/35">
+							{formatArtistCredit(track.artist_name)}{#if track.album_title}<span
+									class="text-base-content/35"
+								>
 									· {track.album_title}</span
 								>{/if}
 						</div>
@@ -559,7 +579,7 @@
 					</div>
 				</div>
 			{/each}
-			</div>
+		</div>
 
 		{#if selectionEnabled && selectedIds.size > 0}
 			<div
@@ -570,15 +590,23 @@
 				<button class="btn btn-ghost btn-sm" onclick={clearSelection}>Clear</button>
 				<button
 					class="btn btn-primary btn-sm gap-1.5"
-					onclick={() => void addTracksToLocalPlaylist(data.items.filter((track) => selectedIds.has(track.id)))}
+					onclick={() =>
+						void addTracksToLocalPlaylist(data.items.filter((track) => selectedIds.has(track.id)))}
 					disabled={addingToPlaylist}
 				>
-					{#if addingToPlaylist}<span class="loading loading-spinner loading-xs"></span>{:else}<Music2 class="h-4 w-4" />{/if}
+					{#if addingToPlaylist}<span class="loading loading-spinner loading-xs"
+						></span>{:else}<Music2 class="h-4 w-4" />{/if}
 					Add to playlist
 				</button>
 				{#if !targetPlaylistId}
-					<button class="btn btn-error btn-sm" onclick={() => void deleteSelectedTracks()} disabled={bulkDeleting}>
-						{#if bulkDeleting}<span class="loading loading-spinner loading-xs"></span>{:else}<Trash2 class="h-4 w-4" />{/if}
+					<button
+						class="btn btn-error btn-sm"
+						onclick={() => void deleteSelectedTracks()}
+						disabled={bulkDeleting}
+					>
+						{#if bulkDeleting}<span class="loading loading-spinner loading-xs"></span>{:else}<Trash2
+								class="h-4 w-4"
+							/>{/if}
 						Delete selected
 					</button>
 				{/if}

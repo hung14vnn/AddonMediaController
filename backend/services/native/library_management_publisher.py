@@ -696,6 +696,12 @@ class LibraryManagementPublisher:
                 value.medium_position,
                 value.release_track_position,
             )
+            provider_local_track = bool(
+                value.release_group_mbid
+                and value.release_group_mbid.startswith("spotify:album:")
+                and value.recording_mbid
+                and value.recording_mbid.startswith("spotify:track:")
+            )
             if any(item is not None for item in automatic_values) and not all(
                 item is not None for item in automatic_values
             ):
@@ -704,6 +710,7 @@ class LibraryManagementPublisher:
                 )
             if (
                 not value.conversion_recycle_only
+                and not provider_local_track
                 and any(item is not None for item in mapping_values)
                 and not all(item is not None for item in mapping_values)
             ):

@@ -22,6 +22,7 @@ from services.native.file_processor import (
     FileProcessor,
     VerifyStatus,
     _FolderCandidate,
+    _PlannedImport,
     _folder_names_wrong_album,
 )
 from services.native.library_manager import LibraryManager
@@ -60,6 +61,62 @@ def test_unreadable_file_fails(processor, tmp_path):
     result = processor.verify_downloaded_file(junk)
     assert result.status == VerifyStatus.FAIL
     assert result.reason == "tags unreadable"
+
+
+@pytest.mark.asyncio
+async def test_storage_conversion_uses_writable_staging_not_source_directory(
+    tmp_path: Path, monkeypatch
+):
+    source_dir = tmp_path / "slskd-owned"
+    source_dir.mkdir()
+    source = source_dir / "07 My Love Mine All Mine.flac"
+    source.write_bytes(b"source audio")
+    conversion_dir = tmp_path / "cache" / "conversion-staging"
+    converted_info = AudioInfo(
+        duration_seconds=137.0,
+        bitrate=256,
+        sample_rate=48_000,
+        channels=2,
+        file_format="m4a",
+        file_size_bytes=12,
+    )
+    tagger = MagicMock()
+    tagger.read_tags.return_value = (
+        AudioTag(title="Track", artist="Artist", album="Album", track_number=7),
+        converted_info,
+    )
+    processor = FileProcessor(
+        tagger,
+        saving_storage_mode=True,
+        conversion_dir=conversion_dir,
+    )
+    targets: list[Path] = []
+
+    def transcode(_source: Path, target: Path) -> None:
+        targets.append(target)
+        target.write_bytes(b"converted")
+
+    monkeypatch.setattr(processor, "_transcode_flac_to_aac", transcode)
+    source_info = AudioInfo(
+        duration_seconds=137.0,
+        bitrate=2652,
+        sample_rate=96_000,
+        channels=2,
+        file_format="flac",
+        file_size_bytes=12,
+        bit_depth=24,
+    )
+
+    converted, actual_info, cleanup_source = await processor._prepare_storage_source(
+        source, source_info
+    )
+
+    assert targets and targets[0].parent == conversion_dir
+    assert converted.parent == conversion_dir
+    assert converted.exists()
+    assert actual_info is converted_info
+    assert cleanup_source == source
+    assert list(source_dir.iterdir()) == [source]
 
 
 def test_title_mismatch_fails(processor):
@@ -299,24 +356,27 @@ async def test_shared_publisher_receives_complete_slskd_album_bundle(tmp_path: P
                 musicbrainz_recording_id=f"recording-{position}",
             ),
         )
-    manifest = _manifest(
-        ExpectedFile(filename="A/one.flac", size=1),
-        ExpectedFile(filename="A/two.flac", size=1),
-        release_mbid="release-1",
-        expected_tracks=(
-            ExpectedTrack(
-                track_number=1,
-                title="One",
-                recording_mbid="recording-1",
-                release_track_mbid="release-track-1",
-            ),
-            ExpectedTrack(
-                track_number=2,
-                title="Two",
-                recording_mbid="recording-2",
-                release_track_mbid="release-track-2",
+    manifest = msgspec.structs.replace(
+        _manifest(
+            ExpectedFile(filename="A/one.flac", size=1),
+            ExpectedFile(filename="A/two.flac", size=1),
+            release_mbid="release-1",
+            expected_tracks=(
+                ExpectedTrack(
+                    track_number=1,
+                    title="One",
+                    recording_mbid="recording-1",
+                    release_track_mbid="release-track-1",
+                ),
+                ExpectedTrack(
+                    track_number=2,
+                    title="Two",
+                    recording_mbid="recording-2",
+                    release_track_mbid="release-track-2",
+                ),
             ),
         ),
+        requested_cover_url="https://i.scdn.co/image/spotify-cover",
     )
 
     result = await fp.process_downloaded(manifest)
@@ -329,6 +389,9 @@ async def test_shared_publisher_receives_complete_slskd_album_bundle(tmp_path: P
     assert bundle.origin == "acquisition"
     assert bundle.policy_revision == "policy-1"
     assert all(value.authoritative_mapping for value in bundle.files)
+    assert {
+        value.cover_url for value in bundle.files
+    } == {"https://i.scdn.co/image/spotify-cover"}
     assert {value.release_track_mbid for value in bundle.files} == {
         "release-track-1",
         "release-track-2",
@@ -336,6 +399,67 @@ async def test_shared_publisher_receives_complete_slskd_album_bundle(tmp_path: P
     assert result.failed == []
     assert len(result.succeeded) == 2
     assert await manager.has_album("rg-1") is False
+
+
+@pytest.mark.asyncio
+async def test_post_commit_source_cleanup_error_does_not_fail_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.flac"
+    source.write_bytes(b"source")
+    target = tmp_path / "library" / "track.m4a"
+    target.parent.mkdir()
+    published = LibraryManagementImportResult(
+        bundle_id="bundle-committed",
+        paths=(str(target),),
+        local_track_ids=("track-1",),
+    )
+    processor = FileProcessor(
+        AudioTagger(),
+        library_paths=[target.parent],
+        library_root_ids=["root-a"],
+        publish_import_bundle=AsyncMock(return_value=published),
+        policy_revision_getter=lambda: "policy-1",
+    )
+    real_to_thread = asyncio.to_thread
+
+    async def fail_unlink(func, *args, **kwargs):
+        if getattr(func, "__name__", "") == "unlink":
+            raise PermissionError("root-owned slskd directory")
+        return await real_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", fail_unlink)
+    info = AudioInfo(
+        duration_seconds=1,
+        bitrate=256,
+        sample_rate=48_000,
+        channels=2,
+        file_format="m4a",
+        file_size_bytes=6,
+    )
+    planned = _PlannedImport(
+        source=tmp_path / "converted.m4a",
+        target=target,
+        tag=AudioTag(title="Track", artist="Artist", album="Album", track_number=1),
+        info=info,
+        release_group_mbid="spotify:album:album-1",
+        release_mbid=None,
+        recording_mbid="spotify:track:track-1",
+        release_track_mbid=None,
+        medium_position=1,
+        release_track_position=1,
+        authoritative_mapping=False,
+        confidence=1.0,
+        download_task_id="task-1",
+        source_path=str(source),
+        cleanup_source=source,
+    )
+
+    result = await processor._publish_planned_imports(
+        [planned], idempotency_key="test"
+    )
+
+    assert result.bundle_id == "bundle-committed"
 
 
 @pytest.mark.asyncio
@@ -832,7 +956,7 @@ async def test_process_downloaded_skips_duplicate_track_position(tmp_path: Path)
     assert Path(r2.succeeded[0]) == Path(r1.succeeded[0])  # points at the kept copy
     rows = await manager.get_file_rows_for_album("rg-1")
     assert len(rows) == 1  # NO duplicate row
-    assert (downloads / "B" / "second.flac").exists()
+    assert not (downloads / "B" / "second.flac").exists()
 
 
 @pytest.mark.asyncio
@@ -1986,7 +2110,7 @@ async def test_covering_occupant_still_dedupes(tmp_path: Path):
     result = await fp.process_downloaded(manifest)
 
     assert result.succeeded == [str(squatter)]  # kept the existing copy
-    assert (downloads / "A/track.flac").exists()  # duplicates are never auto-deleted
+    assert not (downloads / "A/track.flac").exists()
 
 
 # -- P7 (D7): real attribution confidence at import, on the scanner's scale --

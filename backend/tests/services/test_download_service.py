@@ -432,6 +432,35 @@ async def test_request_album_mb_failure_starts_no_download_without_exact_identit
 
 
 @pytest.mark.asyncio
+async def test_spotify_local_track_bypasses_musicbrainz_exact_edition_gate():
+    album_service = _single_album_service(fail=True)
+    service, store, *_ = _make_service(album_service=album_service)
+    service._library.has_track.return_value = False
+    store.get_active_task_for_track.return_value = None
+
+    await service.request_track(
+        "u1",
+        "spotify:track:track-123",
+        "Artist",
+        "Track",
+        album_title="Album",
+        duration_seconds=201,
+        release_group_mbid="spotify:album:album-123",
+        cover_url="https://i.scdn.co/image/spotify-cover",
+    )
+
+    album_service.get_album_tracks_info.assert_not_awaited()
+    album_service.get_exact_edition_tracks_info.assert_not_awaited()
+    kwargs = store.create_task.await_args.kwargs
+    assert kwargs["release_group_mbid"] == "spotify:album:album-123"
+    assert kwargs["recording_mbid"] == "spotify:track:track-123"
+    assert kwargs["cover_url"] == "https://i.scdn.co/image/spotify-cover"
+    assert kwargs["release_mbid"] is None
+    assert kwargs["download_type"] == "track"
+    assert kwargs["track_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_pick_candidate_resumes_parked_task_not_a_new_one():
     """R1 (incident review blocker): a pick on a parked orchestrator task must RESUME
     the original task - a fresh task drops the threaded identity (the import gates

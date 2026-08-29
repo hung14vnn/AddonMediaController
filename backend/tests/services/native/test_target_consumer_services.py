@@ -1878,6 +1878,24 @@ async def test_target_track_removal_marks_an_externally_deleted_file_missing() -
 
 
 @pytest.mark.asyncio
+async def test_target_track_removal_hides_shared_track_for_actor_only() -> None:
+    store = AsyncMock()
+    store.get_target_track.return_value = {
+        "id": "shared-track",
+        "availability": "indexed",
+        "recording_mbid": "recording-1",
+    }
+    store.target_track_has_other_user_access.return_value = True
+    writer = TargetCatalogWriterService(store, MagicMock(), MagicMock())
+
+    removed = await writer.remove_track("shared-track", actor_user_id="user-1")
+
+    assert removed == ["shared-track"]
+    store.exclude_target_track_for_user.assert_awaited_once_with("user-1", "recording-1")
+    store.mark_target_tracks_missing.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_target_ownership_projection_is_conservative_and_provider_independent(
     target_services,
 ) -> None:

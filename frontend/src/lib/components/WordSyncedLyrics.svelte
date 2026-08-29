@@ -125,7 +125,7 @@
 
 <div class="word-synced-shell">
 	<div class="word-synced-host" aria-label="Word-synced lyrics">
-		<am-lyrics bind:this={element} class="word-synced-element"></am-lyrics>
+		<am-lyrics bind:this={element} translation-language="vi" class="word-synced-element"></am-lyrics>
 	</div>
 	{#if loading}
 		<div class="word-synced-status">

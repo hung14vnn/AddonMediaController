@@ -473,7 +473,7 @@ class SoulseekStrategy:
         release_mbid, expected_tracks = await _expected_tracks_for_task(
             task, self._album_service, self._store
         )
-        if not expected_tracks and (
+        if not expected_tracks and not is_spotify_local and (
             self._album_service is not None or task.release_mbid is not None
         ):
             raise OrchestrationError("could not resolve the exact album tracklist")
@@ -539,6 +539,7 @@ class SoulseekStrategy:
             release_mbid=release_mbid,
             artist_mbid=task.artist_mbid,
             external_track_id=task.recording_mbid if is_spotify_local else None,
+            requested_cover_url=task.cover_url,
             artist_name=task.artist_name,
             album_title=task.album_title,
             year=task.year,
@@ -911,6 +912,7 @@ class UsenetStrategy:
             release_group_mbid=task.release_group_mbid,
             release_mbid=release_mbid,
             artist_mbid=task.artist_mbid,
+            requested_cover_url=task.cover_url,
             artist_name=task.artist_name,
             album_title=task.album_title,
             year=task.year,

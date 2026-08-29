@@ -730,6 +730,7 @@ class DownloadService:
         track_duration_seconds: float | None = None,
         download_type: str = "album",
         artist_mbid: str | None = None,
+        cover_url: str | None = None,
         origin: str = "user",
         release_mbid: str | None = None,
         release_track_mbid: str | None = None,
@@ -835,7 +836,15 @@ class DownloadService:
 
         track_number = None
         disc_number = None
-        if self._album_service is not None:
+        # Spotify catalog tracks deliberately keep a provider-local identity when
+        # MusicBrainz cannot resolve their ISRC/metadata.  They are still safe to
+        # acquire as a single track: the Soulseek path searches and verifies using
+        # Spotify's title/artist/duration, while the importer persists the external
+        # track id without writing fake MusicBrainz tags.  Do not feed the synthetic
+        # ``spotify:album:*`` id to AlbumService's MBID-only exact-edition resolver.
+        if self._album_service is not None and not _is_spotify_local_identity(
+            release_group_mbid
+        ):
             (
                 release_mbid,
                 tracks,
@@ -889,6 +898,7 @@ class DownloadService:
             artist_mbid=artist_mbid,
             artist_name=artist_name,
             album_title=album_title,
+            cover_url=cover_url,
             track_title=track_title,
             track_number=track_number,
             disc_number=disc_number,
@@ -940,6 +950,7 @@ class DownloadService:
         duration_seconds: int | None = None,
         release_group_mbid: str | None = None,
         artist_mbid: str | None = None,
+        cover_url: str | None = None,
         origin: str = "user",
         release_mbid: str | None = None,
         release_track_mbid: str | None = None,
@@ -1008,6 +1019,7 @@ class DownloadService:
             track_duration_seconds=duration_seconds,
             download_type="track",
             artist_mbid=artist_mbid,
+            cover_url=cover_url,
             origin=origin,
             release_mbid=release_mbid,
             release_track_mbid=release_track_mbid,

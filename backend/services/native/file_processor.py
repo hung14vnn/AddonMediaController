@@ -183,6 +183,7 @@ class _PlannedImport(NamedTuple):
     source_path: str
     replacement: dict | None = None
     cleanup_source: Path | None = None
+    cover_url: str | None = None
 
 
 def _filename_track_number(path: Path) -> int | None:
@@ -631,6 +632,7 @@ class FileProcessor:
         saving_storage_mode: bool = False,
         download_store: "DownloadStore | None" = None,
         held_dir: Path | None = None,
+        conversion_dir: Path | None = None,
         recycle_bin: Path | None = None,
         library_root_ids: list[str] | None = None,
         publish_import_bundle: (
@@ -657,6 +659,7 @@ class FileProcessor:
         # "import anyway" review instead of being silently dropped.
         self._download_store = download_store
         self._held_dir = held_dir
+        self._conversion_dir = Path(conversion_dir) if conversion_dir else None
         # Where an upgrade-replaced file is MOVED instead of deleted (D4/D19). None
         # disables replace-on-import entirely - an upgrade must never destroy the
         # only copy of the old bytes.
@@ -721,6 +724,7 @@ class FileProcessor:
                     source="download",
                     source_path=value.source_path,
                     download_task_id=value.download_task_id,
+                    cover_url=value.cover_url,
                     replacement_local_track_id=replacement_track_id,
                     replacement_root_id=replacement_root_id,
                     replacement_relative_path=replacement_relative,
@@ -741,10 +745,25 @@ class FileProcessor:
                 files=tuple(requests),
             )
         )
+        # Publication and catalog adoption are already committed here. Cleanup is a
+        # post-commit obligation: a stale/root-owned slskd directory must never turn
+        # a successful import into a failed attempt and trigger a second download.
         for value in planned:
-            if value.cleanup_source is not None:
-                await asyncio.to_thread(value.cleanup_source.unlink, missing_ok=True)
-            self._prune_empty_source_dirs(value.source)
+            cleanup_paths = (
+                [value.cleanup_source, value.source]
+                if value.cleanup_source is not None
+                else []
+            )
+            for path in dict.fromkeys(cleanup_paths):
+                try:
+                    await asyncio.to_thread(path.unlink, missing_ok=True)
+                except OSError:
+                    logger.warning(
+                        "Published source cleanup deferred for %s",
+                        _basename(str(path)),
+                        exc_info=True,
+                    )
+            self._prune_empty_source_dirs(value.cleanup_source or value.source)
         return result
 
     def _storage_output_format(self, source: Path, info: AudioInfo) -> str:
@@ -763,7 +782,9 @@ class FileProcessor:
         if not (self._saving_storage_mode and source.suffix.casefold() == ".flac"):
             return source, info, None
         digest = await asyncio.to_thread(self._hash_source_file, source)
-        converted = source.with_name(
+        conversion_dir = self._conversion_dir or source.parent
+        await asyncio.to_thread(conversion_dir.mkdir, parents=True, exist_ok=True)
+        converted = conversion_dir / (
             f".droppedneedle-aac-{source.stem}-{digest[:12]}.m4a"
         )
         converted_info: AudioInfo | None = None
@@ -1387,6 +1408,9 @@ class FileProcessor:
                     self._position_upgrade_target(manifest.origin, present, info)
                     is None
                 ):
+                    await self._discard_redundant_source(
+                        source, Path(present["file_path"])
+                    )
                     return Path(present["file_path"])
                 replacement = present
 
@@ -1445,11 +1469,13 @@ class FileProcessor:
             if not await self._same_path_upgrade_applies(
                 manifest.origin, target_path, info
             ):
+                await self._discard_redundant_source(source, target_path)
                 return target_path
             replacement = (
                 await self._library.get_attributions_for_paths([str(target_path)])
             ).get(str(target_path))
             if replacement is None or self._recycle_bin is None:
+                await self._discard_redundant_source(source, target_path)
                 return target_path
         publish_source, publish_info, cleanup_source = await self._prepare_storage_source(
             source, info
@@ -1471,6 +1497,7 @@ class FileProcessor:
             source_path=str(source),
             replacement=replacement,
             cleanup_source=cleanup_source,
+            cover_url=manifest.requested_cover_url,
         )
 
     # Replace-on-import (CollectionManagement D4/D18/D19)
@@ -2019,6 +2046,9 @@ class FileProcessor:
                             "track": target_tag.track_number,
                         },
                     )
+                    await self._discard_redundant_source(
+                        source, Path(present["file_path"])
+                    )
                     return Path(present["file_path"])
                 replacement = present
 
@@ -2163,11 +2193,13 @@ class FileProcessor:
             if not await self._same_path_upgrade_applies(
                 manifest.origin, target_path, info
             ):
+                await self._discard_redundant_source(source, target_path)
                 return target_path
             replacement = (
                 await self._library.get_attributions_for_paths([str(target_path)])
             ).get(str(target_path))
             if replacement is None or self._recycle_bin is None:
+                await self._discard_redundant_source(source, target_path)
                 return target_path
         publish_source, publish_info, cleanup_source = await self._prepare_storage_source(
             source, info
@@ -2198,7 +2230,27 @@ class FileProcessor:
             source_path=str(source),
             replacement=replacement,
             cleanup_source=cleanup_source,
+            cover_url=manifest.requested_cover_url,
         )
+
+    async def _discard_redundant_source(self, source: Path, adopted: Path) -> None:
+        """Best-effort consumption after the library already owns equivalent bytes.
+
+        A cleanup permission problem is cleanup debt, not an acquisition failure.
+        Reporting failure here would make source failover download the same track again.
+        """
+        if source.resolve(strict=False) == adopted.resolve(strict=False):
+            return
+        try:
+            await asyncio.to_thread(source.unlink, missing_ok=True)
+        except OSError:
+            logger.warning(
+                "Redundant downloaded source cleanup deferred for %s",
+                _basename(str(source)),
+                exc_info=True,
+            )
+            return
+        self._prune_empty_source_dirs(source)
 
     def _prune_empty_source_dirs(self, source: Path) -> None:
         """Remove the now-empty folders slskd left behind after a file is moved out of

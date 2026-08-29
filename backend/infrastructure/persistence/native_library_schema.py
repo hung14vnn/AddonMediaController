@@ -131,6 +131,18 @@ CREATE TABLE IF NOT EXISTS library_user_selections (
 CREATE INDEX IF NOT EXISTS idx_library_user_selections_provider
 ON library_user_selections(item_kind, provider_id);
 
+-- A user may hide one track inherited from an album selection without changing
+-- the shared catalog or the album selection itself.
+CREATE TABLE IF NOT EXISTS library_user_exclusions (
+    user_id TEXT NOT NULL,
+    item_kind TEXT NOT NULL CHECK(item_kind IN ('track')),
+    provider_id TEXT NOT NULL COLLATE NOCASE,
+    excluded_at REAL NOT NULL,
+    PRIMARY KEY(user_id, item_kind, provider_id)
+);
+CREATE INDEX IF NOT EXISTS idx_library_user_exclusions_provider
+ON library_user_exclusions(item_kind, provider_id);
+
 CREATE TABLE IF NOT EXISTS library_play_history (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,

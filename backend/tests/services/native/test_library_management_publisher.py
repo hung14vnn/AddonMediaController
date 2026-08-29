@@ -63,7 +63,7 @@ from services.native.identification_revisions import (
     album_input_revisions,
 )
 from services.native.target_import_library_service import TargetImportLibraryService
-from models.audio import AudioTag
+from models.audio import AudioInfo, AudioTag
 from models.audio_metadata import (
     AudioWritePolicy,
     DesiredAudioDocument,
@@ -267,6 +267,52 @@ def _import_file(
         source_path=source.name,
         download_task_id="task-1",
     )
+
+
+def test_spotify_local_track_allows_position_without_musicbrainz_release_track(
+    tmp_path: Path,
+) -> None:
+    request = LibraryManagementImportFile(
+        ordinal=0,
+        input_path=str((tmp_path / "track.m4a").resolve()),
+        destination_root_id="root-1",
+        destination_relative_path="Artist/Album/01 Track.m4a",
+        tag=AudioTag(title="Track", artist="Artist", album="Album", track_number=1),
+        info=AudioInfo(
+            duration_seconds=180.0,
+            bitrate=256,
+            sample_rate=48_000,
+            channels=2,
+            file_format="m4a",
+            file_size_bytes=1024,
+        ),
+        release_group_mbid="spotify:album:album-123",
+        release_mbid=None,
+        recording_mbid="spotify:track:track-123",
+        release_track_mbid=None,
+        medium_position=1,
+        release_track_position=1,
+        confidence=0.8,
+        source="download",
+    )
+    bundle = LibraryManagementImportBundle(
+        idempotency_key="spotify-local-track",
+        origin="acquisition",
+        policy_revision="policy-1",
+        files=(request,),
+    )
+
+    LibraryManagementPublisher._validate_import_bundle(bundle)
+
+    with pytest.raises(ValidationError, match="complete release-track mapping"):
+        LibraryManagementPublisher._validate_import_bundle(
+            msgspec.structs.replace(
+                bundle,
+                files=(
+                    msgspec.structs.replace(request, recording_mbid="not-spotify"),
+                ),
+            )
+        )
 
 
 def _same_path_configuration(_root, preferences, _store) -> None:

@@ -217,6 +217,30 @@ async def test_single_enqueue_strict_off_keeps_peer_duration(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_spotify_local_track_enqueue_does_not_require_musicbrainz_edition(
+    tmp_path: Path,
+):
+    task = _single_task(
+        download_type="track",
+        release_group_mbid="spotify:album:album-123",
+        release_mbid=None,
+        release_track_mbid=None,
+        recording_mbid="spotify:track:track-123",
+        cover_url="https://i.scdn.co/image/spotify-cover",
+        track_number=None,
+        disc_number=None,
+    )
+
+    manifest = await _enqueue(tmp_path, task)
+
+    assert manifest.release_mbid is None
+    assert manifest.requested_cover_url == "https://i.scdn.co/image/spotify-cover"
+    assert manifest.external_track_id == "spotify:track:track-123"
+    assert manifest.expected_tracks == []
+    assert manifest.is_track is False
+
+
+@pytest.mark.asyncio
 async def test_multi_track_album_enqueue_carries_complete_exact_track_map(
     tmp_path: Path,
 ):

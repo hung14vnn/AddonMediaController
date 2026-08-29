@@ -184,6 +184,7 @@ async def start_target_operational_runtime(
     """Start non-catalog work with target-aware catalog dependencies."""
 
     from core.dependencies import (
+        get_acquisition_cleanup_service,
         get_audiodb_browse_queue,
         get_audiodb_image_service,
         get_download_client_repository,
@@ -221,6 +222,7 @@ async def start_target_operational_runtime(
     )
     from core.dependencies.service_providers import get_plugin_host
     from core.tasks import (
+        start_acquisition_cleanup_task,
         start_artist_discovery_cache_warming_task,
         start_audiodb_sweep_task,
         start_background_upgrade_scan_task,
@@ -250,6 +252,14 @@ async def start_target_operational_runtime(
     start_download_auto_retry_task(
         get_target_download_orchestrator, get_target_spotiflac_service
     )
+    try:
+        await get_acquisition_cleanup_service().recover_startup()
+    except Exception as error:  # noqa: BLE001 - cleanup debt must survive startup failures
+        logger.warning(
+            "startup.acquisition_cleanup_recovery_failed",
+            extra={"error": str(error)},
+        )
+    start_acquisition_cleanup_task(get_acquisition_cleanup_service)
 
     try:
         await get_target_drop_import_service().sweep_stale()

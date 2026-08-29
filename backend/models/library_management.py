@@ -58,6 +58,7 @@ class LibraryManagementImportFile(AppStruct):
     source: str
     source_path: str | None = None
     download_task_id: str | None = None
+    cover_url: str | None = None
     file_mtime: float | None = None
     replacement_local_track_id: str | None = None
     replacement_root_id: str | None = None

@@ -250,6 +250,7 @@ from .service_providers import (  # noqa: F401
     get_target_file_processor,
     get_bootstrap_demand_signal,
     get_wal_checkpoint_service,
+    get_acquisition_cleanup_service,
     get_acquisition_dispatcher,
     get_target_acquisition_dispatcher,
     get_quota_service,

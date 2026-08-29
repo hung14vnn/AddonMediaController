@@ -2609,7 +2609,12 @@ class DownloadOrchestrator:
         release_mbid, expected_tracks = await _expected_tracks_for_task(
             task, self._album_service, self._store
         )
-        if self._album_service is not None and not expected_tracks:
+        is_spotify_local = task.release_group_mbid.startswith("spotify:album:")
+        if (
+            self._album_service is not None
+            and not expected_tracks
+            and not is_spotify_local
+        ):
             raise ValidationError(
                 "The original exact MusicBrainz track map is unavailable for reimport"
             )
@@ -2619,6 +2624,8 @@ class DownloadOrchestrator:
             release_group_mbid=task.release_group_mbid,
             release_mbid=release_mbid,
             artist_mbid=task.artist_mbid,
+            external_track_id=task.recording_mbid if is_spotify_local else None,
+            requested_cover_url=task.cover_url,
             artist_name=task.artist_name,
             album_title=task.album_title,
             year=task.year,
@@ -2917,8 +2924,20 @@ class DownloadOrchestrator:
             # Every source takes its turn. A successful handoff creates a new task
             # owned by that source; only when every configured source is unavailable
             # do we fall back to a fresh native retry below.
+            #
+            # A no-match task may never have a selected source (`source=""`), because
+            # the search job never linked a candidate. A Soulseek miss can also leave the
+            # task pinned to the stale source even though the next configured downloader is
+            # higher in ``source_priority``. In both cases the retry ladder must skip the
+            # current/first native source once so it can advance to SpotiFLAC instead of
+            # re-arming Soulseek forever.
             handed_off = False
-            for source in self._sources_after(task.source):
+            retry_sources = self._sources_after(task.source)
+            if task.source in {"", "soulseek"} and self._source_priority:
+                first_source = self._source_priority[0]
+                if first_source in {"soulseek", "usenet"}:
+                    retry_sources = list(self._source_priority[1:]) or list(self._source_priority)
+            for source in retry_sources:
                 if source == "spotiflac":
                     if (
                         failover_to_spotiflac is not None

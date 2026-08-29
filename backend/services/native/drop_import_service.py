@@ -852,6 +852,33 @@ class DropImportService:
             )
             return
 
+        is_provider_local_download = bool(
+            release_group_mbid and release_group_mbid.startswith(
+                _PROVIDER_LOCAL_ALBUM_PREFIXES
+            )
+        )
+        is_known_download = bool(
+            release_group_mbid
+            or recording_mbid
+        ) and (is_provider_local_download or bool(recording_mbid))
+        if is_known_download:
+            result = await self._organise(
+                entries,
+                ident,
+                confidence_override=1.0,
+                cover_url=requested_cover_url,
+            )
+            await self._finish_item(
+                job,
+                item_id,
+                ident,
+                result,
+                unreadable,
+                staged=entries,
+                cover_url=requested_cover_url,
+            )
+            return
+
         # Hold identified albums for explicit track selection.
         detail = (
             f"{len(entries)} files identified. Review the album and choose which tracks to import."

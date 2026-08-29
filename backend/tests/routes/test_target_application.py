@@ -440,6 +440,7 @@ def test_target_lifecycle_retains_every_source_task() -> None:
         "start_target_identification_worker",
         "start_target_operation_worker",
         "start_target_worker_watchdog",
+        "start_acquisition_cleanup_task",
     } <= target
 
 

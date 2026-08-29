@@ -359,7 +359,13 @@ def _user_track_access_clause(track_alias: str = "t") -> str:
         f"LOWER(COALESCE({track_alias}.embedded_recording_mbid, '')) = access.provider_id "
         "OR EXISTS (SELECT 1 FROM local_track_external_identities access_track "
         f"WHERE access_track.local_track_id = {track_alias}.id "
-        "AND LOWER(access_track.recording_mbid) = access.provider_id)))))"
+        "AND LOWER(access_track.recording_mbid) = access.provider_id))) "
+        "AND NOT EXISTS (SELECT 1 FROM library_user_exclusions excluded "
+        "WHERE excluded.user_id = access.user_id AND excluded.item_kind = 'track' "
+        f"AND (LOWER(COALESCE({track_alias}.embedded_recording_mbid, '')) = excluded.provider_id "
+        "OR EXISTS (SELECT 1 FROM local_track_external_identities excluded_track "
+        f"WHERE excluded_track.local_track_id = {track_alias}.id "
+        "AND LOWER(excluded_track.recording_mbid) = excluded.provider_id))))"
     )
 
 _LEGACY_MIGRATION_TABLE_ORDER = {
@@ -2297,12 +2303,69 @@ class NativeLibraryStore(PersistenceBase):
                 "ON CONFLICT(user_id, item_kind, provider_id) DO NOTHING",
                 (user_id, item_kind, normalized, time.time()),
             )
+            if item_kind == "track":
+                connection.execute(
+                    "DELETE FROM library_user_exclusions "
+                    "WHERE user_id = ? AND item_kind = 'track' AND provider_id = ?",
+                    (user_id, normalized),
+                )
             if cursor.rowcount:
                 # User-scoped browse projections share the catalog revision as
                 # their invalidation epoch, so a new selection must advance it.
                 self._bump_catalog(connection)
 
         await self._write(operation)
+
+    async def exclude_target_track_for_user(self, user_id: str, provider_id: str) -> None:
+        normalized = provider_id.strip().casefold()
+        if not user_id or not normalized:
+            return
+
+        def operation(connection: sqlite3.Connection) -> None:
+            cursor = connection.execute(
+                "INSERT INTO library_user_exclusions "
+                "(user_id, item_kind, provider_id, excluded_at) VALUES (?, 'track', ?, ?) "
+                "ON CONFLICT(user_id, item_kind, provider_id) DO NOTHING",
+                (user_id, normalized, time.time()),
+            )
+            if cursor.rowcount:
+                self._bump_catalog(connection)
+
+        await self._write(operation)
+
+    async def target_track_has_other_user_access(
+        self, track_id: str, excluding_user_id: str
+    ) -> bool:
+        row = await self.get_target_track(track_id)
+        if row is None:
+            return False
+        recording_id = str(row.get("recording_mbid") or "").strip().casefold()
+        album_id = str(row.get("provider_release_group_mbid") or "").strip().casefold()
+        if not recording_id and not album_id:
+            return False
+
+        def operation(connection: sqlite3.Connection) -> bool:
+            clauses: list[str] = []
+            params: list[str] = [excluding_user_id]
+            if recording_id:
+                clauses.append("(item_kind = 'track' AND provider_id = ?)")
+                params.append(recording_id)
+            if album_id:
+                clauses.append("(item_kind = 'album' AND provider_id = ?)")
+                params.append(album_id)
+            return connection.execute(
+                "SELECT 1 FROM library_user_selections "
+                "WHERE user_id != ? AND (" + " OR ".join(clauses) + ") "
+                "AND NOT (item_kind = 'track' AND EXISTS ("
+                "SELECT 1 FROM library_user_exclusions excluded "
+                "WHERE excluded.user_id = library_user_selections.user_id "
+                "AND excluded.item_kind = 'track' "
+                "AND excluded.provider_id = library_user_selections.provider_id)) "
+                "LIMIT 1",
+                params,
+            ).fetchone() is not None
+
+        return await self._read(operation)
 
     async def remove_target_library_item(
         self, user_id: str, item_kind: str, provider_id: str
@@ -23400,6 +23463,38 @@ class NativeLibraryStore(PersistenceBase):
                 local_track_ids.append(track_id)
                 persisted[ordinal] = (track_id, write)
                 catalog_changed = catalog_changed or changed
+                request = requests_by_ordinal[ordinal]
+                if request.cover_url:
+                    artwork = connection.execute(
+                        "SELECT cover_url FROM local_album_artwork WHERE local_album_id=?",
+                        (write.album.id,),
+                    ).fetchone()
+                    if artwork is None:
+                        connection.execute(
+                            "INSERT INTO local_album_artwork "
+                            "(local_album_id,cover_url,source,source_locator,version,updated_at,row_revision) "
+                            "VALUES (?,?,'provider',?,1,?,1)",
+                            (
+                                write.album.id,
+                                request.cover_url,
+                                request.release_group_mbid,
+                                updated_at,
+                            ),
+                        )
+                        catalog_changed = True
+                    elif not artwork["cover_url"]:
+                        connection.execute(
+                            "UPDATE local_album_artwork SET cover_url=?,source='provider',"
+                            "source_locator=?,version=version+1,updated_at=?,"
+                            "row_revision=row_revision+1 WHERE local_album_id=?",
+                            (
+                                request.cover_url,
+                                request.release_group_mbid,
+                                updated_at,
+                                write.album.id,
+                            ),
+                        )
+                        catalog_changed = True
                 if replacement_id is not None and replacement_id != track_id:
                     replacement = connection.execute(
                         "SELECT local_album_id,availability,row_revision "

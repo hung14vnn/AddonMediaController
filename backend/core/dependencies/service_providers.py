@@ -1059,6 +1059,7 @@ def _build_file_processor(
         saving_storage_mode=policy.saving_storage_mode,
         download_store=get_download_store(),
         held_dir=Path(get_settings().cache_dir) / "held",
+        conversion_dir=Path(get_settings().cache_dir) / "conversion-staging",
         recycle_bin=resolve_bin_path(policy.recycle_bin_path, library_paths),
         library_root_ids=library_root_ids,
         publish_import_bundle=publish_import_bundle,
