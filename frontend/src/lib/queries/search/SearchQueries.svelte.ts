@@ -14,7 +14,8 @@ import type {
 	NativeAlbumsResponse,
 	NativeArtistsResponse,
 	SearchBucketResponse,
-	SearchSuggestResponse
+	SearchSuggestResponse,
+	SpotifyTrackResult
 } from '$lib/types';
 
 import { SearchQueryKeyFactory } from './SearchQueryKeyFactory';
@@ -35,6 +36,11 @@ export const successfulSuggestStaleTime = (query: {
 	query.state.data?.remote_status === 'ok'
 		? ttl('search', CACHE_TTL.SEARCH)
 		: SEARCH_FAILURE_STALE_TIME_MS;
+
+// Keep the combined artist query at the bucket page width so a navigation
+// can reuse the same provider profile. The combined view slices its display
+// window below.
+export const REMOTE_ARTIST_PAGE_SIZE = 24;
 
 // B7 prefetch surface: the two LOCAL buckets are warmed from routes/search/+page.ts.
 export const getLocalArtistSearchQueryOptions = (query: string, limit = 24) =>
@@ -66,19 +72,26 @@ export const getLocalAlbumSearchQueryOptions = (query: string, limit = 24) =>
 export const getLocalAlbumSearchQuery = (getQuery: Getter<string>, _limit = 24) =>
 	createQuery(() => getLocalAlbumSearchQueryOptions(getQuery().trim()));
 
-export const getRemoteArtistSearchQuery = (getQuery: Getter<string>, limit = 6) =>
-	createQuery(() => {
-		const query = getQuery().trim();
-		return {
-			enabled: enabled(query),
-			staleTime: successfulSearchStaleTime,
-			queryKey: SearchQueryKeyFactory.artists(authStore.user?.id, query, limit),
-			queryFn: ({ signal }) =>
-				api.global.get<SearchBucketResponse<Artist>>(API.search.artists(query, limit), {
-					signal
-				})
-		};
+export const getRemoteArtistSearchQueryOptions = (
+	query: string,
+	limit = REMOTE_ARTIST_PAGE_SIZE
+) => {
+	const normalizedQuery = query.trim();
+	return queryOptions({
+		enabled: enabled(normalizedQuery),
+		staleTime: successfulSearchStaleTime,
+		queryKey: SearchQueryKeyFactory.artists(authStore.user?.id, normalizedQuery, limit),
+		queryFn: ({ signal }) =>
+			api.global.get<SearchBucketResponse<Artist>>(API.search.artists(normalizedQuery, limit), {
+				signal
+			})
 	});
+};
+
+export const getRemoteArtistSearchQuery = (
+	getQuery: Getter<string>,
+	limit = REMOTE_ARTIST_PAGE_SIZE
+) => createQuery(() => getRemoteArtistSearchQueryOptions(getQuery(), limit));
 
 export const getRemoteAlbumSearchQuery = (getQuery: Getter<string>, limit = 24) =>
 	createQuery(() => {
@@ -89,6 +102,21 @@ export const getRemoteAlbumSearchQuery = (getQuery: Getter<string>, limit = 24) 
 			queryKey: SearchQueryKeyFactory.albums(authStore.user?.id, query, limit),
 			queryFn: ({ signal }) =>
 				api.global.get<SearchBucketResponse<Album>>(API.search.albums(query, limit), { signal })
+		};
+	});
+
+export const getSpotifyTrackSearchQuery = (getQuery: Getter<string>, limit = 10) =>
+	createQuery(() => {
+		const query = getQuery().trim();
+		return {
+			enabled: enabled(query),
+			staleTime: ttl('search', CACHE_TTL.SEARCH),
+			retry: false,
+			queryKey: SearchQueryKeyFactory.tracks(authStore.user?.id, query, limit),
+			queryFn: ({ signal }) =>
+				api.global.get<{ tracks: SpotifyTrackResult[] }>(API.search.tracks(query, limit), {
+					signal
+				})
 		};
 	});
 

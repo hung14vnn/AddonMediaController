@@ -8,6 +8,7 @@ from datetime import datetime
 
 import logging
 import os
+import asyncio
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -173,6 +174,7 @@ from core.exception_handlers import (
     client_disconnected_handler,
     configuration_error_handler,
     conflict_error_handler,
+    automatic_management_hold_handler,
     external_service_error_handler,
     general_exception_handler,
     http_exception_handler,
@@ -189,6 +191,7 @@ from core.exceptions import (
     ClientDisconnectedError,
     ConfigurationError,
     ConflictError,
+    AutomaticManagementHoldError,
     ExternalServiceError,
     PermissionDeniedError,
     ResourceNotFoundError,
@@ -197,7 +200,7 @@ from core.exceptions import (
     StaleRevisionError,
     ValidationError,
 )
-from infrastructure.resilience.retry import CircuitOpenError
+from infrastructure.resilience.retry import CircuitOpenError, CircuitState
 from core.task_registry import TaskRegistry
 from core.tasks import (
     start_cache_cleanup_task,
@@ -217,9 +220,14 @@ from services.native.library_scan_supervisor import (
     start_target_scan_supervisor,
 )
 from services.native.target_application_runtime import (
+    CONTRIBUTION_VERIFICATION_WORKER_TASK_NAME,
+    IDENTIFICATION_WORKER_TASK_NAME,
+    OPERATION_WORKER_TASK_NAME,
+    TARGET_WORKER_WATCHDOG_TASK_NAME,
     start_library_contribution_verification_worker,
     start_target_identification_worker,
     start_target_operation_worker,
+    start_target_worker_watchdog,
 )
 from services.native.target_application_lifecycle import (
     run_target_one_time_migrations,
@@ -624,10 +632,20 @@ async def production_target_lifespan(app: FastAPI):
         def library_enabled() -> bool:
             return get_preferences_service().get_typed_library_settings().enabled
 
-        def mb_provider_state():
-            from repositories.musicbrainz_base import mb_circuit_breaker
+        def start_scan_supervisor() -> asyncio.Task[None]:
+            return start_target_scan_supervisor(
+                get_target_library_scan_coordinator,
+                root_paths,
+                work_wakeups,
+                scheduler_getter=get_target_library_scan_scheduler,
+                resolver_getter=get_library_policy_resolver,
+                schedule_settings_getter=schedule_settings,
+            )
 
-            return mb_circuit_breaker.state
+        def mb_provider_state() -> CircuitState:
+            from repositories.musicbrainz_base import get_mb_provider_circuit_breaker
+
+            return get_mb_provider_circuit_breaker().state
 
         async def probe_mb_provider() -> None:
             # Resolve HALF_OPEN breaker state even when no foreground request is
@@ -641,32 +659,45 @@ async def production_target_lifespan(app: FastAPI):
                 priority=RequestPriority.BACKGROUND_SYNC,
             )
 
-        start_target_scan_supervisor(
-            get_target_library_scan_coordinator,
-            root_paths,
-            scheduler_getter=get_target_library_scan_scheduler,
-            resolver_getter=get_library_policy_resolver,
-            schedule_settings_getter=schedule_settings,
-        )
-        start_target_identification_worker(
-            get_target_identification_queue,
-            get_target_album_identification_service,
-            work_wakeups,
-            workload_gate=get_background_workload_gate(),
-            provider_state_getter=mb_provider_state,
-            probe_provider=probe_mb_provider,
-            enabled_getter=library_enabled,
-        )
-        start_target_operation_worker(
-            get_target_library_operation_supervisor,
-            work_wakeups,
-            recovery_getter=get_library_management_recovery_service,
-            enabled_getter=library_enabled,
-        )
-        start_library_contribution_verification_worker(
-            get_library_contribution_verification_worker,
-            work_wakeups,
-        )
+        def start_identification_worker() -> asyncio.Task[None]:
+            return start_target_identification_worker(
+                get_target_identification_queue,
+                get_target_album_identification_service,
+                work_wakeups,
+                workload_gate=get_background_workload_gate(),
+                provider_state_getter=mb_provider_state,
+                probe_provider=probe_mb_provider,
+                enabled_getter=library_enabled,
+            )
+
+        def start_operation_worker() -> asyncio.Task[None]:
+            return start_target_operation_worker(
+                get_target_library_operation_supervisor,
+                work_wakeups,
+                recovery_getter=get_library_management_recovery_service,
+                enabled_getter=library_enabled,
+            )
+
+        def start_contribution_worker() -> asyncio.Task[None]:
+            return start_library_contribution_verification_worker(
+                get_library_contribution_verification_worker,
+                work_wakeups,
+            )
+
+        worker_starters = {
+            SUPERVISOR_TASK_NAME: start_scan_supervisor,
+            IDENTIFICATION_WORKER_TASK_NAME: start_identification_worker,
+            OPERATION_WORKER_TASK_NAME: start_operation_worker,
+            CONTRIBUTION_VERIFICATION_WORKER_TASK_NAME: start_contribution_worker,
+        }
+        for start_worker in worker_starters.values():
+            start_worker()
+        start_target_worker_watchdog(worker_starters)
+        # (GH-293) Safe PASSIVE WAL checkpoint policy with high/low-water
+        # backpressure; registered, one sleep per iteration, never TRUNCATE.
+        from core.dependencies.service_providers import get_wal_checkpoint_service
+
+        start_target_wal_checkpoint_task(get_wal_checkpoint_service())
         await start_target_operational_runtime(
             settings=settings,
             preferences=preferences,
@@ -678,9 +709,19 @@ async def production_target_lifespan(app: FastAPI):
     try:
         yield
     finally:
-        await TaskRegistry.get_instance().cancel_all(
-            grace_period=settings.shutdown_grace_period
-        )
+        registry = TaskRegistry.get_instance()
+        # Stop the watchdog first so it cannot restart a worker while the
+        # remaining registered tasks are being cancelled.
+        await registry.cancel(TARGET_WORKER_WATCHDOG_TASK_NAME)
+        await registry.cancel_all(grace_period=settings.shutdown_grace_period)
+        try:
+            coordinator = get_target_library_scan_coordinator()
+            if hasattr(coordinator, "aclose"):
+                await coordinator.aclose()
+            elif hasattr(coordinator, "close"):
+                coordinator.close()  # type: ignore[call-arg]
+        except Exception:  # noqa: BLE001 - close must not hang shutdown
+            logger.exception("Failed to close scan coordinator")
         await cleanup_app_state(
             queue_manager_getter=get_target_discover_queue_manager,
             genre_prewarm_getter=get_target_genre_cover_prewarm_service,
@@ -709,6 +750,7 @@ def create_production_target_application() -> FastAPI:
         (ConfigurationError, configuration_error_handler),
         (PermissionDeniedError, permission_denied_handler),
         (ConflictError, conflict_error_handler),
+        (AutomaticManagementHoldError, automatic_management_hold_handler),
         (StaleRevisionError, stale_revision_error_handler),
         (RevisionOverflowError, revision_overflow_error_handler),
         (CircuitOpenError, circuit_open_error_handler),
@@ -766,7 +808,9 @@ def create_production_target_application() -> FastAPI:
         routes=[*subsonic_router.routes, *jellyfin_router.routes],
     )
     # Legacy settings doubles omit base_path; absence means unprefixed serving.
-    app.add_middleware(BasePathMiddleware, base_path=getattr(get_settings(), "base_path", ""))
+    app.add_middleware(
+        BasePathMiddleware, base_path=getattr(get_settings(), "base_path", "")
+    )
     app.add_middleware(
         ProxyHeadersMiddleware, trusted_hosts=get_settings().trusted_proxy_ips
     )

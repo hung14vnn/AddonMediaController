@@ -45,5 +45,5 @@
 {:else if localArtist && !providerArtistId && !data.preferProvider}
 	<LocalArtistPage artistId={localArtist.id} />
 {:else}
-	<ProviderArtistPage {data} />
+	<ProviderArtistPage {data} {localArtist} />
 {/if}

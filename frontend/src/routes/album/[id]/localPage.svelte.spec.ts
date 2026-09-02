@@ -12,7 +12,8 @@ const h = vi.hoisted(() => ({
 vi.mock('$app/state', () => ({ page: { params: { id: 'local-album-1' } } }));
 vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => h.goto(...args) }));
 vi.mock('$lib/stores/authStore.svelte', () => ({
-	authStore: h.authStore
+	authStore: h.authStore,
+	LAST_USER_ID_KEY: 'test:last-user'
 }));
 vi.mock('$lib/stores/player.svelte', () => ({
 	playerStore: { playQueue: (...args: unknown[]) => h.playQueue(...args) }

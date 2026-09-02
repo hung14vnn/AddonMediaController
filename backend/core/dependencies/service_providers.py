@@ -30,6 +30,7 @@ from .cache_providers import (
     get_genre_index,
     get_youtube_store,
     get_mbid_store,
+    get_mb_canonical_store,
     get_sync_state_store,
     get_discovery_snapshot_store,
     get_preferences_service,
@@ -508,10 +509,10 @@ def get_library_administrative_work_service() -> "LibraryAdministrativeWorkServi
 
 
 def get_mb_provider_availability() -> Callable[[], bool]:
-    """Return whether the MusicBrainz circuit breaker currently allows work."""
-    from repositories.musicbrainz_base import mb_circuit_breaker
+    """Live MusicBrainz breaker read shared by identification and activity routes."""
+    from repositories.musicbrainz_base import get_mb_provider_circuit_breaker
 
-    return lambda: not mb_circuit_breaker.is_open()
+    return lambda: not get_mb_provider_circuit_breaker().is_open()
 
 
 @singleton
@@ -1363,6 +1364,11 @@ def get_follow_service() -> "FollowService":
 
 
 @singleton
+def get_release_type_policy_transition_lock() -> asyncio.Lock:
+    return asyncio.Lock()
+
+
+@singleton
 def get_lidarr_import_service() -> "LidarrImportService":
     from services.lidarr_import_service import LidarrImportService
 
@@ -1388,6 +1394,8 @@ def _build_new_release_service(*, library_repo, acquisition) -> "NewReleaseServi
         download_store=get_download_store(),
         library_repo=library_repo,
         sse_publisher=get_sse_publisher(),
+        preferences_service=get_preferences_service(),
+        policy_transition_lock=get_release_type_policy_transition_lock(),
     )
 
 
@@ -2035,6 +2043,7 @@ def get_settings_service() -> "SettingsService":
         preferences_service,
         cache,
         discovery_snapshot_store=get_discovery_snapshot_store(),
+        disk_cache=get_disk_cache(),
     )
 
 
@@ -2048,6 +2057,7 @@ def get_target_settings_service() -> "SettingsService":
         navidrome_library_getter=get_target_navidrome_library_service,
         plex_library_getter=get_target_plex_library_service,
         discovery_snapshot_store=get_discovery_snapshot_store(),
+        disk_cache=get_disk_cache(),
     )
 
 
@@ -2123,6 +2133,7 @@ def _build_album_discovery_service(library_repo, library_db) -> "AlbumDiscoveryS
         listenbrainz_repo=listenbrainz_repo,
         library_db=library_db,
         mbid_store=get_mbid_store(),
+        mb_canonical_store=get_mb_canonical_store(),
     )
     return AlbumDiscoveryService(
         listenbrainz_repo=listenbrainz_repo,
@@ -2263,13 +2274,13 @@ def _build_discover_service(
     lastfm_repo = get_lastfm_repository()
     audiodb_image_service = get_audiodb_image_service()
     genre_index = genre_index or get_genre_index()
-
     radio_mbid_svc = MbidResolutionService(
         musicbrainz_repo=musicbrainz_repo,
         library_repo=library_repo,
         listenbrainz_repo=listenbrainz_repo,
         library_db=library_db,
         mbid_store=mbid_store,
+        mb_canonical_store=get_mb_canonical_store(),
     )
     radio_integration = IntegrationHelpers(preferences_service)
     radio_service = DiscoverRadioService(
@@ -2308,6 +2319,7 @@ def _build_discover_service(
         genre_artwork_service=genre_artwork_service,
         discovery_snapshot_store=get_discovery_snapshot_store(),
         workload_gate=get_background_workload_gate(),
+        mb_canonical_store=get_mb_canonical_store(),
     )
 
 

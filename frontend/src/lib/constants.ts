@@ -605,8 +605,8 @@ export const API = {
 		albums: (query: string, limit = 50, offset = 0) =>
 			`/api/v1/search/albums?q=${encodeURIComponent(query)}&limit=${limit}${offset ? `&offset=${offset}` : ''}`,
 		enrichment: () => '/api/v1/search/enrich/batch',
-		tracks: (query: string, limit = 10) =>
-			`/api/v1/search?q=${encodeURIComponent(query.trim())}&buckets=artists,albums&limit_artists=0&limit_albums=0&limit_per_bucket=${limit}`,
+		tracks: (query: string, _limit = 10) =>
+			`/api/v1/search?q=${encodeURIComponent(query.trim())}&buckets=tracks&limit_artists=0&limit_albums=0`,
 		suggest: (query: string, limit = 5) =>
 			`/api/v1/search/suggest?q=${encodeURIComponent(query.trim())}&limit=${limit}`
 	},
@@ -678,7 +678,10 @@ export const API = {
 	settingsLocalFiles: () => '/api/v1/settings/local-files',
 	settingsLocalFilesVerify: () => '/api/v1/settings/local-files/verify',
 	settingsMusicbrainz: () => '/api/v1/settings/musicbrainz',
+	settingsMusicbrainzBrainzMashStage: () => '/api/v1/settings/musicbrainz/brainzmash/stage',
+	settingsMusicbrainzBrainzMashConsent: () => '/api/v1/settings/musicbrainz/brainzmash/consent',
 	settingsMusicbrainzVerify: () => '/api/v1/settings/musicbrainz/verify',
+	settingsMusicbrainzActivate: () => '/api/v1/settings/musicbrainz/activate',
 	settingsSpotify: () => '/api/v1/settings/spotify',
 	settingsSpotifyRedirectUri: () => '/api/v1/settings/spotify/redirect-uri',
 	settingsGetIt: () => '/api/v1/settings/get-it',

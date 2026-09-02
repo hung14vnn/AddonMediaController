@@ -85,7 +85,10 @@ vi.mock('$lib/queries/artist/ArtistQueries.svelte', () => ({
 	updateArtistReleaseInCache: vi.fn()
 }));
 
-vi.mock('$lib/queries/QueryClient', () => ({ invalidateQueriesWithPersister: vi.fn() }));
+vi.mock('$lib/queries/QueryClient', () => ({
+	invalidateQueriesWithPersister: vi.fn(),
+	setQueryDataWithPersister: vi.fn()
+}));
 vi.mock('$lib/queries/downloads/DownloadMutations.svelte', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/queries/downloads/DownloadMutations.svelte')>()),
 	requestAlbum: () => ({
