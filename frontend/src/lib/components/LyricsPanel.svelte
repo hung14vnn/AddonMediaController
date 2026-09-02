@@ -32,8 +32,8 @@
 		coverUrl?: string | null;
 		duration?: number;
 		isrc?: string;
+		/** Legacy test/embedding override; the player leaves this enabled. */
 		preferWordSynced?: boolean;
-		source?: string;
 		onseek?: (seconds: number) => void;
 		isPlaying?: boolean;
 		hasPrevious?: boolean;
@@ -68,7 +68,6 @@
 		duration = 0,
 		isrc = '',
 		preferWordSynced = true,
-		source = '',
 		onseek = () => {},
 		isPlaying = false,
 		hasPrevious = false,
@@ -90,40 +89,19 @@
 	let scrollContainer: HTMLDivElement | undefined = $state();
 	let userScrolling = $state(false);
 	let scrollTimeout: ReturnType<typeof setTimeout> | undefined;
-	let viewMode = $state<'word' | 'library'>('word');
-	let timingOffsetMs = $state(0);
+	let wordSyncedAvailable = $state<boolean | null>(null);
 	let previousTrackKey: string | null = null;
 
-	const hasLibraryLyrics = $derived(lines.length > 0 || lyricsText.trim().length > 0);
-	const adjustedTime = $derived(Math.max(0, currentTime - timingOffsetMs / 1000));
+	const showWordSynced = $derived(wordSyncedAvailable !== false);
 
 	$effect(() => {
 		if (trackKey === previousTrackKey) return;
 		previousTrackKey = trackKey;
-		viewMode = preferWordSynced ? 'word' : 'library';
-		if (typeof localStorage !== 'undefined' && trackKey) {
-			timingOffsetMs = Number(localStorage.getItem(`lyrics-offset-${trackKey}`) ?? 0) || 0;
-		} else {
-			timingOffsetMs = 0;
-		}
+		wordSyncedAvailable = preferWordSynced ? null : false;
 	});
 
-	function adjustTiming(deltaMs: number) {
-		timingOffsetMs = Math.max(-10_000, Math.min(10_000, timingOffsetMs + deltaMs));
-		if (typeof localStorage !== 'undefined' && trackKey) {
-			localStorage.setItem(`lyrics-offset-${trackKey}`, String(timingOffsetMs));
-		}
-	}
-
-	function resetTiming() {
-		timingOffsetMs = 0;
-		if (typeof localStorage !== 'undefined' && trackKey) {
-			localStorage.removeItem(`lyrics-offset-${trackKey}`);
-		}
-	}
-
 	function seekFromLyrics(seconds: number) {
-		onseek(Math.max(0, seconds + timingOffsetMs / 1000));
+		onseek(Math.max(0, seconds));
 	}
 
 	function formatTime(seconds: number): string {
@@ -144,7 +122,7 @@
 		if (timedLines.length === 0) return -1;
 		let idx = -1;
 		for (let i = 0; i < timedLines.length; i++) {
-			if ((timedLines[i].start_seconds ?? 0) <= adjustedTime) {
+			if ((timedLines[i].start_seconds ?? 0) <= currentTime) {
 				idx = i;
 			} else {
 				break;
@@ -179,6 +157,8 @@
 
 <div
 	class:hidden={!open}
+	class:pointer-events-none={!open}
+	style:pointer-events={open ? 'auto' : 'none'}
 	class="lyrics-stage fixed inset-0 z-[60] flex flex-col overflow-hidden bg-base-100 text-white"
 	role="dialog"
 	aria-label="Lyrics"
@@ -195,7 +175,7 @@
 		transition:slide={{ duration: 250 }}
 	>
 		<div
-			class="relative z-30 flex items-center justify-between gap-3 px-5 py-4 sm:px-8 pointer-events-auto"
+			class="lyrics-stage-header relative z-30 flex items-center justify-between gap-3 px-5 sm:px-8 pointer-events-auto"
 		>
 			<div class="flex items-center gap-2 min-w-0 flex-1">
 				<Music2 class="h-4 w-4 text-white/75 shrink-0" />
@@ -205,20 +185,6 @@
 					{/if}
 					{#if artistName}
 						<p class="text-xs text-white/55 truncate">{formatArtistCredit(artistName)}</p>
-					{/if}
-				</div>
-				<div class="segmented-control shrink-0" aria-label="Lyrics view">
-					<button
-						class:active={viewMode === 'word'}
-						onclick={() => (viewMode = 'word')}
-						aria-label="Word-synced lyrics">Word sync</button
-					>
-					{#if hasLibraryLyrics}
-						<button
-							class:active={viewMode === 'library'}
-							onclick={() => (viewMode = 'library')}
-							aria-label="Library lyrics">Library</button
-						>
 					{/if}
 				</div>
 			</div>
@@ -262,6 +228,27 @@
 					aria-label="Toggle queue"
 					title="Queue"><ListMusic class="h-4 w-4" /></button
 				>
+				{#if karaokeAvailable}
+					<button
+						class="btn btn-ghost btn-xs btn-circle"
+						class:text-accent={karaokeActive ||
+							karaokeStatus === 'preparing' ||
+							karaokeStatus === 'queued' ||
+							karaokeStatus === 'processing'}
+						disabled={karaokeStatus === 'preparing' ||
+							karaokeStatus === 'queued' ||
+							karaokeStatus === 'processing'}
+						onclick={ontogglekaraoke}
+						aria-label={karaokeActive ? 'Turn off karaoke' : 'Start karaoke'}
+						title={karaokeActive ? 'Turn off karaoke' : 'Karaoke'}
+					>
+						{#if karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'}
+							<span class="loading loading-spinner loading-xs"></span>
+						{:else}
+							<Mic class="h-4 w-4" />
+						{/if}
+					</button>
+				{/if}
 				<button
 					class="btn btn-ghost btn-sm btn-circle"
 					onclick={() => {
@@ -276,16 +263,37 @@
 		</div>
 
 		<div class="relative z-0 min-h-0 flex-1">
-			{#if viewMode === 'word'}
+			{#if karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'}
+				<div
+					class="absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-base-100/85 px-4 py-2 text-sm shadow-lg backdrop-blur"
+				>
+					<Loader2 class="h-4 w-4 animate-spin text-accent" />
+					{karaokeStatus === 'preparing'
+						? 'Preparing karaoke...'
+						: karaokeStatus === 'queued'
+							? 'Karaoke is queued'
+							: 'Creating karaoke stems...'}
+				</div>
+			{:else if karaokeStatus === 'failed'}
+				<div
+					class="absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-full bg-error/15 px-4 py-2 text-sm text-error"
+				>
+					{karaokeError || 'Karaoke generation failed'}
+				</div>
+			{/if}
+			{#if showWordSynced}
 				{#key trackKey}
 					<WordSyncedLyrics
 						title={trackName}
 						artist={artistName}
 						album={albumName}
 						durationSeconds={duration}
-						currentTimeSeconds={adjustedTime}
+						currentTimeSeconds={currentTime}
 						{isrc}
 						onseek={seekFromLyrics}
+						onavailability={(available) => {
+							wordSyncedAvailable = available;
+						}}
 					/>
 				{/key}
 			{:else}
@@ -294,20 +302,6 @@
 					class="scrollbar-hide h-full overflow-y-auto px-8 py-[22vh]"
 					onscroll={onUserScroll}
 				>
-					{#if karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'}
-						<div
-							class="sticky top-0 z-10 mx-auto mb-8 flex w-fit items-center gap-2 rounded-full bg-base-100/85 px-4 py-2 text-sm shadow-lg backdrop-blur"
-						>
-							<Loader2 class="h-4 w-4 animate-spin text-accent" />
-							{karaokeStatus === 'queued' ? 'Karaoke is queued' : 'Creating karaoke stems...'}
-						</div>
-					{:else if karaokeStatus === 'failed'}
-						<div
-							class="sticky top-0 z-10 mx-auto mb-8 w-fit rounded-full bg-error/15 px-4 py-2 text-sm text-error"
-						>
-							{karaokeError || 'Karaoke generation failed'}
-						</div>
-					{/if}
 					{#if isLoading}
 						<div class="flex flex-col items-center justify-center py-12 gap-3">
 							<Loader2 class="h-6 w-6 animate-spin text-primary" />
@@ -336,7 +330,7 @@
 								>
 									{#if line.words.length > 0}
 										{@const activeWordIndex =
-											i === activeLineIndex ? activeLyricWordIndex(line.words, adjustedTime) : -1}
+											i === activeLineIndex ? activeLyricWordIndex(line.words, currentTime) : -1}
 										{#each line.words as word, wordIndex (wordIndex)}
 											<span
 												class="lyrics-word transition-colors duration-150"
@@ -385,43 +379,6 @@
 				<span class="text-[10px] tabular-nums text-base-content/60">{Math.round(vocalLevel)}%</span>
 			</div>
 		{/if}
-
-		<div class="px-5 py-3 sm:px-8 flex items-center justify-between gap-3 text-xs text-white/55">
-			<div class="flex gap-2">
-				{#if viewMode === 'word'}
-					<span>LyricsPlus · Apple Music fallback</span>
-				{:else}
-					{#if isSynced}<span class="badge badge-xs border-white/20 bg-white/10 text-white"
-							>Synced</span
-						>{/if}
-					{#if source === 'lrclib'}<span>Lyrics from LRCLIB</span>{/if}
-				{/if}
-			</div>
-			<div class="timing-controls" aria-label="Lyrics timing offset">
-				<button onclick={() => adjustTiming(-500)} aria-label="Lyrics earlier by half a second"
-					>−</button
-				>
-				<button onclick={resetTiming} title="Reset timing offset"
-					>{timingOffsetMs >= 0 ? '+' : ''}{(timingOffsetMs / 1000).toFixed(1)}s</button
-				>
-				<button onclick={() => adjustTiming(500)} aria-label="Lyrics later by half a second"
-					>+</button
-				>
-			</div>
-			{#if karaokeAvailable}
-				<button
-					class="btn btn-sm rounded-full {karaokeActive ? 'btn-accent' : 'btn-ghost'}"
-					disabled={karaokeStatus === 'preparing' ||
-						karaokeStatus === 'queued' ||
-						karaokeStatus === 'processing'}
-					onclick={ontogglekaraoke}
-					aria-label={karaokeActive ? 'Turn off karaoke' : 'Create or enable karaoke'}
-				>
-					<Mic class="h-4 w-4" />
-					{karaokeActive ? 'Karaoke on' : karaokeStatus === 'ready' ? 'Enable karaoke' : 'Karaoke'}
-				</button>
-			{/if}
-		</div>
 	</div>
 </div>
 
@@ -436,50 +393,17 @@
 		opacity: 0.2;
 	}
 
+	/* The lyrics view fills the viewport, so its controls must start below the
+	   iPhone Dynamic Island/notch safe area. */
+	.lyrics-stage-header {
+		padding-top: calc(1rem + env(safe-area-inset-top, 0px));
+		padding-bottom: 1rem;
+	}
+
 	.lyrics-wash {
 		position: absolute;
 		inset: 0;
 		background: linear-gradient(180deg, rgba(5, 5, 5, 0.45), rgba(5, 5, 5, 0.86));
-	}
-	.segmented-control,
-	.timing-controls {
-		display: flex;
-		align-items: center;
-		gap: 0.2rem;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.05);
-		padding: 0.2rem;
-		backdrop-filter: blur(16px);
-	}
-
-	.segmented-control button,
-	.timing-controls button {
-		border: 0;
-		border-radius: 999px;
-		background: transparent;
-		color: rgba(255, 255, 255, 0.58);
-		padding: 0.35rem 0.7rem;
-		font-size: 0.72rem;
-		font-weight: 650;
-		transition: 180ms ease;
-	}
-
-	.segmented-control button:hover,
-	.timing-controls button:hover,
-	.segmented-control button.active {
-		background: rgba(255, 255, 255, 0.12);
-		color: white;
-	}
-
-	@media (max-width: 640px) {
-		.segmented-control {
-			position: absolute;
-			top: 4.6rem;
-			left: 50%;
-			z-index: 20;
-			transform: translateX(-50%);
-		}
 	}
 
 	.vocal-level-slider {

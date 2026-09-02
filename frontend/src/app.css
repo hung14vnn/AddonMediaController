@@ -825,7 +825,7 @@ textarea {
 	left: 0;
 	z-index: 60;
 	display: grid;
-	grid-template-columns: repeat(5, minmax(0, 1fr));
+	grid-template-columns: repeat(7, minmax(0, 1fr));
 	min-height: calc(var(--ms-bottom-nav-height) + var(--ms-safe-bottom));
 	padding: 0.45rem 0.5rem calc(0.45rem + var(--ms-safe-bottom));
 	border-top: 1px solid oklch(from var(--color-base-content) l c h / 0.08);
@@ -842,6 +842,7 @@ textarea {
 	min-height: 3.5rem;
 	align-items: center;
 	justify-content: center;
+	flex-direction: column;
 	gap: 0.2rem;
 	border-radius: 0.75rem;
 	color: oklch(from var(--color-base-content) l c h / 0.62);
@@ -1420,6 +1421,32 @@ textarea {
 }
 .deck-visualiser.is-active {
 	opacity: 0.2;
+}
+
+.local-lyrics-artwork {
+	position: absolute;
+	inset: -15%;
+	height: 130%;
+	width: 130%;
+	object-fit: cover;
+	filter: blur(48px) saturate(1.15);
+	opacity: 0.2;
+}
+
+.local-lyrics-wash {
+	position: absolute;
+	inset: 0;
+	background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012));
+	backdrop-filter: blur(18px) saturate(0.8);
+	-webkit-backdrop-filter: blur(18px) saturate(0.8);
+}
+
+.glass-surface {
+	background: linear-gradient(135deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015));
+	border-color: rgba(255, 255, 255, 0.09);
+	backdrop-filter: blur(18px) saturate(0.82);
+	-webkit-backdrop-filter: blur(18px) saturate(0.82);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
 }
 
 .decade-card {

@@ -334,4 +334,21 @@ describe('AuthenticatedAppShell sidebar scroll at short desktop heights (#281)',
 			{ timeout: 3000 }
 		);
 	});
+
+	it('shows the mobile navigation entries with labels below their icons', async () => {
+		await page.viewport(390, 844);
+		renderLayout();
+
+		const nav = page.getByRole('navigation', { name: 'Primary navigation' });
+		await expect.element(nav).toBeInTheDocument();
+		await expect.element(nav.getByRole('link', { name: 'Downloads' })).toBeInTheDocument();
+		await expect.element(nav.getByRole('link', { name: 'Playlists' })).toBeInTheDocument();
+
+		const navElement = nav.element();
+		expect(navElement.querySelectorAll('.droppedneedle-bottom-nav__item')).toHaveLength(7);
+		expect(getComputedStyle(navElement).gridTemplateColumns.split(' ')).toHaveLength(7);
+		expect(
+			getComputedStyle(navElement.querySelector('.droppedneedle-bottom-nav__item')!).flexDirection
+		).toBe('column');
+	});
 });

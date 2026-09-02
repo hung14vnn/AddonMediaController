@@ -15,6 +15,7 @@
 		currentTimeSeconds?: number;
 		isrc?: string;
 		onseek?: (seconds: number) => void;
+		onavailability?: (available: boolean) => void;
 	}
 
 	let {
@@ -25,11 +26,13 @@
 		currentTimeSeconds = 0,
 		isrc = '',
 		onseek = () => {},
+		onavailability = () => {}
 	}: Props = $props();
 
 	let element = $state<AmLyricsElement | null>(null);
 	let loading = $state(true);
 	let failed = $state(false);
+	let lyricsObserver: MutationObserver | undefined;
 
 	function applyAttributes(target: AmLyricsElement) {
 		target.setAttribute('song-title', title);
@@ -77,6 +80,16 @@
 		root.appendChild(style);
 	}
 
+	function reportAvailability(target: AmLyricsElement): void {
+		const root = target.shadowRoot;
+		if (!root) return;
+		if (root.querySelector('.lyrics-line')) {
+			onavailability(true);
+		} else if (root.querySelector('.no-lyrics')) {
+			onavailability(false);
+		}
+	}
+
 	onMount(() => {
 		let disposed = false;
 		const handleLineClick = (event: Event) => {
@@ -95,6 +108,12 @@
 				(target as AmLyricsElement & { fetchLyrics?: () => void }).fetchLyrics?.();
 				target.currentTime = Math.max(0, currentTimeSeconds * 1000);
 				target.addEventListener('line-click', handleLineClick);
+				const root = target.shadowRoot;
+				if (root) {
+					lyricsObserver = new MutationObserver(() => reportAvailability(target));
+					lyricsObserver.observe(root, { childList: true, subtree: true });
+				}
+				reportAvailability(target);
 				loading = false;
 				injectMonochromeStyle(target);
 			})
@@ -103,11 +122,14 @@
 				if (!disposed) {
 					loading = false;
 					failed = true;
+					onavailability(false);
 				}
 			});
 
 		return () => {
 			disposed = true;
+			lyricsObserver?.disconnect();
+			lyricsObserver = undefined;
 			element?.removeEventListener('line-click', handleLineClick);
 		};
 	});
@@ -125,7 +147,8 @@
 
 <div class="word-synced-shell">
 	<div class="word-synced-host" aria-label="Word-synced lyrics">
-		<am-lyrics bind:this={element} translation-language="vi" class="word-synced-element"></am-lyrics>
+		<am-lyrics bind:this={element} translation-language="vi" class="word-synced-element" hide-source-footer=true
+		></am-lyrics>
 	</div>
 	{#if loading}
 		<div class="word-synced-status">

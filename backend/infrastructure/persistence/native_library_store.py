@@ -350,7 +350,8 @@ def _user_track_access_clause(track_alias: str = "t") -> str:
     """Return the provider-identity predicate for one user's library selection."""
     return (
         "EXISTS (SELECT 1 FROM library_user_selections access "
-        "WHERE access.user_id = ? AND ((access.item_kind = 'album' AND ("
+        "WHERE access.user_id = ? AND ("
+        "(access.item_kind = 'album' AND ("
         f"LOWER(COALESCE({track_alias}.embedded_release_group_mbid, '')) = access.provider_id "
         "OR EXISTS (SELECT 1 FROM local_album_external_identities access_album "
         f"WHERE access_album.local_album_id = {track_alias}.local_album_id "
@@ -359,13 +360,15 @@ def _user_track_access_clause(track_alias: str = "t") -> str:
         f"LOWER(COALESCE({track_alias}.embedded_recording_mbid, '')) = access.provider_id "
         "OR EXISTS (SELECT 1 FROM local_track_external_identities access_track "
         f"WHERE access_track.local_track_id = {track_alias}.id "
-        "AND LOWER(access_track.recording_mbid) = access.provider_id))) "
-        "AND NOT EXISTS (SELECT 1 FROM library_user_exclusions excluded "
+        "AND LOWER(access_track.recording_mbid) = access.provider_id)))"
+        ") AND NOT EXISTS (SELECT 1 FROM library_user_exclusions excluded "
         "WHERE excluded.user_id = access.user_id AND excluded.item_kind = 'track' "
         f"AND (LOWER(COALESCE({track_alias}.embedded_recording_mbid, '')) = excluded.provider_id "
         "OR EXISTS (SELECT 1 FROM local_track_external_identities excluded_track "
         f"WHERE excluded_track.local_track_id = {track_alias}.id "
-        "AND LOWER(excluded_track.recording_mbid) = excluded.provider_id))))"
+        "AND LOWER(excluded_track.recording_mbid) = excluded.provider_id))"
+        ")"
+        ")"
     )
 
 _LEGACY_MIGRATION_TABLE_ORDER = {
@@ -1296,6 +1299,7 @@ class NativeLibraryStore(PersistenceBase):
                 "ALTER TABLE library_work_control ADD COLUMN high_priority_claim_count INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE library_identification_jobs ADD COLUMN provider_reset_count INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE local_albums ADD COLUMN management_schedule_pending INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE local_tracks ADD COLUMN embedded_release_group_mbid TEXT",
                 "ALTER TABLE local_tracks ADD COLUMN embedded_release_mbid TEXT",
                 "ALTER TABLE local_tracks ADD COLUMN embedded_recording_mbid TEXT",
                 "ALTER TABLE local_tracks ADD COLUMN embedded_release_track_mbid TEXT",
@@ -5255,7 +5259,7 @@ class NativeLibraryStore(PersistenceBase):
                 unique_tracks.append(track)
             if not unique_tracks:
                 return []
-            tracks = unique_tracks
+            tracks_to_insert = unique_tracks
             current_count = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM library_playlist_tracks WHERE playlist_id = ?",
@@ -5276,10 +5280,10 @@ class NativeLibraryStore(PersistenceBase):
                 for row in rows:
                     connection.execute(
                         "UPDATE library_playlist_tracks SET position = ? WHERE id = ?",
-                        (int(row["position"]) + len(tracks), row["id"]),
+                        (int(row["position"]) + len(tracks_to_insert), row["id"]),
                     )
             created: list[dict[str, Any]] = []
-            for index, track in enumerate(tracks):
+            for index, track in enumerate(tracks_to_insert):
                 source_type = str(track.get("source_type") or "")
                 candidate_id = track.get("library_file_id")
                 if not candidate_id and source_type in {

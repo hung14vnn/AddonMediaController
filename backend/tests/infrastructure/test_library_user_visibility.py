@@ -115,3 +115,30 @@ async def test_catalog_is_global_but_library_lists_are_user_selected(
 
     with sqlite3.connect(db_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM local_tracks").fetchone()[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_user_scoped_reads_migrate_missing_embedded_release_group_column(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "library.db"
+    NativeLibraryStore(db_path, threading.Lock())
+
+    # Databases created before the target catalog schema included the embedded
+    # release-group tag can still be opened by the current application.  Admin
+    # reads do not reference this column, while user-scoped reads do.
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "ALTER TABLE local_tracks DROP COLUMN embedded_release_group_mbid"
+        )
+
+    migrated = NativeLibraryStore(db_path, threading.Lock())
+    with sqlite3.connect(db_path) as connection:
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(local_tracks)")
+        }
+    assert "embedded_release_group_mbid" in columns
+    assert await migrated.get_target_library_stats(user_id="user-1")
+    tracks, total = await migrated.list_target_tracks(user_id="user-1")
+    assert tracks == []
+    assert total == 0

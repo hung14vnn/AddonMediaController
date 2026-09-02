@@ -18,7 +18,6 @@
 	import Turntable from '$lib/components/local/Turntable.svelte';
 	import Crate from '$lib/components/local/Crate.svelte';
 	import SearchCard from '$lib/components/local/SearchCard.svelte';
-	import DeckVisualiser from '$lib/components/local/DeckVisualiser.svelte';
 	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import {
@@ -253,30 +252,17 @@
 <svelte:head><title>Listening Room &middot; hify</title></svelte:head>
 
 <div class="listening-room relative isolate">
-	{#if heroCover}
-		<div
-			class="pointer-events-none fixed inset-0 z-0 bg-cover bg-center transition-opacity duration-1000"
-			style="background-image:url({heroCover}); opacity:0.2; filter:blur(48px) saturate(1.15);"
-		></div>
-	{/if}
-	<div
-		class="pointer-events-none fixed inset-0 z-0 bg-gradient-to-b from-base-100/60 via-base-100/80 to-base-100"
-	></div>
-
 	<section
 		bind:this={heroEl}
-		class="relative z-10 isolate flex min-h-[calc(100dvh-4.5rem)] flex-col px-4 pt-5 sm:px-6 lg:px-8"
+		class="relative z-10 isolate flex min-h-[calc(100dvh-4.5rem)] flex-col overflow-hidden px-4 pt-5 sm:px-6 lg:px-8"
 	>
-		<DeckVisualiser {reducedMotion} />
-
-		<header class="mb-4 flex items-center gap-3">
-			<div>
-				<p class="text-xs text-base-content/50">
-					{#if stats}{stats.total_tracks.toLocaleString()} tracks &middot; {stats.total_artists} artists
-						&middot; {stats.total_size_human}{:else}Your local music, ready to spin{/if}
-				</p>
-			</div>
-		</header>
+		{#if heroCover}
+			<img class="local-lyrics-artwork pointer-events-none absolute -z-20" src={heroCover} alt="" />
+			<div
+				class="local-lyrics-wash pointer-events-none absolute inset-0 -z-10"
+				aria-hidden="true"
+			></div>
+		{/if}
 
 		<div class="grid flex-1 grid-cols-1 items-center gap-6 lg:grid-cols-12">
 			<div class="lg:col-span-7 xl:col-span-8">
@@ -295,9 +281,7 @@
 				class="flex flex-col gap-4 lg:col-span-5 lg:h-[var(--deck-h)] xl:col-span-4"
 				style:--deck-h={deckHeight ? `${deckHeight}px` : '44rem'}
 			>
-				<div
-					class="min-h-0 flex-[3] rounded-3xl border border-base-content/5 bg-base-200/30 p-3 backdrop-blur-sm"
-				>
+				<div class="glass-surface min-h-0 flex-[3] rounded-3xl border border-base-content/5 p-3">
 					<Crate
 						tracks={crateTracks}
 						isLoading={suggestionsQuery.isLoading || suggestionsQuery.isFetching}
@@ -312,9 +296,7 @@
 						onQueueAlbum={queueAlbum}
 					/>
 				</div>
-				<div
-					class="min-h-0 flex-[2] rounded-3xl border border-base-content/5 bg-base-200/30 p-3 backdrop-blur-sm"
-				>
+				<div class="glass-surface min-h-0 flex-[2] rounded-3xl border border-base-content/5 p-3">
 					<SearchCard
 						{reducedMotion}
 						onPlayTrack={searchPlayTrack}

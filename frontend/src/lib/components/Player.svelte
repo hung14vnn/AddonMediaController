@@ -25,8 +25,8 @@
 	import { getNavidromeFolderScopeRevision } from '$lib/utils/navidromeLibraryCache';
 	import {
 		X,
-		Eye,
-		EyeOff,
+		ChevronDown,
+		ChevronUp,
 		Music,
 		Disc3,
 		Shuffle,
@@ -162,7 +162,7 @@
 			aria-label="Hide player"
 			title="Hide player"
 		>
-			<EyeOff class="h-3.5 w-3.5" />
+			<ChevronDown class="h-3.5 w-3.5" />
 		</button>
 
 		<div
@@ -335,25 +335,15 @@
 						<SkipForward class="h-4 w-4 fill-current" />
 					</button>
 
-					{#if playerStore.currentQueueItem?.sourceType === 'local'}
-						<button
-							class="btn btn-ghost btn-sm btn-circle md:hidden"
-							class:text-accent={playerStore.karaokeActive ||
-								karaokeStatus === 'processing' ||
-								karaokeStatus === 'queued'}
-							disabled={karaokeStatus === 'preparing' ||
-								karaokeStatus === 'queued' ||
-								karaokeStatus === 'processing'}
-							onclick={toggleKaraoke}
-							aria-label="Karaoke controls"
-						>
-							{#if karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'}
-								<span class="loading loading-spinner loading-xs"></span>
-							{:else}
-								<Mic class="h-4 w-4" />
-							{/if}
-						</button>
-					{/if}
+					<button
+						class="btn btn-ghost btn-sm btn-circle md:hidden"
+						class:text-accent={lyricsPanelOpen}
+						onclick={toggleLyrics}
+						disabled={!supportsLyrics}
+						aria-label="Open lyrics"
+					>
+						<Music2 class="h-4 w-4" />
+					</button>
 				</div>
 
 				<div class="hidden sm:flex items-center gap-2 w-full max-w-lg">
@@ -399,21 +389,6 @@
 					</button>
 				</div>
 
-				<div
-					class="tooltip tooltip-left"
-					data-tip={supportsLyrics ? 'Lyrics' : 'Lyrics unavailable for this track'}
-				>
-					<button
-						class="btn btn-ghost btn-sm btn-circle"
-						class:text-accent={lyricsPanelOpen}
-						onclick={toggleLyrics}
-						disabled={!supportsLyrics}
-						aria-label="Toggle lyrics"
-					>
-						<Music2 class="h-4 w-4" />
-					</button>
-				</div>
-
 				{#if playerStore.currentQueueItem?.sourceType === 'local'}
 					<div
 						class="tooltip tooltip-left"
@@ -438,6 +413,21 @@
 						</button>
 					</div>
 				{/if}
+
+				<div
+					class="tooltip tooltip-left"
+					data-tip={supportsLyrics ? 'Lyrics' : 'Lyrics unavailable for this track'}
+				>
+					<button
+						class="btn btn-ghost btn-sm btn-circle"
+						class:text-accent={lyricsPanelOpen}
+						onclick={toggleLyrics}
+						disabled={!supportsLyrics}
+						aria-label="Toggle lyrics"
+					>
+						<Music2 class="h-4 w-4" />
+					</button>
+				</div>
 
 				<div
 					class="tooltip tooltip-left"
@@ -529,7 +519,6 @@
 		lyricsText={lyricsQuery.data?.text ?? ''}
 		lines={lyricsQuery.data?.lines ?? []}
 		isSynced={lyricsQuery.data?.is_synced ?? false}
-		source={lyricsQuery.data?.source ?? ''}
 		onseek={(seconds) => playerStore.seekTo(seconds)}
 		isPlaying={playerStore.isPlaying}
 		hasPrevious={playerStore.hasPrevious}
@@ -571,7 +560,7 @@
 		onclick={() => playerStore.showPlayer()}
 		aria-label="Show player"
 	>
-		<Eye class="h-4 w-4" />
+		<ChevronUp class="h-4 w-4" />
 		<span class="hidden sm:inline">Show player</span>
 	</button>
 {/if}

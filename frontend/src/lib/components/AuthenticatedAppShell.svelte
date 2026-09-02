@@ -698,8 +698,8 @@
 	<a
 		href={withBasePath('/library')}
 		class="droppedneedle-bottom-nav__item"
-		class:active={isNavActive('/library')}
-		aria-current={isNavActive('/library') ? 'page' : undefined}
+		class:active={isLibraryNavActive()}
+		aria-current={isLibraryNavActive() ? 'page' : undefined}
 	>
 		<Menu />
 		<span>Library</span>
@@ -707,6 +707,27 @@
 			<span class="droppedneedle-bottom-nav__badge" aria-label="Library sync in progress"></span>
 		{/if}
 	</a>
+	<a
+		href={withBasePath('/downloads')}
+		class="droppedneedle-bottom-nav__item"
+		class:active={isNavActive('/downloads')}
+		aria-current={isNavActive('/downloads') ? 'page' : undefined}
+	>
+		<Download />
+		<span>Downloads</span>
+		<DownloadsNavBadge />
+	</a>
+	{#if downloadClientConfigured}
+		<a
+			href={withBasePath('/playlists')}
+			class="droppedneedle-bottom-nav__item"
+			class:active={isNavActive('/playlists')}
+			aria-current={isNavActive('/playlists') ? 'page' : undefined}
+		>
+			<ListMusic />
+			<span>Playlists</span>
+		</a>
+	{/if}
 	<a
 		href={versionUpdateAvailable ? withBasePath('/settings?tab=about') : withBasePath('/settings')}
 		class="droppedneedle-bottom-nav__item"

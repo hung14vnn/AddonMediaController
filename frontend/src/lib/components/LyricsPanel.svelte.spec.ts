@@ -23,7 +23,7 @@ describe('LyricsPanel', () => {
 		await expect.element(page.getByText('Second line', { exact: true })).toHaveClass(/text-accent/);
 		await expect.element(page.getByText('First line', { exact: true })).toHaveClass(/opacity-45/);
 		await expect.element(page.getByText('Third line', { exact: true })).toHaveClass(/opacity-30/);
-		await expect.element(page.getByText('Synced', { exact: true })).toBeVisible();
+		await expect.element(page.getByText('Synced', { exact: true })).not.toBeInTheDocument();
 	});
 
 	it('renders plain lyrics when no timed lines are available', async () => {

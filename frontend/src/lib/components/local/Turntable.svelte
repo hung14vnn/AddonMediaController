@@ -144,7 +144,7 @@
 </script>
 
 <div
-	class="deck-droptarget relative flex flex-col items-center gap-6 rounded-3xl border border-base-content/5 bg-base-200/40 p-6 backdrop-blur-sm sm:p-8"
+	class="deck-droptarget glass-surface relative flex flex-col items-center gap-6 rounded-3xl border border-base-content/5 p-6 sm:p-8"
 	class:is-over={dragOver}
 	role="region"
 	aria-label="Now playing turntable - drop a track here to play it"
@@ -351,10 +351,7 @@
 					<ListMusic class="h-5 w-5" />
 				</button>
 			</div>
-			<div
-				class="tooltip tooltip-top"
-				data-tip={'Lyrics'}
-			>
+			<div class="tooltip tooltip-top" data-tip={'Lyrics'}>
 				<button
 					class="btn btn-circle btn-ghost"
 					class:text-accent={lyricsOpen}
