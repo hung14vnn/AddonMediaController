@@ -74,6 +74,29 @@ describe('QueueDrawer.svelte', () => {
 		await expect.element(page.getByText('1 track upcoming')).toBeVisible();
 	});
 
+	it('keeps artwork supplied by local tracks', async () => {
+		playerStore.playQueue([
+			{
+				trackSourceId: 'local-1',
+				trackName: 'Local Track',
+				artistName: 'Artist',
+				trackNumber: 1,
+				albumId: '12345678-1234-1234-1234-123456789012',
+				albumName: 'Local Album',
+				coverUrl: 'https://cdn.example.test/local-cover.jpg',
+				sourceType: 'local',
+				streamUrl: 'http://test/local-1.mp3'
+			}
+		]);
+		const onclose = vi.fn();
+		const view = renderDrawer(true, onclose);
+
+		await expect.element(page.getByText('Local Track')).toBeVisible();
+		expect(view.container.querySelector('img')?.getAttribute('src')).toBe(
+			'https://cdn.example.test/local-cover.jpg'
+		);
+	});
+
 	it('does not render content when closed', async () => {
 		const onclose = vi.fn();
 		renderDrawer(false, onclose);

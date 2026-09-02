@@ -1430,8 +1430,8 @@ textarea {
 	width: 130%;
 	object-fit: cover;
 	filter: blur(48px) saturate(1.15);
-	opacity: 0.134;
-	transform: scale(1.388);
+	opacity: 0.124;
+	transform: scale(1.25);
 	transform-origin: center;
 	animation: local-artwork-rotate 30s linear infinite;
 }

@@ -4,7 +4,9 @@
 	import { fly, fade } from 'svelte/transition';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
+	import { getApiUrl } from '$lib/api/api-utils';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
+	import type { QueueItem } from '$lib/player/types';
 	import { X, GripVertical, ListMusic, Disc3, Shuffle, Trash2, Pin } from 'lucide-svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import LocalFilesIcon from '$lib/components/LocalFilesIcon.svelte';
@@ -162,6 +164,14 @@
 		return `${m}:${s.toString().padStart(2, '0')}`;
 	}
 
+	function getQueueCoverUrl(item: QueueItem): string {
+		// Local tracks may have artwork stored against a catalog album ID that
+		// happens to look like a MusicBrainz ID. Preserve that artwork instead of
+		// replacing it with a Cover Art Archive lookup. This mirrors the player bar.
+		if (item.sourceType === 'local' && item.coverUrl) return getApiUrl(item.coverUrl);
+		return getCoverUrl(item.coverUrl, item.albumId);
+	}
+
 	function scrollToCurrentTrack() {
 		if (currentTrackEl) {
 			currentTrackEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -288,7 +298,7 @@
 						{@const isCurrent = queueIndex === currentIndex}
 						{@const isPlayed = displayPosition < currentDisplayPosition}
 						{@const isReorderable = displayPosition > currentDisplayPosition}
-						{@const coverUrl = getCoverUrl(item.coverUrl, item.albumId)}
+						{@const coverUrl = getQueueCoverUrl(item)}
 						{#if displayPosition === currentDisplayPosition + 1}
 							<div class="flex items-center gap-2 {pinned ? 'px-3' : 'px-4'} py-1.5">
 								<span
@@ -302,9 +312,9 @@
 						{/if}
 						<div
 							use:trackCurrentEl={isCurrent}
-							class="flex items-center {pinned
-								? 'gap-1.5 px-1.5'
-								: 'gap-2 px-3'} {pinned ? 'py-1.5' : 'py-2'} transition-colors cursor-pointer group/item
+							class="flex items-center {pinned ? 'gap-1.5 px-1.5' : 'gap-2 px-3'} {pinned
+								? 'py-1.5'
+								: 'py-2'} transition-colors cursor-pointer group/item
 								{isCurrent
 								? 'bg-accent/10 border-l-2 border-accent'
 								: 'hover:bg-base-300/50 border-l-2 border-transparent'}

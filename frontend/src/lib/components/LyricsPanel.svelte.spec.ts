@@ -42,4 +42,28 @@ describe('LyricsPanel', () => {
 		await expect.element(page.getByText(/Plain first line/)).toBeVisible();
 		await expect.element(page.getByText('Synced', { exact: true })).not.toBeInTheDocument();
 	});
+
+	it('hides the outer page scrollbar only while the full-screen panel is open', async () => {
+		const props = {
+			open: true,
+			lyricsText: 'Plain lyrics',
+			preferWordSynced: false,
+			onclose: vi.fn()
+		};
+		const view = render(LyricsPanel, props);
+
+		await expect
+			.poll(() => document.documentElement.classList.contains('lyrics-page-scroll-lock'))
+			.toBe(true);
+		expect(document.body).toHaveClass('lyrics-page-scroll-lock');
+		expect(getComputedStyle(document.documentElement).overflow).toBe('hidden');
+		expect(getComputedStyle(document.body).overflow).toBe('hidden');
+
+		await view.rerender({ ...props, open: false });
+
+		await expect
+			.poll(() => document.documentElement.classList.contains('lyrics-page-scroll-lock'))
+			.toBe(false);
+		expect(document.body).not.toHaveClass('lyrics-page-scroll-lock');
+	});
 });

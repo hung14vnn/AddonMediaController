@@ -91,6 +91,7 @@
 	let scrollTimeout: ReturnType<typeof setTimeout> | undefined;
 	let wordSyncedAvailable = $state<boolean | null>(null);
 	let previousTrackKey: string | null = null;
+	const pageScrollLockClass = 'lyrics-page-scroll-lock';
 
 	const showWordSynced = $derived(wordSyncedAvailable !== false);
 
@@ -98,6 +99,20 @@
 		if (trackKey === previousTrackKey) return;
 		previousTrackKey = trackKey;
 		wordSyncedAvailable = preferWordSynced ? null : false;
+	});
+
+	$effect(() => {
+		if (!open) return;
+
+		const root = document.documentElement;
+		const body = document.body;
+		root.classList.add(pageScrollLockClass);
+		body.classList.add(pageScrollLockClass);
+
+		return () => {
+			root.classList.remove(pageScrollLockClass);
+			body.classList.remove(pageScrollLockClass);
+		};
 	});
 
 	function seekFromLyrics(seconds: number) {
@@ -383,6 +398,11 @@
 </div>
 
 <style>
+	:global(html.lyrics-page-scroll-lock),
+	:global(body.lyrics-page-scroll-lock) {
+		overflow: hidden;
+	}
+
 	.lyrics-artwork {
 		position: absolute;
 		inset: -15%;
@@ -391,6 +411,21 @@
 		object-fit: cover;
 		filter: blur(48px) saturate(1.15);
 		opacity: 0.2;
+		transform: scale(1.08);
+		transform-origin: center;
+		animation: lyrics-artwork-rotate 30s linear infinite;
+	}
+
+	@keyframes lyrics-artwork-rotate {
+		to {
+			transform: scale(1.08) rotate(360deg);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.lyrics-artwork {
+			animation: none;
+		}
 	}
 
 	/* The lyrics view fills the viewport, so its controls must start below the
