@@ -61,7 +61,6 @@ export const getSimilarArtistsQuery = (
 		return {
 			enabled,
 			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
-			refetchOnWindowFocus: false,
 			queryKey: ArtistQueryKeyFactory.similarArtists(authStore.user?.id, artistId, source),
 			queryFn: ({ signal }) =>
 				api.global.get<SimilarArtistsResponse>(API.artist.similarArtists(artistId, source), {
@@ -78,7 +77,6 @@ export const getArtistTopAlbumsQuery = (
 		return {
 			enabled,
 			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
-			refetchOnWindowFocus: false,
 			queryKey: ArtistQueryKeyFactory.topAlbums(authStore.user?.id, artistId, source),
 			queryFn: ({ signal }) =>
 				api.global.get<TopAlbumsResponse>(API.artist.topAlbums(artistId, source), {
@@ -95,7 +93,6 @@ export const getArtistTopSongsQuery = (
 		return {
 			enabled,
 			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
-			refetchOnWindowFocus: false,
 			queryKey: ArtistQueryKeyFactory.topSongs(authStore.user?.id, artistId, source),
 			queryFn: ({ signal }) =>
 				api.global.get<TopSongsResponse>(API.artist.topSongs(artistId, source), {
