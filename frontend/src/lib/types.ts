@@ -2245,6 +2245,10 @@ export interface SabnzbdTestResult {
 	message: string;
 	categories: string[];
 	complete_dir?: string | null;
+	mount_has_files?: boolean | null;
+	resolvable_downloads?: number | null;
+	sampled_downloads?: number | null;
+	mount_message?: string | null;
 }
 
 export interface SpotiflacConnectionSettings {
