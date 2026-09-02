@@ -348,24 +348,6 @@ class PreferencesService:
             logger.error("Failed to save download client settings: %s", e)
             raise ConfigurationError(f"Failed to save download client settings: {e}")
 
-    def get_slskd_incomplete_mount(self) -> Path | None:
-        """Resolved slskd incomplete-downloads dir, or None when unset/unusable.
-
-        Fail-closed: empty, unresolvable, non-dir, or unreadable all yield None,
-        and the repository then skips the incomplete fallback entirely
-        (byte-identical behaviour to before the knob existed).
-        """
-        raw = self.get_download_client_settings_raw().slskd_incomplete_mount
-        if not raw:
-            return None
-        try:
-            resolved = Path(raw).resolve()
-        except (OSError, RuntimeError):
-            return None
-        if not resolved.is_dir() or not os.access(resolved, os.R_OK):
-            return None
-        return resolved
-
     def _decode_download_policy(self, data: object) -> DownloadPolicySettings:
         """Decode policy while preserving invalid recipe status.
 

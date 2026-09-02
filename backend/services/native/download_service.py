@@ -1099,9 +1099,6 @@ class DownloadService:
             track_count=track_count,
             track_duration_seconds=track_duration_seconds,
             origin=origin,
-            # A fresh request starts at the first native entry in the configured
-            # source order. A non-empty source is reserved for a failover retry.
-            source="",
             **self._pinned_snapshot(quality_snapshot),
         )
         self._orchestrator.dispatch(task.id)

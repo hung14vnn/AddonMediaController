@@ -599,7 +599,7 @@ class DownloadOrchestrator:
         or slow source never erases another's candidates."""
         if snapshot is None:
             snapshot = await self._task_quality_snapshot(task)
-        enabled = [s for s in self._sources_from(task.source) if self._source_enabled(s)]
+        enabled = [s for s in self._source_priority if self._source_enabled(s)]
 
         async def run_one(source):
             try:
@@ -707,10 +707,9 @@ class DownloadOrchestrator:
         )
 
         remembered: list[list] = []
-        source_order = self._sources_from(task.source)
         if self._source_selection_mode(snapshot) == "quality_first":
             by_source = await self._concurrent_search_and_score(task, snapshot=snapshot)
-            for source in source_order:
+            for source in self._source_priority:
                 if self._source_enabled(source):
                     remembered.append(by_source.get(source, []))
             pooled_flat = [c for group in remembered for c in group]

@@ -2322,6 +2322,30 @@ export interface QualityRecipeEntry {
 	sample_rate_hz?: number | null;
 }
 
+export type QualityRecipeFormat = 'flac' | 'mp3';
+
+export type QualityRecipeQuality =
+	| 'below_192'
+	| '192_255'
+	| '256_319'
+	| '320_plus'
+	| 'cd'
+	| '24_48'
+	| '24_96'
+	| '24_192'
+	| 'hi_res'
+	| 'custom';
+
+export interface QualityRecipeEntry {
+	format: QualityRecipeFormat;
+	quality: QualityRecipeQuality;
+	min_bitrate_kbps?: number | null;
+	target_bitrate_kbps?: number | null;
+	max_bitrate_kbps?: number | null;
+	bit_depth?: number | null;
+	sample_rate_hz?: number | null;
+}
+
 export interface SourcePriority {
 	order: string[];
 }

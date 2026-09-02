@@ -12,7 +12,6 @@
 		legacyRangeFromRecipe,
 		recipeFingerprint,
 		recipeFromPolicy,
-		resolvePreferenceOrderForRange,
 		stripRecipeIds,
 		validateRecipeEntry,
 		type RecipeDraftEntry
@@ -51,7 +50,6 @@
 	>(null);
 	let migrationMessage = $state<string | null>(null);
 	let sourceSelectionMode = $state('source_first');
-	let savingStorageMode = $state(false);
 	let verifyDownloads = $state(true);
 	let autoAccept = $state(0.7);
 	let manualMin = $state(0.5);
@@ -65,6 +63,7 @@
 	let lossyMaxBitrateKbps = $state<number | null>(null);
 	let baselineFingerprint = $state<string | null>(null);
 	let seeded = $state(false);
+	let savingStorageMode = $state(false);
 
 	const liveLegacyRange = $derived.by(() => legacyRangeFromRecipe(qualityRecipe));
 	const qualityMin = $derived(liveLegacyRange?.quality_min ?? 'mp3_320');
@@ -140,11 +139,6 @@
 		const nextQualityMax = legacyRange?.quality_max ?? qualityMax;
 		const nextCutoff = clampCutoff(qualityCutoff, nextQualityMin, nextQualityMax);
 		if (nextCutoff !== qualityCutoff) qualityCutoff = nextCutoff;
-		const nextPreferenceOrder = resolvePreferenceOrderForRange(
-			d.quality_preference_order,
-			nextQualityMin,
-			nextQualityMax
-		);
 		const policy: DownloadPolicySettings = {
 			...d,
 			quality_min: nextQualityMin,
@@ -164,7 +158,7 @@
 			auto_retry_max_attempts: autoRetryMax,
 			usenet_min_release_age_minutes: usenetMinAge,
 			quality_recipe: stripRecipeIds(qualityRecipe),
-			quality_preference_order: nextPreferenceOrder,
+			quality_preference_order: d.quality_preference_order ?? [],
 			preferred_lossy_bitrate_kbps: d.preferred_lossy_bitrate_kbps ?? null,
 			lossy_min_bitrate_kbps: lossyMinBitrateKbps,
 			lossy_max_bitrate_kbps: lossyMaxBitrateKbps,
@@ -252,19 +246,19 @@
 
 			<div class="divider my-1"></div>
 
-		<div class="rounded-box border border-base-300 bg-base-200/40 p-3">
-			<label class="label cursor-pointer justify-start gap-3 p-0">
-				<input
-					type="checkbox"
-					class="toggle toggle-sm toggle-primary"
-					bind:checked={savingStorageMode}
-				/>
-				<span class="label-text">Saving storage mode</span>
-			</label>
-			<p class="mt-2 text-xs text-base-content/60">
-				Convert verified Soulseek FLAC downloads to AAC 256 kbps M4A files to reduce library storage.
-			</p>
-		</div>
+			<div class="rounded-box border border-base-300 bg-base-200/40 p-3">
+				<label class="label cursor-pointer justify-start gap-3 p-0">
+					<input
+						type="checkbox"
+						class="toggle toggle-sm toggle-primary"
+						bind:checked={savingStorageMode}
+					/>
+					<span class="label-text">Saving storage mode</span>
+				</label>
+				<p class="mt-2 text-xs text-base-content/60">
+					Convert verified Soulseek FLAC downloads to AAC 256 kbps M4A files to reduce library storage.
+				</p>
+			</div>
 
 			<div>
 				<h3 class="font-medium">Upgrades</h3>

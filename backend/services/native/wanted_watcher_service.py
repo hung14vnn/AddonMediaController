@@ -871,12 +871,12 @@ class WantedWatcherService:
         )
         if want.kind == "missing":
             return await self._dispatch_album(
-                want, acquisition, quality_snapshot=quality_snapshot
+                want, download_service, quality_snapshot=quality_snapshot
             )
         await self._dispatch_tracks(
             want,
             missing_tracks,
-            acquisition,
+            download_service,
             quality_snapshot=quality_snapshot,
         )
         return "dispatched"
