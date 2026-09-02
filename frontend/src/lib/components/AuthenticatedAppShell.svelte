@@ -107,6 +107,9 @@
 	let isDesktopViewport = $state(false);
 	type RouteTransitionAxis = 'x' | 'y';
 	let routeTransitionAxis = $state<RouteTransitionAxis>('y');
+	// Settings runs as a fixed two-pane app surface: the tab rail and the content
+	// pane scroll, the document itself must not.
+	const isSettingsPane = $derived(currentPath.startsWith('/settings'));
 
 	const NAV_PROGRESS_DELAY_MS = 120;
 	const NAV_PROGRESS_MIN_VISIBLE_MS = 220;
@@ -437,7 +440,10 @@
 <div class="drawer md:drawer-open">
 	<input id="main-drawer" type="checkbox" class="drawer-toggle" />
 
-	<div class="drawer-content flex min-w-0 flex-col isolate">
+	<div
+		class="drawer-content flex min-w-0 flex-col isolate"
+		class:droppedneedle-pane-mode={isSettingsPane}
+	>
 		<div
 			class="droppedneedle-topbar navbar bg-base-100/95 backdrop-blur shadow-sm sticky top-0 z-50"
 		>
@@ -507,6 +513,7 @@
 					{@render children()}
 				</div>
 			{/key}
+			{#if !isSettingsPane}<Footer />{/if}
 		</div>
 	</div>
 
