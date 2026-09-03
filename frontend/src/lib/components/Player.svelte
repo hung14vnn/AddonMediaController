@@ -271,7 +271,9 @@
 								</p>
 							{/if}
 							{#if playerStore.nowPlaying.format}
-								<AudioQualityBadge codec={playerStore.nowPlaying.format} compact />
+								<div class="hidden sm:block">
+									<AudioQualityBadge codec={playerStore.nowPlaying.format} compact />
+								</div>
 							{/if}
 							{#if playerStore.playbackState === 'error'}
 								<p class="text-xs text-error truncate">This track isn't available right now.</p>

@@ -622,30 +622,36 @@
 
 	{#if selectionMode}
 		<div
-			class="fixed left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-base-300 border border-base-content/10 rounded-box px-4 py-3 shadow-xl {playerStore.isPlayerVisible &&
-			playerStore.nowPlaying
-				? 'bottom-28'
-				: 'bottom-4'}"
+			class="droppedneedle-selection-toolbar fixed left-1/2 z-[70] flex -translate-x-1/2 items-center gap-3 rounded-box border border-base-content/10 bg-base-300 px-4 py-3 shadow-xl"
+			class:droppedneedle-selection-toolbar--player={playerStore.isPlayerVisible &&
+				playerStore.nowPlaying}
 			transition:fly={{ y: 40, duration: 200 }}
 		>
 			<span class="text-sm font-medium">
 				{selectedIds.size} selected
 			</span>
-			<button class="btn btn-ghost btn-sm" onclick={clearSelection}>
+			<button
+				class="selection-action btn btn-ghost btn-sm"
+				onclick={clearSelection}
+				aria-label="Clear selection"
+				title="Clear selection"
+			>
 				<X class="h-4 w-4" />
-				Deselect
+				<span class="selection-action-label">Deselect</span>
 			</button>
 			<button
-				class="btn btn-error btn-sm"
+				class="selection-action btn btn-error btn-sm gap-1.5"
 				onclick={() => void removeSelectedTracks()}
 				disabled={bulkRemoving}
+				aria-label="Delete selected tracks"
+				title="Delete selected tracks"
 			>
 				{#if bulkRemoving}
 					<span class="loading loading-spinner loading-xs"></span>
 				{:else}
 					<Trash2 class="h-4 w-4" />
 				{/if}
-				Delete
+				<span class="selection-action-label">Delete</span>
 			</button>
 		</div>
 	{/if}

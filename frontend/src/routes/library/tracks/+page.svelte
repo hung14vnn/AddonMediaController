@@ -848,41 +848,55 @@
 
 		{#if selectionEnabled && selectedIds.size > 0}
 			<div
-				class="droppedneedle-selection-toolbar fixed bottom-4 left-1/2 z-[70] flex -translate-x-1/2 items-center gap-3 rounded-box border border-base-content/10 bg-base-300 px-4 py-3 shadow-xl"
+				class="droppedneedle-selection-toolbar fixed left-1/2 z-[70] flex -translate-x-1/2 items-center gap-3 rounded-box border border-base-content/10 bg-base-300 px-4 py-3 shadow-xl"
 				class:droppedneedle-selection-toolbar--player={playerStore.isPlayerVisible}
 			>
 				<span class="text-sm font-medium">{selectedIds.size} selected</span>
-				<button class="btn btn-ghost btn-sm" onclick={clearSelection}>Clear</button>
 				<button
-					class="btn btn-primary btn-sm gap-1.5"
+					class="selection-action btn btn-ghost btn-sm"
+					onclick={clearSelection}
+					aria-label="Clear selection"
+					title="Clear selection"
+				>
+					<X class="h-4 w-4" />
+					<span class="selection-action-label">Clear</span>
+				</button>
+				<button
+					class="selection-action btn btn-primary btn-sm gap-1.5"
 					onclick={() =>
 						void addTracksToLocalPlaylist(data.items.filter((track) => selectedIds.has(track.id)))}
 					disabled={addingToPlaylist}
+					aria-label="Add selected tracks to playlist"
+					title="Add selected tracks to playlist"
 				>
 					{#if addingToPlaylist}<span class="loading loading-spinner loading-xs"
 						></span>{:else}<Music2 class="h-4 w-4" />{/if}
-					Add to playlist
+					<span class="selection-action-label">Add to playlist</span>
 				</button>
 				<button
-					class="btn btn-secondary btn-sm gap-1.5"
+					class="selection-action btn btn-secondary btn-sm gap-1.5"
 					onclick={() => void downloadSelectedOffline()}
 					disabled={bulkOfflineDownloading || selectedOfflineCount === selectedIds.size}
 					aria-busy={bulkOfflineDownloading}
+					aria-label="Save selected tracks offline"
+					title="Save selected tracks offline"
 				>
 					{#if bulkOfflineDownloading}<span class="loading loading-spinner loading-xs"
 						></span>{:else}<Download class="h-4 w-4" />{/if}
-					Save offline
+					<span class="selection-action-label">Save offline</span>
 				</button>
 				{#if !targetPlaylistId}
 					<button
-						class="btn btn-error btn-sm"
+						class="selection-action btn btn-error btn-sm gap-1.5"
 						onclick={() => void deleteSelectedTracks()}
 						disabled={offlineOnly || bulkDeleting}
+						aria-label="Delete selected tracks"
+						title="Delete selected tracks"
 					>
 						{#if bulkDeleting}<span class="loading loading-spinner loading-xs"></span>{:else}<Trash2
 								class="h-4 w-4"
 							/>{/if}
-						Delete selected
+						<span class="selection-action-label">Delete selected</span>
 					</button>
 				{/if}
 			</div>

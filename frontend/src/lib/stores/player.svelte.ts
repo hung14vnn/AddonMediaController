@@ -398,19 +398,13 @@ function createPlayerStore() {
 	function updateMediaSessionControls(): void {
 		setMediaSessionActionHandler('play', playCurrent);
 		setMediaSessionActionHandler('pause', pauseCurrent);
-		// Keep the OS/mobile media controls focused on queue navigation. Registering
-		// seekbackward/seekforward makes Android and iOS surface +/-10s buttons in
-		// place of the previous/next track actions.
 		setMediaSessionActionHandler('seekbackward', null);
 		setMediaSessionActionHandler('seekforward', null);
 		setMediaSessionActionHandler('seekto', ({ seekTime }) => {
 			if (seekTime !== undefined) seekCurrent(seekTime);
 		});
-		setMediaSessionActionHandler('nexttrack', getNextIndex() === null ? null : nextTrack);
-		setMediaSessionActionHandler(
-			'previoustrack',
-			getPreviousIndex() === null ? null : previousTrack
-		);
+		setMediaSessionActionHandler('nexttrack', nextTrack);
+		setMediaSessionActionHandler('previoustrack', previousTrack);
 	}
 
 	function playCurrent(): void {

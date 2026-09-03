@@ -39,14 +39,14 @@
 				class="group btn btn-sm gap-2 rounded-full border-0 bg-primary text-primary-content shadow-lg shadow-primary/25 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-primary/40 sm:btn-md"
 			>
 				<Headphones class="h-4 w-4 transition-transform duration-200 group-hover:scale-110" />
-				<span>Listen</span>
+				<span class="hidden sm:inline">Listen</span>
 			</a>
 			<a
 				href={CONNECT_APPS_HREF}
 				class="group btn btn-sm gap-2 rounded-full border border-base-content/15 bg-base-100/50 text-base-content backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-accent/40 hover:bg-base-100/80 sm:btn-md"
 			>
 				<Waypoints class="h-4 w-4 transition-transform duration-200 group-hover:scale-110" />
-				<span>Connect Apps</span>
+				<span class="hidden sm:inline">Connect Apps</span>
 			</a>
 			{#if authStore.isAdmin}
 				<a
@@ -56,7 +56,7 @@
 					<SlidersHorizontal
 						class="h-4 w-4 transition-transform duration-200 group-hover:rotate-12"
 					/>
-					<span>Controls</span>
+					<span class="hidden sm:inline">Controls</span>
 				</a>
 			{:else}
 				<button
@@ -66,7 +66,7 @@
 					class="btn btn-sm cursor-not-allowed gap-2 rounded-full border border-base-content/10 bg-base-200/35 text-base-content/35 shadow-none sm:btn-md"
 				>
 					<LockKeyhole class="h-4 w-4" aria-hidden="true" />
-					<span>Controls</span>
+					<span class="hidden sm:inline">Controls</span>
 				</button>
 				<span id="library-controls-admin-only" class="sr-only">
 					Library controls require administrator access.

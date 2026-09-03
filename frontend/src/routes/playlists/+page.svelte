@@ -100,7 +100,8 @@
 					class="btn btn-sm gap-1.5 bg-green-600 text-white hover:bg-green-500"
 				>
 					<SpotifyIcon class="h-3.5 w-3.5" />
-					Import from Spotify
+					<span class="sm:hidden">Import</span>
+					<span class="hidden sm:inline">Import from Spotify</span>
 				</a>
 			{/if}
 			<button
@@ -110,7 +111,8 @@
 				}}
 			>
 				<Plus class="h-4 w-4" />
-				New Local Playlist
+				<span class="sm:hidden">New</span>
+				<span class="hidden sm:inline">New Local Playlist</span>
 			</button>
 		</div>
 	</div>

@@ -842,7 +842,8 @@ textarea {
 
 /* Keep bulk track actions accessible when the player is docked at the bottom. */
 .droppedneedle-selection-toolbar {
-	bottom: 1rem;
+	bottom: calc(var(--ms-bottom-nav-offset) + 1rem);
+	max-width: calc(100vw - 1rem);
 }
 
 .droppedneedle-selection-toolbar--player {
@@ -949,6 +950,28 @@ textarea {
 	}
 }
 
+@media (max-width: 767px) {
+	/* Keep the bulk actions above the fixed mobile nav. Text labels are redundant
+	   at this width; the aria-label/title still provide the action names. */
+	.droppedneedle-selection-toolbar {
+		gap: 0.5rem;
+		flex-wrap: wrap;
+		justify-content: center;
+		padding: 0.5rem;
+		white-space: nowrap;
+	}
+
+	.droppedneedle-selection-toolbar .selection-action {
+		width: 2.5rem;
+		min-width: 2.5rem;
+		padding-inline: 0;
+	}
+
+	.droppedneedle-selection-toolbar .selection-action-label {
+		display: none;
+	}
+}
+
 @media (min-width: 768px) {
 	:root {
 		--ms-bottom-nav-height: 0rem;
@@ -976,6 +999,10 @@ textarea {
 
 	.droppedneedle-player-bar {
 		bottom: 0;
+	}
+
+	.droppedneedle-selection-toolbar {
+		bottom: 1rem;
 	}
 
 	.droppedneedle-selection-toolbar--player {
