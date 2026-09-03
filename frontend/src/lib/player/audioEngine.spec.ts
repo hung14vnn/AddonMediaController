@@ -41,7 +41,9 @@ function createMockContext(
 		createBiquadFilter: vi.fn(mockFilterFactory),
 		createAnalyser: vi.fn(() => mockAnalyser),
 		resume: vi.fn(() => Promise.resolve()),
-		close: vi.fn(() => Promise.resolve())
+		close: vi.fn(() => Promise.resolve()),
+		addEventListener: vi.fn(),
+		removeEventListener: vi.fn()
 	};
 }
 

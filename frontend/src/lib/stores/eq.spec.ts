@@ -7,6 +7,7 @@ const mockEngine = {
 };
 
 vi.mock('$lib/player/audioElement', () => ({
+	ensureAudioEngine: vi.fn(() => mockEngine),
 	tryGetAudioEngine: vi.fn(() => mockEngine)
 }));
 

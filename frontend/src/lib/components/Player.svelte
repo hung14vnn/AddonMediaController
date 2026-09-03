@@ -56,7 +56,8 @@
 	const lyricsQuery = getLyricsQuery(
 		() => playerStore.nowPlaying,
 		() => authStore.user?.id,
-		() => getNavidromeFolderScopeRevision(authStore.user?.id ?? '')
+		() => getNavidromeFolderScopeRevision(authStore.user?.id ?? ''),
+		() => lyricsPanelOpen
 	);
 
 	const supportsLyrics = $derived(
@@ -536,7 +537,10 @@
 	<EqPanel bind:open={eqPanelOpen} onclose={() => (eqPanelOpen = false)} />
 {/if}
 
-{#if playerStore.nowPlaying}
+<!-- Keep the word-synced lyrics web component out of the DOM until lyrics are
+	actually open. Its interpolation engine owns a requestAnimationFrame loop;
+	CSS-hiding the panel left that loop running for every playing track. -->
+{#if playerStore.nowPlaying && lyricsPanelOpen}
 	<LyricsPanel
 		bind:open={lyricsPanelOpen}
 		lyricsText={lyricsQuery.data?.text ?? ''}

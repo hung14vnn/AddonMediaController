@@ -11,11 +11,18 @@ type MediaSessionTrack = Pick<
 	| 'trackNumber'
 >;
 
-type MediaSessionAction = 'nexttrack' | 'previoustrack';
+type PlayerMediaSessionAction =
+	| 'play'
+	| 'pause'
+	| 'seekbackward'
+	| 'seekforward'
+	| 'seekto'
+	| 'nexttrack'
+	| 'previoustrack';
 
 export function setMediaSessionActionHandler(
-	action: MediaSessionAction,
-	handler: (() => void) | null
+	action: PlayerMediaSessionAction,
+	handler: ((details: MediaSessionActionDetails) => void) | null
 ): void {
 	if (typeof navigator === 'undefined' || !navigator.mediaSession) return;
 
@@ -23,6 +30,41 @@ export function setMediaSessionActionHandler(
 		navigator.mediaSession.setActionHandler(action, handler);
 	} catch {
 		// Some browsers expose Media Session without every optional action.
+	}
+}
+
+/** Keep the OS-level media notification in sync with the app player. */
+export function updateMediaSessionPlaybackState(state: 'none' | 'paused' | 'playing'): void {
+	if (typeof navigator === 'undefined' || !navigator.mediaSession) return;
+
+	try {
+		navigator.mediaSession.playbackState = state;
+	} catch {
+		// Playback state is optional on older Media Session implementations.
+	}
+}
+
+/** Supply progress to lock-screen controls without affecting unsupported browsers. */
+export function updateMediaSessionPosition(position: number, duration: number): void {
+	if (
+		typeof navigator === 'undefined' ||
+		!navigator.mediaSession ||
+		typeof navigator.mediaSession.setPositionState !== 'function' ||
+		!Number.isFinite(position) ||
+		!Number.isFinite(duration) ||
+		duration <= 0
+	) {
+		return;
+	}
+
+	try {
+		navigator.mediaSession.setPositionState({
+			duration,
+			playbackRate: 1,
+			position: Math.max(0, Math.min(position, duration))
+		});
+	} catch {
+		// Some browsers expose the method but reject particular stream durations.
 	}
 }
 

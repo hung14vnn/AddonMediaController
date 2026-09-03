@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockEngine = vi.hoisted(() => ({
 	connect: vi.fn(),
@@ -18,7 +18,8 @@ import {
 	getAudioEngine,
 	resumeAudioEngine,
 	tryGetAudioEngine,
-	setAudioElement
+	setAudioElement,
+	usesNativeBackgroundPlayback
 } from './audioElement';
 
 describe('audioElement registry', () => {
@@ -26,6 +27,10 @@ describe('audioElement registry', () => {
 		_resetAudioElement();
 		vi.clearAllMocks();
 		mockEngine.resume.mockResolvedValue(undefined);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
 	});
 
 	it('throws when getting audio element before registration', () => {
@@ -78,11 +83,11 @@ describe('audioElement registry', () => {
 		expect(tryGetAudioEngine()).toBeNull();
 	});
 
-	it('tryGetAudioEngine returns engine after registration', () => {
+	it('defers creating the engine after registration', () => {
 		expect.assertions(1);
 		const audio = { src: '' } as HTMLAudioElement;
 		setAudioElement(audio);
-		expect(tryGetAudioEngine()).not.toBeNull();
+		expect(tryGetAudioEngine()).toBeNull();
 	});
 
 	it('_resetAudioElement destroys engine', () => {
@@ -121,5 +126,51 @@ describe('audioElement registry', () => {
 
 		await expect(resumeAudioEngine()).resolves.toBeUndefined();
 		expect(mockEngine.resume).toHaveBeenCalledTimes(1);
+	});
+
+	it('keeps installed iOS PWA playback on the native audio element', () => {
+		vi.stubGlobal('navigator', {
+			userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+			platform: 'iPhone',
+			maxTouchPoints: 5,
+			standalone: true
+		});
+		const audio = { src: '' } as HTMLAudioElement;
+
+		setAudioElement(audio);
+
+		expect(usesNativeBackgroundPlayback()).toBe(true);
+		expect(getAudioElement()).toBe(audio);
+		expect(tryGetAudioEngine()).toBeNull();
+		expect(mockEngine.connect).not.toHaveBeenCalled();
+	});
+
+	it('recognizes an installed iPad PWA using a desktop user agent', () => {
+		vi.stubGlobal('navigator', {
+			userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)',
+			platform: 'MacIntel',
+			maxTouchPoints: 5
+		});
+		vi.stubGlobal('window', {
+			matchMedia: vi.fn(() => ({ matches: true }))
+		});
+
+		expect(usesNativeBackgroundPlayback()).toBe(true);
+	});
+
+	it('retains Web Audio processing outside installed iOS PWAs', () => {
+		vi.stubGlobal('navigator', {
+			userAgent: 'Mozilla/5.0 (Linux; Android 15)',
+			platform: 'Linux armv8l',
+			maxTouchPoints: 5
+		});
+		const audio = { src: '' } as HTMLAudioElement;
+
+		setAudioElement(audio);
+
+		expect(usesNativeBackgroundPlayback()).toBe(false);
+		getAudioEngine();
+		expect(tryGetAudioEngine()).not.toBeNull();
+		expect(mockEngine.connect).toHaveBeenCalledWith(audio);
 	});
 });

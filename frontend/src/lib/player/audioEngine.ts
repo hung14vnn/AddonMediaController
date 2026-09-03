@@ -16,6 +16,7 @@ export class AudioEngine {
 	private analyser: AnalyserNode | null = null;
 	private freqData: Uint8Array<ArrayBuffer> | null = null;
 	private connectedElement: HTMLAudioElement | null = null;
+	private contextStateHandler: (() => void) | null = null;
 
 	connect(audio: HTMLAudioElement): void {
 		if (this.connectedElement === audio) return;
@@ -25,6 +26,15 @@ export class AudioEngine {
 
 		this.context = new AudioContext();
 		this.source = this.context.createMediaElementSource(audio);
+		const context = this.context;
+		this.contextStateHandler = () => {
+			if (context.state === 'suspended' && this.connectedElement && !this.connectedElement.paused) {
+				void context.resume().catch(() => {
+					// A backgrounded browser may reject resume until it is foregrounded.
+				});
+			}
+		};
+		context.addEventListener?.('statechange', this.contextStateHandler);
 
 		this.filters = EQ_FREQUENCIES.map((freq) => {
 			const filter = this.context!.createBiquadFilter();
@@ -123,6 +133,9 @@ export class AudioEngine {
 	}
 
 	destroy(): void {
+		if (this.context && this.contextStateHandler) {
+			this.context.removeEventListener?.('statechange', this.contextStateHandler);
+		}
 		for (const filter of this.filters) {
 			filter.disconnect();
 		}
@@ -137,5 +150,6 @@ export class AudioEngine {
 		this.source = null;
 		this.context = null;
 		this.connectedElement = null;
+		this.contextStateHandler = null;
 	}
 }

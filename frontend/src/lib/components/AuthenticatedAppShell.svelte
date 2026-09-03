@@ -153,11 +153,16 @@
 			cleanupResumeListeners?.();
 			cleanupResumeListeners = null;
 		};
+		const resumeAudioContextOnVisibility = () => {
+			if (playerStore.isPlaying) void resumeAudioEngine();
+		};
 		document.addEventListener('click', resumeAudioContext, { once: true });
 		document.addEventListener('keydown', resumeAudioContext, { once: true });
+		document.addEventListener('visibilitychange', resumeAudioContextOnVisibility);
 		cleanupResumeListeners = () => {
 			document.removeEventListener('click', resumeAudioContext);
 			document.removeEventListener('keydown', resumeAudioContext);
+			document.removeEventListener('visibilitychange', resumeAudioContextOnVisibility);
 		};
 
 		if (browser) {
@@ -895,7 +900,7 @@
 {/if}
 
 {#if browser}
-	<audio bind:this={audioElement}></audio>
+	<audio bind:this={audioElement} preload="auto"></audio>
 {/if}
 
 <Player />

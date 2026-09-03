@@ -52,7 +52,8 @@ export async function fetchLyrics(np: NowPlaying, signal: AbortSignal): Promise<
 export const getLyricsQuery = (
 	getNowPlaying: Getter<NowPlaying | null>,
 	getUserId: Getter<string | undefined>,
-	getNavidromeScope: Getter<string | undefined>
+	getNavidromeScope: Getter<string | undefined>,
+	getEnabled: Getter<boolean> = () => true
 ) =>
 	createQuery(() => {
 		const np = getNowPlaying();
@@ -74,6 +75,7 @@ export const getLyricsQuery = (
 			),
 			queryFn: ({ signal }: { signal: AbortSignal }) => fetchLyrics(np!, signal),
 			enabled:
+				getEnabled() &&
 				!!np?.trackSourceId &&
 				(np.sourceType === 'navidrome' || np.sourceType === 'jellyfin' || np.sourceType === 'local')
 		};

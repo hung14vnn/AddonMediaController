@@ -51,7 +51,12 @@ import {
 } from './playerSourceResolver';
 import { resumeAudioEngine } from '$lib/player/audioElement';
 import { KaraokePlaybackSource } from '$lib/player/KaraokePlaybackSource';
-import { setMediaSessionActionHandler, updateMediaSessionMetadata } from '$lib/player/mediaSession';
+import {
+	setMediaSessionActionHandler,
+	updateMediaSessionMetadata,
+	updateMediaSessionPlaybackState,
+	updateMediaSessionPosition
+} from '$lib/player/mediaSession';
 import {
 	persistSession as doPersistSession,
 	restoreSessionData,
@@ -197,6 +202,12 @@ function createPlayerStore() {
 		currentSource = null;
 		nowPlaying = null;
 		updateMediaSessionMetadata(null);
+		updateMediaSessionPlaybackState('none');
+		setMediaSessionActionHandler('play', null);
+		setMediaSessionActionHandler('pause', null);
+		setMediaSessionActionHandler('seekbackward', null);
+		setMediaSessionActionHandler('seekforward', null);
+		setMediaSessionActionHandler('seekto', null);
 		setMediaSessionActionHandler('nexttrack', null);
 		setMediaSessionActionHandler('previoustrack', null);
 		playbackState = 'idle';
@@ -368,11 +379,52 @@ function createPlayerStore() {
 	}
 
 	function updateMediaSessionControls(): void {
+		setMediaSessionActionHandler('play', playCurrent);
+		setMediaSessionActionHandler('pause', pauseCurrent);
+		setMediaSessionActionHandler('seekbackward', ({ seekOffset }) =>
+			seekCurrent(progress - (seekOffset ?? 10))
+		);
+		setMediaSessionActionHandler('seekforward', ({ seekOffset }) =>
+			seekCurrent(progress + (seekOffset ?? 10))
+		);
+		setMediaSessionActionHandler('seekto', ({ seekTime }) => {
+			if (seekTime !== undefined) seekCurrent(seekTime);
+		});
 		setMediaSessionActionHandler('nexttrack', getNextIndex() === null ? null : nextTrack);
 		setMediaSessionActionHandler(
 			'previoustrack',
 			getPreviousIndex() === null ? null : previousTrack
 		);
+	}
+
+	function playCurrent(): void {
+		// Native sources resume the optional Web Audio graph immediately before
+		// calling HTMLMediaElement.play(). YouTube is iframe-backed and must not
+		// create an unused AudioContext at all.
+		const sourceType = currentQueueItem?.sourceType ?? nowPlaying?.sourceType;
+		if (sourceType !== 'youtube') void resumeAudioEngine();
+		currentSource?.play();
+	}
+
+	function pauseCurrent(): void {
+		currentSource?.pause();
+		const jf = getJellyfinItem();
+		if (jf?.playSessionId)
+			void reportJellyfinProgress(jf.trackSourceId, jf.playSessionId, progress, true);
+		const item = getCurrentItem();
+		if (item?.sourceType === 'plex' && item.plexRatingKey)
+			void reportPlexStopped(item.plexRatingKey);
+		if (item?.sourceType === 'navidrome') void reportNavidromeStopped(item.trackSourceId);
+		persist();
+	}
+
+	function seekCurrent(seconds: number): void {
+		if (!isSeekable) return;
+		const target = duration > 0 ? Math.max(0, Math.min(seconds, duration)) : Math.max(0, seconds);
+		currentSource?.seekTo(target);
+		progress = target;
+		updateMediaSessionPosition(progress, duration);
+		persist();
 	}
 
 	function nextTrack(): void {
@@ -402,6 +454,10 @@ function createPlayerStore() {
 		source.onStateChange((state) => {
 			if (gen !== loadGeneration) return;
 			playbackState = state;
+			if (state === 'playing') updateMediaSessionPlaybackState('playing');
+			else if (state === 'paused' || state === 'buffering' || state === 'loading')
+				updateMediaSessionPlaybackState('paused');
+			else updateMediaSessionPlaybackState('none');
 			if (state === 'playing') {
 				consecutiveErrors = 0;
 				failedTrackNames = [];
@@ -449,6 +505,7 @@ function createPlayerStore() {
 			if (gen !== loadGeneration) return;
 			progress = t;
 			duration = d;
+			updateMediaSessionPosition(t, d);
 			// preview tier: DJ-style fade over the last 2s so 30s clips blend
 			// instead of stopping dead (owner-signed anti-jarring rule)
 			const item = queue[currentIndex];
@@ -579,13 +636,13 @@ function createPlayerStore() {
 
 		playAlbum(source: PlaybackSource, metadata: NowPlaying): void {
 			radioSession.end();
-			void resumeAudioEngine();
 			void stopPreviousSession(getCurrentItem(), progress);
 			currentSource?.destroy();
 			const gen = ++loadGeneration;
 			currentSource = source;
 			nowPlaying = metadata;
 			updateMediaSessionMetadata(nowPlaying);
+			updateMediaSessionPlaybackState('paused');
 			playbackState = 'loading';
 			isSeekable = true;
 			isPlayerVisible = true;
@@ -595,6 +652,7 @@ function createPlayerStore() {
 			shuffleOrder = [];
 			consecutiveErrors = 0;
 			subscribeToSource(source, gen);
+			updateMediaSessionControls();
 			source.setVolume(volume);
 			persist();
 		},
@@ -604,7 +662,6 @@ function createPlayerStore() {
 			if (!items.some((item) => item.playlistTrackId?.startsWith('radio:'))) {
 				radioSession.end();
 			}
-			void resumeAudioEngine();
 			const currentItem = queue[currentIndex];
 			const matchingCurrentIndex =
 				shuffle && currentItem?.playlistTrackId
@@ -850,42 +907,22 @@ function createPlayerStore() {
 		},
 
 		play(): void {
-			void resumeAudioEngine();
-			currentSource?.play();
+			playCurrent();
 		},
 
 		pause(): void {
-			currentSource?.pause();
-			const jf = getJellyfinItem();
-			if (jf?.playSessionId)
-				void reportJellyfinProgress(jf.trackSourceId, jf.playSessionId, progress, true);
-			const item = getCurrentItem();
-			if (item?.sourceType === 'plex' && item.plexRatingKey)
-				void reportPlexStopped(item.plexRatingKey);
-			if (item?.sourceType === 'navidrome') void reportNavidromeStopped(item.trackSourceId);
-			persist();
+			pauseCurrent();
 		},
 
 		togglePlay(): void {
 			if (isPlaying) {
-				currentSource?.pause();
-				const jf = getJellyfinItem();
-				if (jf?.playSessionId)
-					void reportJellyfinProgress(jf.trackSourceId, jf.playSessionId, progress, true);
-				const item = getCurrentItem();
-				if (item?.sourceType === 'plex' && item.plexRatingKey)
-					void reportPlexStopped(item.plexRatingKey);
-				if (item?.sourceType === 'navidrome') void reportNavidromeStopped(item.trackSourceId);
-				persist();
+				pauseCurrent();
 			} else {
-				void resumeAudioEngine();
-				currentSource?.play();
+				playCurrent();
 			}
 		},
 		seekTo(seconds: number): void {
-			currentSource?.seekTo(seconds);
-			progress = seconds;
-			persist();
+			seekCurrent(seconds);
 		},
 
 		setVolume(level: number): void {

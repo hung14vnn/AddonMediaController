@@ -100,6 +100,16 @@ describe('Player.svelte lyrics button', () => {
 		await expect.element(page.getByLabelText('Toggle lyrics')).toBeInTheDocument();
 	});
 
+	it('does not mount the lyrics engine until the lyrics panel is opened', async () => {
+		playerStore.playQueue([makeTrack('navidrome')]);
+		render(Player);
+
+		await expect.element(page.getByRole('dialog', { name: 'Lyrics' })).not.toBeInTheDocument();
+
+		await page.getByLabelText('Toggle lyrics').click();
+		await expect.element(page.getByRole('dialog', { name: 'Lyrics' })).toBeInTheDocument();
+	});
+
 	it('keeps word-synced lyrics available when library lyrics are missing', async () => {
 		mockQueryState = {
 			isSuccess: true,

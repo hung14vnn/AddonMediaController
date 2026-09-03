@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { setMediaSessionActionHandler, updateMediaSessionMetadata } from './mediaSession';
+import {
+	setMediaSessionActionHandler,
+	updateMediaSessionMetadata,
+	updateMediaSessionPlaybackState,
+	updateMediaSessionPosition
+} from './mediaSession';
 
 describe('updateMediaSessionMetadata', () => {
 	afterEach(() => {
@@ -97,5 +102,27 @@ describe('updateMediaSessionMetadata', () => {
 
 		expect(setActionHandler).toHaveBeenNthCalledWith(1, 'nexttrack', handler);
 		expect(setActionHandler).toHaveBeenNthCalledWith(2, 'previoustrack', null);
+	});
+
+	it('publishes playback state for background system controls', () => {
+		const mediaSession = { playbackState: 'none' };
+		vi.stubGlobal('navigator', { mediaSession });
+
+		updateMediaSessionPlaybackState('playing');
+
+		expect(mediaSession.playbackState).toBe('playing');
+	});
+
+	it('publishes clamped progress for lock-screen controls', () => {
+		const setPositionState = vi.fn();
+		vi.stubGlobal('navigator', { mediaSession: { setPositionState } });
+
+		updateMediaSessionPosition(190, 180);
+
+		expect(setPositionState).toHaveBeenCalledWith({
+			duration: 180,
+			playbackRate: 1,
+			position: 180
+		});
 	});
 });

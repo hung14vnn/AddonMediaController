@@ -5,7 +5,7 @@ import {
 	EQ_PRESETS,
 	type EqPresetName
 } from '$lib/stores/eqPresets';
-import { tryGetAudioEngine } from '$lib/player/audioElement';
+import { ensureAudioEngine, tryGetAudioEngine } from '$lib/player/audioElement';
 
 const STORAGE_KEY = 'droppedneedle_eq_settings';
 const PERSIST_DEBOUNCE_MS = 150;
@@ -55,7 +55,7 @@ function createEqStore() {
 	let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 	function syncToEngine(): void {
-		const engine = tryGetAudioEngine();
+		const engine = enabled ? ensureAudioEngine() : tryGetAudioEngine();
 		if (!engine) return;
 		if (enabled) {
 			engine.setAllGains(gains);
