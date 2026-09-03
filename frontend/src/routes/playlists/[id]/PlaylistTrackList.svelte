@@ -491,7 +491,7 @@
 					<div class="flex items-center gap-4 w-full">
 						{#if !readonly}
 							<button
-								class="cursor-grab active:cursor-grabbing p-1 touch-none shrink-0 transition-opacity {selectionMode
+								class="hidden sm:inline-flex cursor-grab active:cursor-grabbing p-1 touch-none shrink-0 transition-opacity {selectionMode
 									? 'pointer-events-none opacity-0'
 									: isSearching
 										? 'pointer-events-none opacity-0'

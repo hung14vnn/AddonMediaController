@@ -338,7 +338,7 @@
 						>
 							{#if isReorderable}
 								<button
-									class="shrink-0 opacity-40 group-hover/item:opacity-70 focus:opacity-80 cursor-grab active:cursor-grabbing transition-opacity bg-transparent border-none p-0"
+									class="hidden sm:inline-flex shrink-0 opacity-40 group-hover/item:opacity-70 focus:opacity-80 cursor-grab active:cursor-grabbing transition-opacity bg-transparent border-none p-0"
 									aria-label="Drag to reorder"
 									onkeydown={(e) => handleItemKeydown(e, displayPosition)}
 									onclick={(e) => e.stopPropagation()}

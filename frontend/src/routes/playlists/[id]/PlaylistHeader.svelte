@@ -336,11 +336,11 @@
 			{/if}
 		</div>
 
-		<div class="flex items-center gap-3 pt-4">
+		<div class="flex flex-wrap items-center gap-2 pt-4 sm:gap-3">
 			{#if playable}
 				<button
 					type="button"
-					class="btn btn-accent"
+					class="btn btn-sm btn-accent sm:btn-md"
 					onclick={onplayall}
 					disabled={playlist.track_count === 0}
 				>
@@ -349,7 +349,7 @@
 				</button>
 				<button
 					type="button"
-					class="btn btn-ghost"
+					class="btn btn-sm btn-ghost sm:btn-md"
 					onclick={onshuffleall}
 					disabled={playlist.track_count < 2}
 				>
@@ -357,7 +357,7 @@
 					Shuffle
 				</button>
 				{#if canEdit}
-					<a class="btn btn-ghost" href="/library/tracks?playlist={playlist.id}">
+					<a class="btn btn-sm btn-ghost sm:btn-md" href="/library/tracks?playlist={playlist.id}">
 						<Plus class="h-4 w-4" />
 						Add local tracks
 					</a>
@@ -366,7 +366,7 @@
 			{#if playable}
 				<button
 					type="button"
-					class="btn btn-ghost"
+					class="btn btn-sm btn-ghost sm:btn-md"
 					onclick={() => (discoverModalOpen = true)}
 					disabled={playlist.track_count === 0}
 				>

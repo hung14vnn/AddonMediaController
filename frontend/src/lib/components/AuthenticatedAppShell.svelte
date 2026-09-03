@@ -406,7 +406,7 @@
 		integrations.current.download_client || !integrations.current.loaded
 	);
 	const mobileNavItemCount = $derived(
-		4 +
+		3 +
 			(authStore.isTrusted ? 1 : 0) +
 			(downloadClientConfigured ? 1 : 0) +
 			(authStore.isAdmin ? 1 : 0)
