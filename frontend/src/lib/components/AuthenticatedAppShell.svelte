@@ -392,6 +392,12 @@
 	const downloadClientConfigured = $derived(
 		integrations.current.download_client || !integrations.current.loaded
 	);
+	const mobileNavItemCount = $derived(
+		4 +
+			(authStore.isTrusted ? 1 : 0) +
+			(downloadClientConfigured ? 1 : 0) +
+			(authStore.isAdmin ? 1 : 0)
+	);
 </script>
 
 {#if showNavigationProgress}
@@ -533,21 +539,23 @@
 					</a>
 				</li>
 
-				<li>
-					<a
-						href={withBasePath('/downloads')}
-						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-						class:menu-active={isNavActive('/downloads')}
-						aria-current={isNavActive('/downloads') ? 'page' : undefined}
-						data-tip="Downloads"
-					>
-						<div class="relative">
-							<Download class="h-6 w-6" />
-							<DownloadsNavBadge />
-						</div>
-						<span class="is-drawer-close:hidden">Downloads</span>
-					</a>
-				</li>
+				{#if authStore.isTrusted}
+					<li>
+						<a
+							href={withBasePath('/downloads')}
+							class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+							class:menu-active={isNavActive('/downloads')}
+							aria-current={isNavActive('/downloads') ? 'page' : undefined}
+							data-tip="Downloads"
+						>
+							<div class="relative">
+								<Download class="h-6 w-6" />
+								<DownloadsNavBadge />
+							</div>
+							<span class="is-drawer-close:hidden">Downloads</span>
+						</a>
+					</li>
+				{/if}
 
 				<li>
 					<a
@@ -695,7 +703,11 @@
 	</div>
 </div>
 
-<nav class="droppedneedle-bottom-nav md:hidden" aria-label="Primary navigation">
+<nav
+	class="droppedneedle-bottom-nav md:hidden"
+	style:--mobile-nav-items={mobileNavItemCount}
+	aria-label="Primary navigation"
+>
 	<a
 		href={withBasePath('/')}
 		class="droppedneedle-bottom-nav__item"
@@ -736,16 +748,18 @@
 			<span class="droppedneedle-bottom-nav__badge" aria-label="Library sync in progress"></span>
 		{/if}
 	</a>
-	<a
-		href={withBasePath('/downloads')}
-		class="droppedneedle-bottom-nav__item"
-		class:active={isNavActive('/downloads')}
-		aria-current={isNavActive('/downloads') ? 'page' : undefined}
-	>
-		<Download />
-		<span>Downloads</span>
-		<DownloadsNavBadge />
-	</a>
+	{#if authStore.isTrusted}
+		<a
+			href={withBasePath('/downloads')}
+			class="droppedneedle-bottom-nav__item"
+			class:active={isNavActive('/downloads')}
+			aria-current={isNavActive('/downloads') ? 'page' : undefined}
+		>
+			<Download />
+			<span>Downloads</span>
+			<DownloadsNavBadge />
+		</a>
+	{/if}
 	{#if downloadClientConfigured}
 		<a
 			href={withBasePath('/playlists')}
@@ -757,20 +771,24 @@
 			<span>Playlists</span>
 		</a>
 	{/if}
-	<a
-		href={versionUpdateAvailable ? withBasePath('/settings?tab=about') : withBasePath('/settings')}
-		class="droppedneedle-bottom-nav__item"
-		class:active={isNavActive('/settings')}
-		aria-current={isNavActive('/settings') ? 'page' : undefined}
-	>
-		<Settings />
-		<span>Settings</span>
-		{#if versionUpdateAvailable}
-			<span class="droppedneedle-bottom-nav__badge" aria-label="Update available">
-				<ArrowUpCircle class="h-3 w-3" />
-			</span>
-		{/if}
-	</a>
+	{#if authStore.isAdmin}
+		<a
+			href={versionUpdateAvailable
+				? withBasePath('/settings?tab=about')
+				: withBasePath('/settings')}
+			class="droppedneedle-bottom-nav__item"
+			class:active={isNavActive('/settings')}
+			aria-current={isNavActive('/settings') ? 'page' : undefined}
+		>
+			<Settings />
+			<span>Settings</span>
+			{#if versionUpdateAvailable}
+				<span class="droppedneedle-bottom-nav__badge" aria-label="Update available">
+					<ArrowUpCircle class="h-3 w-3" />
+				</span>
+			{/if}
+		</a>
+	{/if}
 </nav>
 
 <dialog id="search_modal" class="modal">

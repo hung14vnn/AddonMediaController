@@ -47,14 +47,6 @@ _SPOTIFLAC_LOCK_PATCHED = False
 
 
 def _patch_spotiflac_cross_loop_lock() -> None:
-    """Correct SpotiFLAC 3.0.6's loop-bound signed-session auth lock.
-
-    Its JavaScript runtime handles every signed-session callback with a fresh
-    ``asyncio.run()`` loop, but the auth module caches one ``asyncio.Lock`` per
-    namespace.  Concurrent callbacks therefore reuse a lock bound to another
-    loop.  Authentication is process-wide, so a thread-backed async context
-    manager matches the actual lifecycle.
-    """
     global _SPOTIFLAC_LOCK_PATCHED
 
     with _SPOTIFLAC_AUTH_LOCKS_GUARD:
@@ -472,10 +464,6 @@ class SpotiflacService:
             downloaded_files: list[Path] = []
             provider_errors: list[str] = []
 
-            # SpotiFLAC runs its own provider chain inside one call.  A wedged
-            # signed-session callback prevents that call from ever advancing to
-            # the next extension, so isolate each provider behind its own
-            # deadline and client lifecycle.
             for provider in _PROVIDER_FALLBACKS:
                 await self._bus.publish(
                     f"download:{task_id}",
@@ -626,14 +614,6 @@ class SpotiflacService:
             )
 
     async def _watch_progress(self, task_id: str, staging: Path) -> None:
-        """Report best-effort progress while SpotiFLAC writes its output.
-
-        SpotiFLAC does not expose a callback through its async client. The staging
-        directory is private to this task, so its file sizes provide a safe live
-        byte counter even when the provider writes a temporary extension first.
-        The total size is intentionally left unknown; the UI renders this as an
-        indeterminate transfer until the import completes.
-        """
         previous: tuple[int, int] | None = None
         while True:
             await asyncio.sleep(_SPOTIFLAC_PROGRESS_INTERVAL_SECONDS)

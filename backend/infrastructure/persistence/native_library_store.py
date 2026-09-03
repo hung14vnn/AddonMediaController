@@ -4025,11 +4025,13 @@ class NativeLibraryStore(PersistenceBase):
                 {str(rg_row["release_group_mbid"])} if rg_row is not None else set()
             )
             artist_rows = connection.execute(
-                "SELECT DISTINCT te.provider_artist_id FROM "
-                "local_track_external_identities te "
-                "JOIN local_tracks t ON t.id = te.local_track_id "
-                "WHERE t.local_album_id = ? AND te.provider = 'musicbrainz' "
-                "AND te.provider_artist_id IS NOT NULL",
+                "SELECT DISTINCT artist_identity.provider_artist_id "
+                "FROM local_track_artists track_artist "
+                "JOIN local_tracks t ON t.id = track_artist.local_track_id "
+                "JOIN local_artist_external_identities artist_identity "
+                "ON artist_identity.local_artist_id = track_artist.local_artist_id "
+                "AND artist_identity.provider = 'musicbrainz' "
+                "WHERE t.local_album_id = ? AND t.availability = 'indexed'",
                 (local_album_id,),
             ).fetchall()
             artist_ids = {str(row["provider_artist_id"]) for row in artist_rows}

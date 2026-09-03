@@ -214,6 +214,35 @@ def test_domain_types_allow_local_only_catalog_and_nullable_provider_fields() ->
 
 
 @pytest.mark.asyncio
+async def test_album_catalog_scope_ids_resolves_artist_ids_through_track_credits(
+    store: NativeLibraryStore,
+) -> None:
+    await store.create_catalog_membership(_membership())
+    await store.attach_album_identity(
+        LocalAlbumExternalIdentity(
+            local_album_id="album-1",
+            release_group_mbid="rg-1",
+            selected_at=1,
+        ),
+        expected_album_revision=1,
+    )
+    await store.attach_artist_identity_with_aliases(
+        LocalArtistExternalIdentity(
+            local_artist_id="artist-1",
+            provider_artist_id="artist-mbid-1",
+            selected_at=1,
+        ),
+        [],
+        expected_artist_revision=1,
+    )
+
+    release_group_ids, artist_ids = await store.album_catalog_scope_ids("album-1")
+
+    assert release_group_ids == {"rg-1"}
+    assert artist_ids == {"artist-mbid-1"}
+
+
+@pytest.mark.asyncio
 async def test_schema_repairs_release_alias_stored_as_release_group_id(
     db_path: Path,
 ) -> None:

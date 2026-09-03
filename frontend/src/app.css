@@ -783,7 +783,7 @@ textarea {
 	left: 0;
 	z-index: 60;
 	display: grid;
-	grid-template-columns: repeat(7, minmax(0, 1fr));
+	grid-template-columns: repeat(var(--mobile-nav-items, 7), minmax(0, 1fr));
 	min-height: calc(var(--ms-bottom-nav-height) + var(--ms-safe-bottom));
 	padding: 0.45rem 0.5rem calc(0.45rem + var(--ms-safe-bottom));
 	border-top: 1px solid oklch(from var(--color-base-content) l c h / 0.08);

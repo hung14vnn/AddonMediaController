@@ -351,4 +351,21 @@ describe('AuthenticatedAppShell sidebar scroll at short desktop heights (#281)',
 			getComputedStyle(navElement.querySelector('.droppedneedle-bottom-nav__item')!).flexDirection
 		).toBe('column');
 	});
+
+	it('hides Downloads and Settings from a normal user', async () => {
+		authStore.clear();
+		authStore.setUser(testUser('user'));
+		await page.viewport(390, 844);
+		renderLayout();
+
+		const nav = page.getByRole('navigation', { name: 'Primary navigation' });
+		await expect.element(nav).toBeInTheDocument();
+		await expect.element(nav.getByRole('link', { name: 'Downloads' })).not.toBeInTheDocument();
+		await expect.element(nav.getByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+		await expect.element(nav.getByRole('link', { name: 'Playlists' })).toBeInTheDocument();
+
+		const navElement = nav.element();
+		expect(navElement.querySelectorAll('.droppedneedle-bottom-nav__item')).toHaveLength(5);
+		expect(getComputedStyle(navElement).gridTemplateColumns.split(' ')).toHaveLength(5);
+	});
 });

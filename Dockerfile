@@ -76,6 +76,9 @@ RUN groupadd -r -g 1000 droppedneedle \
     && useradd -r -u 1000 -g droppedneedle -d /app -s /sbin/nologin droppedneedle
 
 COPY backend/ .
+# Recent tidal-web extensions use file.downloadSegments. Patch the bridge while
+# site-packages is still root-owned; the application runs as an unprivileged user.
+RUN python maintenance/patch_spotiflac_bridge.py
 # Pristine, never-served input for entrypoint.sh, which writes the resolved
 # frontend to DROPPEDNEEDLE_STATIC_DIR before uvicorn starts.
 COPY --from=frontend-build /app/frontend/build ./static-template
