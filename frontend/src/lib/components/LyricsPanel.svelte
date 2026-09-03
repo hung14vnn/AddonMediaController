@@ -42,7 +42,14 @@
 		onprevious?: () => void;
 		onnext?: () => void;
 		onopenqueue?: () => void;
-		karaokeStatus?: 'idle' | 'preparing' | 'queued' | 'processing' | 'ready' | 'failed';
+		karaokeStatus?:
+			| 'idle'
+			| 'not_generated'
+			| 'preparing'
+			| 'queued'
+			| 'processing'
+			| 'ready'
+			| 'failed';
 		karaokeAvailable?: boolean;
 		karaokeActive?: boolean;
 		karaokeError?: string;
@@ -247,6 +254,7 @@
 					<button
 						class="btn btn-ghost btn-xs btn-circle"
 						class:text-accent={karaokeActive ||
+							karaokeStatus === 'ready' ||
 							karaokeStatus === 'preparing' ||
 							karaokeStatus === 'queued' ||
 							karaokeStatus === 'processing'}
@@ -255,7 +263,15 @@
 							karaokeStatus === 'processing'}
 						onclick={ontogglekaraoke}
 						aria-label={karaokeActive ? 'Turn off karaoke' : 'Start karaoke'}
-						title={karaokeActive ? 'Turn off karaoke' : 'Karaoke'}
+						title={karaokeActive
+							? 'Turn off karaoke'
+							: karaokeStatus === 'ready'
+								? 'Karaoke ready'
+								: karaokeStatus === 'failed'
+									? karaokeError || 'Karaoke unavailable'
+									: karaokeStatus === 'idle'
+										? 'Checking karaoke status…'
+										: 'Karaoke'}
 					>
 						{#if karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'}
 							<span class="loading loading-spinner loading-xs"></span>

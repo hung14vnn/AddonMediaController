@@ -197,7 +197,7 @@
 		playCrateTrack(pick);
 	}
 
-	let heroEl: HTMLElement;
+	let turntableHostEl: HTMLElement;
 	let observer: IntersectionObserver | null = null;
 	let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -210,15 +210,19 @@
 		const onMq = (e: MediaQueryListEvent) => (reducedMotion = e.matches);
 		mq.addEventListener('change', onMq);
 
+		const deckEl = turntableHostEl?.querySelector<HTMLElement>('[data-listening-room-deck]');
 		observer = new IntersectionObserver(
 			([entry]) => {
-				const deckInView = entry.isIntersecting && entry.intersectionRatio > 0.45;
+				// The mobile page stacks the crate below the turntable. Observe the
+				// disc viewport itself so the global player does not cover a visible deck
+				// just because the rest of the listening-room hero is below the fold.
+				const deckInView = entry.isIntersecting && entry.intersectionRatio > 0;
 				deckFocus.set(deckInView);
 				if (!deckInView) playerStore.showPlayer();
 			},
-			{ threshold: [0, 0.45, 0.8] }
+			{ threshold: [0, 0.01] }
 		);
-		if (heroEl) observer.observe(heroEl);
+		if (deckEl) observer.observe(deckEl);
 
 		// countdown freezes while the tab is hidden so a refresh never fires unseen
 		resetCrateCountdown();
@@ -253,7 +257,6 @@
 
 <div class="listening-room relative isolate">
 	<section
-		bind:this={heroEl}
 		class="relative z-10 isolate flex min-h-[calc(100dvh-4.5rem)] flex-col overflow-hidden px-4 pt-5 sm:px-6 lg:px-8"
 	>
 		{#if heroCover}
@@ -266,7 +269,7 @@
 
 		<div class="grid flex-1 grid-cols-1 items-center gap-6 lg:grid-cols-12">
 			<div class="lg:col-span-7 xl:col-span-8">
-				<div bind:clientHeight={deckHeight}>
+				<div bind:this={turntableHostEl} bind:clientHeight={deckHeight}>
 					<Turntable
 						onDropPlay={playCrateTrack}
 						onDropAlbum={(a) => playAlbum(a)}

@@ -57,13 +57,25 @@
 			karaokeController.status === 'processing'
 	);
 
+	function karaokeTip(): string {
+		if (playerStore.karaokeActive) return 'Turn off karaoke';
+		if (karaokeController.status === 'ready') return 'Karaoke ready';
+		if (karaokeController.status === 'queued') return 'Karaoke is queued';
+		if (karaokeController.status === 'processing') return 'Creating karaoke stems';
+		if (karaokeController.status === 'failed') {
+			return karaokeController.error || 'Karaoke unavailable';
+		}
+		if (karaokeController.status === 'idle') return 'Checking karaoke status…';
+		return 'Karaoke not generated';
+	}
+
 	let dragOver = $state(false);
 	let eqPanelOpen = $state(false);
 	let lyricsOpen = $state(false);
 	let karaokePanelOpen = $state(false);
 
 	$effect(() => {
-		karaokeController.syncTrack(np?.trackSourceId);
+		karaokeController.syncTrack(np?.trackSourceId, np?.sourceType);
 		if (!np) {
 			lyricsOpen = false;
 			return;
@@ -152,7 +164,10 @@
 	ondragleave={() => (dragOver = false)}
 	ondrop={handleDrop}
 >
-	<div class="relative aspect-square w-full max-w-[32rem] lg:max-w-[36rem]">
+	<div
+		data-listening-room-deck
+		class="relative aspect-square w-full max-w-[32rem] lg:max-w-[36rem]"
+	>
 		{#if np && lyricsOpen}
 			<div
 				class="inline-lyrics-surface absolute inset-0 overflow-hidden rounded-3xl bg-transparent text-white"
@@ -351,7 +366,7 @@
 					<ListMusic class="h-5 w-5" />
 				</button>
 			</div>
-			<div class="tooltip tooltip-top" data-tip={'Lyrics'}>
+			<div class="tooltip tooltip-top" data-tip="Lyrics">
 				<button
 					class="btn btn-circle btn-ghost"
 					class:text-accent={lyricsOpen}
@@ -375,14 +390,20 @@
 					disabled={karaokeBusy}
 					onclick={() => void karaokeController.toggle()}
 					aria-label={playerStore.karaokeActive ? 'Turn off karaoke' : 'Start karaoke'}
-					title={karaokeController.error || 'Create or enable karaoke'}
+					title={karaokeTip()}
 				>
 					{#if karaokeBusy}
 						<span class="loading loading-spinner loading-xs"></span>
 					{:else}
 						<Mic class="h-4 w-4" />
 					{/if}
-					{playerStore.karaokeActive ? 'Karaoke on' : karaokeBusy ? 'Creating stems...' : 'Karaoke'}
+					{playerStore.karaokeActive
+						? 'Karaoke on'
+						: karaokeBusy
+							? 'Creating stems...'
+							: karaokeController.status === 'ready'
+								? 'Karaoke ready'
+								: 'Karaoke'}
 				</button>
 				{#if playerStore.karaokeActive}
 					<div class="flex min-w-40 flex-1 items-center gap-2">
@@ -447,10 +468,14 @@
 					/>
 				</div>
 				{#if isLocal}
-					<div class="tooltip tooltip-top" data-tip="Karaoke">
+					<div class="tooltip tooltip-top" data-tip={karaokeTip()}>
 						<button
 							class="btn btn-circle btn-ghost btn-sm"
-							class:text-accent={karaokePanelOpen || playerStore.karaokeActive}
+							class:text-accent={karaokePanelOpen ||
+								playerStore.karaokeActive ||
+								karaokeController.status === 'ready' ||
+								karaokeBusy}
+							class:text-error={karaokeController.status === 'failed'}
 							onclick={() => (karaokePanelOpen = !karaokePanelOpen)}
 							aria-label={karaokePanelOpen ? 'Hide karaoke controls' : 'Show karaoke controls'}
 							aria-expanded={karaokePanelOpen}

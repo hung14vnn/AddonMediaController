@@ -77,11 +77,7 @@ class KaraokeService:
         if not self._settings.karaoke_enabled:
             raise ExternalServiceError("Karaoke generation is disabled")
 
-        source_path = await self._local_files.resolve_validated_path(track_file_id)
-        stat = await asyncio.to_thread(source_path.stat)
-        cache_key = hashlib.sha256(
-            f"{source_path}\0{stat.st_size}\0{stat.st_mtime_ns}\0{_ENGINE_VERSION}".encode()
-        ).hexdigest()
+        source_path, cache_key = await self._source_and_cache_key(track_file_id)
 
         if self._entry_ready(cache_key):
             await self._touch(cache_key)
@@ -100,6 +96,27 @@ class KaraokeService:
             await self._queue.put(job)
             self.start()
             return self._response_for_job(job)
+
+    async def status(self, track_file_id: str) -> KaraokeJobResponse:
+        """Return a track's karaoke state without enqueueing a generation job."""
+        if not self._settings.karaoke_enabled:
+            return KaraokeJobResponse(
+                cache_key="",
+                status="failed",
+                error_message="Karaoke generation is disabled",
+            )
+
+        _source_path, cache_key = await self._source_and_cache_key(track_file_id)
+        if self._entry_ready(cache_key):
+            await self._touch(cache_key)
+            return self._response_for_key(cache_key, cached=True)
+
+        async with self._lock:
+            job = self._jobs_by_key.get(cache_key)
+            if job is not None and job.status in {"queued", "processing", "failed"}:
+                return self._response_for_job(job)
+
+        return KaraokeJobResponse(cache_key=cache_key, status="not_generated")
 
     async def get_job(self, job_id: str) -> KaraokeJobResponse:
         job = self._jobs.get(job_id)
@@ -269,6 +286,14 @@ class KaraokeService:
             await asyncio.sleep(
                 max(60, self._settings.karaoke_cache_cleanup_interval_seconds)
             )
+
+    async def _source_and_cache_key(self, track_file_id: str) -> tuple[Path, str]:
+        source_path = await self._local_files.resolve_validated_path(track_file_id)
+        stat = await asyncio.to_thread(source_path.stat)
+        cache_key = hashlib.sha256(
+            f"{source_path}\0{stat.st_size}\0{stat.st_mtime_ns}\0{_ENGINE_VERSION}".encode()
+        ).hexdigest()
+        return source_path, cache_key
 
     async def _touch(self, cache_key: str) -> None:
         now = time.time()

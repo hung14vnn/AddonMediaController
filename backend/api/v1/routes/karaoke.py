@@ -31,6 +31,16 @@ async def get_karaoke_job(
     return await service.get_job(job_id)
 
 
+@router.get("/{track_file_id}/status", response_model=KaraokeJobResponse)
+async def get_karaoke_status(
+    track_file_id: str,
+    _current_user: CurrentUserDep,
+    service: KaraokeService = Depends(get_karaoke_service),
+) -> KaraokeJobResponse:
+    """Report the current karaoke state without starting generation."""
+    return await service.status(track_file_id)
+
+
 @router.get("/{cache_key}/{stem}")
 async def stream_karaoke_stem(
     cache_key: str,

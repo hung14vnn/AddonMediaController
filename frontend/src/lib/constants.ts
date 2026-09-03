@@ -136,7 +136,8 @@ const requestKindQuery = (requestKind: RequestKind = 'album') =>
 export const API = {
 	karaoke: {
 		prepare: () => '/api/v1/karaoke',
-		job: (jobId: string) => `/api/v1/karaoke/jobs/${encodeURIComponent(jobId)}`
+		job: (jobId: string) => `/api/v1/karaoke/jobs/${encodeURIComponent(jobId)}`,
+		status: (trackFileId: string) => `/api/v1/karaoke/${encodeURIComponent(trackFileId)}/status`
 	},
 	lyrics: (
 		source: string,

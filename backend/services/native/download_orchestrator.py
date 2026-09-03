@@ -2615,8 +2615,35 @@ class DownloadOrchestrator:
             and not expected_tracks
             and not is_spotify_local
         ):
-            raise ValidationError(
-                "The original exact MusicBrainz track map is unavailable for reimport"
+            # Spotify requests keep the descriptive metadata on the durable task even
+            # when their MusicBrainz lookup succeeded initially.  If MusicBrainz no
+            # longer has the exact edition during a later reimport, do not strand the
+            # files: Soulseek imports can safely use that captured metadata (and the
+            # file's own tags for multi-track albums).  A single-track task gets a
+            # positional target so its title/duration checks remain active, but the
+            # missing release-track MBID deliberately keeps the mapping non-authoritative.
+            # Usenet folder imports have no reliable filename/tag fallback, so retain
+            # the exact-map requirement there.
+            if task.source != "soulseek":
+                raise ValidationError(
+                    "The original exact MusicBrainz track map is unavailable for reimport"
+                )
+            if task.download_type == "track" or (
+                task.track_count == 1 and task.track_title
+            ):
+                expected_tracks = [
+                    ExpectedTrack(
+                        track_number=task.track_number or 1,
+                        disc_number=task.disc_number or 1,
+                        duration_seconds=task.track_duration_seconds,
+                        recording_mbid=task.recording_mbid,
+                        title=task.track_title,
+                    )
+                ]
+            logger.warning(
+                "Reimporting task %s with captured request metadata because the "
+                "MusicBrainz track map is unavailable",
+                task.id,
             )
         manifest = DownloadManifest(
             task_id=task.id,

@@ -3,7 +3,7 @@ from typing import Literal
 from api.v1.schemas.common import AppStruct
 
 
-KaraokeStatus = Literal["queued", "processing", "ready", "failed"]
+KaraokeStatus = Literal["not_generated", "queued", "processing", "ready", "failed"]
 
 
 class KaraokePrepareRequest(AppStruct):
@@ -18,4 +18,3 @@ class KaraokeJobResponse(AppStruct):
     instrumental_url: str | None = None
     vocals_url: str | None = None
     error_message: str | None = None
-

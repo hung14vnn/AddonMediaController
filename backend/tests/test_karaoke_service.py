@@ -48,6 +48,27 @@ async def test_prepare_deduplicates_an_inflight_track(tmp_path: Path):
 
 
 @pytest.mark.asyncio()
+async def test_status_reports_unprepared_track_without_enqueueing(tmp_path: Path):
+    service, _ = _service(tmp_path)
+
+    result = await service.status("track-1")
+
+    assert result.status == "not_generated"
+    assert service._queue.qsize() == 0
+
+
+@pytest.mark.asyncio()
+async def test_status_reports_inflight_track(tmp_path: Path):
+    service, _ = _service(tmp_path)
+
+    queued = await service.prepare("track-1")
+    result = await service.status("track-1")
+
+    assert result.status == "queued"
+    assert result.job_id == queued.job_id
+
+
+@pytest.mark.asyncio()
 async def test_prepare_returns_both_stems_on_cache_hit(tmp_path: Path):
     service, _ = _service(tmp_path)
     queued = await service.prepare("track-1")
@@ -67,8 +88,12 @@ async def test_prepare_returns_both_stems_on_cache_hit(tmp_path: Path):
 
     result = await service.prepare("track-1")
 
+    status = await service.status("track-1")
+
     assert result.status == "ready"
     assert result.cached is True
+    assert status.status == "ready"
+    assert status.cached is True
     assert result.instrumental_url.endswith("/instrumental")
     assert result.vocals_url.endswith("/vocals")
 

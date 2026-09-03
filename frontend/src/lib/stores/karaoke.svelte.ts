@@ -1,13 +1,21 @@
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
+import type { SourceType } from '$lib/player/types';
 import { playerStore } from '$lib/stores/player.svelte';
 
-export type KaraokeStatus = 'idle' | 'preparing' | 'queued' | 'processing' | 'ready' | 'failed';
+export type KaraokeStatus =
+	| 'idle'
+	| 'not_generated'
+	| 'preparing'
+	| 'queued'
+	| 'processing'
+	| 'ready'
+	| 'failed';
 
 interface KaraokeJob {
 	job_id: string | null;
 	cache_key: string;
-	status: 'queued' | 'processing' | 'ready' | 'failed';
+	status: 'not_generated' | 'queued' | 'processing' | 'ready' | 'failed';
 	cached: boolean;
 	instrumental_url: string | null;
 	vocals_url: string | null;
@@ -21,14 +29,37 @@ class KaraokeController {
 	error = $state('');
 
 	private requestGeneration = 0;
-	private trackId: string | undefined;
+	private trackKey: string | undefined;
 
-	syncTrack(trackId: string | undefined): void {
-		if (trackId === this.trackId) return;
-		this.trackId = trackId;
-		this.requestGeneration += 1;
+	syncTrack(trackId: string | undefined, sourceType?: SourceType): void {
+		const trackKey = trackId ? `${sourceType ?? ''}:${trackId}` : undefined;
+		if (trackKey === this.trackKey) return;
+		this.trackKey = trackKey;
+		const generation = ++this.requestGeneration;
 		this.status = 'idle';
 		this.error = '';
+		if (trackId && sourceType === 'local') void this.refreshStatus(trackId, generation);
+	}
+
+	private async refreshStatus(trackId: string, generation: number): Promise<void> {
+		let pollAttempt = 0;
+		try {
+			while (true) {
+				const status = await api.global.get<KaraokeJob>(API.karaoke.status(trackId));
+				if (generation !== this.requestGeneration) return;
+				this.status = status.status;
+				this.error = status.status === 'failed' ? status.error_message || '' : '';
+				if (status.status !== 'queued' && status.status !== 'processing') return;
+
+				const intervalIndex = Math.min(pollAttempt, KARAOKE_POLL_INTERVALS_MS.length - 1);
+				await new Promise((resolve) =>
+					setTimeout(resolve, KARAOKE_POLL_INTERVALS_MS[intervalIndex])
+				);
+				pollAttempt += 1;
+			}
+		} catch {
+			// Status discovery is advisory. Keep the normal idle state if the lookup fails.
+		}
 	}
 
 	async toggle(): Promise<void> {

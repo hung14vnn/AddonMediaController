@@ -3027,6 +3027,35 @@ async def test_reimport_task_completes_when_files_now_present(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_reimport_task_uses_captured_metadata_when_musicbrainz_map_is_missing(
+    tmp_path: Path,
+):
+    album_service = _album_service_with([])
+    store, orch, fp, lib = _build(tmp_path, album_service=album_service)
+    _coupled_fp(fp, lib)
+    task = await _new_task(
+        store,
+        download_type="track",
+        status="failed",
+        release_mbid=None,
+        release_track_mbid=None,
+        recording_mbid="recording-1",
+        track_title="Track 1",
+        track_number=None,
+        track_duration_seconds=200.0,
+    )
+    await _link_candidate(store, task.id, _candidate(0.9, files=1))
+
+    result = await orch.reimport_task(task.id)
+
+    assert result.status == "completed"
+    manifest = fp.process_downloaded.await_args.args[0]
+    assert manifest.expected_tracks[0].title == "Track 1"
+    assert manifest.expected_tracks[0].duration_seconds == 200.0
+    assert manifest.expected_tracks[0].release_track_mbid is None
+
+
+@pytest.mark.asyncio
 async def test_reimport_task_partial_when_some_still_missing(tmp_path: Path):
     store, orch, fp, lib = _build(tmp_path)
     candidate = _candidate(0.9, files=2)

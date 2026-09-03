@@ -88,7 +88,10 @@
 	}
 
 	$effect(() => {
-		karaokeController.syncTrack(playerStore.nowPlaying?.trackSourceId);
+		karaokeController.syncTrack(
+			playerStore.nowPlaying?.trackSourceId,
+			playerStore.nowPlaying?.sourceType
+		);
 	});
 
 	function toggleLyrics() {
@@ -115,6 +118,16 @@
 	async function toggleKaraoke(): Promise<void> {
 		if (!playerStore.karaokeActive) lyricsPanelOpen = true;
 		await karaokeController.toggle();
+	}
+
+	function karaokeTip(): string {
+		if (playerStore.karaokeActive) return 'Turn off karaoke';
+		if (karaokeStatus === 'ready') return 'Karaoke ready';
+		if (karaokeStatus === 'queued') return 'Karaoke is queued';
+		if (karaokeStatus === 'processing') return 'Creating karaoke stems';
+		if (karaokeStatus === 'failed') return karaokeError || 'Karaoke unavailable';
+		if (karaokeStatus === 'idle') return 'Checking karaoke status…';
+		return 'Karaoke not generated';
 	}
 
 	const MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -390,20 +403,20 @@
 				</div>
 
 				{#if playerStore.currentQueueItem?.sourceType === 'local'}
-					<div
-						class="tooltip tooltip-left"
-						data-tip={playerStore.karaokeActive ? 'Turn off karaoke' : 'Karaoke'}
-					>
+					<div class="tooltip tooltip-left" data-tip={karaokeTip()}>
 						<button
 							class="btn btn-ghost btn-sm btn-circle"
 							class:text-accent={playerStore.karaokeActive ||
+								karaokeStatus === 'ready' ||
 								karaokeStatus === 'processing' ||
 								karaokeStatus === 'queued'}
+							class:text-error={karaokeStatus === 'failed'}
 							disabled={karaokeStatus === 'preparing' ||
 								karaokeStatus === 'queued' ||
 								karaokeStatus === 'processing'}
 							onclick={toggleKaraoke}
 							aria-label={playerStore.karaokeActive ? 'Turn off karaoke' : 'Start karaoke'}
+							title={karaokeTip()}
 						>
 							{#if karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'}
 								<span class="loading loading-spinner loading-xs"></span>
