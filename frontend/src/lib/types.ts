@@ -56,6 +56,7 @@ export type SuggestResult = {
 	disambiguation?: string | null;
 	score: number;
 	local_id?: string | null;
+	cover_url?: string | null;
 };
 
 export type SearchRemoteStatus = 'ok' | 'partial' | 'timeout' | 'error' | 'stale';
@@ -71,6 +72,7 @@ export type SearchBucketResponse<T extends Artist | Album> = {
 
 export type SearchSuggestResponse = {
 	results: SuggestResult[];
+	tracks?: SpotifyTrackResult[];
 	remote_status: SearchRemoteStatus;
 };
 
@@ -126,6 +128,17 @@ export type ReleaseGroup = {
 	first_release_date?: string;
 	in_library: boolean;
 	requested?: boolean;
+	cover_url?: string | null;
+};
+
+export type CombinedSearchResponse = {
+	artists: Artist[];
+	albums: Album[];
+	top_artist?: Artist | null;
+	top_album?: Album | null;
+	tracks: SpotifyTrackResult[];
+	service_status?: Record<string, string> | null;
+	bucket_status?: Record<string, SearchRemoteStatus> | null;
 };
 
 export type ExternalLink = {
@@ -501,6 +514,7 @@ export type TopSong = {
 	listen_count: number;
 	disc_number?: number | null;
 	track_number?: number | null;
+	cover_url?: string | null;
 };
 
 export type TopSongsResponse = {

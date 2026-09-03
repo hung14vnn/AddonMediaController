@@ -87,7 +87,7 @@ export function createSearchEnrichmentBatcher({
 
 	return {
 		requestArtist(artist) {
-			if (artist.listen_count != null) return;
+			if (artist.listen_count != null || artist.musicbrainz_id.startsWith('spotify:')) return;
 			const key = `artist:${artist.musicbrainz_id}`;
 			if (!reserve(key)) return;
 			pendingArtists.set(artist.musicbrainz_id, {
@@ -97,7 +97,7 @@ export function createSearchEnrichmentBatcher({
 			schedule();
 		},
 		requestAlbum(album) {
-			if (album.listen_count != null) return;
+			if (album.listen_count != null || album.musicbrainz_id.startsWith('spotify:')) return;
 			const key = `album:${album.musicbrainz_id}`;
 			if (!reserve(key)) return;
 			pendingAlbums.set(album.musicbrainz_id, {

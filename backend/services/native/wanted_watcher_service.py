@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from infrastructure.sse_publisher import SSEPublisher
     from models.download import ScoredCandidate
     from services.album_service import AlbumService
+    from services.acquisition_dispatcher import AcquisitionDispatcher
     from services.native.download_service import DownloadService
     from services.native.library_manager import LibraryManager
     from services.preferences_service import PreferencesService
@@ -139,6 +140,7 @@ class WantedWatcherService:
         mb_repo,  # concrete MusicBrainz repo, the NewReleaseService way (§5.2.1)
         sse_publisher: "SSEPublisher",
         preferences: "PreferencesService",
+        get_acquisition: "Callable[[], AcquisitionDispatcher] | None" = None,
         inter_want_delay: float = 5.0,
         provider_available: Callable[[], bool] | None = None,
     ) -> None:
@@ -148,6 +150,9 @@ class WantedWatcherService:
         # A settings save rebuilds the DownloadService singleton, so the watcher
         # resolves it fresh at every use rather than capturing an instance.
         self._get_download_service = get_download_service
+        # New automatic acquisitions use the same configured source priority as
+        # interactive requests. Keep this optional for legacy/test constructions.
+        self._get_acquisition = get_acquisition
         self._library = library_manager
         self._album_service = album_service
         self._mb = mb_repo
@@ -835,9 +840,12 @@ class WantedWatcherService:
         missing_tracks: list,
         download_service: "DownloadService",
     ) -> str:
+        acquisition = (
+            self._get_acquisition() if self._get_acquisition is not None else download_service
+        )
         if want.kind == "missing":
-            return await self._dispatch_album(want, download_service)
-        await self._dispatch_tracks(want, missing_tracks, download_service)
+            return await self._dispatch_album(want, acquisition)
+        await self._dispatch_tracks(want, missing_tracks, acquisition)
         return "dispatched"
 
     async def _dispatch_album(

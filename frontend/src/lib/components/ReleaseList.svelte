@@ -14,6 +14,7 @@
 		year?: number | null;
 		in_library?: boolean;
 		requested?: boolean;
+		cover_url?: string | null;
 	}
 
 	interface Props {
@@ -123,6 +124,7 @@
 						>
 							<AlbumImage
 								mbid={rg.id}
+								remoteUrl={rg.cover_url ?? null}
 								alt="{rg.title} cover"
 								size="sm"
 								rounded="lg"

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, Query, Path, BackgroundTasks, Depends, Request
@@ -24,6 +25,12 @@ from repositories.coverart_repository import CoverArtRepository
 from middleware import CurrentUserDep
 from core.dependencies import get_per_user_client_factory
 from services.per_user_client_factory import PerUserClientFactory
+from services.spotify_catalog import (
+    spotify_album_search_result,
+    spotify_artist_search_result,
+    spotify_suggestion,
+    spotify_track_result,
+)
 
 router = APIRouter(route_class=MsgSpecRoute, prefix="/search", tags=["search"])
 logger = logging.getLogger(__name__)
@@ -57,6 +64,58 @@ async def search(
 
     final_limit_artists = limit_per_bucket if limit_per_bucket else limit_artists
     final_limit_albums = limit_per_bucket if limit_per_bucket else limit_albums
+
+    spotify = await client_factory.resolve_spotify_catalog()
+    if spotify is None:
+        spotify = await client_factory.resolve_spotify(current_user.id)
+    if spotify is not None:
+        try:
+            wants_artists = (not buckets_list or "artists" in buckets_list) and final_limit_artists > 0
+            wants_albums = (not buckets_list or "albums" in buckets_list) and final_limit_albums > 0
+            wants_tracks = not buckets_list or "tracks" in buckets_list
+            artist_task = (
+                spotify.search_artists(q, limit=final_limit_artists)
+                if wants_artists
+                else asyncio.sleep(0, result=([], False))
+            )
+            album_task = (
+                spotify.search_albums(q, limit=final_limit_albums)
+                if wants_albums
+                else asyncio.sleep(0, result=([], False))
+            )
+            track_task = (
+                spotify.search_tracks(q, limit=10)
+                if wants_tracks
+                else asyncio.sleep(0, result=([], False))
+            )
+            (raw_artists, _), (raw_albums, _), (raw_tracks, _) = await asyncio.gather(
+                artist_task, album_task, track_task
+            )
+            artists = [
+                spotify_artist_search_result(item, q)
+                for item in raw_artists
+                if item.get("id")
+            ]
+            albums = [
+                spotify_album_search_result(item, q)
+                for item in raw_albums
+                if item.get("id")
+            ]
+            tracks = [spotify_track_result(item) for item in raw_tracks if item.get("id")]
+            return SearchResponse(
+                artists=artists,
+                albums=albums,
+                tracks=tracks,
+                top_artist=artists[0] if artists else None,
+                top_album=albums[0] if albums else None,
+                bucket_status={
+                    name: "ok"
+                    for name, wanted in (("artists", wants_artists), ("albums", wants_albums))
+                    if wanted
+                },
+            )
+        except Exception:  # noqa: BLE001 - preserve the old catalog as an outage fallback
+            logger.exception("Spotify catalog search failed; falling back to MusicBrainz")
 
     result = await search_service.search(
         query=q,
@@ -116,6 +175,7 @@ async def search(
 
 @router.get("/suggest", response_model=SuggestResponse)
 async def suggest(
+    current_user: CurrentUserDep,
     q: str = Query(..., min_length=2, description="Search query"),
     limit: int = Query(5, ge=1, le=10, description="Max results"),
     search_service: SearchService = Depends(get_search_service),
@@ -124,49 +184,77 @@ async def suggest(
     stripped = q.strip()
     if len(stripped) < 2:
         return SuggestResponse()
-    result = await search_service.suggest(query=stripped, limit=limit)
     spotify = await client_factory.resolve_spotify_catalog()
+    if spotify is None and current_user is not None:
+        spotify = await client_factory.resolve_spotify(current_user.id)
     if spotify is None:
-        return result
+        return await search_service.suggest(query=stripped, limit=limit)
     try:
-        from api.v1.schemas.search import SpotifyTrackResult
-
-        tracks, _ = await spotify.search_tracks(stripped, limit=limit)
-        seen_track_ids: set[str] = set()
-        spotify_results = [
-            SpotifyTrackResult(
-                title=track.get("name", ""),
-                artist=", ".join(
-                    artist.get("name", "") for artist in track.get("artists", [])
-                ),
-                album=(track.get("album") or {}).get("name", ""),
-                spotify_id=track_id,
-                spotify_album_id=(track.get("album") or {}).get("id"),
-                spotify_url=(track.get("external_urls") or {}).get("spotify"),
-                preview_url=track.get("preview_url"),
-                album_image_url=((track.get("album") or {}).get("images") or [{}])[
-                    0
-                ].get("url"),
-                duration_ms=track.get("duration_ms"),
-            )
-            for track in tracks
-            if (track_id := track.get("id"))
-            and not (track_id in seen_track_ids or seen_track_ids.add(track_id))
+        (artists, _), (albums, _), (tracks, _) = await asyncio.gather(
+            spotify.search_artists(stripped, limit=limit),
+            spotify.search_albums(stripped, limit=limit),
+            spotify.search_tracks(stripped, limit=limit),
+        )
+        suggestions = [
+            *(spotify_suggestion(item, "artist", stripped) for item in artists if item.get("id")),
+            *(spotify_suggestion(item, "album", stripped) for item in albums if item.get("id")),
         ]
-        return msgspec.structs.replace(result, tracks=spotify_results)
-    except Exception:  # noqa: BLE001 - MusicBrainz suggestions remain useful
-        logger.exception("Spotify supplemental suggest failed")
-        return result
+        suggestions.sort(key=lambda item: (-item.score, item.type, item.title.casefold()))
+        seen_track_ids: set[str] = set()
+        return SuggestResponse(
+            results=suggestions[:limit],
+            tracks=[
+                spotify_track_result(track)
+                for track in tracks
+                if (track_id := track.get("id"))
+                and not (track_id in seen_track_ids or seen_track_ids.add(track_id))
+            ],
+            remote_status="ok",
+        )
+    except Exception:  # noqa: BLE001 - retain the legacy provider as an outage fallback
+        logger.exception("Spotify suggest failed; falling back to MusicBrainz")
+        return await search_service.suggest(query=stripped, limit=limit)
 
 
 @router.get("/{bucket}", response_model=SearchBucketResponse)
 async def search_bucket(
+    current_user: CurrentUserDep,
     bucket: str = Path(..., pattern="^(artists|albums)$"),
     q: str = Query(..., min_length=1, description="Search term"),
     limit: int = Query(50, ge=1, le=100, description="Page size"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     search_service: SearchService = Depends(get_search_service),
+    client_factory: PerUserClientFactory = Depends(get_per_user_client_factory),
 ):
+    spotify = await client_factory.resolve_spotify_catalog()
+    if spotify is None and current_user is not None:
+        spotify = await client_factory.resolve_spotify(current_user.id)
+    if spotify is not None:
+        try:
+            if bucket == "artists":
+                raw, _ = await spotify.search_artists(q.strip(), limit=limit, offset=offset)
+                results = [
+                    spotify_artist_search_result(item, q)
+                    for item in raw
+                    if item.get("id")
+                ]
+            else:
+                raw, _ = await spotify.search_albums(q.strip(), limit=limit, offset=offset)
+                results = [
+                    spotify_album_search_result(item, q)
+                    for item in raw
+                    if item.get("id")
+                ]
+            return SearchBucketResponse(
+                bucket=bucket,
+                limit=limit,
+                offset=offset,
+                results=results,
+                top_result=results[0] if offset == 0 and results else None,
+                status="ok",
+            )
+        except Exception:  # noqa: BLE001 - preserve search during a Spotify outage
+            logger.exception("Spotify %s search failed; falling back to MusicBrainz", bucket)
     results, top_result, status = await search_service.search_bucket(
         bucket=bucket, query=q, limit=limit, offset=offset
     )

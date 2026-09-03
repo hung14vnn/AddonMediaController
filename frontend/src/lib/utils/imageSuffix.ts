@@ -1,6 +1,9 @@
 type ComponentSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl' | 'hero' | 'full';
 
 export function appendAudioDBSizeSuffix(url: string, size: ComponentSize): string {
+	// Spotify CDN URLs are already complete image URLs. Appending AudioDB's
+	// `/small` or `/medium` path would turn them into 404s.
+	if (!url.includes('theaudiodb.com')) return url;
 	if (url.endsWith('/small') || url.endsWith('/medium')) {
 		return url;
 	}

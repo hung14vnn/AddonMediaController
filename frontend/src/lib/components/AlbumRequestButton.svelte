@@ -2,6 +2,7 @@
 	import { Download } from 'lucide-svelte';
 	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { colors } from '$lib/colors';
+	import { trackSelectionDownloadStore } from '$lib/stores/trackSelectionDownload.svelte';
 
 	interface Props {
 		mbid: string;
@@ -22,6 +23,10 @@
 		e.stopPropagation();
 		e.preventDefault();
 		if (requesting) return;
+		if (mbid.startsWith('spotify:album:')) {
+			trackSelectionDownloadStore.show(mbid, albumName, artistName);
+			return;
+		}
 		requesting = true;
 		try {
 			await albumRequest

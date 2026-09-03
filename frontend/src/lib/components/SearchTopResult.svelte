@@ -16,9 +16,12 @@
 
 	let imageUrl = $derived.by(() => {
 		if (artist) {
+			if (artist.thumb_url || artist.cover_url) return artist.thumb_url || artist.cover_url || null;
 			return getApiUrl(`/api/v1/covers/artist/${artist.musicbrainz_id}?size=250`);
 		}
 		if (album) {
+			if (album.album_thumb_url || album.cover_url)
+				return album.album_thumb_url || album.cover_url || null;
 			return getApiUrl(`/api/v1/covers/release-group/${album.musicbrainz_id}?size=250`);
 		}
 		return null;
@@ -68,12 +71,19 @@
 	<div class="relative z-10 flex items-center gap-4 sm:gap-5 w-full">
 		{#if resultType === 'artist' && artist}
 			<div class="shrink-0">
-				<ArtistImage mbid={artist.musicbrainz_id} alt={artist.title} size="lg" requestSize={250} />
+				<ArtistImage
+					mbid={artist.musicbrainz_id}
+					remoteUrl={artist.thumb_url ?? artist.cover_url ?? null}
+					alt={artist.title}
+					size="lg"
+					requestSize={250}
+				/>
 			</div>
 		{:else if album}
 			<div class="shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden shadow-md">
 				<AlbumImage
 					mbid={album.musicbrainz_id}
+					remoteUrl={album.album_thumb_url ?? album.cover_url ?? null}
 					alt={album.title}
 					size="full"
 					requestSize={250}

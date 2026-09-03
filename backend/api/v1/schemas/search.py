@@ -89,6 +89,7 @@ class SuggestResult(AppStruct):
     requested: bool = False
     disambiguation: str | None = None
     score: int = 0
+    cover_url: str | None = None
 
 
 class SuggestResponse(AppStruct):

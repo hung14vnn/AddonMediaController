@@ -71,8 +71,15 @@
 		const handleOpenQueue = () => {
 			queueDrawerOpen = true;
 		};
+		const handleOpenLyrics = () => {
+			if (supportsLyrics) lyricsPanelOpen = true;
+		};
 		window.addEventListener('droppedneedle:open-queue', handleOpenQueue);
-		return () => window.removeEventListener('droppedneedle:open-queue', handleOpenQueue);
+		window.addEventListener('droppedneedle:open-lyrics', handleOpenLyrics);
+		return () => {
+			window.removeEventListener('droppedneedle:open-queue', handleOpenQueue);
+			window.removeEventListener('droppedneedle:open-lyrics', handleOpenLyrics);
+		};
 	});
 
 	$effect(() => {
@@ -527,6 +534,9 @@
 	</div>
 
 	<EqPanel bind:open={eqPanelOpen} onclose={() => (eqPanelOpen = false)} />
+{/if}
+
+{#if playerStore.nowPlaying}
 	<LyricsPanel
 		bind:open={lyricsPanelOpen}
 		lyricsText={lyricsQuery.data?.text ?? ''}
@@ -536,19 +546,21 @@
 		isPlaying={playerStore.isPlaying}
 		hasPrevious={playerStore.hasPrevious}
 		hasNext={playerStore.hasNext}
+		canAddToPlaylist={playerStore.currentQueueItem?.sourceType === 'local'}
 		ontoggleplay={() => playerStore.togglePlay()}
 		onprevious={() => playerStore.previousTrack()}
 		onnext={() => playerStore.nextTrack()}
+		onaddtoplaylist={addCurrentTrackToPlaylist}
 		onopenqueue={toggleQueueDrawer}
 		isLoading={lyricsQuery.isFetching}
 		hasError={lyricsQuery.isError}
 		currentTime={playerStore.progress}
-		trackName={playerStore.nowPlaying?.trackName ?? ''}
-		artistName={formatArtistCredit(playerStore.nowPlaying?.artistName)}
-		albumName={playerStore.nowPlaying?.albumName ?? ''}
-		trackKey={`${playerStore.nowPlaying?.sourceType ?? ''}:${playerStore.nowPlaying?.trackSourceId ?? ''}:${playerStore.nowPlaying?.trackName ?? ''}:${playerStore.nowPlaying?.artistName ?? ''}:${playerStore.nowPlaying?.albumName ?? ''}`}
+		trackName={playerStore.nowPlaying.trackName ?? ''}
+		artistName={formatArtistCredit(playerStore.nowPlaying.artistName)}
+		albumName={playerStore.nowPlaying.albumName ?? ''}
+		trackKey={`${playerStore.nowPlaying.sourceType ?? ''}:${playerStore.nowPlaying.trackSourceId ?? ''}:${playerStore.nowPlaying.trackName ?? ''}:${playerStore.nowPlaying.artistName ?? ''}:${playerStore.nowPlaying.albumName ?? ''}`}
 		coverUrl={nowPlayingCoverUrl}
-		duration={playerStore.nowPlaying?.duration ?? playerStore.duration}
+		duration={playerStore.nowPlaying.duration ?? playerStore.duration}
 		onclose={() => (lyricsPanelOpen = false)}
 		{karaokeStatus}
 		karaokeAvailable={playerStore.currentQueueItem?.sourceType === 'local'}

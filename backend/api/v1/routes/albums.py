@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import quote_plus
 
 from fastapi import (
     APIRouter,
@@ -21,6 +22,7 @@ from api.v1.schemas.album import (
     EditionPinResponse,
     LastFmAlbumEnrichment,
 )
+from api.v1.schemas.get_it import PurchaseLink
 from api.v1.schemas.discovery import SimilarAlbumsResponse, MoreByArtistResponse
 from api.v1.schemas.get_it import PurchaseOptionsResponse
 from core.dependencies import (
@@ -30,6 +32,7 @@ from core.dependencies import (
     get_download_service,
     get_get_it_service,
     get_navidrome_library_service,
+    get_per_user_client_factory,
 )
 from services.album_service import AlbumService
 from services.album_discovery_service import AlbumDiscoveryService
@@ -41,6 +44,15 @@ from infrastructure.validators import is_unknown_mbid
 from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.degradation import try_get_degradation_context
 from infrastructure.msgspec_fastapi import MsgSpecRoute
+from services.per_user_client_factory import PerUserClientFactory
+from services.spotify_catalog import (
+    spotify_album_basic,
+    spotify_album_id,
+    spotify_album_info,
+    spotify_album_tracks,
+    spotify_artist_id,
+    spotify_top_album,
+)
 
 import msgspec.structs
 import msgspec
@@ -52,8 +64,20 @@ router = APIRouter(route_class=MsgSpecRoute, prefix="/albums", tags=["album"])
 
 @router.get("/{album_id}", response_model=AlbumInfo)
 async def get_album(
-    album_id: str, album_service: AlbumService = Depends(get_album_service)
+    album_id: str,
+    album_service: AlbumService = Depends(get_album_service),
+    client_factory: PerUserClientFactory = Depends(get_per_user_client_factory),
 ):
+    spotify_id = spotify_album_id(album_id)
+    if spotify_id:
+        client = await client_factory.resolve_spotify_catalog()
+        if client is None:
+            raise HTTPException(status_code=503, detail="Spotify catalog is not configured")
+        try:
+            return spotify_album_info(await client.get_album(spotify_id))
+        except Exception as exc:
+            logger.exception("Spotify album lookup failed")
+            raise HTTPException(status_code=502, detail="Spotify album lookup failed") from exc
     if is_unknown_mbid(album_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -79,7 +103,14 @@ async def refresh_album(
     album_id: str,
     album_service: AlbumService = Depends(get_album_service),
     navidrome_service: NavidromeLibraryService = Depends(get_navidrome_library_service),
+    client_factory: PerUserClientFactory = Depends(get_per_user_client_factory),
 ):
+    spotify_id = spotify_album_id(album_id)
+    if spotify_id:
+        client = await client_factory.resolve_spotify_catalog()
+        if client is None:
+            raise HTTPException(status_code=503, detail="Spotify catalog is not configured")
+        return spotify_album_basic(await client.get_album(spotify_id))
     if is_unknown_mbid(album_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -100,6 +131,7 @@ async def refresh_album(
 async def get_album_purchase_options(
     album_id: str,
     service=Depends(get_get_it_service),
+    client_factory: PerUserClientFactory = Depends(get_per_user_client_factory),
 ):
     """The "Where to buy" links for an album (Get it, phase 01). Lazy by design:
     the album page's own load path never calls this - the section component
@@ -119,10 +151,38 @@ async def get_album_basic(
     request: Request,
     background_tasks: BackgroundTasks,
     album_service: AlbumService = Depends(get_album_service),
+    client_factory: PerUserClientFactory = Depends(get_per_user_client_factory),
 ):
     if await request.is_disconnected():
         raise ClientDisconnectedError("Client disconnected")
 
+    spotify_id = spotify_album_id(album_id)
+    if spotify_id:
+        client = await client_factory.resolve_spotify_catalog()
+        if client is None:
+            raise HTTPException(status_code=503, detail="Spotify catalog is not configured")
+        try:
+            return spotify_album_basic(await client.get_album(spotify_id))
+        except Exception as exc:
+            logger.exception("Spotify album basic lookup failed")
+            raise HTTPException(status_code=502, detail="Spotify album lookup failed") from exc
+
+    spotify_id = spotify_album_id(album_id)
+    if spotify_id:
+        client = await client_factory.resolve_spotify_catalog()
+        item = await client.get_album(spotify_id) if client else {}
+        spotify_url = (item.get("external_urls") or {}).get("spotify")
+        search_term = quote_plus(f"{', '.join(a.get('name', '') for a in item.get('artists', []))} {item.get('name', '')}".strip())
+        return PurchaseOptionsResponse(
+            digital=(
+                [PurchaseLink(store="spotify", label="Spotify", url=spotify_url, kind="digital")]
+                if spotify_url
+                else []
+            ),
+            bandcamp_search_url=(
+                f"https://bandcamp.com/search?q={search_term}&item_type=a" if search_term else ""
+            ),
+        )
     if is_unknown_mbid(album_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -149,9 +209,21 @@ async def get_album_tracks(
     album_id: str,
     request: Request,
     album_service: AlbumService = Depends(get_album_service),
+    client_factory: PerUserClientFactory = Depends(get_per_user_client_factory),
 ):
     if await request.is_disconnected():
         raise ClientDisconnectedError("Client disconnected")
+
+    spotify_id = spotify_album_id(album_id)
+    if spotify_id:
+        client = await client_factory.resolve_spotify_catalog()
+        if client is None:
+            raise HTTPException(status_code=503, detail="Spotify catalog is not configured")
+        try:
+            return spotify_album_tracks(await client.get_album(spotify_id))
+        except Exception as exc:
+            logger.exception("Spotify album tracks lookup failed")
+            raise HTTPException(status_code=502, detail="Spotify album tracks lookup failed") from exc
 
     if is_unknown_mbid(album_id):
         raise HTTPException(
@@ -175,6 +247,8 @@ async def get_similar_albums(
     count: int = Query(default=10, ge=1, le=30),
     discovery_service: AlbumDiscoveryService = Depends(get_album_discovery_service),
 ):
+    if spotify_album_id(album_id) or spotify_artist_id(artist_id):
+        return SimilarAlbumsResponse(albums=[], source="spotify", configured=False)
     if is_unknown_mbid(album_id) or is_unknown_mbid(artist_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -191,7 +265,38 @@ async def get_more_by_artist(
     artist_id: str = Query(..., description="Artist MBID"),
     count: int = Query(default=10, ge=1, le=30),
     discovery_service: AlbumDiscoveryService = Depends(get_album_discovery_service),
+    client_factory: PerUserClientFactory = Depends(get_per_user_client_factory),
 ):
+    spotify_id = spotify_artist_id(artist_id)
+    if spotify_id:
+        client = await client_factory.resolve_spotify_catalog()
+        if client is None:
+            return MoreByArtistResponse()
+        artist = await client.get_artist(spotify_id)
+        albums, _, _ = await client.get_artist_albums(spotify_id, limit=count)
+        current_id = spotify_album_id(album_id)
+        mapped = [
+            spotify_top_album(item)
+            for item in albums
+            if item.get("id") and item.get("id") != current_id
+        ]
+        from api.v1.schemas.discovery import DiscoveryAlbum
+
+        return MoreByArtistResponse(
+            artist_name=artist.get("name", ""),
+            albums=[
+                DiscoveryAlbum(
+                    musicbrainz_id=item.release_group_mbid or "",
+                    title=item.title,
+                    artist_name=item.artist_name,
+                    artist_id=artist_id,
+                    year=item.year,
+                    cover_url=item.cover_url,
+                )
+                for item in mapped
+                if item.release_group_mbid
+            ],
+        )
     if is_unknown_mbid(artist_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -209,7 +314,7 @@ async def get_album_lastfm_enrichment(
     album_name: str = Query(..., description="Album name for Last.fm lookup"),
     enrichment_service: AlbumEnrichmentService = Depends(get_album_enrichment_service),
 ):
-    if is_unknown_mbid(album_id):
+    if not spotify_album_id(album_id) and is_unknown_mbid(album_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid or unknown album ID: {album_id}",

@@ -11,6 +11,7 @@
 	import LibraryBadge from './LibraryBadge.svelte';
 	import LastFmPlaceholder from './LastFmPlaceholder.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
+	import { trackSelectionDownloadStore } from '$lib/stores/trackSelectionDownload.svelte';
 
 	interface Props {
 		albums: TopAlbum[];
@@ -57,6 +58,14 @@
 
 	async function handleRequest(album: TopAlbum) {
 		if (!album.release_group_mbid) return;
+		if (album.release_group_mbid.startsWith('spotify:album:')) {
+			trackSelectionDownloadStore.show(
+				album.release_group_mbid,
+				album.title,
+				album.artist_name ?? ''
+			);
+			return;
+		}
 
 		const id = album.release_group_mbid;
 		requestingIds.add(id);
@@ -118,6 +127,7 @@
 								alt={album.title}
 								size="full"
 								requestSize={250}
+								remoteUrl={album.cover_url}
 								className="w-12 h-12 rounded"
 							/>
 							{#if isInLibrary(album)}
@@ -157,7 +167,7 @@
 								type="button"
 								class="btn btn-circle btn-sm opacity-0 group-hover:opacity-100 transition-all shrink-0 hover:scale-110 hover:brightness-110"
 								style="background-color: {colors.accent}; border: none;"
-								onclick={(e) => {
+									onclick={(e) => {
 									e.stopPropagation();
 									e.preventDefault();
 									handleRequest(album);

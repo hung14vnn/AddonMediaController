@@ -15,3 +15,7 @@ export async function loadPlaylistModal(): Promise<
 export async function loadDiscographyModal(): Promise<Component> {
 	return (await import('$lib/components/DiscographyDownloadModal.svelte')).default;
 }
+
+export async function loadTrackSelectionModal(): Promise<Component> {
+	return (await import('$lib/components/TrackSelectionDownloadModal.svelte')).default;
+}

@@ -79,6 +79,7 @@
 					alt={song.release_name || ''}
 					size="full"
 					requestSize={250}
+					remoteUrl={song.cover_url}
 					className="w-12 h-12 rounded"
 				/>
 			</div>

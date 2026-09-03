@@ -110,7 +110,9 @@
 	let remoteRequestSize = $derived(
 		requestSize === 250 ? 'md' : requestSize === 500 ? 'lg' : requestSize === 1200 ? 'full' : size
 	);
-	let useRemoteUrl = $derived(remoteUrl && $imageSettingsStore.directRemoteImagesEnabled);
+	let useRemoteUrl = $derived(
+		remoteUrl && ($imageSettingsStore.directRemoteImagesEnabled || mbid.startsWith('spotify:'))
+	);
 	let resolvedRemoteUrl = $derived(
 		remoteUrl ? appendAudioDBSizeSuffix(remoteUrl, remoteRequestSize) : null
 	);

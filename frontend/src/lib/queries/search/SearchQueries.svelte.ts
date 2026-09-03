@@ -9,6 +9,7 @@ import { ttl } from '$lib/stores/cacheTtl.svelte';
 import type {
 	Album,
 	Artist,
+	CombinedSearchResponse,
 	LibraryAlbumSummary,
 	LibraryArtistSummary,
 	NativeAlbumsResponse,
@@ -42,7 +43,36 @@ export const successfulSuggestStaleTime = (query: {
 // window below.
 export const REMOTE_ARTIST_PAGE_SIZE = 24;
 
-// B7 prefetch surface: the two LOCAL buckets are warmed from routes/search/+page.ts.
+export const getCombinedSearchQueryOptions = (
+	query: string,
+	limitArtists = 24,
+	limitAlbums = 24
+) => {
+	const normalizedQuery = query.trim();
+	return queryOptions({
+		enabled: enabled(normalizedQuery),
+		staleTime: ttl('search', CACHE_TTL.SEARCH),
+		queryKey: SearchQueryKeyFactory.combined(
+			authStore.user?.id,
+			normalizedQuery,
+			limitArtists,
+			limitAlbums
+		),
+		queryFn: ({ signal }) =>
+			api.global.get<CombinedSearchResponse>(
+				API.search.all(normalizedQuery, limitArtists, limitAlbums),
+				{ signal }
+			)
+	});
+};
+
+export const getCombinedSearchQuery = (
+	getQuery: Getter<string>,
+	limitArtists = 24,
+	limitAlbums = 24
+) => createQuery(() => getCombinedSearchQueryOptions(getQuery(), limitArtists, limitAlbums));
+
+// Search-page prefetch surface: warm the same combined payload used by the page.
 export const getLocalArtistSearchQueryOptions = (query: string, limit = 24) =>
 	queryOptions({
 		enabled: enabled(query),

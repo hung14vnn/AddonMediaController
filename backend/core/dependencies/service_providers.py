@@ -1416,7 +1416,7 @@ def get_target_new_release_service() -> "NewReleaseService":
 
 
 def _build_wanted_watcher_service(
-    *, download_service_getter, library_manager, album_service
+    *, download_service_getter, acquisition_getter, library_manager, album_service
 ) -> "WantedWatcherService":
     from services.native.wanted_watcher_service import WantedWatcherService
 
@@ -1433,6 +1433,7 @@ def _build_wanted_watcher_service(
         # provider, not an instance: a settings save rebuilds the DownloadService
         # singleton and the watcher must always dispatch through the current one
         get_download_service=download_service_getter,
+        get_acquisition=acquisition_getter,
         library_manager=library_manager,
         album_service=album_service,
         mb_repo=get_musicbrainz_repository(),
@@ -1446,6 +1447,7 @@ def _build_wanted_watcher_service(
 def get_wanted_watcher_service() -> "WantedWatcherService":
     return _build_wanted_watcher_service(
         download_service_getter=get_download_service,
+        acquisition_getter=get_acquisition_dispatcher,
         library_manager=get_library_repository(),
         album_service=get_album_service(),
     )
@@ -1455,6 +1457,7 @@ def get_wanted_watcher_service() -> "WantedWatcherService":
 def get_target_wanted_watcher_service() -> "WantedWatcherService":
     return _build_wanted_watcher_service(
         download_service_getter=get_target_download_service,
+        acquisition_getter=get_target_acquisition_dispatcher,
         library_manager=get_target_library_repository(),
         album_service=get_target_album_service(),
     )

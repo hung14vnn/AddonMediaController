@@ -23,6 +23,7 @@
 	let heroImageLoaded = $state(false);
 
 	let resolvedBackdropUrl = $derived.by(() => {
+		if (artist.musicbrainz_id.startsWith('spotify:') && artist.thumb_url) return artist.thumb_url;
 		if ($imageSettingsStore.directRemoteImagesEnabled) {
 			if (artist.banner_url) return artist.banner_url;
 			if (artist.wide_thumb_url) return artist.wide_thumb_url;
@@ -40,7 +41,11 @@
 
 	function onHeroImageLoad() {
 		heroImageLoaded = true;
-		extractDominantColor(getApiUrl(`/api/v1/covers/artist/${artist.musicbrainz_id}?size=500`)).then(
+		const colorSource =
+			artist.musicbrainz_id.startsWith('spotify:') && artist.thumb_url
+				? artist.thumb_url
+				: getApiUrl(`/api/v1/covers/artist/${artist.musicbrainz_id}?size=500`);
+		extractDominantColor(colorSource).then(
 			(gradient) => (heroGradient = gradient)
 		);
 	}

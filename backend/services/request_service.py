@@ -14,6 +14,7 @@ from core.exceptions import ExternalServiceError, ValidationError
 from infrastructure.persistence.request_history import RequestHistoryStore
 from infrastructure.queue.priority_queue import RequestPriority
 from services.native.download_service import ALREADY_IN_LIBRARY
+from services.spotify_catalog import spotify_album_id
 
 if TYPE_CHECKING:
     from infrastructure.persistence.mbid_store import MBIDStore
@@ -75,6 +76,11 @@ class RequestService:
     async def _resolve_album_identity(
         self, musicbrainz_id: str
     ) -> tuple[str, str | None]:
+        # Spotify catalog albums are already canonical provider identities. They
+        # must not be sent through AlbumService, whose identity resolver is
+        # intentionally MusicBrainz-only.
+        if spotify_album_id(musicbrainz_id):
+            return musicbrainz_id, None
         if self._ownership is not None:
             musicbrainz_id = await self._ownership.provider_album_id(musicbrainz_id)
         if self._album_service is None:

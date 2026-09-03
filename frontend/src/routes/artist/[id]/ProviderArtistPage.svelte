@@ -42,6 +42,7 @@
 		discographyDownloadStore,
 		type DiscographyRelease
 	} from '$lib/stores/discographyDownload.svelte';
+	import { trackSelectionDownloadStore } from '$lib/stores/trackSelectionDownload.svelte';
 	import { Download } from 'lucide-svelte';
 	import ArtistReleasePagination from '$lib/components/ArtistReleasePagination.svelte';
 	import { mergeArtistReleasePages } from '$lib/queries/artist/artistReleasePages';
@@ -159,6 +160,10 @@
 	const providerReleaseRequest = requestAlbum();
 
 	async function handleRequest(releaseId: string, releaseTitle?: string) {
+		if (releaseId.startsWith('spotify:album:')) {
+			trackSelectionDownloadStore.show(releaseId, releaseTitle ?? '', artist?.name ?? '');
+			return;
+		}
 		requestedReleaseIds.add(releaseId);
 		requestedReleaseIds = requestedReleaseIds;
 

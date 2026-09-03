@@ -5,6 +5,7 @@
 	import { libraryStore } from '$lib/stores/library';
 	import { integrationStore } from '$lib/stores/integration';
 	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { trackSelectionDownloadStore } from '$lib/stores/trackSelectionDownload.svelte';
 	import { formatArtistCredit, formatListenCount } from '$lib/utils/formatting';
 	import { getListenTitle } from '$lib/utils/enrichment';
 	import { Download, Music2 } from 'lucide-svelte';
@@ -46,6 +47,11 @@
 
 	async function handleRequest(e: Event) {
 		e.stopPropagation();
+		if (album.musicbrainz_id.startsWith('spotify:album:')) {
+			e.preventDefault();
+			trackSelectionDownloadStore.show(album.musicbrainz_id, album.title, album.artist ?? '');
+			return;
+		}
 		requesting = true;
 		try {
 			const result = await albumRequest

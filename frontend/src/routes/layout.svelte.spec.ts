@@ -200,6 +200,9 @@ vi.mock('$lib/components/lazyComponentLoaders', () => ({
 			throw new Error('discography chunk unavailable');
 		}
 		return (await import('$lib/components/DiscographyDownloadModal.svelte')).default;
+	},
+	loadTrackSelectionModal: async () => {
+		return (await import('$lib/components/TrackSelectionDownloadModal.svelte')).default;
 	}
 }));
 

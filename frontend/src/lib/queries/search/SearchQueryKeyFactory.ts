@@ -7,6 +7,14 @@ const providerAll = (userId: string | null | undefined) => {
 
 export const SearchQueryKeyFactory = {
 	all: (userId: string | null | undefined) => ['search', userId ?? null] as const,
+	combined: (userId: string | null | undefined, query: string, limitArtists: number, limitAlbums: number) =>
+		[
+			...providerAll(userId),
+			'combined',
+			query.trim().toLowerCase(),
+			limitArtists,
+			limitAlbums
+		] as const,
 	localArtists: (userId: string | null | undefined, query: string, limit: number) =>
 		[
 			...SearchQueryKeyFactory.all(userId),

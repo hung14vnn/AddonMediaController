@@ -270,6 +270,35 @@ export function requestSpotifyTrack() {
 	}));
 }
 
+export function requestSpotifyTracks() {
+	return createMutation(() => ({
+		mutationFn: async (spotifyIds: string[]) => {
+			const uniqueIds = [...new Set(spotifyIds.filter(Boolean))];
+			const results = await Promise.all(
+				uniqueIds.map((spotify_id) =>
+					api.global.post<{ status: string; task_id?: string | null }>(
+						API.me.spotifyTrackRequest(),
+						{ spotify_id }
+					)
+				)
+			);
+			return {
+				requested: results.filter((result) => result.status !== 'already_in_library').length,
+				alreadyInLibrary: results.filter((result) => result.status === 'already_in_library').length
+			};
+		},
+		onSuccess: (data: { requested: number; alreadyInLibrary: number }) => {
+			toastStore.show({
+				message: `${data.requested} track${data.requested === 1 ? '' : 's'} requested`,
+				type: 'success'
+			});
+			void invalidateTasks();
+		},
+		onError: (err: unknown) =>
+			toastStore.show({ message: errorMessage(err, 'Spotify track request failed'), type: 'error' })
+	}));
+}
+
 export function cancelDownload() {
 	return createMutation(() => ({
 		mutationFn: (id: string) =>

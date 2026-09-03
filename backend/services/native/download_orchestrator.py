@@ -1447,12 +1447,34 @@ class DownloadOrchestrator:
         disposition: str,
         publisher_bundle_ids: list[str] | None = None,
     ) -> str | None:  # noqa: ANN001 - DownloadTask
-        manifest = (
-            manifest_override
-            if manifest_override is not None
-            else self._read_manifest(task.id)
-        )
-        attempt = await self._attempt_for_manifest(task, manifest)
+        if manifest_override is not None:
+            attempt = await self._attempt_for_manifest(task, manifest_override)
+        else:
+            try:
+                manifest = self._read_manifest(task.id)
+            except OrchestrationError as exc:
+                # Enqueue writes the manifest before calling the client, but a
+                # concurrent cleanup/recovery pass can remove it after an enqueue
+                # failure. The attempt journal is the durable fallback and is enough
+                # to clean up any client-side artifacts without masking the original
+                # enqueue error as "manifest missing" or blocking failover.
+                attempt = await self._store.get_download_attempt_for_candidate(
+                    task.id, task.source, task.candidate_index or 0
+                )
+                if attempt is None:
+                    logger.warning(
+                        "Cannot schedule cleanup for task %s: manifest and attempt "
+                        "journal are missing",
+                        task.id,
+                    )
+                    return None
+                logger.warning(
+                    "Scheduling cleanup for task %s from the attempt journal: %s",
+                    task.id,
+                    exc,
+                )
+            else:
+                attempt = await self._attempt_for_manifest(task, manifest)
         if attempt is None:
             return None
         scheduled = await self._store.schedule_download_attempt_cleanup(

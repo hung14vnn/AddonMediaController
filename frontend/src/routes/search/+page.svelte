@@ -23,14 +23,7 @@
 	import { createSearchEnrichmentBatcher } from '$lib/utils/searchEnrichmentBatcher';
 	import { getSearchStatusNotice } from '$lib/utils/searchStatus';
 	import {
-		REMOTE_ARTIST_PAGE_SIZE,
-		getLocalAlbumSearchQuery,
-		getLocalArtistSearchQuery,
-		getRemoteAlbumSearchQuery,
-		getRemoteArtistSearchQuery,
-		getSpotifyTrackSearchQuery,
-		mergeSearchAlbums,
-		mergeSearchArtists
+		getCombinedSearchQuery
 	} from '$lib/queries/search/SearchQueries.svelte';
 	import { Check, ArrowRight, RefreshCw } from 'lucide-svelte';
 	import SearchTopResult from '$lib/components/SearchTopResult.svelte';
@@ -48,59 +41,38 @@
 	let enrichmentQuery = $state('');
 
 	let normalizedQuery = $derived(data.query.trim());
-	const localArtistQuery = getLocalArtistSearchQuery(() => normalizedQuery);
-	const localAlbumQuery = getLocalAlbumSearchQuery(() => normalizedQuery);
-	const artistQuery = getRemoteArtistSearchQuery(() => normalizedQuery);
-	const albumQuery = getRemoteAlbumSearchQuery(() => normalizedQuery);
-	const trackQuery = getSpotifyTrackSearchQuery(() => normalizedQuery);
+	const searchQuery = getCombinedSearchQuery(() => normalizedQuery);
 
-	let remoteArtists = $derived(
-		(() => {
-			const results = (artistQuery.data?.results ?? []).slice(0, REMOTE_ARTIST_PAGE_SIZE);
-			const top = artistQuery.data?.top_result;
-			if (top && !results.some((artist) => artist.musicbrainz_id === top.musicbrainz_id)) {
-				return [top, ...results.slice(0, REMOTE_ARTIST_PAGE_SIZE - 1)];
-			}
-			return results;
-		})()
-	);
-	let baseArtists = $derived(mergeSearchArtists(localArtistQuery.data?.items ?? [], remoteArtists));
-	let baseAlbums = $derived(
-		mergeSearchAlbums(localAlbumQuery.data?.items ?? [], albumQuery.data?.results ?? [])
-	);
+	let baseArtists = $derived(searchQuery.data?.artists ?? []);
+	let baseAlbums = $derived(searchQuery.data?.albums ?? []);
 	let artists = $derived(enrichment ? applyArtistEnrichment(baseArtists, enrichment) : baseArtists);
 	let albums = $derived(enrichment ? applyAlbumEnrichment(baseAlbums, enrichment) : baseAlbums);
-	let tracks = $derived(trackQuery.data?.tracks ?? []);
+	let tracks = $derived(searchQuery.data?.tracks ?? []);
 	let topArtist = $derived(
-		artists.find(
-			(artist) => artist.musicbrainz_id === artistQuery.data?.top_result?.musicbrainz_id
-		) ?? null
-	);
-	let topAlbum = $derived(
-		albums.find((album) => album.musicbrainz_id === albumQuery.data?.top_result?.musicbrainz_id) ??
+		artists.find((artist) => artist.musicbrainz_id === searchQuery.data?.top_artist?.musicbrainz_id) ??
 			null
 	);
+	let topAlbum = $derived(
+		albums.find((album) => album.musicbrainz_id === searchQuery.data?.top_album?.musicbrainz_id) ?? null
+	);
 	let artistStatus: SearchRemoteStatus = $derived(
-		artistQuery.isError ? 'error' : (artistQuery.data?.status ?? 'ok')
+		searchQuery.isError ? 'error' : (searchQuery.data?.bucket_status?.artists ?? 'ok')
 	);
 	let albumStatus: SearchRemoteStatus = $derived(
-		albumQuery.isError ? 'error' : (albumQuery.data?.status ?? 'ok')
+		searchQuery.isError ? 'error' : (searchQuery.data?.bucket_status?.albums ?? 'ok')
 	);
 	let artistNotice = $derived(getSearchStatusNotice(artistStatus, 'artists'));
 	let albumNotice = $derived(getSearchStatusNotice(albumStatus, 'albums'));
 	let loadingArtists = $derived(
-		(artistQuery.isPending || localArtistQuery.isPending) && artists.length === 0
+		searchQuery.isPending && artists.length === 0
 	);
 	let loadingAlbums = $derived(
-		(albumQuery.isPending || localAlbumQuery.isPending) && albums.length === 0
+		searchQuery.isPending && albums.length === 0
 	);
 	let hasSearched = $derived(normalizedQuery.length >= 2);
 
 	let isSearching = $derived(
-		localArtistQuery.isFetching ||
-			localAlbumQuery.isFetching ||
-			artistQuery.isFetching ||
-			albumQuery.isFetching
+		searchQuery.isFetching
 	);
 	let hasTopResult = $derived(topArtist != null || topAlbum != null);
 	let displayedArtists = $derived(
@@ -108,7 +80,7 @@
 	);
 	let artistCards = $derived(displayedArtists.slice(0, 5));
 	let artistPlaceholderCount = $derived(
-		artistQuery.isFetching ? Math.max(0, 5 - artistCards.length) : 0
+		searchQuery.isFetching ? Math.max(0, 5 - artistCards.length) : 0
 	);
 	let displayedAlbums = $derived(
 		topAlbum ? albums.filter((a) => a.musicbrainz_id !== topAlbum?.musicbrainz_id) : albums
@@ -150,13 +122,7 @@
 
 	$effect(() => {
 		const handleRefresh = () => {
-			void Promise.all([
-				localArtistQuery.refetch(),
-				localAlbumQuery.refetch(),
-				artistQuery.refetch(),
-				albumQuery.refetch(),
-				trackQuery.refetch()
-			]);
+			void searchQuery.refetch();
 		};
 		window.addEventListener('search-refresh', handleRefresh);
 		return () => window.removeEventListener('search-refresh', handleRefresh);
@@ -229,7 +195,7 @@
 			{#if artistNotice}
 				<div class="alert {artistNotice.className} mb-3" role="status">
 					<span>{artistNotice.message}</span>
-					<button class="btn btn-sm" onclick={() => artistQuery.refetch()}>
+					<button class="btn btn-sm" onclick={() => searchQuery.refetch()}>
 						<RefreshCw class="h-4 w-4" /> Retry
 					</button>
 				</div>
@@ -249,7 +215,7 @@
 					<div
 						class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 						aria-label="Artist search results"
-						aria-busy={artistQuery.isFetching}
+						aria-busy={searchQuery.isFetching}
 					>
 						<ViewMoreArtistCard />
 						{#each artistCards as artist (artist.musicbrainz_id)}
@@ -284,7 +250,7 @@
 			{#if albumNotice}
 				<div class="alert {albumNotice.className} mb-3" role="status">
 					<span>{albumNotice.message}</span>
-					<button class="btn btn-sm" onclick={() => albumQuery.refetch()}>
+					<button class="btn btn-sm" onclick={() => searchQuery.refetch()}>
 						<RefreshCw class="h-4 w-4" /> Retry
 					</button>
 				</div>

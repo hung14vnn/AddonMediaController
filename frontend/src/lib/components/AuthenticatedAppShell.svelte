@@ -31,8 +31,13 @@
 		unregisterPlaylistModal,
 		type PlaylistModalHandle
 	} from '$lib/stores/playlistModal.svelte';
-	import { loadDiscographyModal, loadPlaylistModal } from '$lib/components/lazyComponentLoaders';
+	import {
+		loadDiscographyModal,
+		loadPlaylistModal,
+		loadTrackSelectionModal
+	} from '$lib/components/lazyComponentLoaders';
 	import { discographyDownloadStore } from '$lib/stores/discographyDownload.svelte';
+	import { trackSelectionDownloadStore } from '$lib/stores/trackSelectionDownload.svelte';
 	import { batchDownloadStore } from '$lib/stores/batchDownloadStatus.svelte';
 	import BatchDownloadIndicator from '$lib/components/BatchDownloadIndicator.svelte';
 	import { syncStatus } from '$lib/stores/syncStatus.svelte';
@@ -91,6 +96,7 @@
 	let audioElement = $state<HTMLAudioElement | undefined>(undefined);
 	let PlaylistModal = $state<PlaylistModalComponent | null>(null);
 	let DiscographyModal = $state<Component | null>(null);
+	let TrackSelectionModal = $state<Component | null>(null);
 	let playlistModalRef = $state<PlaylistModalHandle | undefined>(undefined);
 	let modalQuery = $state('');
 	let showNavigationProgress = $state(false);
@@ -195,6 +201,23 @@
 	});
 
 	$effect(() => {
+		if (!trackSelectionDownloadStore.open || TrackSelectionModal) return;
+		let cancelled = false;
+		void loadTrackSelectionModal()
+			.then((component) => {
+				if (!cancelled) TrackSelectionModal = component;
+			})
+			.catch(() => {
+				if (cancelled) return;
+				trackSelectionDownloadStore.close();
+				playbackToast.show('Could not load the track selection dialog. Try again.', 'error');
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	$effect(() => {
 		if (!playlistModalRef) return;
 		const ref = playlistModalRef;
 		registerPlaylistModal(ref);
@@ -211,6 +234,7 @@
 		untrack(() => {
 			resetPlaylistModal();
 			discographyDownloadStore.close();
+			trackSelectionDownloadStore.close();
 			batchDownloadStore.clear();
 			PlaylistModal = null;
 			playlistModalRef = undefined;
@@ -862,6 +886,9 @@
 <BatchDownloadIndicator />
 {#if DiscographyModal}
 	<DiscographyModal />
+{/if}
+{#if TrackSelectionModal}
+	<TrackSelectionModal />
 {/if}
 {#if PlaylistModal}
 	<PlaylistModal bind:this={playlistModalRef} />

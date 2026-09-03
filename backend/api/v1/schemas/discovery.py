@@ -25,6 +25,7 @@ class TopSong(AppStruct):
     listen_count: int = 0
     disc_number: int | None = None
     track_number: int | None = None
+    cover_url: str | None = None
 
 
 class TopSongsResponse(AppStruct):

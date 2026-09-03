@@ -296,9 +296,9 @@ async def test_target_projection_rejects_local_only_track_before_free_music() ->
 
 
 @pytest.mark.asyncio
-async def test_enabled_spotiflac_wins_even_when_its_mount_is_not_ready():
+async def test_unready_spotiflac_falls_back_to_the_next_ready_source():
     dispatcher, download, free_music, spotiflac = _dispatcher(
-        builtin_ready=False, spotiflac_enabled=True, spotiflac_ready=False
+        builtin_ready=True, spotiflac_enabled=True, spotiflac_ready=False
     )
 
     task_id = await dispatcher.request_track(
@@ -310,15 +310,28 @@ async def test_enabled_spotiflac_wins_even_when_its_mount_is_not_ready():
         cover_url="https://i.scdn.co/image/album-cover",
     )
 
-    assert task_id == "spotiflac-track"
+    assert task_id == "slskd-track"
+    spotiflac.request_track.assert_not_awaited()
+    download.request_track.assert_awaited_once()
+    free_music.request_track.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_spotiflac_start_failure_falls_back_to_the_next_source():
+    dispatcher, download, free_music, spotiflac = _dispatcher(
+        builtin_ready=True, spotiflac_enabled=True
+    )
+    spotiflac.request_track.side_effect = RuntimeError("provider unavailable")
+
+    task_id = await dispatcher.request_track(
+        user_id="u1",
+        recording_mbid="spotify:track:track-123",
+        release_group_mbid="spotify:album:album-123",
+        artist_name="A",
+        track_title="T",
+    )
+
+    assert task_id == "slskd-track"
     spotiflac.request_track.assert_awaited_once()
-    assert (
-        spotiflac.request_track.await_args.kwargs["release_group_mbid"]
-        == "spotify:album:album-123"
-    )
-    assert (
-        spotiflac.request_track.await_args.kwargs["cover_url"]
-        == "https://i.scdn.co/image/album-cover"
-    )
-    download.request_track.assert_not_awaited()
+    download.request_track.assert_awaited_once()
     free_music.request_track.assert_not_awaited()

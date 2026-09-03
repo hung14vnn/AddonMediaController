@@ -26,6 +26,7 @@
 		VolumeX,
 		SlidersHorizontal,
 		Music2,
+		Maximize2,
 		Check,
 		CircleX,
 		Mic
@@ -109,6 +110,11 @@
 		const target = e.currentTarget as HTMLInputElement;
 		const ratio = Number(target.value) / 1000;
 		if (playerStore.duration > 0) playerStore.seekTo(ratio * playerStore.duration);
+	}
+
+	function openFullscreenLyrics() {
+		if (!supportsLyrics) return;
+		window.dispatchEvent(new CustomEvent('droppedneedle:open-lyrics'));
 	}
 
 	function readTrack(e: DragEvent): CrateTrack | null {
@@ -501,6 +507,22 @@
 						aria-label="Toggle equalizer"
 					>
 						<SlidersHorizontal class="h-4 w-4" />
+					</button>
+				</div>
+				<div
+					class="tooltip tooltip-top"
+					data-tip={supportsLyrics
+						? 'Enter full screen lyrics'
+						: 'Lyrics unavailable for this track'}
+				>
+					<button
+						class="btn btn-circle btn-ghost btn-sm"
+						class:opacity-30={!supportsLyrics}
+						onclick={openFullscreenLyrics}
+						disabled={!supportsLyrics}
+						aria-label="Enter full screen lyrics"
+					>
+						<Maximize2 class="h-4 w-4" />
 					</button>
 				</div>
 			</div>

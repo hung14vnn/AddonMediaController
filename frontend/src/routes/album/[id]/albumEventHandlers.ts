@@ -3,6 +3,7 @@ import { artistHref } from '$lib/utils/entityRoutes';
 import type { AlbumBasicInfo, YouTubeTrackLink, YouTubeLink, YouTubeQuotaStatus } from '$lib/types';
 import { compareDiscTrack, getDiscTrackKey } from '$lib/player/queueHelpers';
 import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
+import { trackSelectionDownloadStore } from '$lib/stores/trackSelectionDownload.svelte';
 
 export interface EventHandlerDeps {
 	getAlbum: () => AlbumBasicInfo | null;
@@ -50,6 +51,14 @@ export function createEventHandlers(deps: EventHandlerDeps) {
 	async function handleRequest(): Promise<void> {
 		const album = deps.getAlbum();
 		if (!album || deps.getRequesting()) return;
+		if (album.musicbrainz_id.startsWith('spotify:album:')) {
+			trackSelectionDownloadStore.show(
+				album.musicbrainz_id,
+				album.title,
+				album.artist_name ?? ''
+			);
+			return;
+		}
 		deps.setRequesting(true);
 		try {
 			const result = await pageRequest

@@ -211,6 +211,108 @@ class SpotifyClient:
         tracks = data.get("tracks", {})
         return tracks.get("items", []) or [], bool(tracks.get("next"))
 
+    async def search_artists(
+        self, query: str, limit: int = 10, offset: int = 0
+    ) -> tuple[list[dict], bool]:
+        items: list[dict] = []
+        has_more = False
+        while len(items) < limit:
+            page_size = min(limit - len(items), 10)
+            data = await self._get(
+                "/search",
+                params={
+                    "q": query,
+                    "type": "artist",
+                    "limit": page_size,
+                    "offset": offset + len(items),
+                },
+            )
+            artists = data.get("artists", {})
+            page = artists.get("items", []) or []
+            items.extend(page)
+            has_more = bool(artists.get("next"))
+            if not page or not has_more:
+                break
+        return items, has_more
+
+    async def search_albums(
+        self,
+        query: str,
+        limit: int = 10,
+        offset: int = 0,
+        market: str = "VN",
+    ) -> tuple[list[dict], bool]:
+        items: list[dict] = []
+        has_more = False
+        while len(items) < limit:
+            page_size = min(limit - len(items), 10)
+            data = await self._get(
+                "/search",
+                params={
+                    "q": query,
+                    "type": "album",
+                    "limit": page_size,
+                    "offset": offset + len(items),
+                    "market": market,
+                },
+            )
+            albums = data.get("albums", {})
+            page = albums.get("items", []) or []
+            items.extend(page)
+            has_more = bool(albums.get("next"))
+            if not page or not has_more:
+                break
+        return items, has_more
+
+    async def get_artist(self, artist_id: str) -> dict:
+        return await self._get(f"/artists/{artist_id}")
+
+    async def get_artist_albums(
+        self,
+        artist_id: str,
+        limit: int = 10,
+        offset: int = 0,
+        market: str = "VN",
+    ) -> tuple[list[dict], bool, int | None]:
+        items: list[dict] = []
+        has_more = False
+        total: int | None = None
+        while len(items) < limit:
+            page_size = min(limit - len(items), 10)
+            data = await self._get(
+                f"/artists/{artist_id}/albums",
+                params={
+                    "include_groups": "album,single,compilation,appears_on",
+                    "limit": page_size,
+                    "offset": offset + len(items),
+                    "market": market,
+                },
+            )
+            page = data.get("items", []) or []
+            items.extend(page)
+            has_more = bool(data.get("next"))
+            total = data.get("total")
+            if not page or not has_more:
+                break
+        return items, has_more, total
+
+    async def get_album(self, album_id: str, market: str = "VN") -> dict:
+        album = await self._get(f"/albums/{album_id}", params={"market": market})
+        tracks = album.get("tracks") or {}
+        items = list(tracks.get("items") or [])
+        total = int(tracks.get("total") or len(items))
+        while tracks.get("next") and len(items) < total:
+            tracks = await self._get(
+                f"/albums/{album_id}/tracks",
+                params={"market": market, "limit": 10, "offset": len(items)},
+            )
+            page = tracks.get("items") or []
+            if not page:
+                break
+            items.extend(page)
+        album["tracks"] = {**tracks, "items": items, "total": total}
+        return album
+
     async def get_artist_top_tracks(self, artist_id: str, market: str = "VN") -> list[dict]:
         data = await self._get(f"/artists/{artist_id}/top-tracks", params={"market": market})
         return data.get("tracks", []) or []

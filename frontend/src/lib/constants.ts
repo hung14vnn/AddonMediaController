@@ -601,6 +601,8 @@ export const API = {
 			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/items/${ordinal}/artwork/${encodeURIComponent(sha256)}`
 	},
 	search: {
+		all: (query: string, limitArtists = 24, limitAlbums = 24) =>
+			`/api/v1/search?q=${encodeURIComponent(query.trim())}&limit_artists=${limitArtists}&limit_albums=${limitAlbums}`,
 		artists: (query: string, limit = 50, offset = 0) =>
 			`/api/v1/search/artists?q=${encodeURIComponent(query)}&limit=${limit}${offset ? `&offset=${offset}` : ''}`,
 		albums: (query: string, limit = 50, offset = 0) =>

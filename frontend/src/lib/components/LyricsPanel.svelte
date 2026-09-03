@@ -10,7 +10,8 @@
 		SkipBack,
 		SkipForward,
 		Mic,
-		ListMusic
+		ListMusic,
+		ListPlus
 	} from 'lucide-svelte';
 	import { fade, slide } from 'svelte/transition';
 	import type { LyricLine } from '$lib/types';
@@ -38,9 +39,11 @@
 		isPlaying?: boolean;
 		hasPrevious?: boolean;
 		hasNext?: boolean;
+		canAddToPlaylist?: boolean;
 		ontoggleplay?: () => void;
 		onprevious?: () => void;
 		onnext?: () => void;
+		onaddtoplaylist?: () => void;
 		onopenqueue?: () => void;
 		karaokeStatus?:
 			| 'idle'
@@ -79,9 +82,11 @@
 		isPlaying = false,
 		hasPrevious = false,
 		hasNext = false,
+		canAddToPlaylist = false,
 		ontoggleplay = () => {},
 		onprevious = () => {},
 		onnext = () => {},
+		onaddtoplaylist = () => {},
 		onopenqueue = () => {},
 		karaokeStatus = 'idle',
 		karaokeAvailable = false,
@@ -193,24 +198,59 @@
 	{/if}
 	<div class="lyrics-wash" aria-hidden="true"></div>
 	<div
-		class="relative z-10 w-full max-w-5xl mx-auto flex flex-col flex-1 min-h-0"
+		class="lyrics-stage-inner relative z-10 w-full max-w-5xl mx-auto flex flex-col flex-1 min-h-0"
 		transition:slide={{ duration: 250 }}
 	>
 		<div
 			class="lyrics-stage-header relative z-30 flex items-center justify-between gap-3 px-5 sm:px-8 pointer-events-auto"
 		>
-			<div class="flex items-center gap-2 min-w-0 flex-1">
-				<Music2 class="h-4 w-4 text-white/75 shrink-0" />
-				<div class="min-w-0 shrink">
-					{#if trackName}
-						<p class="text-sm font-semibold truncate">{trackName}</p>
-					{/if}
-					{#if artistName}
-						<p class="text-xs text-white/55 truncate">{formatArtistCredit(artistName)}</p>
-					{/if}
+			<div class="lyrics-stage-track-meta flex items-center gap-2 min-w-0 flex-1">
+				<div class="lyrics-stage-cover-wrap hidden md:flex" aria-hidden="true">
+					<div
+						class="lyrics-stage-disc turntable-platter vinyl-spin rounded-full"
+						class:is-paused={!isPlaying}
+					>
+						<div
+							class="pointer-events-none absolute inset-[9%] rounded-full border border-base-content/[0.06]"
+						></div>
+						<div
+							class="pointer-events-none absolute inset-[18%] rounded-full border border-base-content/[0.07]"
+						></div>
+						<div
+							class="pointer-events-none absolute inset-[27%] rounded-full border border-base-content/[0.08]"
+						></div>
+						<div
+							class="absolute inset-[25%] overflow-hidden rounded-full ring-1 ring-base-content/25 shadow-[0_0_0_2px_oklch(from_var(--color-base-100)_l_c_h_/_0.55),0_2px_8px_oklch(from_var(--color-base-100)_l_c_h_/_0.6)]"
+						>
+							{#if coverUrl}
+								<img class="lyrics-stage-cover" src={coverUrl} alt="" />
+							{:else}
+								<div class="lyrics-stage-cover lyrics-stage-cover-empty">
+									<Music2 class="h-12 w-12" />
+								</div>
+							{/if}
+						</div>
+						<div
+							class="absolute inset-[48.5%] rounded-full bg-base-100 ring-1 ring-base-content/30"
+						></div>
+					</div>
+				</div>
+				<div class="lyrics-stage-meta-copy flex items-center gap-2 min-w-0">
+					<Music2 class="lyrics-stage-meta-icon h-4 w-4 text-white/75 shrink-0" />
+					<div class="min-w-0 shrink">
+						{#if trackName}
+							<p class="text-sm font-semibold truncate">{trackName}</p>
+						{/if}
+						{#if artistName}
+							<p class="text-xs text-white/55 truncate">{formatArtistCredit(artistName)}</p>
+						{/if}
+						{#if albumName}
+							<p class="lyrics-stage-album hidden text-xs text-white/40 truncate">{albumName}</p>
+						{/if}
+					</div>
 				</div>
 			</div>
-			<div class="flex items-center gap-1.5 shrink-0">
+			<div class="lyrics-stage-actions flex items-center gap-1.5 shrink-0">
 				<div class="hidden sm:flex items-center gap-1.5 w-44 lg:w-56">
 					<span class="text-[10px] text-white/55 tabular-nums w-7 text-right"
 						>{formatTime(currentTime)}</span
@@ -226,6 +266,16 @@
 					/>
 					<span class="text-[10px] text-white/55 tabular-nums w-7">{formatTime(duration)}</span>
 				</div>
+				<button
+					class="btn btn-ghost btn-xs btn-circle hidden md:inline-flex"
+					class:opacity-30={!canAddToPlaylist}
+					onclick={onaddtoplaylist}
+					disabled={!canAddToPlaylist}
+					aria-label="Add current track to playlist"
+					title={canAddToPlaylist ? 'Add to playlist' : 'Only downloaded local tracks can be added'}
+				>
+					<ListPlus class="h-4 w-4" />
+				</button>
 				<button
 					class="btn btn-ghost btn-xs btn-circle"
 					onclick={onprevious}
@@ -293,7 +343,7 @@
 			</div>
 		</div>
 
-		<div class="relative z-0 min-h-0 flex-1">
+		<div class="lyrics-stage-content relative z-0 min-h-0 flex-1">
 			{#if karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'}
 				<div
 					class="absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-base-100/85 px-4 py-2 text-sm shadow-lg backdrop-blur"
@@ -455,6 +505,140 @@
 		position: absolute;
 		inset: 0;
 		background: linear-gradient(180deg, rgba(5, 5, 5, 0.45), rgba(5, 5, 5, 0.86));
+	}
+
+	@media (min-width: 768px) {
+		.lyrics-stage {
+			background: #090c10;
+		}
+
+		.lyrics-stage-inner {
+			max-width: none;
+			margin: 0;
+			display: grid;
+			grid-template-columns: minmax(22rem, 42vw) minmax(0, 1fr);
+			grid-template-rows: minmax(0, 1fr);
+		}
+
+		.lyrics-stage-header {
+			grid-column: 1;
+			grid-row: 1;
+			height: 100%;
+			min-width: 0;
+			align-items: center;
+			justify-content: center;
+			flex-direction: column;
+			gap: clamp(1.5rem, 4vh, 3rem);
+			padding: 4rem clamp(2rem, 5vw, 5rem) 3rem;
+		}
+
+		.lyrics-stage-track-meta {
+			width: 100%;
+			flex: none;
+			flex-direction: column;
+			align-items: center;
+			gap: clamp(1rem, 2.5vh, 1.5rem);
+			text-align: center;
+		}
+
+		.lyrics-stage-cover-wrap {
+			width: min(70%, 26rem);
+			aspect-ratio: 1;
+			align-items: center;
+			justify-content: center;
+		}
+
+		.lyrics-stage-disc {
+			width: 100%;
+			height: 100%;
+		}
+
+		.lyrics-stage-cover {
+			display: block;
+			width: 100%;
+			height: 100%;
+			object-fit: cover;
+		}
+
+		.lyrics-stage-cover-empty {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			background: rgba(255, 255, 255, 0.08);
+			color: rgba(255, 255, 255, 0.35);
+		}
+
+		.lyrics-stage-meta-copy {
+			max-width: 100%;
+			flex-direction: column;
+			gap: 0.25rem;
+		}
+
+		.lyrics-stage-meta-icon {
+			display: none;
+		}
+
+		.lyrics-stage-meta-copy p {
+			max-width: min(100%, 28rem);
+		}
+
+		.lyrics-stage-meta-copy p:first-of-type {
+			font-size: clamp(1.1rem, 1.7vw, 1.6rem);
+		}
+
+		.lyrics-stage-album {
+			display: block;
+		}
+
+		.lyrics-stage-actions {
+			position: relative;
+			width: min(100%, 31rem);
+			flex-wrap: wrap;
+			justify-content: center;
+			gap: 0.35rem;
+		}
+
+		.lyrics-stage-actions > div:first-child {
+			width: 100%;
+			margin-bottom: 0.35rem;
+		}
+
+		.lyrics-stage-actions > div:first-child input {
+			min-width: 0;
+		}
+
+		.lyrics-stage-actions > button {
+			width: 3rem;
+			height: 3rem;
+		}
+
+		.lyrics-stage-actions > button.btn-primary {
+			width: 4rem;
+			height: 4rem;
+		}
+
+		.lyrics-stage-actions > button[aria-label='Close lyrics'] {
+			position: fixed;
+			top: 1.25rem;
+			right: 1.25rem;
+		}
+
+		.lyrics-stage-content {
+			grid-column: 2;
+			grid-row: 1;
+			min-width: 0;
+			height: 100%;
+			flex: none;
+			padding: 0 clamp(1rem, 3vw, 4rem);
+		}
+
+		.lyrics-stage-content > .scrollbar-hide {
+			padding: 8vh clamp(1rem, 3vw, 3.5rem);
+		}
+
+		.lyrics-wash {
+			background: linear-gradient(90deg, rgba(5, 5, 5, 0.7), rgba(5, 5, 5, 0.84));
+		}
 	}
 
 	.vocal-level-slider {

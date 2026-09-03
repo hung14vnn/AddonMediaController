@@ -28,6 +28,7 @@ class ReleaseItem(AppStruct):
     year: int | None = None
     in_library: bool = False
     requested: bool = False
+    cover_url: str | None = None
 
 
 class ArtistInfo(AppStruct):

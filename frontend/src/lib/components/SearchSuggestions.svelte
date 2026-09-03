@@ -56,6 +56,7 @@
 	}
 
 	function coverUrl(result: SuggestResult): string {
+		if (result.cover_url) return result.cover_url;
 		return result.type === 'artist'
 			? getApiUrl(`/api/v1/covers/artist/${result.musicbrainz_id}?size=250`)
 			: getApiUrl(`/api/v1/covers/release-group/${result.musicbrainz_id}?size=250`);

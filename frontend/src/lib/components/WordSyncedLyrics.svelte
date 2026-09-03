@@ -66,13 +66,20 @@
 				scrollbar-width: none !important;
 				padding: clamp(18vh, 22vh, 26vh) clamp(1.25rem, 5vw, 4rem) !important;
 			}
+			@media (min-width: 768px) {
+				.lyrics-container {
+					padding-top: 5vh !important;
+					padding-bottom: 5vh !important;
+				}
+			}
 			.lyrics-container::-webkit-scrollbar { display: none !important; }
 			.lyrics-line {
 				transform-origin: left center;
+				font-weight: 700 !important;
 				transition: opacity .42s ease, transform .55s cubic-bezier(.22,1,.36,1), filter .48s ease !important;
 			}
 			.lyrics-line:not(.active):not(.pre-active) { opacity: .30; filter: blur(.15px); }
-			.lyrics-line.active { transform: scale(1.018); opacity: 1; }
+			.lyrics-line.active { transform: scale(1.018); opacity: 1; font-weight: 700 !important; }
 			.lyrics-line.pre-active { opacity: .58; }
 			.lyrics-line-container { transition: transform .55s cubic-bezier(.22,1,.36,1) !important; }
 			.no-lyrics { color: rgba(255,255,255,.55) !important; font-size: 1rem !important; }
@@ -147,7 +154,11 @@
 
 <div class="word-synced-shell">
 	<div class="word-synced-host" aria-label="Word-synced lyrics">
-		<am-lyrics bind:this={element} translation-language="vi" class="word-synced-element" hide-source-footer=true
+		<am-lyrics
+			bind:this={element}
+			translation-language="vi"
+			class="word-synced-element"
+			hide-source-footer="true"
 		></am-lyrics>
 	</div>
 	{#if loading}

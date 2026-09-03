@@ -170,7 +170,11 @@
 	const editionsQuery = getAlbumEditionsQuery(
 		() => authStore.user?.id,
 		() => editionsMbid,
-		() => authStore.isTrusted && downloadClientConfigured && Boolean(editionsMbid)
+		() =>
+			authStore.isTrusted &&
+			downloadClientConfigured &&
+			Boolean(editionsMbid) &&
+			!editionsMbid.startsWith('spotify:album:')
 	);
 	const editions = $derived(editionsQuery.data?.items ?? []);
 	const pinnedEdition = $derived(editions.find((edition) => edition.is_pinned) ?? null);
@@ -277,7 +281,9 @@
 	}
 
 	let backdropUrl = $derived(
-		album.musicbrainz_id
+		album.musicbrainz_id.startsWith('spotify:')
+			? album.album_thumb_url || album.cover_url || null
+			: album.musicbrainz_id
 			? getApiUrl(`/api/v1/covers/release-group/${album.musicbrainz_id}?size=500`)
 			: album.cover_url || album.album_thumb_url || null
 	);

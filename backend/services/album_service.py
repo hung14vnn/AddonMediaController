@@ -35,6 +35,7 @@ from infrastructure.queue.priority_queue import RequestPriority
 from core.exceptions import ExternalServiceError, ResourceNotFoundError
 from services.audiodb_image_service import AudioDBImageService
 from repositories.audiodb_models import AudioDBAlbumImages
+from services.spotify_catalog import spotify_album_id
 
 if TYPE_CHECKING:
     from infrastructure.persistence.album_release_pin_store import AlbumReleasePinStore
@@ -123,6 +124,8 @@ class AlbumService:
         the containing release group. Keep the incoming release as edition context
         instead of placing it in a release-group field.
         """
+        if spotify_album_id(identifier):
+            return identifier, None
         provider_id = normalize_mb_id(
             validate_mbid(await self._provider_album_id(identifier), "album")
         )
