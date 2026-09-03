@@ -29,6 +29,7 @@
 		ChevronLeft,
 		ChevronRight,
 		Check,
+		Download,
 		Play,
 		Shuffle,
 		ListPlus,
@@ -47,6 +48,12 @@
 	} from '$lib/queries/library/LibraryMutations.svelte';
 	import { untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
+	import {
+		deleteOfflineTrack,
+		downloadOfflineTrack,
+		listOfflineTrackMetadata,
+		type OfflineTrackMetadata
+	} from '$lib/offline/offlineAudio';
 
 	const PAGE_SIZE = 48;
 
@@ -60,15 +67,22 @@
 	let selectedIds = new SvelteSet<string>();
 	let bulkDeleting = $state(false);
 	let addingToPlaylist = $state(false);
+	let offlineOnly = $state(false);
 	let accessTrack = $state<NativeTrackListItem | null>(null);
 	let targetSelectionInitialized = false;
 	let targetMembershipGeneration = 0;
 	let existingTargetTrackIds = new SvelteSet<string>();
+	let offlineAvailableIds = new SvelteSet<string>();
+	let offlineDownloadingIds = new SvelteSet<string>();
+	let bulkOfflineDownloading = $state(false);
 
 	const totalPages = $derived(Math.ceil(data.total / PAGE_SIZE));
 	let targetPlaylistId = $derived(page.url.searchParams.get('playlist'));
 	let selectableTrackCount = $derived(
 		data.items.filter((track) => !existingTargetTrackIds.has(track.id)).length
+	);
+	let selectedOfflineCount = $derived(
+		data.items.filter((track) => selectedIds.has(track.id) && isOfflineAvailable(track)).length
 	);
 	const remove = removeLibraryTrack();
 	const removeMultiple = removeLibraryTracks();
@@ -96,15 +110,211 @@
 		loader.abort();
 		loading = true;
 		try {
+			if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+				throw new Error('offline');
+			}
 			data = await api.global.get<NativeTrackPage>(
-				API.library.tracks(PAGE_SIZE, currentPage * PAGE_SIZE, sort, searchQuery)
+				API.library.tracks(PAGE_SIZE, currentPage * PAGE_SIZE, sort, searchQuery),
+				{ timeoutMs: 5_000 }
 			);
+			offlineOnly = false;
 			await refreshTargetMembership(data.items);
+			await refreshOfflineStatuses(data.items);
 		} catch {
-			data = { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
 			existingTargetTrackIds.clear();
+			try {
+				data = await loadOfflineFallback();
+				offlineOnly = true;
+				await refreshOfflineStatuses(data.items);
+			} catch {
+				data = { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
+				offlineOnly = false;
+				offlineAvailableIds = new SvelteSet();
+			}
 		} finally {
 			loading = false;
+		}
+	}
+
+	function offlineRecordToTrack(record: OfflineTrackMetadata): NativeTrackListItem {
+		return {
+			id: record.libraryTrackId ?? record.trackId,
+			track_file_id: record.trackId,
+			title: record.title,
+			album_id: record.albumId ?? '',
+			album_title: record.albumName,
+			artist_id: record.artistId ?? '',
+			artist_name: record.artistName,
+			album_artist_id: record.artistId ?? '',
+			album_artist_name: record.artistName,
+			musicbrainz_recording_id: null,
+			musicbrainz_release_group_id: null,
+			musicbrainz_artist_id: null,
+			musicbrainz_album_artist_id: null,
+			disc_number: record.discNumber ?? 1,
+			track_number: record.trackNumber ?? 0,
+			year: null,
+			genre: null,
+			duration_seconds: record.durationSeconds ?? 0,
+			format: record.format,
+			bit_rate: null,
+			sample_rate: null,
+			bit_depth: null,
+			channels: null,
+			file_size_bytes: record.sizeBytes,
+			date_added: record.storedAt,
+			cover_available: Boolean(record.coverUrl),
+			cover_url: record.coverUrl,
+			current_tier: null,
+			below_cutoff: false
+		};
+	}
+
+	async function loadOfflineFallback(): Promise<NativeTrackPage> {
+		const userId = authStore.user?.id;
+		if (!userId) return { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
+		const query = searchQuery.trim().toLocaleLowerCase();
+		const records = (await listOfflineTrackMetadata(userId))
+			.filter((record) => {
+				if (!query) return true;
+				return `${record.title} ${record.artistName} ${record.albumName}`
+					.toLocaleLowerCase()
+					.includes(query);
+			})
+			.sort((a, b) => {
+				if (sort === 'title') return a.title.localeCompare(b.title);
+				if (sort === 'artist') return a.artistName.localeCompare(b.artistName);
+				if (sort === 'album') return a.albumName.localeCompare(b.albumName);
+				return b.storedAt - a.storedAt;
+			});
+		const items = records.map(offlineRecordToTrack);
+		return { items, total: items.length, offset: 0, limit: PAGE_SIZE };
+	}
+
+	function localTrackId(track: NativeTrackListItem): string {
+		return String(track.track_file_id ?? track.id);
+	}
+
+	function isOfflineAvailable(track: NativeTrackListItem): boolean {
+		return offlineAvailableIds.has(localTrackId(track));
+	}
+
+	function isOfflineDownloading(track: NativeTrackListItem): boolean {
+		return offlineDownloadingIds.has(localTrackId(track));
+	}
+
+	async function refreshOfflineStatuses(tracks: NativeTrackListItem[]): Promise<void> {
+		const userId = authStore.user?.id;
+		if (!userId) {
+			offlineAvailableIds = new SvelteSet();
+			return;
+		}
+		try {
+			const records: OfflineTrackMetadata[] = await listOfflineTrackMetadata(userId);
+			const pageIds = new SvelteSet(
+				records
+					.filter((record) => tracks.some((track) => localTrackId(track) === record.trackId))
+					.map((record) => record.trackId)
+			);
+			const next = new SvelteSet(offlineAvailableIds);
+			for (const track of tracks) {
+				const id = localTrackId(track);
+				if (pageIds.has(id)) next.add(id);
+				else next.delete(id);
+			}
+			offlineAvailableIds = next;
+		} catch {
+			// A storage failure must not make the online library unusable.
+		}
+	}
+
+	function offlineDownloadInput(track: NativeTrackListItem) {
+		const trackId = localTrackId(track);
+		return {
+			userId: authStore.user?.id ?? '',
+			trackId,
+			libraryTrackId: track.id,
+			sourceUrl: API.stream.local(trackId),
+			title: track.title,
+			artistName: track.artist_name,
+			albumName: track.album_name ?? track.album_title,
+			albumId: track.album_mbid ?? track.album_id,
+			artistId: track.artist_mbid ?? track.artist_id,
+			coverUrl: track.cover_url ?? null,
+			trackNumber: track.track_number,
+			discNumber: track.disc_number,
+			format: (track.format ?? '').toLowerCase(),
+			durationSeconds: track.duration_seconds
+		};
+	}
+
+	async function toggleOffline(track: NativeTrackListItem): Promise<void> {
+		const userId = authStore.user?.id;
+		const trackId = localTrackId(track);
+		if (!userId || offlineDownloadingIds.has(trackId)) return;
+
+		if (isOfflineAvailable(track)) {
+			if (!confirm(`Remove the offline copy of "${track.title}"?`)) return;
+			try {
+				await deleteOfflineTrack(userId, trackId);
+				offlineAvailableIds.delete(trackId);
+				toastStore.show({ message: `Removed offline copy of "${track.title}"`, type: 'info' });
+			} catch {
+				toastStore.show({ message: "Couldn't remove the offline copy", type: 'error' });
+			}
+			return;
+		}
+
+		offlineDownloadingIds.add(trackId);
+		try {
+			await downloadOfflineTrack(offlineDownloadInput(track));
+			offlineAvailableIds.add(trackId);
+			toastStore.show({ message: `Saved "${track.title}" for offline playback`, type: 'success' });
+		} catch (error) {
+			if (!(error instanceof DOMException && error.name === 'AbortError')) {
+				toastStore.show({
+					message: error instanceof Error ? error.message : "Couldn't save this track offline",
+					type: 'error'
+				});
+			}
+		} finally {
+			offlineDownloadingIds.delete(trackId);
+		}
+	}
+
+	async function downloadSelectedOffline(): Promise<void> {
+		if (bulkOfflineDownloading || !authStore.user?.id) return;
+		const tracks = data.items.filter((track) => selectedIds.has(track.id));
+		const pending = tracks.filter((track) => !isOfflineAvailable(track));
+		if (pending.length === 0) return;
+
+		bulkOfflineDownloading = true;
+		let saved = 0;
+		let failed = 0;
+		try {
+			for (const track of pending) {
+				const trackId = localTrackId(track);
+				if (offlineDownloadingIds.has(trackId)) continue;
+				offlineDownloadingIds.add(trackId);
+				try {
+					await downloadOfflineTrack(offlineDownloadInput(track));
+					offlineAvailableIds.add(trackId);
+					saved += 1;
+				} catch {
+					failed += 1;
+				} finally {
+					offlineDownloadingIds.delete(trackId);
+				}
+			}
+			toastStore.show({
+				message:
+					failed > 0
+						? `Saved ${saved} track${saved === 1 ? '' : 's'} offline; ${failed} failed`
+						: `Saved ${saved} track${saved === 1 ? '' : 's'} for offline playback`,
+				type: failed > 0 ? 'error' : 'success'
+			});
+		} finally {
+			bulkOfflineDownloading = false;
 		}
 	}
 
@@ -167,10 +377,20 @@
 	}
 
 	function playAll() {
+		if (offlineOnly) {
+			const queue = buildDiscoveryQueueFromLocal(data.items);
+			if (queue.length > 0) playerStore.playQueue(queue, 0, false);
+			return;
+		}
 		loader.playAll(data.items, data.total);
 	}
 
 	function shuffleAll() {
+		if (offlineOnly) {
+			const queue = buildDiscoveryQueueFromLocal(data.items);
+			if (queue.length > 0) playerStore.playQueue(queue, 0, true);
+			return;
+		}
 		loader.shuffleAll(data.items, data.total);
 	}
 
@@ -296,6 +516,16 @@
 	function getTrackMenuItems(track: NativeTrackListItem): MenuItem[] {
 		return [
 			{
+				label: isOfflineAvailable(track)
+					? 'Remove offline copy'
+					: isOfflineDownloading(track)
+						? 'Saving offline copy...'
+						: 'Save for offline playback',
+				icon: isOfflineAvailable(track) ? Check : Download,
+				onclick: () => void toggleOffline(track),
+				disabled: isOfflineDownloading(track)
+			},
+			{
 				label: 'Add to local playlist',
 				icon: Music2,
 				onclick: () => void addTracksToLocalPlaylist([track]),
@@ -310,7 +540,7 @@
 				label: 'Delete from library',
 				icon: Trash2,
 				onclick: () => deleteTrack(track),
-				disabled: remove.isPending,
+				disabled: offlineOnly || remove.isPending,
 				className: 'text-error'
 			}
 		];
@@ -319,7 +549,7 @@
 	function isTrackPlaying(track: NativeTrackListItem): boolean {
 		return (
 			playerStore.isPlaying &&
-			playerStore.currentQueueItem?.trackSourceId === track.id &&
+			playerStore.currentQueueItem?.trackSourceId === localTrackId(track) &&
 			playerStore.currentQueueItem?.sourceType === 'local'
 		);
 	}
@@ -348,6 +578,9 @@
 				{data.total.toLocaleString()}
 				{data.total === 1 ? 'track' : 'tracks'}
 			</p>
+			{#if offlineOnly}
+				<p class="mt-1 text-xs text-accent">Offline mode · saved tracks on this device</p>
+			{/if}
 		</div>
 	</div>
 
@@ -405,9 +638,21 @@
 	{:else if data.items.length === 0}
 		<div class="flex flex-col items-center justify-center py-20 text-base-content/50">
 			<Music2 class="mb-4 h-12 w-12 opacity-20" />
-			<p class="text-lg font-medium">{searchQuery ? 'No matches' : 'No tracks yet'}</p>
+			<p class="text-lg font-medium">
+				{offlineOnly
+					? searchQuery
+						? 'No saved matches'
+						: 'No offline tracks saved'
+					: searchQuery
+						? 'No matches'
+						: 'No tracks yet'}
+			</p>
 			<p class="mt-1 text-sm">
-				{searchQuery ? 'Try another search term.' : 'Scan your library to see tracks here.'}
+				{offlineOnly
+					? 'Connect to the server and save tracks from your Library for offline playback.'
+					: searchQuery
+						? 'Try another search term.'
+						: 'Scan your library to see tracks here.'}
 			</p>
 		</div>
 	{:else}
@@ -473,6 +718,8 @@
 			{#each data.items as track, i (track.id)}
 				{@const playing = isTrackPlaying(track)}
 				{@const alreadyInTarget = !!targetPlaylistId && existingTargetTrackIds.has(track.id)}
+				{@const offline = isOfflineAvailable(track)}
+				{@const offlineSaving = isOfflineDownloading(track)}
 				<div
 					class="group flex items-center gap-3 px-3 py-2 transition-colors {alreadyInTarget
 						? 'cursor-not-allowed bg-base-200/50 opacity-45'
@@ -566,6 +813,24 @@
 								{formatDurationSec(track.duration_seconds)}
 							</span>
 						{/if}
+						<button
+							type="button"
+							class="btn btn-ghost btn-xs btn-circle"
+							onclick={(e) => (e.stopPropagation(), void toggleOffline(track))}
+							disabled={offlineSaving}
+							title={offline ? 'Remove offline copy' : 'Save for offline playback'}
+							aria-label={offline
+								? `Remove offline copy of ${track.title}`
+								: `Save ${track.title} offline`}
+						>
+							{#if offlineSaving}
+								<Loader2 class="h-3.5 w-3.5 animate-spin" />
+							{:else if offline}
+								<Check class="h-3.5 w-3.5 text-success" />
+							{:else}
+								<Download class="h-3.5 w-3.5" />
+							{/if}
+						</button>
 						{#if !alreadyInTarget}
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
 							<div
@@ -598,11 +863,21 @@
 						></span>{:else}<Music2 class="h-4 w-4" />{/if}
 					Add to playlist
 				</button>
+				<button
+					class="btn btn-secondary btn-sm gap-1.5"
+					onclick={() => void downloadSelectedOffline()}
+					disabled={bulkOfflineDownloading || selectedOfflineCount === selectedIds.size}
+					aria-busy={bulkOfflineDownloading}
+				>
+					{#if bulkOfflineDownloading}<span class="loading loading-spinner loading-xs"
+						></span>{:else}<Download class="h-4 w-4" />{/if}
+					Save offline
+				</button>
 				{#if !targetPlaylistId}
 					<button
 						class="btn btn-error btn-sm"
 						onclick={() => void deleteSelectedTracks()}
-						disabled={bulkDeleting}
+						disabled={offlineOnly || bulkDeleting}
 					>
 						{#if bulkDeleting}<span class="loading loading-spinner loading-xs"></span>{:else}<Trash2
 								class="h-4 w-4"
@@ -613,7 +888,7 @@
 			</div>
 		{/if}
 
-		{#if totalPages > 1}
+		{#if totalPages > 1 && !offlineOnly}
 			<div class="mt-8 flex items-center justify-center gap-2">
 				<button
 					class="btn btn-ghost btn-sm"

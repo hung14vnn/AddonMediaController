@@ -23,6 +23,7 @@ export const load: LayoutLoad = async ({ url }) => {
 
 	let setupRequired = authStore.setupRequired;
 	if (!authStore.initialized) {
+		let offlineBootstrap = false;
 		try {
 			const status = await api.global.get<{ required: boolean }>(API.auth.setupStatus(), {
 				timeoutMs: BOOTSTRAP_TIMEOUT_MS
@@ -30,19 +31,28 @@ export const load: LayoutLoad = async ({ url }) => {
 			setupRequired = status.required;
 			authStore.setSetupRequired(setupRequired);
 		} catch {
-			throw error(503, BUSY_MESSAGE);
+			const cachedUser = browser ? authStore.restoreOfflineUser?.() : null;
+			if (!cachedUser) throw error(503, BUSY_MESSAGE);
+			authStore.setUser(cachedUser);
+			setupRequired = false;
+			offlineBootstrap = true;
 		}
 
-		try {
-			const user = await api.global.get<AuthSessionUser>(API.auth.me(), {
-				timeoutMs: BOOTSTRAP_TIMEOUT_MS
-			});
-			authStore.setUser(toAuthUser(user));
-		} catch (cause) {
-			if (cause instanceof ApiError && cause.status === 401) {
-				await clearUserSessionState().catch(() => undefined);
-			} else {
-				throw error(503, BUSY_MESSAGE);
+		if (!offlineBootstrap) {
+			try {
+				const user = await api.global.get<AuthSessionUser>(API.auth.me(), {
+					timeoutMs: BOOTSTRAP_TIMEOUT_MS
+				});
+				authStore.setUser(toAuthUser(user));
+			} catch (cause) {
+				if (cause instanceof ApiError && cause.status === 401) {
+					await clearUserSessionState().catch(() => undefined);
+				} else {
+					const cachedUser = browser ? authStore.restoreOfflineUser?.() : null;
+					if (!cachedUser) throw error(503, BUSY_MESSAGE);
+					authStore.setUser(cachedUser);
+					offlineBootstrap = true;
+				}
 			}
 		}
 		authStore.markInitialized();

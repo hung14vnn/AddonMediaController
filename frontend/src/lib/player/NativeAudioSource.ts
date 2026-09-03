@@ -23,12 +23,17 @@ export class NativeAudioSource implements PlaybackSource {
 	private pendingVolume = 75;
 	private destroyed = false;
 	private currentState: PlaybackState = 'idle';
+	private cleanupUrl: (() => void) | null;
 
-	constructor(type: NativeSourceType, opts: { url: string; seekable: boolean }) {
+	constructor(
+		type: NativeSourceType,
+		opts: { url: string; seekable: boolean; cleanup?: () => void }
+	) {
 		this.type = type;
 		this.url = opts.url;
 		this.seekable = opts.seekable;
 		this.audio = getAudioElement();
+		this.cleanupUrl = opts.cleanup ?? null;
 	}
 
 	async load(_info?: unknown): Promise<void> {
@@ -195,6 +200,8 @@ export class NativeAudioSource implements PlaybackSource {
 		this.cleanupListeners();
 		this.audio.src = '';
 		this.audio.load();
+		this.cleanupUrl?.();
+		this.cleanupUrl = null;
 		this.stateCallbacks = [];
 		this.readyCallbacks = [];
 		this.errorCallbacks = [];

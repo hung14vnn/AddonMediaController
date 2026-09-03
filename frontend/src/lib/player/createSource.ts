@@ -7,6 +7,7 @@ import { getApiUrl } from '$lib/api/api-utils';
 export type NativeSourceOptions = {
 	url: string;
 	seekable: boolean;
+	cleanup?: () => void;
 };
 
 export function createPlaybackSource(type: SourceType, opts?: NativeSourceOptions): PlaybackSource {

@@ -50,6 +50,8 @@ import {
 	buildNowPlayingMetadata
 } from './playerSourceResolver';
 import { resumeAudioEngine } from '$lib/player/audioElement';
+import { createOfflineTrackUrl } from '$lib/offline/offlineAudio';
+import { authStore } from '$lib/stores/authStore.svelte';
 import { KaraokePlaybackSource } from '$lib/player/KaraokePlaybackSource';
 import {
 	setMediaSessionActionHandler,
@@ -227,18 +229,29 @@ function createPlayerStore() {
 		storeSessionData(null);
 	}
 
-	function resolveSourceForItem(item: QueueItem): {
+	async function resolveSourceForItem(item: QueueItem): Promise<{
 		source: PlaybackSource;
 		loadUrl: string | undefined;
-	} {
+	}> {
 		const url = resolveSourceUrl(item);
 		if (item.sourceType === 'youtube') {
 			isSeekable = true;
 			return { source: createPlaybackSource('youtube'), loadUrl: url };
 		}
 		if (item.sourceType === 'local') {
+			const offline = authStore.user?.id
+				? await createOfflineTrackUrl(authStore.user.id, item.trackSourceId)
+				: null;
+			const playbackUrl = offline?.url ?? url;
 			isSeekable = true;
-			return { source: createPlaybackSource('local', { url: url!, seekable: true }), loadUrl: url };
+			return {
+				source: createPlaybackSource('local', {
+					url: playbackUrl!,
+					seekable: true,
+					cleanup: offline?.revoke
+				}),
+				loadUrl: playbackUrl
+			};
 		}
 		if (item.sourceType === 'navidrome') {
 			isSeekable = true;
@@ -306,6 +319,10 @@ function createPlayerStore() {
 			resolvedUrl: string | undefined = item.streamUrl;
 		try {
 			const r = await resolveSourceForItem(item);
+			if (gen !== loadGeneration) {
+				r.source.destroy();
+				return;
+			}
 			source = r.source;
 			resolvedUrl = r.loadUrl;
 		} catch {
@@ -556,7 +573,7 @@ function createPlayerStore() {
 	async function restoreOriginalSource(startAt: number, resume: boolean): Promise<void> {
 		const item = queue[currentIndex];
 		if (!item) throw new Error('Current queue item is unavailable');
-		const resolved = resolveSourceForItem(item);
+		const resolved = await resolveSourceForItem(item);
 		await replaceCurrentSource(resolved.source, startAt, resume);
 	}
 
@@ -1014,7 +1031,7 @@ function createPlayerStore() {
 
 			void (async () => {
 				try {
-					const { source, loadUrl } = resolveSourceForItem(resume.currentItem);
+					const { source, loadUrl } = await resolveSourceForItem(resume.currentItem);
 					if (gen !== loadGeneration) return;
 					currentSource = source;
 					nowPlaying = resume.nowPlaying;

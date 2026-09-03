@@ -2,7 +2,7 @@
 	import '../../app.css';
 	import { browser } from '$app/environment';
 	import { goto, beforeNavigate, afterNavigate } from '$app/navigation';
-	import { resolve } from '$app/paths';
+	import { base, resolve } from '$app/paths';
 	import { withBasePath, withoutBasePath } from '$lib/utils/basePath';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -145,6 +145,14 @@
 	}
 
 	onMount(() => {
+		if ('serviceWorker' in navigator) {
+			void navigator.serviceWorker
+				.register(`${base || ''}/service-worker.js`, { scope: `${base || ''}/` })
+				.catch(() => {
+					// Offline playback remains available for an already open session even
+					// when service-worker registration is unavailable.
+				});
+		}
 		cleanupMobileLowPowerVisuals = installMobileLowPowerVisuals();
 		if (audioElement) {
 			setAudioElement(audioElement);

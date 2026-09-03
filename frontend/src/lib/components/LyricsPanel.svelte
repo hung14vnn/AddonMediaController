@@ -129,6 +129,7 @@
 
 	function seekFromLyrics(seconds: number) {
 		onseek(Math.max(0, seconds));
+		if (!isPlaying) ontoggleplay();
 	}
 
 	function formatTime(seconds: number): string {
@@ -235,17 +236,16 @@
 						></div>
 					</div>
 				</div>
-				<div class="lyrics-stage-meta-copy flex items-center gap-2 min-w-0">
-					<Music2 class="lyrics-stage-meta-icon h-4 w-4 text-white/75 shrink-0" />
+				<div class="lyrics-stage-meta-copy flex items-center gap-2 min-w-0 mt-4">
 					<div class="min-w-0 shrink">
 						{#if trackName}
 							<p class="text-sm font-semibold truncate">{trackName}</p>
 						{/if}
 						{#if artistName}
-							<p class="text-xs text-white/55 truncate">{formatArtistCredit(artistName)}</p>
+							<p class="text-sm text-white/55 truncate">{formatArtistCredit(artistName)}</p>
 						{/if}
 						{#if albumName}
-							<p class="lyrics-stage-album hidden text-xs text-white/40 truncate">{albumName}</p>
+							<p class="lyrics-stage-album hidden text-sm text-white/40 truncate">{albumName}</p>
 						{/if}
 					</div>
 				</div>
@@ -274,13 +274,13 @@
 					aria-label="Add current track to playlist"
 					title={canAddToPlaylist ? 'Add to playlist' : 'Only downloaded local tracks can be added'}
 				>
-					<ListPlus class="h-4 w-4" />
+					<ListPlus class="h-5 w-5" />
 				</button>
 				<button
 					class="btn btn-ghost btn-xs btn-circle"
 					onclick={onprevious}
 					disabled={!hasPrevious}
-					aria-label="Previous track"><SkipBack class="h-4 w-4" /></button
+					aria-label="Previous track"><SkipBack class="h-5 w-5" /></button
 				>
 				<button
 					class="btn btn-primary btn-xs btn-circle"
@@ -292,13 +292,13 @@
 					class="btn btn-ghost btn-xs btn-circle"
 					onclick={onnext}
 					disabled={!hasNext}
-					aria-label="Next track"><SkipForward class="h-4 w-4" /></button
+					aria-label="Next track"><SkipForward class="h-5 w-5" /></button
 				>
 				<button
 					class="btn btn-ghost btn-xs btn-circle"
 					onclick={onopenqueue}
 					aria-label="Toggle queue"
-					title="Queue"><ListMusic class="h-4 w-4" /></button
+					title="Queue"><ListMusic class="h-5 w-5" /></button
 				>
 				{#if karaokeAvailable}
 					<button
@@ -326,7 +326,7 @@
 						{#if karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'}
 							<span class="loading loading-spinner loading-xs"></span>
 						{:else}
-							<Mic class="h-4 w-4" />
+							<Mic class="h-5 w-5" />
 						{/if}
 					</button>
 				{/if}
@@ -338,7 +338,7 @@
 					}}
 					aria-label="Close lyrics"
 				>
-					<X class="h-4 w-4" />
+					<X class="h-5 w-5" />
 				</button>
 			</div>
 		</div>
@@ -513,6 +513,7 @@
 	.lyrics-wash {
 		position: absolute;
 		inset: 0;
+		pointer-events: none;
 		background: linear-gradient(180deg, rgba(5, 5, 5, 0.45), rgba(5, 5, 5, 0.86));
 	}
 
@@ -617,13 +618,13 @@
 		}
 
 		.lyrics-stage-actions > button {
-			width: 3rem;
-			height: 3rem;
+			width: 3.5rem;
+			height: 3.5rem;
 		}
 
 		.lyrics-stage-actions > button.btn-primary {
-			width: 4rem;
-			height: 4rem;
+			width: 3rem;
+			height: 3rem;
 		}
 
 		.lyrics-stage-actions > button[aria-label='Close lyrics'] {

@@ -43,6 +43,31 @@ describe('LyricsPanel', () => {
 		await expect.element(page.getByText('Synced', { exact: true })).not.toBeInTheDocument();
 	});
 
+	it('resumes playback when a lyric line is clicked while paused', async () => {
+		const onseek = vi.fn();
+		const ontoggleplay = vi.fn();
+
+		render(LyricsPanel, {
+			open: true,
+			lyricsText: 'First line\nSecond line',
+			lines: [
+				{ text: 'First line', start_seconds: 0 },
+				{ text: 'Second line', start_seconds: 5 }
+			],
+			isSynced: true,
+			preferWordSynced: false,
+			isPlaying: false,
+			onseek,
+			ontoggleplay,
+			onclose: vi.fn()
+		});
+
+		await page.getByText('Second line', { exact: true }).click();
+
+		expect(onseek).toHaveBeenCalledWith(5);
+		expect(ontoggleplay).toHaveBeenCalledTimes(1);
+	});
+
 	it('hides the outer page scrollbar only while the full-screen panel is open', async () => {
 		const props = {
 			open: true,
