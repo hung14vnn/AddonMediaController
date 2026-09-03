@@ -17,6 +17,7 @@ export const DownloadQueryKeyFactory = {
 	indexers: () => [...DownloadQueryKeyFactory.all, 'indexers'] as const,
 	sabnzbd: () => [...DownloadQueryKeyFactory.all, 'sabnzbd'] as const,
 	spotiflac: () => [...DownloadQueryKeyFactory.all, 'spotiflac'] as const,
+	sabnzbdStatus: () => [...DownloadQueryKeyFactory.all, 'sabnzbd-status'] as const,
 	policy: () => [...DownloadQueryKeyFactory.all, 'policy'] as const,
 	policySummary: () => [...DownloadQueryKeyFactory.all, 'policy-summary'] as const,
 	wantedSettings: () => [...DownloadQueryKeyFactory.all, 'wanted-settings'] as const,
