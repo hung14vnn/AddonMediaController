@@ -110,6 +110,10 @@
 	background-color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
 }
 
+.edition-finder-search {
+	flex-wrap: wrap;
+}
+
 .library-activity-shell {
 	position: sticky;
 	top: var(--droppedneedle-topbar-height, 4rem);
