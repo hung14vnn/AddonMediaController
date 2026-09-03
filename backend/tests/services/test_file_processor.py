@@ -3171,8 +3171,6 @@ def test_target_location_two_matches_logs_count_and_keeps_message(
     assert resolution[0].root_count == 2
     assert resolution[0].target == "track.flac"
     assert str(tmp_path) not in resolution[0].getMessage()
-
-
 class _RepoClient:
     """Stub client delegating location to a real SlskdRepository, counting
     partial consults so the tests prove which import mode consults them."""
