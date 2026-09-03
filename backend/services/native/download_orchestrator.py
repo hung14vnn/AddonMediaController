@@ -1519,6 +1519,19 @@ class DownloadOrchestrator:
                     task.id, task.source, task.candidate_index or 0
                 )
                 if attempt is None:
+                    # The candidate journal can be absent when the enqueue
+                    # failed before it was fully persisted. Fall back to the
+                    # latest live attempt for this task.
+                    attempts = await self._store.list_download_attempts(task.id)
+                    attempt = next(
+                        (
+                            value
+                            for value in reversed(attempts)
+                            if value.state in {"acquiring", "in_use"}
+                        ),
+                        None,
+                    )
+                if attempt is None:
                     logger.warning(
                         "Cannot schedule cleanup for task %s: manifest and attempt "
                         "journal are missing",
