@@ -102,7 +102,7 @@
 			coverUrl: providerCoverUrl ?? t.cover_url ?? getCoverUrl(null, t.album_mbid ?? ''),
 			// Spotify CDN artwork is already the final image URL.  Do not put it
 			// through the AudioDB remote-image sizing path (which appends /small).
-			coverRemoteUrl: null,
+			coverRemoteUrl: t.cover_url?.startsWith('http') ? t.cover_url : null,
 			sourceType: 'local',
 			streamUrl: API.stream.local(t.track_file_id),
 			format: (t.format ?? '').toLowerCase()
