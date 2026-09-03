@@ -24,43 +24,55 @@ export class AudioEngine {
 			this.destroy();
 		}
 
-		this.context = new AudioContext();
-		this.source = this.context.createMediaElementSource(audio);
-		const context = this.context;
-		this.contextStateHandler = () => {
-			if (context.state === 'suspended' && this.connectedElement && !this.connectedElement.paused) {
-				void context.resume().catch(() => {
-					// A backgrounded browser may reject resume until it is foregrounded.
-				});
+		try {
+			this.context = new AudioContext();
+			this.source = this.context.createMediaElementSource(audio);
+			const context = this.context;
+			this.contextStateHandler = () => {
+				if (
+					context.state === 'suspended' &&
+					this.connectedElement &&
+					!this.connectedElement.paused
+				) {
+					void context.resume().catch(() => {
+						// A backgrounded browser may reject resume until it is foregrounded.
+					});
+				}
+			};
+			context.addEventListener?.('statechange', this.contextStateHandler);
+
+			this.filters = EQ_FREQUENCIES.map((freq) => {
+				const filter = this.context!.createBiquadFilter();
+				filter.type = 'peaking';
+				filter.frequency.value = freq;
+				filter.Q.value = DEFAULT_Q;
+				filter.gain.value = 0;
+				return filter;
+			});
+
+			let prev: AudioNode = this.source;
+			for (const filter of this.filters) {
+				prev.connect(filter);
+				prev = filter;
 			}
-		};
-		context.addEventListener?.('statechange', this.contextStateHandler);
+			prev.connect(this.context.destination);
 
-		this.filters = EQ_FREQUENCIES.map((freq) => {
-			const filter = this.context!.createBiquadFilter();
-			filter.type = 'peaking';
-			filter.frequency.value = freq;
-			filter.Q.value = DEFAULT_Q;
-			filter.gain.value = 0;
-			return filter;
-		});
+			// Analyser is a terminal sink (not connected onward), so it never alters the audio.
+			if (typeof this.context.createAnalyser === 'function') {
+				this.analyser = this.context.createAnalyser();
+				this.analyser.fftSize = ANALYSER_FFT_SIZE;
+				this.analyser.smoothingTimeConstant = 0.82;
+				prev.connect(this.analyser);
+			}
 
-		let prev: AudioNode = this.source;
-		for (const filter of this.filters) {
-			prev.connect(filter);
-			prev = filter;
+			this.connectedElement = audio;
+		} catch (error) {
+			// createMediaElementSource/filter setup can fail (for example because
+			// an element was already attached to another context). Never leave a
+			// partially-created context alive when that happens.
+			this.destroy();
+			throw error;
 		}
-		prev.connect(this.context.destination);
-
-		// Analyser is a terminal sink (not connected onward), so it never alters the audio.
-		if (typeof this.context.createAnalyser === 'function') {
-			this.analyser = this.context.createAnalyser();
-			this.analyser.fftSize = ANALYSER_FFT_SIZE;
-			this.analyser.smoothingTimeConstant = 0.82;
-			prev.connect(this.analyser);
-		}
-
-		this.connectedElement = audio;
 	}
 
 	/**

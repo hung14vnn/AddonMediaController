@@ -505,7 +505,11 @@ function createPlayerStore() {
 			if (gen !== loadGeneration) return;
 			progress = t;
 			duration = d;
-			updateMediaSessionPosition(t, d);
+			// Do not publish MediaSession position on every native `timeupdate`.
+			// iOS fires this event several times per second, and each
+			// setPositionState call crosses into WebKit's media-session bridge.
+			// The native audio element already keeps the lock-screen timeline in
+			// sync; explicit updates are sent only after a user seek.
 			// preview tier: DJ-style fade over the last 2s so 30s clips blend
 			// instead of stopping dead (owner-signed anti-jarring rule)
 			const item = queue[currentIndex];

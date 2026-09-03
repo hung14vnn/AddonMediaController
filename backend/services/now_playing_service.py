@@ -31,7 +31,7 @@ CHANNEL = "now-playing"
 SNAPSHOT_EVENT = "snapshot"
 # drop a session that has not heartbeated within this window (covers browsers that
 # closed without a stop, and Subsonic clients that never send progress)
-ENTRY_TTL_SECONDS = 45.0
+ENTRY_TTL_SECONDS = 90.0
 
 VISIBILITY_FULL = "full"
 VISIBILITY_TRACK_HIDDEN = "track_hidden"

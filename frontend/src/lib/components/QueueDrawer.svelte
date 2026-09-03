@@ -227,7 +227,7 @@
 			: ''}"
 		transition:fly={{ x: 400, duration: 200 }}
 	>
-		<div class="flex items-center justify-between p-4 border-b border-base-content/10">
+		<div class="queue-drawer-header flex items-center justify-between p-4 border-b border-base-content/10">
 			<div class="flex items-center gap-2">
 				<ListMusic class="h-5 w-5" />
 				{#if !pinned}
@@ -431,3 +431,9 @@
 		{/if}
 	</div>
 {/if}
+
+<style>
+	.queue-drawer-header {
+		padding-top: calc(1rem + env(safe-area-inset-top, 0px));
+	}
+</style>

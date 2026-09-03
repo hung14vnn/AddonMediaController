@@ -116,6 +116,20 @@ describe('AudioEngine', () => {
 			expect(mockSource.disconnect).toHaveBeenCalled();
 			expect(AudioContext).toHaveBeenCalledTimes(2);
 		});
+
+		it('closes a partially-created context when setup fails', () => {
+			expect.assertions(2);
+			const failedContext = {
+				...mockCtx,
+				createMediaElementSource: vi.fn(() => {
+					throw new Error('source already connected');
+				})
+			};
+			vi.mocked(AudioContext).mockImplementation(() => failedContext as unknown as AudioContext);
+
+			expect(() => engine.connect(mockAudio)).toThrow('source already connected');
+			expect(failedContext.close).toHaveBeenCalled();
+		});
 	});
 
 	describe('setBandGain', () => {

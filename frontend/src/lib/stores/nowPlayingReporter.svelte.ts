@@ -6,7 +6,7 @@ import { playerStore } from '$lib/stores/player.svelte';
 // playback is surfaced to other users by the server-side poll of those upstream
 // servers, so reporting it here too would show a duplicate card.
 const REPORTED_SOURCES = new Set(['local', 'youtube']);
-const HEARTBEAT_MS = 5_000;
+const HEARTBEAT_MS = 15_000;
 
 function createNowPlayingReporter() {
 	let timer: ReturnType<typeof setInterval> | undefined;

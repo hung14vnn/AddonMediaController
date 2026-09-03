@@ -226,8 +226,8 @@ function createScrobbleManager() {
 
 				if (isLoopReset(prevProgressS, progressS, track.durationMs)) {
 					track.accumulatedMs = 0;
-					track.scrobbled = false;
 					track.nowPlayingSent = false;
+					track.scrobbled = false;
 					track.startedAt = Math.floor(Date.now() / 1000);
 					status = 'tracking';
 					lastServiceDetail = null;
