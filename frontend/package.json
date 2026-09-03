@@ -64,7 +64,6 @@
 		"@tanstack/svelte-query": "^6.1.48",
 		"@tanstack/svelte-query-devtools": "^6.1.48",
 		"@tanstack/svelte-query-persist-client": "^6.1.48",
-		"@uimaxbai/am-lyrics": "1.6.1",
 		"dompurify": "^3.4.14",
 		"idb-keyval": "^6.3.0",
 		"lucide-svelte": "^0.575.0",

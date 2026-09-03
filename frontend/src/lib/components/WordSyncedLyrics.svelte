@@ -7,6 +7,41 @@
 		duration: number;
 	};
 
+	const AM_LYRICS_CDN_URL =
+		'https://cdn.jsdelivr.net/npm/@uimaxbai/am-lyrics@1.6.1/dist/src/am-lyrics.min.js';
+	let amLyricsCdnPromise: Promise<void> | undefined;
+
+	function loadAmLyricsFromCdn(): Promise<void> {
+		if (customElements.get('am-lyrics')) return Promise.resolve();
+		if (amLyricsCdnPromise) return amLyricsCdnPromise;
+
+		amLyricsCdnPromise = new Promise((resolve, reject) => {
+			const existingScript = document.querySelector<HTMLScriptElement>(
+				'script[data-am-lyrics-cdn]'
+			);
+			const script = existingScript ?? document.createElement('script');
+
+			const onLoad = () => {
+				customElements.whenDefined('am-lyrics').then(() => resolve(), reject);
+			};
+			const onError = () => reject(new Error('Could not load am-lyrics from jsDelivr'));
+
+			script.addEventListener('load', onLoad, { once: true });
+			script.addEventListener('error', onError, { once: true });
+
+			if (!existingScript) {
+				script.type = 'module';
+				script.src = AM_LYRICS_CDN_URL;
+				script.async = true;
+				script.crossOrigin = 'anonymous';
+				script.dataset.amLyricsCdn = 'true';
+				document.head.appendChild(script);
+			}
+		});
+
+		return amLyricsCdnPromise;
+	}
+
 	interface Props {
 		title: string;
 		artist: string;
@@ -104,7 +139,7 @@
 			if (typeof timestamp === 'number') onseek(timestamp / 1000);
 		};
 
-		void import('@uimaxbai/am-lyrics/am-lyrics.js')
+		void loadAmLyricsFromCdn()
 			.then(async () => {
 				if (disposed) return;
 				await customElements.whenDefined('am-lyrics');

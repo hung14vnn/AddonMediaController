@@ -21,9 +21,6 @@ importers:
       '@tanstack/svelte-query-persist-client':
         specifier: ^6.1.48
         version: 6.1.48(@tanstack/svelte-query@6.1.48(svelte@5.57.0(@typescript-eslint/types@8.69.0)))(svelte@5.57.0(@typescript-eslint/types@8.69.0))
-      '@uimaxbai/am-lyrics':
-        specifier: 1.6.1
-        version: 1.6.1
       dompurify:
         specifier: ^3.4.14
         version: 3.4.14
@@ -884,17 +881,6 @@ packages:
   '@typescript-eslint/visitor-keys@8.69.0':
     resolution: {integrity: sha512-+rmdgPA+EXkNgKYvHvFfhrs35utXbwaC5PGpDquSXcoXQDKUA5UjV0LmTucG/4JXkM31BTu4TilHtrN8IVBe8w==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
-
-  '@uimaxbai/am-lyrics@1.6.1':
-    resolution: {integrity: sha512-v6QPDnzzXWOCISfznuA1Zbxv7DXD1K22pL53TuII5LWf8hp8GhoI6QglqhufniwkoupeVi1FJAhGTtpPPriQ6Q==}
-    peerDependencies:
-      '@lit/react': ^1.0.0
-      react: '>=17.0.0'
-    peerDependenciesMeta:
-      '@lit/react':
-        optional: true
-      react:
-        optional: true
 
   '@vitest/browser-playwright@4.1.11':
     resolution: {integrity: sha512-riLBxPqwnJ0lWs2DN2WeUfYeKLoAjbP2Xx8cLQdSddzMi20sksIa6K2mPz79DyMZKKVKH2ksOC2yJvtNcZg8cg==}
@@ -2446,11 +2432,6 @@ snapshots:
     dependencies:
       '@typescript-eslint/types': 8.69.0
       eslint-visitor-keys: 5.0.1
-
-  '@uimaxbai/am-lyrics@1.6.1':
-    dependencies:
-      '@babel/runtime': 7.29.7
-      lit: 3.3.3
 
   '@vitest/browser-playwright@4.1.11(playwright@1.62.1)(vite@7.3.5(@types/node@22.19.17)(jiti@2.7.0)(lightningcss@1.32.0))(vitest@4.1.11)':
     dependencies:
