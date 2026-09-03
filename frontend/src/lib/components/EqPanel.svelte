@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { eqStore } from '$lib/stores/eq.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
-	import { usesNativeBackgroundPlayback } from '$lib/player/audioElement';
+	import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 	import {
 		EQ_FREQUENCY_LABELS,
 		EQ_BAND_COUNT,
@@ -16,7 +16,7 @@
 	let { open = $bindable(), onclose }: { open: boolean; onclose: () => void } = $props();
 
 	const isYouTube = $derived(playerStore.nowPlaying?.sourceType === 'youtube');
-	const nativeBackgroundPlayback = usesNativeBackgroundPlayback();
+	const nativeMobilePlayback = usesMobileLowPowerVisuals();
 
 	const TRACK_HEIGHT = 160;
 	const GAIN_RANGE = EQ_MAX_GAIN - EQ_MIN_GAIN;
@@ -45,7 +45,7 @@
 	}
 
 	function handlePointerDown(index: number, e: PointerEvent): void {
-		if (isYouTube || nativeBackgroundPlayback || !eqStore.enabled) return;
+		if (isYouTube || nativeMobilePlayback || !eqStore.enabled) return;
 		e.preventDefault();
 		draggingIndex = index;
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -110,7 +110,7 @@
 					type="checkbox"
 					class="toggle toggle-accent toggle-sm"
 					checked={eqStore.enabled}
-					disabled={isYouTube || nativeBackgroundPlayback}
+					disabled={isYouTube || nativeMobilePlayback}
 					onchange={() => eqStore.toggleEq()}
 					aria-label="Toggle equalizer"
 				/>
@@ -128,11 +128,9 @@
 			<div class="mx-4 mb-3 rounded-lg bg-warning/10 border border-warning/20 px-3 py-2">
 				<p class="text-xs text-warning">EQ is not available during YouTube playback</p>
 			</div>
-		{:else if nativeBackgroundPlayback}
+		{:else if nativeMobilePlayback}
 			<div class="mx-4 mb-3 rounded-lg bg-info/10 border border-info/20 px-3 py-2">
-				<p class="text-xs text-info">
-					EQ is disabled in the installed iOS app so playback can continue while locked
-				</p>
+				<p class="text-xs text-info">EQ is disabled on mobile to reduce power use</p>
 			</div>
 		{/if}
 
@@ -141,7 +139,7 @@
 				class="select select-sm select-bordered flex-1 rounded-full text-xs"
 				value={eqStore.activePreset ?? ''}
 				onchange={handlePresetChange}
-				disabled={isYouTube || nativeBackgroundPlayback || !eqStore.enabled}
+				disabled={isYouTube || nativeMobilePlayback || !eqStore.enabled}
 			>
 				{#if eqStore.activePreset === null}
 					<option value="" disabled>Custom</option>
@@ -154,7 +152,7 @@
 				<button
 					class="btn btn-ghost btn-sm btn-circle"
 					onclick={() => eqStore.resetToFlat()}
-					disabled={isYouTube || nativeBackgroundPlayback || !eqStore.enabled}
+					disabled={isYouTube || nativeMobilePlayback || !eqStore.enabled}
 					aria-label="Reset equalizer to flat"
 				>
 					<RotateCcw class="h-3.5 w-3.5" />
@@ -164,8 +162,8 @@
 
 		<div
 			class="px-4 pb-4 pt-1 transition-opacity duration-200"
-			class:opacity-30={isYouTube || nativeBackgroundPlayback || !eqStore.enabled}
-			class:pointer-events-none={isYouTube || nativeBackgroundPlayback || !eqStore.enabled}
+			class:opacity-30={isYouTube || nativeMobilePlayback || !eqStore.enabled}
+			class:pointer-events-none={isYouTube || nativeMobilePlayback || !eqStore.enabled}
 		>
 			<div class="flex">
 				<div

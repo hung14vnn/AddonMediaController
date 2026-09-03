@@ -1,4 +1,5 @@
 import { AudioEngine } from './audioEngine';
+import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 
 let audioElement: HTMLAudioElement | null = null;
 let engine: AudioEngine | null = null;
@@ -27,13 +28,13 @@ export function setAudioElement(el: HTMLAudioElement): void {
 		engine = null;
 	}
 	audioElement = el;
-	if (usesNativeBackgroundPlayback()) return;
-	// Context creation is deferred until playback starts. iOS Home Screen PWAs can
-	// leave a context created during app startup permanently suspended.
+	if (usesMobileLowPowerVisuals()) return;
+	// Context creation is deferred until playback starts. Mobile playback stays
+	// on the native media element to avoid a permanent Web Audio processing graph.
 }
 
 export function ensureAudioEngine(): AudioEngine | null {
-	if (engine || !audioElement || usesNativeBackgroundPlayback()) return engine;
+	if (engine || !audioElement || usesMobileLowPowerVisuals()) return engine;
 	try {
 		const newEngine = new AudioEngine();
 		newEngine.connect(audioElement);

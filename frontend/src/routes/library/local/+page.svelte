@@ -10,6 +10,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { formatArtistCredit } from '$lib/utils/formatting';
+	import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 	import type { CrateTrack, LocalAlbumSummary, LocalAlbumMatch, CrateResponse } from '$lib/types';
 	import type { QueueItem } from '$lib/player/types';
 	import { launchLocalPlayback } from '$lib/player/launchLocalPlayback';
@@ -33,6 +34,8 @@
 	const isMbid = (id?: string | null): id is string => !!id && MBID_RE.test(id);
 
 	let reducedMotion = $state(false);
+	let mobileLowPower = $state(false);
+	let deviceProfileReady = $state(false);
 	// biases the crate toward the era of whatever was last dropped on the deck
 	let eraDecade = $state<number | undefined>(undefined);
 
@@ -203,11 +206,13 @@
 
 	onMount(() => {
 		if (!browser) return;
+		mobileLowPower = usesMobileLowPowerVisuals();
+		deviceProfileReady = true;
 		// queue mutations happen inline here (drag to Up Next, search, etc.) so the toast is redundant
 		setQueueMutationToastsSuppressed(true);
 		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-		reducedMotion = mq.matches;
-		const onMq = (e: MediaQueryListEvent) => (reducedMotion = e.matches);
+		reducedMotion = mq.matches || mobileLowPower;
+		const onMq = (e: MediaQueryListEvent) => (reducedMotion = e.matches || mobileLowPower);
 		mq.addEventListener('change', onMq);
 
 		const deckEl = turntableHostEl?.querySelector<HTMLElement>('[data-listening-room-deck]');
@@ -224,16 +229,19 @@
 		);
 		if (deckEl) observer.observe(deckEl);
 
-		// countdown freezes while the tab is hidden so a refresh never fires unseen
-		resetCrateCountdown();
-		refreshTimer = setInterval(() => {
-			if (document.hidden) return;
-			crateNow = Date.now();
-			if (crateNow >= crateDeadline && !suggestionsQuery.isFetching) {
-				resetCrateCountdown();
-				void suggestionsQuery.refetch();
-			}
-		}, 250);
+		// Crate is intentionally absent on mobile, so do not leave its countdown
+		// or refresh work running invisibly. Desktop freezes it with the tab.
+		if (!mobileLowPower) {
+			resetCrateCountdown();
+			refreshTimer = setInterval(() => {
+				if (document.hidden) return;
+				crateNow = Date.now();
+				if (crateNow >= crateDeadline && !suggestionsQuery.isFetching) {
+					resetCrateCountdown();
+					void suggestionsQuery.refetch();
+				}
+			}, 250);
+		}
 
 		return () => mq.removeEventListener('change', onMq);
 	});
@@ -284,21 +292,23 @@
 				class="flex flex-col gap-4 lg:col-span-5 lg:h-[var(--deck-h)] xl:col-span-4"
 				style:--deck-h={deckHeight ? `${deckHeight}px` : '44rem'}
 			>
-				<div class="glass-surface min-h-0 flex-[3] rounded-3xl border border-base-content/5 p-3">
-					<Crate
-						tracks={crateTracks}
-						isLoading={suggestionsQuery.isLoading || suggestionsQuery.isFetching}
-						{reducedMotion}
-						{countdownFraction}
-						refreshNonce={suggestionsQuery.dataUpdatedAt ?? 0}
-						refreshIntervalMs={CRATE_REFRESH_MS}
-						{upcomingCount}
-						onRefresh={() => suggestionsQuery.refetch()}
-						onPlay={playCrateTrack}
-						onQueue={queueCrateTrack}
-						onQueueAlbum={queueAlbum}
-					/>
-				</div>
+				{#if deviceProfileReady && !mobileLowPower}
+					<div class="glass-surface min-h-0 flex-[3] rounded-3xl border border-base-content/5 p-3">
+						<Crate
+							tracks={crateTracks}
+							isLoading={suggestionsQuery.isLoading || suggestionsQuery.isFetching}
+							{reducedMotion}
+							{countdownFraction}
+							refreshNonce={suggestionsQuery.dataUpdatedAt ?? 0}
+							refreshIntervalMs={CRATE_REFRESH_MS}
+							{upcomingCount}
+							onRefresh={() => suggestionsQuery.refetch()}
+							onPlay={playCrateTrack}
+							onQueue={queueCrateTrack}
+							onQueueAlbum={queueAlbum}
+						/>
+					</div>
+				{/if}
 				<div class="glass-surface min-h-0 flex-[2] rounded-3xl border border-base-content/5 p-3">
 					<SearchCard
 						{reducedMotion}

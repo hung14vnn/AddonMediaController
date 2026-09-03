@@ -50,6 +50,7 @@
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { cancelPendingImages } from '$lib/utils/lazyImage';
 	import { abortAllPageRequests } from '$lib/utils/navigationAbort';
+	import { installMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 	import { nowPlayingStore } from '$lib/stores/nowPlayingSessions.svelte';
 	import { nowPlayingReporter } from '$lib/stores/nowPlayingReporter.svelte';
 	import { createNavigationProgressController } from '$lib/utils/navigationProgress';
@@ -132,6 +133,7 @@
 	});
 
 	let cleanupResumeListeners: (() => void) | null = null;
+	let cleanupMobileLowPowerVisuals: (() => void) | null = null;
 
 	function deferInit(fn: () => void): () => void {
 		if ('requestIdleCallback' in window) {
@@ -143,6 +145,7 @@
 	}
 
 	onMount(() => {
+		cleanupMobileLowPowerVisuals = installMobileLowPowerVisuals();
 		if (audioElement) {
 			setAudioElement(audioElement);
 			eqStore.replayToEngine();
@@ -296,6 +299,8 @@
 
 	onDestroy(() => {
 		navigationProgress.cleanup();
+		cleanupMobileLowPowerVisuals?.();
+		cleanupMobileLowPowerVisuals = null;
 		cleanupResumeListeners?.();
 		cleanupResumeListeners = null;
 		if (browser) {

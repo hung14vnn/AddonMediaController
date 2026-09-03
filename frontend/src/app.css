@@ -853,6 +853,35 @@ textarea {
 	height: 100%;
 }
 
+/* Mobile Safari and Chromium can spend more energy compositing these fixed,
+   translucent surfaces than decoding the audio itself. Keep the same opaque
+   hierarchy on touch-first devices without continuously blurring the page. */
+.mobile-low-power-playback .droppedneedle-bottom-nav,
+.mobile-low-power-playback .droppedneedle-player-bar,
+.mobile-low-power-playback .local-lyrics-wash,
+.mobile-low-power-playback .glass-surface {
+	backdrop-filter: none !important;
+	-webkit-backdrop-filter: none !important;
+}
+
+/* Large rotating/blurred artwork and perpetual status animations keep the GPU
+   awake for the entire track. Mobile gets a static equivalent instead. */
+.mobile-low-power-playback .vinyl-spin,
+.mobile-low-power-playback .local-lyrics-artwork,
+.mobile-low-power-playback .animate-glow-pulse,
+.mobile-low-power-playback .animate-equalizer-1,
+.mobile-low-power-playback .animate-equalizer-2,
+.mobile-low-power-playback .animate-equalizer-3,
+.mobile-low-power-playback .now-playing-bars span {
+	animation: none !important;
+}
+
+.mobile-low-power-playback .local-lyrics-artwork {
+	filter: saturate(0.85) !important;
+	opacity: 0.07;
+	transform: scale(1.02) !important;
+}
+
 /* A pinned queue becomes a desktop rail instead of covering the app. */
 @media (min-width: 80rem) {
 	body.droppedneedle-queue-pinned .drawer-content {

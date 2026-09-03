@@ -494,6 +494,15 @@
 		}
 	}
 
+	/* Full-screen blurred artwork is particularly costly on mobile GPUs. The
+	   app shell marks touch-first devices so lyrics can keep a static backdrop. */
+	:global(html.mobile-low-power-playback) .lyrics-artwork {
+		animation: none;
+		filter: saturate(0.85);
+		opacity: 0.12;
+		transform: scale(1.02);
+	}
+
 	/* The lyrics view fills the viewport, so its controls must start below the
 	   iPhone Dynamic Island/notch safe area. */
 	.lyrics-stage-header {

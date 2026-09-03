@@ -168,7 +168,7 @@ describe('audioElement registry', () => {
 		expect(usesNativeBackgroundPlayback()).toBe(true);
 	});
 
-	it('retains Web Audio processing outside installed iOS PWAs', () => {
+	it('keeps Android playback on the native audio element', () => {
 		vi.stubGlobal('navigator', {
 			userAgent: 'Mozilla/5.0 (Linux; Android 15)',
 			platform: 'Linux armv8l',
@@ -179,8 +179,7 @@ describe('audioElement registry', () => {
 		setAudioElement(audio);
 
 		expect(usesNativeBackgroundPlayback()).toBe(false);
-		getAudioEngine();
-		expect(tryGetAudioEngine()).not.toBeNull();
-		expect(mockEngine.connect).toHaveBeenCalledWith(audio);
+		expect(tryGetAudioEngine()).toBeNull();
+		expect(mockEngine.connect).not.toHaveBeenCalled();
 	});
 });
