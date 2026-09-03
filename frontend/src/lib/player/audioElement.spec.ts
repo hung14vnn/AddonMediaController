@@ -145,6 +145,16 @@ describe('audioElement registry', () => {
 		expect(mockEngine.connect).not.toHaveBeenCalled();
 	});
 
+	it('keeps iPhone playback native even when standalone detection is unavailable', () => {
+		vi.stubGlobal('navigator', {
+			userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+			platform: 'iPhone',
+			maxTouchPoints: 5
+		});
+
+		expect(usesNativeBackgroundPlayback()).toBe(true);
+	});
+
 	it('recognizes an installed iPad PWA using a desktop user agent', () => {
 		vi.stubGlobal('navigator', {
 			userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)',

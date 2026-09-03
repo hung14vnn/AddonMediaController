@@ -6,24 +6,18 @@ let engine: AudioEngine | null = null;
 type StandaloneNavigator = Navigator & { standalone?: boolean };
 
 /**
- * WebKit may suspend a Web Audio graph after an installed iOS PWA is backgrounded.
- * Keeping the media element out of AudioContext lets iOS own the playback session and
- * continue it from the lock screen. iPadOS desktop-mode user agents need the touch check.
+ * Keep iOS/iPadOS playback on the native media element. WebKit may suspend a Web
+ * Audio graph in an installed PWA, and some iOS versions do not reliably expose
+ * `display-mode: standalone`; using the device check avoids creating a context by
+ * accident and lets iOS own the audio session (including lock-screen playback).
  */
 export function usesNativeBackgroundPlayback(): boolean {
 	if (typeof navigator === 'undefined') return false;
 	const nav = navigator as StandaloneNavigator;
-	const isiOS =
+	return (
 		/iPad|iPhone|iPod/.test(nav.userAgent) ||
-		(nav.platform === 'MacIntel' && nav.maxTouchPoints > 1);
-	if (!isiOS) return false;
-
-	const standalone =
-		nav.standalone === true ||
-		(typeof window !== 'undefined' &&
-			typeof window.matchMedia === 'function' &&
-			window.matchMedia('(display-mode: standalone)').matches);
-	return standalone;
+		(nav.platform === 'MacIntel' && nav.maxTouchPoints > 1)
+	);
 }
 
 export function setAudioElement(el: HTMLAudioElement): void {
