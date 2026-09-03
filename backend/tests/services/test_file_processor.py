@@ -3077,3 +3077,228 @@ def test_build_file_processor_resolves_downloads_subpath(tmp_path, monkeypatch):
     fp = _providers._build_file_processor(MagicMock(), [tmp_path / "lib"])
 
     assert fp._slskd_downloads_path == mount / "etc"
+@pytest.mark.asyncio
+async def test_shared_publication_enospc_logs_errno_and_keeps_generic_reason(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#185 part A: an ENOSPC publisher failure must log errno/exc-type context to
+    the server log only, while the user-facing reason stays the fixed generic
+    string."""
+    import errno
+    import logging
+
+    from services.native.file_processor import IMPORT_FAILED
+
+    fp, _manager, _client, _library, downloads = _make_processor(
+        tmp_path, verify=False
+    )
+    _place(downloads, "A/good.flac")
+    fp._publish_import_bundle = AsyncMock(
+        side_effect=OSError(errno.ENOSPC, "No space left on device")
+    )
+    manifest = _manifest(_sized(downloads, "A/good.flac"))
+
+    with caplog.at_level(logging.DEBUG, logger="services.native.file_processor"):
+        result = await fp.process_downloaded(manifest)
+
+    assert len(result.failed) == 1
+    assert result.failed[0].reason == IMPORT_FAILED
+    assert (
+        result.failed[0].reason
+        == "import failed - could not write the file into the library"
+    )
+    errno_records = [
+        record for record in caplog.records if getattr(record, "errno", None) == errno.ENOSPC
+    ]
+    assert errno_records, "expected a log record carrying errno=ENOSPC (28)"
+    assert any(getattr(record, "exc_type", None) == "OSError" for record in errno_records)
+    assert any("good.flac" in record.getMessage() for record in errno_records)
+    assert any("acquisition:t1:files" in record.getMessage() for record in errno_records)
+
+
+def test_target_location_zero_matches_logs_count_and_keeps_message(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#185 part A: a 0-root resolution logs count/roots/basename and raises with
+    the unchanged message."""
+    import logging
+
+    fp = FileProcessor(
+        AudioTagger(),
+        library_paths=[tmp_path / "lib"],
+        library_root_ids=["root-a"],
+    )
+    outside = tmp_path / "elsewhere" / "track.flac"
+
+    with caplog.at_level(logging.DEBUG, logger="services.native.file_processor"):
+        with pytest.raises(RuntimeError) as excinfo:
+            fp._target_location(outside)
+
+    assert str(excinfo.value) == "Import target does not resolve to one library root."
+    resolution = [
+        record for record in caplog.records if getattr(record, "match_count", None) == 0
+    ]
+    assert resolution, "expected a log record with match_count=0"
+    assert resolution[0].root_count == 1
+    assert resolution[0].target == "track.flac"
+    assert str(tmp_path) not in resolution[0].getMessage()
+
+
+def test_target_location_two_matches_logs_count_and_keeps_message(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#185 part A: a 2-root resolution (nested roots) logs count/roots/basename
+    and raises with the unchanged message."""
+    import logging
+
+    outer = tmp_path / "lib"
+    inner = outer / "sub"
+    fp = FileProcessor(
+        AudioTagger(),
+        library_paths=[outer, inner],
+        library_root_ids=["root-a", "root-b"],
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="services.native.file_processor"):
+        with pytest.raises(RuntimeError) as excinfo:
+            fp._target_location(inner / "track.flac")
+
+    assert str(excinfo.value) == "Import target does not resolve to one library root."
+    resolution = [
+        record for record in caplog.records if getattr(record, "match_count", None) == 2
+    ]
+    assert resolution, "expected a log record with match_count=2"
+    assert resolution[0].root_count == 2
+    assert resolution[0].target == "track.flac"
+    assert str(tmp_path) not in resolution[0].getMessage()
+
+
+class _RepoClient:
+    """Stub client delegating location to a real SlskdRepository, counting
+    partial consults so the tests prove which import mode consults them."""
+
+    def __init__(self, repo) -> None:  # noqa: ANN001
+        self._repo = repo
+        self.partial_calls = 0
+
+    async def get_file_path(
+        self, handle, remote_filename: str, size: int | None = None
+    ):
+        return await self._repo.get_file_path(handle, remote_filename, size)
+
+    async def locate_partial(
+        self, handle, remote_filename: str, size: int | None = None
+    ):
+        self.partial_calls += 1
+        return await self._repo.locate_partial(handle, remote_filename, size)
+
+
+def _partial_processor(tmp_path: Path, *, incomplete: Path | None):
+    """FileProcessor wired to a real SlskdRepository over split tmp mounts."""
+    from repositories.slskd.slskd_repository import SlskdRepository
+
+    complete = tmp_path / "complete"
+    complete.mkdir(parents=True, exist_ok=True)
+    library = tmp_path / "library"
+    library.mkdir(parents=True, exist_ok=True)
+    manager = LibraryManager(
+        LibraryDB(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    )
+    repo = SlskdRepository(
+        client=None,
+        url="",
+        api_key="",
+        downloads_mount=complete,
+        incomplete_mount=incomplete,
+    )
+    client = _RepoClient(repo)
+    fp = FileProcessor(
+        AudioTagger(),
+        naming_engine=NamingTemplateEngine(),
+        library_manager=manager,
+        library_paths=[library],
+        client=client,
+        slskd_downloads_path=complete,
+        verify_downloads=False,
+        library_root_ids=["root-a"],
+        publish_import_bundle=_test_publisher(manager, library),
+        policy_revision_getter=lambda: "policy-1",
+    )
+    return fp, client, complete
+
+
+@pytest.mark.asyncio
+async def test_subset_import_partial_hit_emits_retry_signal_without_import(
+    tmp_path: Path,
+) -> None:
+    """An Errored file's stranded bytes resolve via locate_partial while
+    get_file_path stays None: the subset import must emit the per-file retry
+    signal (SOURCE_FILE_MISSING, non-quarantine, workspace preserved) WITHOUT
+    a tag read or import. The staged bytes are deliberately not valid audio,
+    so any tag-read attempt would fail "corrupt" instead."""
+    from services.native.file_processor import SOURCE_FILE_MISSING
+
+    incomplete = tmp_path / "incomplete"
+    album = incomplete / "Album"
+    album.mkdir(parents=True)
+    (album / "01 - Track.flac").write_bytes(b"not audio, just stranded bytes")
+    fp, client, _complete = _partial_processor(tmp_path, incomplete=incomplete)
+    manifest = _manifest(ExpectedFile(filename="Album/01 - Track.flac", size=50000))
+
+    result = await fp.process_downloaded(
+        manifest, only_filenames={"Album/01 - Track.flac"}
+    )
+
+    assert client.partial_calls == 1
+    assert result.succeeded == []
+    assert len(result.failed) == 1
+    assert result.failed[0].reason == SOURCE_FILE_MISSING
+    assert SOURCE_FILE_MISSING not in QUARANTINE_REASONS
+    assert result.workspace_disposition == "preserve"
+
+
+@pytest.mark.asyncio
+async def test_full_manifest_import_never_consults_partial(tmp_path: Path) -> None:
+    """Full-manifest import (only=None, the completed-status shape) must never
+    consult the partial path: a synthetic completed-status import with a short
+    staged file still fails closed with SOURCE_FILE_MISSING."""
+    from services.native.file_processor import SOURCE_FILE_MISSING
+
+    incomplete = tmp_path / "incomplete"
+    album = incomplete / "Album"
+    album.mkdir(parents=True)
+    (album / "01 - Track.flac").write_bytes(b"not audio, just stranded bytes")
+    fp, client, _complete = _partial_processor(tmp_path, incomplete=incomplete)
+    manifest = _manifest(ExpectedFile(filename="Album/01 - Track.flac", size=50000))
+
+    result = await fp.process_downloaded(manifest)
+
+    assert client.partial_calls == 0
+    assert result.succeeded == []
+    assert len(result.failed) == 1
+    assert result.failed[0].reason == SOURCE_FILE_MISSING
+
+
+@pytest.mark.asyncio
+async def test_subset_import_empty_setting_emits_no_partial_signal(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Empty setting = byte-identical behaviour: the repo declines silently, so
+    no partial_retry signal fires and the missing file fails exactly as before."""
+    from services.native.file_processor import SOURCE_FILE_MISSING
+
+    fp, _client, _complete = _partial_processor(tmp_path, incomplete=None)
+    manifest = _manifest(ExpectedFile(filename="Album/01 - Track.flac", size=50000))
+
+    with caplog.at_level("INFO", logger="services.native.file_processor"):
+        result = await fp.process_downloaded(
+            manifest, only_filenames={"Album/01 - Track.flac"}
+        )
+
+    assert result.succeeded == []
+    assert len(result.failed) == 1
+    assert result.failed[0].reason == SOURCE_FILE_MISSING
+    assert not [
+        r for r in caplog.records if r.getMessage() == "process.partial_retry"
+    ]
