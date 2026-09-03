@@ -267,7 +267,7 @@
 	<section
 		class="relative z-10 isolate flex min-h-[calc(100dvh-4.5rem)] flex-col overflow-hidden px-4 pt-5 sm:px-6 lg:px-8"
 	>
-		{#if heroCover}
+		{#if heroCover && deviceProfileReady && !mobileLowPower}
 			<img class="local-lyrics-artwork pointer-events-none absolute -z-20" src={heroCover} alt="" />
 			<div
 				class="local-lyrics-wash pointer-events-none absolute inset-0 -z-10"
