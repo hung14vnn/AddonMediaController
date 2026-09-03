@@ -576,12 +576,14 @@
 	/>
 {/if}
 
-<QueueDrawer
-	bind:open={queueDrawerOpen}
-	bind:pinned={queuePinned}
-	pinnable
-	onclose={() => (queueDrawerOpen = false)}
-/>
+{#if queueDrawerOpen || queuePinned}
+	<QueueDrawer
+		bind:open={queueDrawerOpen}
+		bind:pinned={queuePinned}
+		pinnable
+		onclose={() => (queueDrawerOpen = false)}
+	/>
+{/if}
 
 {#if playerStore.nowPlaying && !playerStore.isPlayerVisible && !deckFocus.inView}
 	<button

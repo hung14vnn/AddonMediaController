@@ -345,8 +345,8 @@ describe('AuthenticatedAppShell sidebar scroll at short desktop heights (#281)',
 		await expect.element(nav.getByRole('link', { name: 'Playlists' })).toBeInTheDocument();
 
 		const navElement = nav.element();
-		expect(navElement.querySelectorAll('.droppedneedle-bottom-nav__item')).toHaveLength(7);
-		expect(getComputedStyle(navElement).gridTemplateColumns.split(' ')).toHaveLength(7);
+		expect(navElement.querySelectorAll('.droppedneedle-bottom-nav__item')).toHaveLength(6);
+		expect(getComputedStyle(navElement).gridTemplateColumns.split(' ')).toHaveLength(6);
 		expect(
 			getComputedStyle(navElement.querySelector('.droppedneedle-bottom-nav__item')!).flexDirection
 		).toBe('column');
@@ -365,7 +365,7 @@ describe('AuthenticatedAppShell sidebar scroll at short desktop heights (#281)',
 		await expect.element(nav.getByRole('link', { name: 'Playlists' })).toBeInTheDocument();
 
 		const navElement = nav.element();
-		expect(navElement.querySelectorAll('.droppedneedle-bottom-nav__item')).toHaveLength(5);
-		expect(getComputedStyle(navElement).gridTemplateColumns.split(' ')).toHaveLength(5);
+		expect(navElement.querySelectorAll('.droppedneedle-bottom-nav__item')).toHaveLength(4);
+		expect(getComputedStyle(navElement).gridTemplateColumns.split(' ')).toHaveLength(4);
 	});
 });

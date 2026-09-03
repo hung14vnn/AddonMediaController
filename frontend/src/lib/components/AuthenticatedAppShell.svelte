@@ -57,7 +57,6 @@
 	import { fromStore } from 'svelte/store';
 	import {
 		Settings,
-		Search,
 		House,
 		Compass,
 		Menu,
@@ -99,10 +98,10 @@
 	let DiscographyModal = $state<Component | null>(null);
 	let TrackSelectionModal = $state<Component | null>(null);
 	let playlistModalRef = $state<PlaylistModalHandle | undefined>(undefined);
-	let modalQuery = $state('');
 	let showNavigationProgress = $state(false);
 	let currentPath = $state('/');
 	let versionUpdateAvailable = $state(false);
+	let isDesktopViewport = $state(false);
 
 	const NAV_PROGRESS_DELAY_MS = 120;
 	const NAV_PROGRESS_MIN_VISIBLE_MS = 220;
@@ -145,6 +144,13 @@
 	}
 
 	onMount(() => {
+		const desktopMedia = window.matchMedia('(min-width: 768px)');
+		const updateDesktopViewport = () => {
+			isDesktopViewport = desktopMedia.matches;
+		};
+		updateDesktopViewport();
+		desktopMedia.addEventListener('change', updateDesktopViewport);
+
 		if ('serviceWorker' in navigator) {
 			void navigator.serviceWorker
 				.register(`${base || ''}/service-worker.js`, { scope: `${base || ''}/` })
@@ -180,6 +186,10 @@
 			currentPath = withoutBasePath(window.location.pathname);
 		}
 		document.addEventListener('keydown', handleGlobalKeydown);
+
+		return () => {
+			desktopMedia.removeEventListener('change', updateDesktopViewport);
+		};
 	});
 
 	$effect(() => {
@@ -378,22 +388,7 @@
 		}
 	}
 
-	function handleModalSearch() {
-		if (modalQuery.trim()) {
-			goto(withBasePath(`/search?q=${encodeURIComponent(modalQuery)}`));
-			const modal = document.getElementById('search_modal') as HTMLDialogElement;
-			if (modal) modal.close();
-			modalQuery = '';
-		}
-	}
-
 	function handleSuggestionSelect(result: SuggestResult) {
-		const routeId = result.type === 'artist' ? '/artist/[id]' : '/album/[id]';
-		goto(resolve(routeId, { id: result.musicbrainz_id }));
-	}
-
-	function handleModalSuggestionSelect(result: SuggestResult) {
-		(document.getElementById('search_modal') as HTMLDialogElement)?.close();
 		const routeId = result.type === 'artist' ? '/artist/[id]' : '/album/[id]';
 		goto(resolve(routeId, { id: result.musicbrainz_id }));
 	}
@@ -448,12 +443,13 @@
 					</span>
 				</a>
 			</div>
-			<div class="navbar-center min-w-0 grow justify-center px-1 sm:px-4">
+			<div class="navbar-center min-w-0 grow justify-center px-2 sm:px-4">
 				<div class="w-full max-w-2xl">
 					<SearchSuggestions
 						bind:query
 						onSearch={handleSearch}
 						onSelect={handleSuggestionSelect}
+						inputClass="max-sm:h-10 max-sm:min-h-0"
 						id="navbar-suggest"
 					/>
 				</div>
@@ -496,20 +492,6 @@
 			class="is-drawer-close:w-16 is-drawer-open:w-64 bg-base-200 flex flex-col items-start min-h-full max-h-dvh overflow-y-auto overflow-x-hidden"
 		>
 			<ul class="menu w-full grow p-2 [&_li>*]:py-3">
-				<li>
-					<button
-						onclick={() =>
-							(document.getElementById('search_modal') as HTMLDialogElement)?.showModal()}
-						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-						data-tip="Search"
-					>
-						<Search class="h-6 w-6" />
-						<span class="is-drawer-close:hidden">Search</span>
-					</button>
-				</li>
-
-				<div class="divider my-0"></div>
-
 				<li>
 					<a
 						href={withBasePath('/')}
@@ -608,7 +590,9 @@
 					</li>
 				{/if}
 
-				<SidebarServices />
+				{#if isDesktopViewport}
+					<SidebarServices />
+				{/if}
 
 				{#if downloadClientConfigured}
 					<div class="divider my-0"></div>
@@ -744,16 +728,6 @@
 		<Compass />
 		<span>Discover</span>
 	</a>
-	<button
-		type="button"
-		class="droppedneedle-bottom-nav__item"
-		class:active={isNavActive('/search')}
-		onclick={() => (document.getElementById('search_modal') as HTMLDialogElement)?.showModal()}
-		aria-current={isNavActive('/search') ? 'page' : undefined}
-	>
-		<Search />
-		<span>Search</span>
-	</button>
 	<a
 		href={withBasePath('/library')}
 		class="droppedneedle-bottom-nav__item"
@@ -808,28 +782,6 @@
 		</a>
 	{/if}
 </nav>
-
-<dialog id="search_modal" class="modal">
-	<div class="modal-box overflow-visible">
-		<form method="dialog">
-			<button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Close"
-				><X class="h-4 w-4" /></button
-			>
-		</form>
-		<h3 class="font-bold text-lg mb-4">Search</h3>
-		<SearchSuggestions
-			bind:query={modalQuery}
-			onSearch={handleModalSearch}
-			onSelect={handleModalSuggestionSelect}
-			placeholder="Search albums or artists..."
-			autofocus={true}
-			id="modal-suggest"
-		/>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close modal">close</button>
-	</form>
-</dialog>
 
 {#if $errorModal.show}
 	<dialog class="modal modal-open">
