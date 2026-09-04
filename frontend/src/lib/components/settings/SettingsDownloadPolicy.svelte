@@ -12,6 +12,7 @@
 		legacyRangeFromRecipe,
 		recipeFingerprint,
 		recipeFromPolicy,
+		resolvePreferenceOrderForRange,
 		stripRecipeIds,
 		validateRecipeEntry,
 		type RecipeDraftEntry
@@ -139,6 +140,11 @@
 		const nextQualityMax = legacyRange?.quality_max ?? qualityMax;
 		const nextCutoff = clampCutoff(qualityCutoff, nextQualityMin, nextQualityMax);
 		if (nextCutoff !== qualityCutoff) qualityCutoff = nextCutoff;
+		const nextPreferenceOrder = resolvePreferenceOrderForRange(
+			d.quality_preference_order,
+			nextQualityMin,
+			nextQualityMax
+		);
 		const policy: DownloadPolicySettings = {
 			...d,
 			quality_min: nextQualityMin,
@@ -158,7 +164,7 @@
 			auto_retry_max_attempts: autoRetryMax,
 			usenet_min_release_age_minutes: usenetMinAge,
 			quality_recipe: stripRecipeIds(qualityRecipe),
-			quality_preference_order: d.quality_preference_order ?? [],
+			quality_preference_order: nextPreferenceOrder,
 			preferred_lossy_bitrate_kbps: d.preferred_lossy_bitrate_kbps ?? null,
 			lossy_min_bitrate_kbps: lossyMinBitrateKbps,
 			lossy_max_bitrate_kbps: lossyMaxBitrateKbps,
