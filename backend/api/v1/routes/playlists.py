@@ -522,6 +522,8 @@ async def request_missing_tracks(
         release_group_mbid = track.album_id
         if not release_group_mbid:
             continue
+        if track.library_file_id:
+            continue
         if track.available_sources and len(track.available_sources) > 0:
             continue
         key = (
