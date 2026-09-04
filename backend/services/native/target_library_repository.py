@@ -69,6 +69,15 @@ class TargetLibraryRepository:
     async def get_library_file_by_id(self, file_id: str) -> dict[str, Any] | None:
         return await self.get_file_row_by_id(file_id)
 
+    async def get_karaoke_track_rows(self) -> list[dict[str, Any]]:
+        """Return indexed tracks needed to label existing karaoke cache entries."""
+        rows, _ = await self._store.list_target_tracks(
+            limit=100_000,
+            offset=0,
+            sort="title",
+        )
+        return rows
+
     async def has_album_files(self, album_id: str) -> bool:
         return bool(await self._store.get_target_album_tracks(album_id))
 

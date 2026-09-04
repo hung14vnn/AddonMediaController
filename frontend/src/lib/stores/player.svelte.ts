@@ -3,7 +3,8 @@ import type {
 	PlaybackState,
 	NowPlaying,
 	QueueItem,
-	SourceType
+	SourceType,
+	PlaybackOrigin
 } from '$lib/player/types';
 import { createPlaybackSource } from '$lib/player/createSource';
 import { API } from '$lib/constants';
@@ -50,7 +51,8 @@ import {
 	buildNowPlayingMetadata
 } from './playerSourceResolver';
 import { resumeAudioEngine } from '$lib/player/audioElement';
-import { createOfflineTrackUrl } from '$lib/offline/offlineAudio';
+import { createOfflineTrackUrl, getOfflineTrackMetadata } from '$lib/offline/offlineAudio';
+import { cachePlaybackTrack, createPlaybackTrackUrl } from '$lib/player/playbackAudioCache';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { KaraokePlaybackSource } from '$lib/player/KaraokePlaybackSource';
 import {
@@ -97,6 +99,7 @@ function createPlayerStore() {
 	let volume = $state(getStoredVolume());
 	let progress = $state(0);
 	let duration = $state(0);
+	let playbackOrigin = $state<PlaybackOrigin>('https');
 	let isPlayerVisible = $state(false);
 	let karaokeActive = $state(false);
 	let karaokeVocalLevel = $state(100);
@@ -203,6 +206,7 @@ function createPlayerStore() {
 		currentSource?.destroy();
 		currentSource = null;
 		nowPlaying = null;
+		playbackOrigin = 'https';
 		updateMediaSessionMetadata(null);
 		updateMediaSessionPlaybackState('none');
 		setMediaSessionActionHandler('play', null);
@@ -232,25 +236,36 @@ function createPlayerStore() {
 	async function resolveSourceForItem(item: QueueItem): Promise<{
 		source: PlaybackSource;
 		loadUrl: string | undefined;
+		playbackOrigin: PlaybackOrigin;
 	}> {
 		const url = resolveSourceUrl(item);
 		if (item.sourceType === 'youtube') {
 			isSeekable = true;
-			return { source: createPlaybackSource('youtube'), loadUrl: url };
+			return { source: createPlaybackSource('youtube'), loadUrl: url, playbackOrigin: 'https' };
 		}
 		if (item.sourceType === 'local') {
-			const offline = authStore.user?.id
-				? await createOfflineTrackUrl(authStore.user.id, item.trackSourceId)
-				: null;
-			const playbackUrl = offline?.url ?? url;
+			const userId = authStore.user?.id;
+			const offline = userId ? await createOfflineTrackUrl(userId, item.trackSourceId) : null;
+			const cached =
+				!offline && userId && url
+					? await createPlaybackTrackUrl({
+							userId,
+							trackId: item.trackSourceId,
+							sourceUrl: url,
+							format: item.format
+						})
+					: null;
+			const localCopy = offline ?? cached;
+			const playbackUrl = localCopy?.url ?? url;
 			isSeekable = true;
 			return {
 				source: createPlaybackSource('local', {
 					url: playbackUrl!,
 					seekable: true,
-					cleanup: offline?.revoke
+					cleanup: localCopy?.revoke
 				}),
-				loadUrl: playbackUrl
+				loadUrl: playbackUrl,
+				playbackOrigin: localCopy?.source ?? 'https'
 			};
 		}
 		if (item.sourceType === 'navidrome') {
@@ -258,7 +273,8 @@ function createPlayerStore() {
 			void reportNavidromeNowPlaying(item.trackSourceId);
 			return {
 				source: createPlaybackSource('navidrome', { url: url!, seekable: true }),
-				loadUrl: url
+				loadUrl: url,
+				playbackOrigin: 'https'
 			};
 		}
 		if (item.sourceType === 'plex') {
@@ -266,13 +282,15 @@ function createPlayerStore() {
 			if (item.plexRatingKey) void reportPlexNowPlaying(item.plexRatingKey);
 			return {
 				source: createPlaybackSource('plex', { url: url!, seekable: true }),
-				loadUrl: url
+				loadUrl: url,
+				playbackOrigin: 'https'
 			};
 		}
 		isSeekable = true;
 		return {
 			source: createPlaybackSource('jellyfin', { url: url!, seekable: true }),
-			loadUrl: url
+			loadUrl: url,
+			playbackOrigin: 'https'
 		};
 	}
 
@@ -285,6 +303,16 @@ function createPlayerStore() {
 			uq[index] = { ...uq[index], playSessionId };
 			queue = uq;
 			registerBeforeUnload();
+			// Native autoplay can start the element while the session request is in
+			// flight. The normal `playing` callback could not start the reporter
+			// without a session, so catch up once the session is available.
+			if (index === currentIndex && playbackState === 'playing') {
+				progressReporter.start(() => ({
+					jellyfinItem: getJellyfinItem(),
+					progress,
+					isPaused: playbackState !== 'playing'
+				}));
+			}
 		} catch {
 			const uq = [...queue];
 			uq[index] = { ...uq[index], playSessionId: '' };
@@ -304,10 +332,14 @@ function createPlayerStore() {
 		currentIndex = index;
 		updateMediaSessionControls();
 		playbackState = 'loading';
+		playbackOrigin = 'https';
 		progress = 0;
 		duration = 0;
 		if (prevItem) {
-			await stopPreviousSession(prevItem, prevProgress);
+			// Reporting the previous track must not hold up the new native media
+			// source. In particular, a lock-screen next action may run while the PWA
+			// is backgrounded and the report request can be throttled there.
+			void stopPreviousSession(prevItem, prevProgress);
 		} else {
 			progressReporter.stop();
 			unregisterBeforeUnload();
@@ -325,6 +357,7 @@ function createPlayerStore() {
 			}
 			source = r.source;
 			resolvedUrl = r.loadUrl;
+			playbackOrigin = r.playbackOrigin;
 		} catch {
 			if (gen === loadGeneration) handleTrackError(gen);
 			return;
@@ -340,10 +373,12 @@ function createPlayerStore() {
 			const loadPromise = source.load({
 				trackSourceId: activeItem.trackSourceId,
 				url: resolvedUrl,
-				format: activeItem.format
+				format: activeItem.format,
+				autoplay: true
 			});
-			// Session must exist before play(): a fast 'playing' event would otherwise
-			// start the progress reporter without a playSessionId and it bails permanently.
+			// Start the session before the explicit play() call when possible. Native
+			// autoplay may still begin first while this request is in flight; the
+			// session helper above catches up the progress reporter in that case.
 			if (activeItem.sourceType === 'jellyfin') await startJellyfinPlayback(index);
 			if (gen === loadGeneration && activeItem.sourceType !== 'youtube') {
 				source.play();
@@ -391,6 +426,23 @@ function createPlayerStore() {
 		if (nextIdx === null) return;
 		const nextItem = queue[nextIdx];
 		if (!nextItem) return;
+		if (nextItem.sourceType === 'local' && authStore.user?.id) {
+			const userId = authStore.user.id;
+			const url = resolveSourceUrl(nextItem);
+			if (!url) return;
+			void (async () => {
+				// A user-requested offline copy is durable and always takes precedence;
+				// never duplicate it in the disposable playback cache.
+				if (await getOfflineTrackMetadata(userId, nextItem.trackSourceId)) return;
+				await cachePlaybackTrack({
+					userId,
+					trackId: nextItem.trackSourceId,
+					sourceUrl: url,
+					format: nextItem.format
+				});
+			})().catch(() => undefined);
+			return;
+		}
 		const url = buildPrefetchUrl(nextItem);
 		if (url) void api.global.head(url).catch(() => {});
 	}
@@ -553,7 +605,7 @@ function createPlayerStore() {
 		currentSource = source;
 		playbackState = 'loading';
 		source.setVolume(volume);
-		await source.load({});
+		await source.load({ autoplay: resume });
 		if (gen !== loadGeneration) {
 			source.destroy();
 			throw new Error('Playback changed while the new source was loading');
@@ -570,6 +622,7 @@ function createPlayerStore() {
 		if (!item) throw new Error('Current queue item is unavailable');
 		const resolved = await resolveSourceForItem(item);
 		await replaceCurrentSource(resolved.source, startAt, resume);
+		playbackOrigin = resolved.playbackOrigin;
 	}
 
 	return {
@@ -578,6 +631,9 @@ function createPlayerStore() {
 		},
 		get nowPlaying() {
 			return nowPlaying;
+		},
+		get playbackOrigin() {
+			return playbackOrigin;
 		},
 		get playbackState() {
 			return playbackState;
@@ -656,6 +712,7 @@ function createPlayerStore() {
 			const gen = ++loadGeneration;
 			currentSource = source;
 			nowPlaying = metadata;
+			playbackOrigin = 'https';
 			updateMediaSessionMetadata(nowPlaying);
 			updateMediaSessionPlaybackState('paused');
 			playbackState = 'loading';
@@ -1019,6 +1076,7 @@ function createPlayerStore() {
 			currentSource?.destroy();
 			currentIndex = resume.currentIndex;
 			playbackState = 'loading';
+			playbackOrigin = 'https';
 			isSeekable = true;
 			progress = 0;
 			duration = 0;
@@ -1026,9 +1084,14 @@ function createPlayerStore() {
 
 			void (async () => {
 				try {
-					const { source, loadUrl } = await resolveSourceForItem(resume.currentItem);
+					const {
+						source,
+						loadUrl,
+						playbackOrigin: resolvedPlaybackOrigin
+					} = await resolveSourceForItem(resume.currentItem);
 					if (gen !== loadGeneration) return;
 					currentSource = source;
+					playbackOrigin = resolvedPlaybackOrigin;
 					nowPlaying = resume.nowPlaying;
 					updateMediaSessionMetadata(nowPlaying);
 					subscribeToSource(source, gen);

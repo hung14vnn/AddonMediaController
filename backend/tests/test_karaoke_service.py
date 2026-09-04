@@ -5,15 +5,23 @@ from pathlib import Path
 import pytest
 
 from core.config import Settings
+from core.exceptions import ResourceNotFoundError
 from services.karaoke_service import KaraokeService
 
 
 class _LocalFiles:
     def __init__(self, path: Path) -> None:
         self.path = path
+        self.rows: list[dict] = []
 
     async def resolve_validated_path(self, _file_id: str) -> Path:
         return self.path
+
+    async def get_karaoke_track_rows(self) -> list[dict]:
+        return self.rows
+
+    async def get_karaoke_track_metadata(self, file_id: str) -> dict | None:
+        return next((row for row in self.rows if row.get("id") == file_id), None)
 
 
 def _service(tmp_path: Path) -> tuple[KaraokeService, Path]:
@@ -164,3 +172,89 @@ async def test_local_generation_records_model_metadata(tmp_path: Path):
     assert metadata["provider"] == "local"
     assert metadata["model"] == "UVR_MDXNET_9482.onnx"
     assert metadata["quality"] == "standard"
+    assert metadata["track_file_id"] == "track-1"
+
+
+@pytest.mark.asyncio()
+async def test_list_entries_includes_current_legacy_and_partial_folders(tmp_path: Path):
+    service, _ = _service(tmp_path)
+    current = service._entry_dir("a" * 64)
+    current.mkdir(parents=True)
+    (current / "instrumental.m4a").write_bytes(b"instrumental")
+    (current / "vocals.m4a").write_bytes(b"vocals")
+    (current / "metadata.json").write_text(
+        json.dumps(
+            {
+                "track_title": "Current song",
+                "artist_name": "Artist",
+                "size_bytes": 18,
+                "created_at": 10,
+                "last_accessed_at": 20,
+            }
+        )
+    )
+
+    legacy = service._root / "old-song"
+    legacy.mkdir()
+    (legacy / "instrumental.m4a").write_bytes(b"old-i")
+    (legacy / "vocals.m4a").write_bytes(b"old-v")
+
+    partial = service._root / "broken-song"
+    partial.mkdir()
+    (partial / "vocals.m4a").write_bytes(b"broken")
+
+    response = await service.list_entries()
+
+    assert response.total == 3
+    assert {item.name for item in response.items} == {"Current song", "old-song", "broken-song"}
+    assert next(item for item in response.items if item.name == "Current song").status == "ready"
+    assert next(item for item in response.items if item.name == "old-song").status == "legacy"
+    assert next(item for item in response.items if item.name == "broken-song").status == "partial"
+
+
+@pytest.mark.asyncio()
+async def test_list_entries_uses_library_metadata_for_existing_cache(tmp_path: Path):
+    service, source = _service(tmp_path)
+    local_files = service._local_files
+    local_files.rows = [  # type: ignore[attr-defined]
+        {
+            "id": "track-1",
+            "file_path": str(source),
+            "track_title": "Song from the library",
+            "artist_name": "Library artist",
+            "album_title": "Library album",
+        }
+    ]
+    cache_key = service._cache_key_for_stat(
+        source, source.stat().st_size, source.stat().st_mtime_ns
+    )
+    entry = service._entry_dir(cache_key)
+    entry.mkdir(parents=True)
+    (entry / "instrumental.m4a").write_bytes(b"i")
+    (entry / "vocals.m4a").write_bytes(b"v")
+    (entry / "metadata.json").write_text(json.dumps({"cache_key": cache_key}))
+
+    response = await service.list_entries()
+
+    assert response.total == 1
+    item = response.items[0]
+    assert item.name == "Song from the library"
+    assert item.artist_name == "Library artist"
+    assert item.album_name == "Library album"
+    assert item.track_file_id == "track-1"
+
+
+@pytest.mark.asyncio()
+async def test_delete_entry_only_removes_a_listed_cache_folder(tmp_path: Path):
+    service, _ = _service(tmp_path)
+    entry = service._root / "old-song"
+    entry.mkdir()
+    (entry / "vocals.m4a").write_bytes(b"old-v")
+
+    listed = await service.list_entries()
+    await service.delete_entry(listed.items[0].id)
+
+    assert not entry.exists()
+
+    with pytest.raises(ResourceNotFoundError):
+        await service.delete_entry("Li4vLi4v")

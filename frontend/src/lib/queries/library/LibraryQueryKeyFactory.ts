@@ -116,5 +116,7 @@ export const LibraryQueryKeyFactory = {
 	albumSearch: (q: string) => [...LibraryQueryKeyFactory.all, 'album-search', q] as const,
 	albumTracks: (mbid: string) => [...LibraryQueryKeyFactory.all, 'album-tracks', mbid] as const,
 	search: (q: string) => [...LibraryQueryKeyFactory.all, 'search', q] as const,
+	karaokeEntries: () => [...LibraryQueryKeyFactory.all, 'karaoke-entries'] as const,
+	karaokeSearch: (q: string) => [...LibraryQueryKeyFactory.all, 'karaoke-search', q] as const,
 	artistThumbs: () => [...LibraryQueryKeyFactory.all, 'artist-thumbs-v2'] as const
 };

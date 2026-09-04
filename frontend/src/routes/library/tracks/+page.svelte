@@ -49,11 +49,15 @@
 	import { untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import {
+		deleteAllOfflineTracks,
 		deleteOfflineTrack,
+		deleteOfflineTracks,
 		downloadOfflineTrack,
+		findInvalidOfflineTrackIds,
 		listOfflineTrackMetadata,
 		type OfflineTrackMetadata
 	} from '$lib/offline/offlineAudio';
+	import { clearPlaybackCache, deletePlaybackTracks } from '$lib/player/playbackAudioCache';
 
 	const PAGE_SIZE = 48;
 
@@ -75,6 +79,12 @@
 	let offlineAvailableIds = new SvelteSet<string>();
 	let offlineDownloadingIds = new SvelteSet<string>();
 	let bulkOfflineDownloading = $state(false);
+	let clearingAllOffline = $state(false);
+	let clearingPlaybackCache = $state(false);
+	let deletingInvalidOffline = $state(false);
+	let invalidOfflineCheckComplete = $state(false);
+	let invalidOfflineIds = new SvelteSet<string>();
+	let offlineTrackCount = $state(0);
 
 	const totalPages = $derived(Math.ceil(data.total / PAGE_SIZE));
 	let targetPlaylistId = $derived(page.url.searchParams.get('playlist'));
@@ -120,8 +130,11 @@
 			offlineOnly = false;
 			await refreshTargetMembership(data.items);
 			await refreshOfflineStatuses(data.items);
+			await refreshInvalidOfflineTracks();
 		} catch {
 			existingTargetTrackIds.clear();
+			invalidOfflineIds.clear();
+			invalidOfflineCheckComplete = false;
 			try {
 				data = await loadOfflineFallback();
 				offlineOnly = true;
@@ -130,6 +143,7 @@
 				data = { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
 				offlineOnly = false;
 				offlineAvailableIds = new SvelteSet();
+				offlineTrackCount = 0;
 			}
 		} finally {
 			loading = false;
@@ -207,10 +221,12 @@
 		const userId = authStore.user?.id;
 		if (!userId) {
 			offlineAvailableIds = new SvelteSet();
+			offlineTrackCount = 0;
 			return;
 		}
 		try {
 			const records: OfflineTrackMetadata[] = await listOfflineTrackMetadata(userId);
+			offlineTrackCount = records.length;
 			const pageIds = new SvelteSet(
 				records
 					.filter((record) => tracks.some((track) => localTrackId(track) === record.trackId))
@@ -225,6 +241,23 @@
 			offlineAvailableIds = next;
 		} catch {
 			// A storage failure must not make the online library unusable.
+		}
+	}
+
+	async function refreshInvalidOfflineTracks(): Promise<void> {
+		invalidOfflineIds.clear();
+		invalidOfflineCheckComplete = false;
+		const userId = authStore.user?.id;
+		if (!userId || typeof navigator === 'undefined' || navigator.onLine === false) return;
+
+		try {
+			for (const trackId of await findInvalidOfflineTrackIds(userId)) {
+				invalidOfflineIds.add(trackId);
+			}
+			invalidOfflineCheckComplete = true;
+		} catch {
+			// A failed server check is unknown, not proof that local downloads are invalid.
+			invalidOfflineIds.clear();
 		}
 	}
 
@@ -261,6 +294,8 @@
 				toastStore.show({ message: `Removed offline copy of "${track.title}"`, type: 'info' });
 			} catch {
 				toastStore.show({ message: "Couldn't remove the offline copy", type: 'error' });
+			} finally {
+				await refreshOfflineStatuses(data.items);
 			}
 			return;
 		}
@@ -279,6 +314,7 @@
 			}
 		} finally {
 			offlineDownloadingIds.delete(trackId);
+			await refreshOfflineStatuses(data.items);
 		}
 	}
 
@@ -315,6 +351,107 @@
 			});
 		} finally {
 			bulkOfflineDownloading = false;
+			await refreshOfflineStatuses(data.items);
+		}
+	}
+
+	async function clearAllOffline(): Promise<void> {
+		const userId = authStore.user?.id;
+		if (
+			!userId ||
+			clearingAllOffline ||
+			deletingInvalidOffline ||
+			bulkOfflineDownloading ||
+			offlineDownloadingIds.size > 0 ||
+			offlineTrackCount === 0
+		)
+			return;
+		if (
+			!confirm(
+				`Remove all ${offlineTrackCount} offline track${offlineTrackCount === 1 ? '' : 's'} from this device?`
+			)
+		) {
+			return;
+		}
+		clearingAllOffline = true;
+		try {
+			const removed = await deleteAllOfflineTracks(userId);
+			offlineAvailableIds = new SvelteSet();
+			invalidOfflineIds.clear();
+			invalidOfflineCheckComplete = true;
+			offlineTrackCount = 0;
+			clearSelection();
+			if (offlineOnly) {
+				data = await loadOfflineFallback();
+			}
+			toastStore.show({
+				message: `Removed ${removed} offline track${removed === 1 ? '' : 's'}`,
+				type: 'success'
+			});
+		} catch {
+			toastStore.show({ message: "Couldn't clear offline tracks", type: 'error' });
+		} finally {
+			clearingAllOffline = false;
+		}
+	}
+
+	async function deleteInvalidOfflineTracks(): Promise<void> {
+		const userId = authStore.user?.id;
+		const trackIds = [...invalidOfflineIds];
+		if (
+			!userId ||
+			!invalidOfflineCheckComplete ||
+			trackIds.length === 0 ||
+			deletingInvalidOffline ||
+			clearingAllOffline ||
+			bulkOfflineDownloading ||
+			offlineDownloadingIds.size > 0
+		)
+			return;
+		if (
+			!confirm(
+				`Delete ${trackIds.length} offline track${trackIds.length === 1 ? '' : 's'} that no longer exist in the library?`
+			)
+		)
+			return;
+
+		deletingInvalidOffline = true;
+		try {
+			const removed = await deleteOfflineTracks(userId, trackIds);
+			await deletePlaybackTracks(userId, trackIds).catch(() => undefined);
+			for (const trackId of trackIds) {
+				offlineAvailableIds.delete(trackId);
+				invalidOfflineIds.delete(trackId);
+			}
+			offlineTrackCount = Math.max(0, offlineTrackCount - removed);
+			if (offlineOnly) data = await loadOfflineFallback();
+			toastStore.show({
+				message: `Deleted ${removed} invalid offline track${removed === 1 ? '' : 's'}`,
+				type: 'success'
+			});
+		} catch {
+			toastStore.show({ message: "Couldn't delete invalid offline tracks", type: 'error' });
+		} finally {
+			deletingInvalidOffline = false;
+		}
+	}
+
+	async function clearPlaybackCacheOnDevice(): Promise<void> {
+		if (clearingPlaybackCache || clearingAllOffline || deletingInvalidOffline) return;
+		if (
+			!confirm('Clear the automatic playback cache on this device? Offline downloads will be kept.')
+		) {
+			return;
+		}
+
+		clearingPlaybackCache = true;
+		try {
+			await clearPlaybackCache();
+			toastStore.show({ message: 'Playback cache cleared', type: 'success' });
+		} catch {
+			toastStore.show({ message: "Couldn't clear playback cache", type: 'error' });
+		} finally {
+			clearingPlaybackCache = false;
 		}
 	}
 
@@ -452,7 +589,7 @@
 		)
 			return;
 		remove.mutate(
-			{ fileId: track.id },
+			{ fileId: track.id, cacheTrackIds: [localTrackId(track)] },
 			{
 				onSuccess: () => {
 					toastStore.show({ message: `Deleted "${track.title}"`, type: 'success' });
@@ -497,7 +634,10 @@
 			return;
 		bulkDeleting = true;
 		try {
-			await removeMultiple.mutateAsync({ fileIds: tracks.map((track) => track.id) });
+			await removeMultiple.mutateAsync({
+				fileIds: tracks.map((track) => track.id),
+				cacheTrackIds: tracks.map(localTrackId)
+			});
 			toastStore.show({
 				message: `Deleted ${count} track${count === 1 ? '' : 's'}`,
 				type: 'success'
@@ -515,16 +655,20 @@
 
 	function getTrackMenuItems(track: NativeTrackListItem): MenuItem[] {
 		return [
-			{
-				label: isOfflineAvailable(track)
-					? 'Remove offline copy'
-					: isOfflineDownloading(track)
-						? 'Saving offline copy...'
-						: 'Save for offline playback',
-				icon: isOfflineAvailable(track) ? Check : Download,
-				onclick: () => void toggleOffline(track),
-				disabled: isOfflineDownloading(track)
-			},
+			...(!targetPlaylistId
+				? [
+						{
+							label: isOfflineAvailable(track)
+								? 'Remove offline copy'
+								: isOfflineDownloading(track)
+									? 'Saving offline copy...'
+									: 'Save for offline playback',
+							icon: isOfflineAvailable(track) ? Check : Download,
+							onclick: () => void toggleOffline(track),
+							disabled: isOfflineDownloading(track)
+						}
+					]
+				: []),
 			{
 				label: 'Add to local playlist',
 				icon: Music2,
@@ -564,24 +708,83 @@
 <svelte:head><title>Tracks · Library</title></svelte:head>
 
 <div class="container mx-auto p-4 md:p-6 lg:p-8">
-	<div class="flex items-center gap-4 mb-6">
-		<button
-			class="btn btn-ghost btn-circle"
-			onclick={() => goto(withBasePath('/library'))}
-			aria-label="Back to library"
-		>
-			<ChevronLeft class="w-6 h-6" />
-		</button>
-		<div>
-			<h1 class="text-3xl font-bold">All Tracks</h1>
-			<p class="text-base-content/70 text-sm mt-1">
-				{data.total.toLocaleString()}
-				{data.total === 1 ? 'track' : 'tracks'}
-			</p>
-			{#if offlineOnly}
-				<p class="mt-1 text-xs text-accent">Offline mode · saved tracks on this device</p>
-			{/if}
+	<div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+		<div class="flex min-w-0 items-center gap-4">
+			<button
+				class="btn btn-ghost btn-circle shrink-0"
+				onclick={() => goto(withBasePath('/library'))}
+				aria-label="Back to library"
+			>
+				<ChevronLeft class="w-6 h-6" />
+			</button>
+			<div class="min-w-0">
+				<h1 class="text-3xl font-bold">All Tracks</h1>
+				<p class="text-base-content/70 text-sm mt-1">
+					{data.total.toLocaleString()}
+					{data.total === 1 ? 'track' : 'tracks'}
+				</p>
+				{#if offlineOnly}
+					<p class="mt-1 text-xs text-accent">Offline mode · saved tracks on this device</p>
+				{/if}
+			</div>
 		</div>
+		{#if !targetPlaylistId}
+			<div class="flex w-full flex-wrap justify-end gap-2 sm:ml-auto sm:w-auto">
+				{#if invalidOfflineCheckComplete && invalidOfflineIds.size > 0}
+					<button
+						class="btn btn-outline btn-warning btn-sm gap-1.5"
+						onclick={() => void deleteInvalidOfflineTracks()}
+						disabled={deletingInvalidOffline ||
+							clearingAllOffline ||
+							bulkOfflineDownloading ||
+							offlineDownloadingIds.size > 0}
+						aria-label="Delete invalid offline tracks"
+					>
+						{#if deletingInvalidOffline}
+							<Loader2 class="h-3.5 w-3.5 animate-spin" />
+						{:else}
+							<Trash2 class="h-3.5 w-3.5" />
+						{/if}
+						Delete invalid offline tracks ({invalidOfflineIds.size})
+					</button>
+				{/if}
+				{#if offlineTrackCount > 0}
+					<button
+						class="btn btn-outline btn-error btn-sm gap-1.5"
+						onclick={() => void clearAllOffline()}
+						disabled={clearingAllOffline ||
+							deletingInvalidOffline ||
+							bulkOfflineDownloading ||
+							offlineDownloadingIds.size > 0}
+						aria-label="Clear all offline tracks"
+					>
+						{#if clearingAllOffline}
+							<Loader2 class="h-3.5 w-3.5 animate-spin" />
+						{:else}
+							<Trash2 class="h-3.5 w-3.5" />
+						{/if}
+						Clear all offline ({offlineTrackCount})
+					</button>
+				{/if}
+				<button
+					class="btn btn-outline btn-sm gap-1.5"
+					onclick={() => void clearPlaybackCacheOnDevice()}
+					disabled={clearingPlaybackCache ||
+						clearingAllOffline ||
+						deletingInvalidOffline ||
+						bulkOfflineDownloading ||
+						offlineDownloadingIds.size > 0}
+					aria-label="Clear playback cache"
+				>
+					{#if clearingPlaybackCache}
+						<Loader2 class="h-3.5 w-3.5 animate-spin" />
+					{:else}
+						<Trash2 class="h-3.5 w-3.5" />
+					{/if}
+					Clear cache
+				</button>
+			</div>
+		{/if}
 	</div>
 
 	<div class="flex flex-col sm:flex-row gap-3 mb-6">
@@ -813,24 +1016,26 @@
 								{formatDurationSec(track.duration_seconds)}
 							</span>
 						{/if}
-						<button
-							type="button"
-							class="btn btn-ghost btn-xs btn-circle"
-							onclick={(e) => (e.stopPropagation(), void toggleOffline(track))}
-							disabled={offlineSaving}
-							title={offline ? 'Remove offline copy' : 'Save for offline playback'}
-							aria-label={offline
-								? `Remove offline copy of ${track.title}`
-								: `Save ${track.title} offline`}
-						>
-							{#if offlineSaving}
-								<Loader2 class="h-3.5 w-3.5 animate-spin" />
-							{:else if offline}
-								<Check class="h-3.5 w-3.5 text-success" />
-							{:else}
-								<Download class="h-3.5 w-3.5" />
-							{/if}
-						</button>
+						{#if !targetPlaylistId}
+							<button
+								type="button"
+								class="btn btn-ghost btn-xs btn-circle"
+								onclick={(e) => (e.stopPropagation(), void toggleOffline(track))}
+								disabled={offlineSaving}
+								title={offline ? 'Remove offline copy' : 'Save for offline playback'}
+								aria-label={offline
+									? `Remove offline copy of ${track.title}`
+									: `Save ${track.title} offline`}
+							>
+								{#if offlineSaving}
+									<Loader2 class="h-3.5 w-3.5 animate-spin" />
+								{:else if offline}
+									<Check class="h-3.5 w-3.5 text-success" />
+								{:else}
+									<Download class="h-3.5 w-3.5" />
+								{/if}
+							</button>
+						{/if}
 						{#if !alreadyInTarget}
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
 							<div
@@ -873,18 +1078,20 @@
 						></span>{:else}<Music2 class="h-4 w-4" />{/if}
 					<span class="selection-action-label">Add to playlist</span>
 				</button>
-				<button
-					class="selection-action btn btn-secondary btn-sm gap-1.5"
-					onclick={() => void downloadSelectedOffline()}
-					disabled={bulkOfflineDownloading || selectedOfflineCount === selectedIds.size}
-					aria-busy={bulkOfflineDownloading}
-					aria-label="Save selected tracks offline"
-					title="Save selected tracks offline"
-				>
-					{#if bulkOfflineDownloading}<span class="loading loading-spinner loading-xs"
-						></span>{:else}<Download class="h-4 w-4" />{/if}
-					<span class="selection-action-label">Save offline</span>
-				</button>
+				{#if !targetPlaylistId}
+					<button
+						class="selection-action btn btn-secondary btn-sm gap-1.5"
+						onclick={() => void downloadSelectedOffline()}
+						disabled={bulkOfflineDownloading || selectedOfflineCount === selectedIds.size}
+						aria-busy={bulkOfflineDownloading}
+						aria-label="Save selected tracks offline"
+						title="Save selected tracks offline"
+					>
+						{#if bulkOfflineDownloading}<span class="loading loading-spinner loading-xs"
+							></span>{:else}<Download class="h-4 w-4" />{/if}
+						<span class="selection-action-label">Save offline</span>
+					</button>
+				{/if}
 				{#if !targetPlaylistId}
 					<button
 						class="selection-action btn btn-error btn-sm gap-1.5"

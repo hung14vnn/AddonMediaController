@@ -25,3 +25,10 @@ class LibraryRepositoryProtocol(Protocol):
 
     async def get_library_artist_mbids(self) -> set[str]:
         ...
+
+    async def get_file_row_by_id(self, file_id: str) -> dict | None:
+        ...
+
+    async def get_karaoke_track_rows(self) -> list[dict]:
+        """Active indexed tracks with paths and display metadata."""
+        ...

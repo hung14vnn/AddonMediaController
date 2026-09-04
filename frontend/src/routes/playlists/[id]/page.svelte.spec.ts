@@ -19,6 +19,9 @@ const mockDeletePlaylistCover = vi.fn();
 const mockCheckTrackMembership = vi.fn();
 const mockResolvePlaylistSources = vi.fn();
 const mockRequestMissingTracks = vi.fn();
+const mockListOfflineTrackMetadata = vi.fn();
+const mockDownloadOfflineTrack = vi.fn();
+const mockDeleteOfflineTracks = vi.fn();
 
 vi.mock('$lib/api/playlists', () => ({
 	queueItemToTrackData: (item: unknown) => item,
@@ -38,6 +41,12 @@ vi.mock('$lib/api/playlists', () => ({
 	checkTrackMembership: (...args: unknown[]) => mockCheckTrackMembership(...args),
 	resolvePlaylistSources: (...args: unknown[]) => mockResolvePlaylistSources(...args),
 	requestMissingTracks: (...args: unknown[]) => mockRequestMissingTracks(...args)
+}));
+
+vi.mock('$lib/offline/offlineAudio', () => ({
+	listOfflineTrackMetadata: (...args: unknown[]) => mockListOfflineTrackMetadata(...args),
+	downloadOfflineTrack: (...args: unknown[]) => mockDownloadOfflineTrack(...args),
+	deleteOfflineTracks: (...args: unknown[]) => mockDeleteOfflineTracks(...args)
 }));
 
 // The detail page consumes the user-scoped TanStack detail query + share mutation;
@@ -103,6 +112,7 @@ vi.mock('$app/navigation', () => ({
 }));
 
 import DetailPage from './+page.svelte';
+import { authStore } from '$lib/stores/authStore.svelte';
 
 function renderDetail(playlistId = 'pl-1') {
 	return render(DetailPage, {
@@ -165,6 +175,16 @@ function makePlaylist(overrides: Partial<PlaylistDetail> = {}): PlaylistDetail {
 
 describe('Playlist detail page', () => {
 	beforeEach(() => {
+		authStore.setUser({
+			id: 'offline-user',
+			display_name: 'Listener',
+			role: 'user',
+			email: null,
+			avatar_url: null,
+			username: 'listener',
+			username_display: 'Listener',
+			providers: []
+		});
 		detailQuery.data = makePlaylist();
 		detailQuery.isLoading = false;
 		detailQuery.isError = false;
@@ -181,6 +201,12 @@ describe('Playlist detail page', () => {
 		mockResolvePlaylistSources.mockResolvedValue({});
 		mockRequestMissingTracks.mockReset();
 		mockRequestMissingTracks.mockResolvedValue({ message: '1 track queued' });
+		mockListOfflineTrackMetadata.mockReset();
+		mockListOfflineTrackMetadata.mockResolvedValue([]);
+		mockDownloadOfflineTrack.mockReset();
+		mockDownloadOfflineTrack.mockResolvedValue({});
+		mockDeleteOfflineTracks.mockReset();
+		mockDeleteOfflineTracks.mockResolvedValue(1);
 		mockToastShow.mockReset();
 		mockPlayQueue.mockReset();
 		mockAddToQueue.mockReset();
@@ -191,6 +217,48 @@ describe('Playlist detail page', () => {
 		} catch {
 			// may throw in environments without localStorage
 		}
+	});
+
+	it('downloads only the playlist tracks that are not already offline', async () => {
+		mockListOfflineTrackMetadata.mockResolvedValue([{ trackId: 'file-1' }]);
+		detailQuery.data = makePlaylist({
+			tracks: [
+				makeTrack({ id: 'trk-1', track_source_id: 'file-1' }),
+				makeTrack({ id: 'trk-2', track_source_id: 'file-2' })
+			]
+		});
+		renderDetail();
+
+		const downloadRemaining = page.getByRole('button', { name: 'Download remaining (1)' });
+		await expect.element(downloadRemaining).toBeVisible();
+		await downloadRemaining.click();
+
+		expect(mockDownloadOfflineTrack).toHaveBeenCalledTimes(1);
+		expect(mockDownloadOfflineTrack).toHaveBeenCalledWith(
+			expect.objectContaining({ userId: 'offline-user', trackId: 'file-2' })
+		);
+	});
+
+	it('clears only downloaded tracks that belong to the playlist', async () => {
+		mockListOfflineTrackMetadata.mockResolvedValue([
+			{ trackId: 'file-1' },
+			{ trackId: 'outside-playlist' }
+		]);
+		detailQuery.data = makePlaylist({
+			tracks: [
+				makeTrack({ id: 'trk-1', track_source_id: 'file-1' }),
+				makeTrack({ id: 'trk-2', track_source_id: 'file-2' })
+			]
+		});
+		const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+		renderDetail();
+
+		const clearDownloaded = page.getByRole('button', { name: 'Clear downloaded (1)' });
+		await expect.element(clearDownloaded).toBeVisible();
+		await clearDownloaded.click();
+
+		expect(mockDeleteOfflineTracks).toHaveBeenCalledWith('offline-user', ['file-1']);
+		confirmSpy.mockRestore();
 	});
 
 	it('renders header with playlist name, track count, and duration', async () => {

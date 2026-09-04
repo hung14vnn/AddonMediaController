@@ -8,10 +8,26 @@ vi.mock('$lib/api/client', () => ({
 	api: { global: { post: vi.fn(), put: vi.fn(), delete: vi.fn() } }
 }));
 
-const { mockRemoveMbid } = vi.hoisted(() => ({ mockRemoveMbid: vi.fn() }));
+const { mockRemoveMbid, mockDeleteOfflineTracks, mockDeletePlaybackTracks } = vi.hoisted(() => ({
+	mockRemoveMbid: vi.fn(),
+	mockDeleteOfflineTracks: vi.fn(),
+	mockDeletePlaybackTracks: vi.fn()
+}));
 
 vi.mock('$lib/stores/library', () => ({
 	libraryStore: { removeMbid: mockRemoveMbid }
+}));
+
+vi.mock('$lib/stores/authStore.svelte', () => ({
+	authStore: { user: { id: 'user-1' } }
+}));
+
+vi.mock('$lib/offline/offlineAudio', () => ({
+	deleteOfflineTracks: mockDeleteOfflineTracks
+}));
+
+vi.mock('$lib/player/playbackAudioCache', () => ({
+	deletePlaybackTracks: mockDeletePlaybackTracks
 }));
 
 vi.mock('../QueryClient', () => ({
@@ -20,7 +36,12 @@ vi.mock('../QueryClient', () => ({
 }));
 
 import { api } from '$lib/api/client';
-import { removeLibraryAlbum, saveLibraryScanSchedule } from './LibraryMutations.svelte';
+import {
+	removeLibraryAlbum,
+	removeLibraryTrack,
+	removeLibraryTracks,
+	saveLibraryScanSchedule
+} from './LibraryMutations.svelte';
 import { invalidateQueriesWithPersister, setQueryDataWithPersister } from '../QueryClient';
 
 const mockPost = vi.mocked(api.global.post);
@@ -32,6 +53,52 @@ beforeEach(() => {
 	mockPost.mockResolvedValue({});
 	mockPut.mockResolvedValue({});
 	mockDelete.mockResolvedValue({});
+	mockDeleteOfflineTracks.mockResolvedValue(0);
+	mockDeletePlaybackTracks.mockResolvedValue(0);
+});
+
+describe('track removal mutations', () => {
+	it('removes offline and playback cache copies after deleting one library track', async () => {
+		const mutation = removeLibraryTrack() as unknown as {
+			mutationFn: (input: { fileId: string; cacheTrackIds: string[] }) => Promise<unknown>;
+			onSuccess: (
+				data: unknown,
+				input: { fileId: string; cacheTrackIds: string[] }
+			) => Promise<void>;
+		};
+		const input = { fileId: 'catalog-id', cacheTrackIds: ['file-id'] };
+		const data = await mutation.mutationFn(input);
+		await mutation.onSuccess(data, input);
+
+		expect(mockDeleteOfflineTracks).toHaveBeenCalledWith('user-1', ['catalog-id', 'file-id']);
+		expect(mockDeletePlaybackTracks).toHaveBeenCalledWith('user-1', ['catalog-id', 'file-id']);
+	});
+
+	it('cleans every selected track after bulk library removal', async () => {
+		const mutation = removeLibraryTracks() as unknown as {
+			mutationFn: (input: { fileIds: string[]; cacheTrackIds: string[] }) => Promise<unknown>;
+			onSuccess: (
+				data: unknown,
+				input: { fileIds: string[]; cacheTrackIds: string[] }
+			) => Promise<void>;
+		};
+		const input = { fileIds: ['catalog-1', 'catalog-2'], cacheTrackIds: ['file-1', 'file-2'] };
+		const data = await mutation.mutationFn(input);
+		await mutation.onSuccess(data, input);
+
+		expect(mockDeleteOfflineTracks).toHaveBeenCalledWith('user-1', [
+			'catalog-1',
+			'catalog-2',
+			'file-1',
+			'file-2'
+		]);
+		expect(mockDeletePlaybackTracks).toHaveBeenCalledWith('user-1', [
+			'catalog-1',
+			'catalog-2',
+			'file-1',
+			'file-2'
+		]);
+	});
 });
 
 describe('album removal mutation', () => {

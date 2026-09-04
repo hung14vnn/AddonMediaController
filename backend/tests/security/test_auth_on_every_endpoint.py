@@ -51,6 +51,7 @@ from api.v1.routes import spotify as spotify_routes
 from api.v1.routes import stream as stream_routes
 from api.v1.routes import system as system_routes
 from api.v1.routes import tracks as tracks_routes
+from api.v1.routes import karaoke as karaoke_routes
 from core.dependencies import (
     get_app_password_service,
     get_auth_service,
@@ -73,6 +74,7 @@ from core.dependencies import (
     get_library_policy_service,
     get_library_service,
     get_local_files_service,
+    get_karaoke_service,
     get_drop_import_service,
     get_free_music_service,
     get_plugin_host,
@@ -182,6 +184,8 @@ _SERVICE_PROVIDERS = (
 # (method, path, body-or-None). Path params use dummy values; bodies are valid so
 # body-validation never preempts the auth check with a 422.
 _ADMIN_ENDPOINTS = [
+    ("GET", "/api/v1/karaoke/entries", None),
+    ("DELETE", "/api/v1/karaoke/entries", {"id": "b2xkLXNvbmc"}),
     (
         "POST",
         "/api/v1/library/albums/album-1/contributions",
@@ -887,6 +891,7 @@ _USER_ENDPOINTS = [
     ),
     ("GET", "/api/v1/library/albums", None),
     ("GET", "/api/v1/library/tracks", None),
+    ("POST", "/api/v1/library/tracks/existence", {"file_ids": []}),
     ("GET", "/api/v1/library/stats", None),
     ("GET", "/api/v1/library/albums/rg-1/tracks", None),
     ("GET", "/api/v1/library/albums/rg-1/status", None),
@@ -1019,6 +1024,7 @@ def _client(scenario: str):
         downloads_routes.router,
         following_routes.router,
         tracks_routes.router,
+        karaoke_routes.router,
         library_operations_target_routes.router,
         target_library_routes.router,
         library_contribution_routes.router,

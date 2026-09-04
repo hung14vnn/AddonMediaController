@@ -305,10 +305,24 @@ class TargetNativeLibraryService:
         )
 
     async def track(
-        self, track_id: str, *, user_id: str | None = None
+        self,
+        track_id: str,
+        *,
+        user_id: str | None = None,
+        indexed_only: bool = False,
     ) -> TargetNativeTrack | None:
-        row = await self._store.get_target_track(track_id, user_id=user_id)
+        row = await self._store.get_target_track(
+            track_id, user_id=user_id, indexed_only=indexed_only
+        )
         return self._track(row) if row is not None else None
+
+    async def get_active_tracks_by_ids(
+        self, track_ids: list[str], *, user_id: str | None = None
+    ) -> dict[str, TargetNativeTrack]:
+        rows = await self._store.get_target_tracks_by_ids(
+            track_ids, user_id=user_id, indexed_only=True
+        )
+        return {track_id: self._track(row) for track_id, row in rows.items()}
 
     async def recently_added(
         self, limit: int, *, user_id: str | None = None

@@ -14,6 +14,8 @@ from api.v1.schemas.library import (
     TrackResolveRequest,
     TrackResolveResponse,
     RemoveLibraryTracksRequest,
+    LibraryTrackExistenceRequest,
+    LibraryTrackExistenceResponse,
     NativeAlbumsResponse,
     NativeArtistsResponse,
     NativeTrackPage,
@@ -282,6 +284,21 @@ async def remove_library_tracks(
     for file_id in file_ids:
         await library_service.remove_file(file_id)
     return StatusMessageResponse(status="ok", message=f"Removed {len(file_ids)} file(s)")
+
+
+@router.post("/tracks/existence", response_model=LibraryTrackExistenceResponse)
+async def get_library_track_existence(
+    current_user: CurrentUserDep,
+    body: LibraryTrackExistenceRequest = MsgSpecBody(LibraryTrackExistenceRequest),
+    library_manager: LibraryManager = Depends(get_library_manager),
+):
+    file_ids = list(dict.fromkeys(value.strip() for value in body.file_ids if value.strip()))
+    if len(file_ids) > 500:
+        raise ValidationError("Track existence accepts at most 500 file IDs.")
+    tracks = await library_manager.get_active_tracks_by_ids(file_ids)
+    return LibraryTrackExistenceResponse(
+        existing_file_ids=[file_id for file_id in file_ids if file_id in tracks]
+    )
 
 
 @router.delete("/tracks/{file_id}", response_model=StatusMessageResponse)

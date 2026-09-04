@@ -131,6 +131,32 @@ class LocalFilesService:
             raise ResourceNotFoundError(f"Track file {file_id} not found")
         return self._resolve_and_validate_path(str(data.get("file_path") or ""))
 
+    async def get_karaoke_track_rows(self) -> list[dict[str, Any]]:
+        """Read active track paths/metadata used to label legacy karaoke caches."""
+        getter = getattr(self._library_repo, "get_karaoke_track_rows", None)
+        if not callable(getter):
+            return []
+        try:
+            return await getter()
+        except Exception:  # noqa: BLE001 - cache listing should remain available
+            logger.warning(
+                "Could not load library tracks for karaoke cache labels",
+                exc_info=True,
+            )
+            return []
+
+    async def get_karaoke_track_metadata(self, file_id: str) -> dict[str, Any] | None:
+        """Return one track's display metadata for newly generated cache entries."""
+        getter = getattr(self._library_repo, "get_file_row_by_id", None)
+        if not callable(getter):
+            return None
+        try:
+            row = await getter(file_id)
+        except Exception:  # noqa: BLE001 - labels are best-effort metadata
+            logger.debug("Could not load karaoke track metadata", exc_info=True)
+            return None
+        return row if isinstance(row, dict) else None
+
     async def head_track(self, file_id: str) -> dict[str, str]:
         library_path = await self.get_track_file_path(file_id)
         file_path = self._resolve_and_validate_path(library_path)

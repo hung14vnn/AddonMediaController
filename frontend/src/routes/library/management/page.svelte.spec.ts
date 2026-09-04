@@ -33,6 +33,7 @@ const h = vi.hoisted(() => ({
 	scanningRender: vi.fn(),
 	organizeRender: vi.fn(),
 	overviewRender: vi.fn(),
+	karaokeRender: vi.fn(),
 	settingsRender: vi.fn()
 }));
 
@@ -58,6 +59,14 @@ vi.mock('$lib/components/library/LibraryManagementControlRoom.svelte', () => {
 vi.mock('$lib/components/library/LibraryOverviewPanel.svelte', () => {
 	const Comp = function () {
 		h.overviewRender();
+	};
+	Comp.prototype = {};
+	return { default: Comp };
+});
+
+vi.mock('$lib/components/library/LibraryKaraokePanel.svelte', () => {
+	const Comp = function () {
+		h.karaokeRender();
 	};
 	Comp.prototype = {};
 	return { default: Comp };
@@ -115,7 +124,24 @@ describe('Library Management route page', () => {
 		expect(h.overviewRender).toHaveBeenCalledOnce();
 		expect(h.scanningRender).not.toHaveBeenCalled();
 		expect(h.organizeRender).not.toHaveBeenCalled();
+		expect(h.karaokeRender).not.toHaveBeenCalled();
 		expect(h.settingsRender).not.toHaveBeenCalled();
+	});
+
+	it('writes the Karaoke tab to the URL and renders its panel', async () => {
+		render(LibraryManagementPage);
+		await page.getByRole('tab', { name: 'Karaoke' }).click();
+		expect(h.goto).toHaveBeenCalledOnce();
+		const [url, options] = h.goto.mock.calls[0] as [URL, Record<string, unknown>];
+		expect(url.searchParams.get('tab')).toBe('karaoke');
+		expect(options).toMatchObject({ replaceState: true, noScroll: true, keepFocus: true });
+
+		h.appPage.url = new URL('https://music.example.test/library/management?tab=karaoke');
+		render(LibraryManagementPage);
+		await expect
+			.element(page.getByRole('tab', { name: 'Karaoke' }))
+			.toHaveAttribute('aria-selected', 'true');
+		expect(h.karaokeRender).toHaveBeenCalledOnce();
 	});
 
 	it('writes the chosen tab to the URL without scrolling', async () => {
@@ -170,6 +196,7 @@ describe('Library Management route page', () => {
 			})
 		);
 		expect(h.scanningRender).not.toHaveBeenCalled();
+		expect(h.karaokeRender).not.toHaveBeenCalled();
 	});
 
 	it('shows disabled states for organize and automation when the library is off', async () => {
@@ -182,6 +209,7 @@ describe('Library Management route page', () => {
 		render(LibraryManagementPage);
 		await expect.element(page.getByText('The local library is disabled').first()).toBeVisible();
 		expect(h.organizeRender).not.toHaveBeenCalled();
+		expect(h.karaokeRender).not.toHaveBeenCalled();
 		h.appPage.url = new URL('https://music.example.test/library/management?tab=automation');
 		render(LibraryManagementPage);
 		await expect.element(page.getByText('The local library is disabled').nth(1)).toBeVisible();

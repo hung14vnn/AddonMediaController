@@ -182,13 +182,6 @@ class HomeService:
     def _resolve_source(self, source: str | None = None) -> str:
         return self._helpers.resolve_source(source)
 
-    def _build_service_prompts(
-        self, lb_enabled, download_client_configured, lfm_enabled
-    ):
-        return self._builders.build_service_prompts(
-            lb_enabled, download_client_configured, lfm_enabled
-        )
-
     def get_integration_status(self) -> HomeIntegrationStatus:
         return HomeIntegrationStatus(
             listenbrainz=self._helpers.is_listenbrainz_enabled(),
@@ -483,9 +476,7 @@ class HomeService:
         )
         await self._apply_genre_artwork(response)
         response.service_prompts = self._builders.build_service_prompts(
-            music.lb_enabled,
             integration_status.download_client,
-            music.lfm_enabled,
         )
         response.discover_preview = await self._build_discover_preview(
             user_id, music.lb_enabled, music.lfm_enabled
@@ -640,9 +631,7 @@ class HomeService:
         await self._apply_genre_artwork(response)
 
         response.service_prompts = self._builders.build_service_prompts(
-            lb_enabled,
             download_client_configured,
-            lfm_enabled,
         )
 
         response.discover_preview = await self._build_discover_preview(

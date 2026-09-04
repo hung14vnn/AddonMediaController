@@ -573,6 +573,10 @@ class LibraryManager:
         row = await self._db.get_library_file_by_id(file_id)
         return self._to_track(row) if row is not None else None
 
+    async def get_active_tracks_by_ids(self, file_ids: list[str]) -> dict[str, LibraryTrack]:
+        rows = await self._db.get_library_files_by_ids(file_ids)
+        return {file_id: self._to_track(row) for file_id, row in rows.items()}
+
     async def get_file_rows_for_album(self, release_group_mbid: str) -> list[dict]:
         """Raw active rows for one album (rescan needs source/confidence/MBIDs)."""
         return await self._db.get_library_files_for_album(release_group_mbid)

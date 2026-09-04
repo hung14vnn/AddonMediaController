@@ -6,6 +6,8 @@ const hoisted = vi.hoisted(() => {
 	const audio = {
 		src: '',
 		crossOrigin: '',
+		autoplay: false,
+		preload: 'auto',
 		volume: 1,
 		currentTime: 0,
 		duration: 180,
@@ -34,6 +36,8 @@ const hoisted = vi.hoisted(() => {
 		listeners.clear();
 		audio.src = '';
 		audio.crossOrigin = '';
+		audio.autoplay = false;
+		audio.preload = 'auto';
 		audio.volume = 1;
 		audio.currentTime = 0;
 		audio.duration = 180;
@@ -78,6 +82,17 @@ describe('NativeAudioSource', () => {
 
 		expect(hoisted.audio.src).toBe('/audio.mp3');
 		expect(hoisted.audio.crossOrigin).toBe('use-credentials');
+		hoisted.dispatch('canplay');
+
+		await expect(loadPromise).resolves.toBeUndefined();
+	});
+
+	it('keeps autoplay enabled for a background Media Session track change', async () => {
+		const source = new NativeAudioSource('local', { url: '/next.mp3', seekable: true });
+		const loadPromise = source.load({ autoplay: true });
+
+		expect(hoisted.audio.autoplay).toBe(true);
+		expect(hoisted.audio.preload).toBe('auto');
 		hoisted.dispatch('canplay');
 
 		await expect(loadPromise).resolves.toBeUndefined();
@@ -154,7 +169,7 @@ describe('NativeAudioSource', () => {
 		expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'AUTOPLAY_BLOCKED' }));
 	});
 
-	it('resumes the Web Audio engine before native playback', async () => {
+	it('starts native playback before resuming the optional Web Audio engine', async () => {
 		const source = new NativeAudioSource('local', { url: '/resume.mp3', seekable: true });
 
 		source.play();
@@ -163,8 +178,8 @@ describe('NativeAudioSource', () => {
 
 		expect(hoisted.resumeAudioEngine).toHaveBeenCalledTimes(1);
 		expect(hoisted.audio.play).toHaveBeenCalledTimes(1);
-		expect(hoisted.resumeAudioEngine.mock.invocationCallOrder[0]).toBeLessThan(
-			hoisted.audio.play.mock.invocationCallOrder[0]
+		expect(hoisted.audio.play.mock.invocationCallOrder[0]).toBeLessThan(
+			hoisted.resumeAudioEngine.mock.invocationCallOrder[0]
 		);
 	});
 

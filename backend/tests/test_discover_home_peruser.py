@@ -175,8 +175,9 @@ async def test_unlinked_user_omits_personalized_and_shows_connect_prompt():
     assert resp.recently_played is not None
     assert resp.recently_played.items[0].name == "Local Song"
     prompt_services = {p.service for p in resp.service_prompts}
-    assert "listenbrainz" in prompt_services
-    assert "lastfm" in prompt_services
+    assert "listenbrainz" not in prompt_services
+    assert "jellyfin" not in prompt_services
+    assert "lastfm" not in prompt_services
 
 
 @pytest.mark.asyncio

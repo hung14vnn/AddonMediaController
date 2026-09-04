@@ -1629,6 +1629,39 @@ export type NativeTrackPage = {
 	limit: number;
 };
 
+export type KaraokeCacheEntryStatus = 'ready' | 'partial' | 'legacy';
+
+export type KaraokeCacheEntry = {
+	id: string;
+	name: string;
+	relative_path: string;
+	status: KaraokeCacheEntryStatus;
+	size_bytes: number;
+	instrumental_size_bytes: number;
+	vocals_size_bytes: number;
+	created_at: number | null;
+	last_accessed_at: number | null;
+	track_file_id: string | null;
+	track_title: string | null;
+	artist_name: string | null;
+	album_name: string | null;
+};
+
+export type KaraokeCacheEntriesResponse = {
+	items: KaraokeCacheEntry[];
+	total: number;
+};
+
+export type KaraokeJobResponse = {
+	cache_key: string;
+	status: 'not_generated' | 'queued' | 'processing' | 'ready' | 'failed';
+	job_id: string | null;
+	cached: boolean;
+	instrumental_url: string | null;
+	vocals_url: string | null;
+	error_message: string | null;
+};
+
 export interface LibraryAlbumSummary {
 	id: string;
 	title: string;

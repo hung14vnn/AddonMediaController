@@ -36,6 +36,8 @@ from api.v1.schemas.edition_conversion import (
     EditionConversionStatusResponse,
 )
 from api.v1.schemas.library import (
+    LibraryTrackExistenceRequest,
+    LibraryTrackExistenceResponse,
     LibraryMbidsResponse,
     LibraryMembershipRequest,
     LibraryMembershipResponse,
@@ -739,6 +741,23 @@ async def remove_target_album(
             logger.warning("Target album removal wanted-state cleanup failed")
     return TargetCatalogRemovalResponse(
         success=True, id=album_id, removed_track_ids=removed
+    )
+
+
+@router.post("/tracks/existence", response_model=LibraryTrackExistenceResponse)
+async def get_target_track_existence(
+    user: CurrentUserDep,
+    service: TargetNativeLibraryServiceDep,
+    body: LibraryTrackExistenceRequest = MsgSpecBody(LibraryTrackExistenceRequest),
+) -> LibraryTrackExistenceResponse:
+    file_ids = list(dict.fromkeys(value.strip() for value in body.file_ids if value.strip()))
+    if len(file_ids) > 500:
+        raise ValidationError("Track existence accepts at most 500 file IDs.")
+    tracks = await service.get_active_tracks_by_ids(
+        file_ids, user_id=_library_scope(user)
+    )
+    return LibraryTrackExistenceResponse(
+        existing_file_ids=[file_id for file_id in file_ids if file_id in tracks]
     )
 
 

@@ -74,6 +74,14 @@ class RemoveLibraryTracksRequest(AppStruct):
     file_ids: list[str] = []
 
 
+class LibraryTrackExistenceRequest(AppStruct):
+    file_ids: list[str] = []
+
+
+class LibraryTrackExistenceResponse(AppStruct):
+    existing_file_ids: list[str] = []
+
+
 class ResolvedTrack(AppStruct):
     release_group_mbid: str | None = None
     disc_number: int | None = None

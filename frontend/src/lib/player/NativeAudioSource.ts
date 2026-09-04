@@ -36,7 +36,7 @@ export class NativeAudioSource implements PlaybackSource {
 		this.cleanupUrl = opts.cleanup ?? null;
 	}
 
-	async load(_info?: unknown): Promise<void> {
+	async load(info?: { autoplay?: boolean }): Promise<void> {
 		this.destroyed = false;
 		this.cleanupListeners();
 		this.clearStallTimeout();
@@ -153,6 +153,11 @@ export class NativeAudioSource implements PlaybackSource {
 			// than producing a silent, CORS-tainted MediaElementAudioSource. The
 			// authenticated stream needs the httpOnly session cookie as well.
 			this.audio.crossOrigin = 'use-credentials';
+			// Media Session actions can arrive while the document is backgrounded,
+			// where a later script-driven play() may be rejected. Let the native
+			// element retain the autoplay intent across the source change instead.
+			this.audio.autoplay = info?.autoplay === true;
+			this.audio.preload = 'auto';
 			this.audio.src = this.url;
 			this.audio.volume = this.pendingVolume / 100;
 			this.audio.load();
@@ -198,6 +203,7 @@ export class NativeAudioSource implements PlaybackSource {
 		this.destroyed = true;
 		this.clearStallTimeout();
 		this.cleanupListeners();
+		this.audio.autoplay = false;
 		this.audio.src = '';
 		this.audio.load();
 		this.cleanupUrl?.();
@@ -261,13 +267,20 @@ export class NativeAudioSource implements PlaybackSource {
 	}
 
 	private async playWithEngineResume(): Promise<void> {
+		// Start the native element first. Resuming an optional Web Audio graph can
+		// be delayed or rejected while a PWA is backgrounded, but must not delay the
+		// media-session transition to the next track.
+		let playPromise: Promise<void>;
 		try {
-			await resumeAudioEngine();
+			playPromise = this.audio.play();
 		} catch {
-			// Keep native playback attempt alive even if Web Audio resume fails.
+			this.emitError('AUTOPLAY_BLOCKED', 'Playback failed. Browser may be blocking autoplay.');
+			this.emitStateChange('error');
+			return;
 		}
+		void resumeAudioEngine();
 		try {
-			await this.audio.play();
+			await playPromise;
 		} catch {
 			this.emitError('AUTOPLAY_BLOCKED', 'Playback failed. Browser may be blocking autoplay.');
 			this.emitStateChange('error');

@@ -42,25 +42,18 @@ class TestBuildLibraryArtists:
 class TestBuildServicePrompts:
     def test_no_prompts_when_all_enabled(self):
         b = _make_builders()
-        prompts = b.build_service_prompts(
-            lb_enabled=True, download_client_configured=True, lfm_enabled=True
-        )
+        prompts = b.build_service_prompts(download_client_configured=True)
         assert prompts == []
 
-    def test_all_prompts_when_nothing_enabled(self):
+    def test_download_prompt_when_not_configured(self):
         b = _make_builders()
-        prompts = b.build_service_prompts(
-            lb_enabled=False, download_client_configured=False, lfm_enabled=False
-        )
-        assert len(prompts) > 0
+        prompts = b.build_service_prompts(download_client_configured=False)
         services = {p.service for p in prompts}
-        assert "download-client" in services
+        assert services == {"download-client"}
 
     def test_prompts_are_service_prompt_type(self):
         b = _make_builders()
-        prompts = b.build_service_prompts(
-            lb_enabled=False, download_client_configured=False, lfm_enabled=False
-        )
+        prompts = b.build_service_prompts(download_client_configured=False)
         for p in prompts:
             assert isinstance(p, ServicePrompt)
 

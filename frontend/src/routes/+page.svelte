@@ -10,7 +10,6 @@
 	} from 'lucide-svelte';
 	import HomeSection from '$lib/components/HomeSection.svelte';
 	import WeeklyExploration from '$lib/components/WeeklyExploration.svelte';
-	import ServicePromptCard from '$lib/components/ServicePromptCard.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import GenreGrid from '$lib/components/GenreGrid.svelte';
 	import SectionDivider from '$lib/components/SectionDivider.svelte';
@@ -22,7 +21,6 @@
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { getGreeting } from '$lib/utils/homeCache';
-	import { isDismissed } from '$lib/utils/dismissedPrompts';
 	import HomeSectionNowPlaying from '$lib/components/HomeSectionNowPlaying.svelte';
 	import HomeEntryCards from '$lib/components/HomeEntryCards.svelte';
 	import DiscoverTeaserBand from '$lib/components/discover/DiscoverTeaserBand.svelte';
@@ -143,15 +141,6 @@
 	let servicePrompts = $derived(homeData?.service_prompts || []);
 	let downloadClientConfigured = $derived(homeData?.integration_status?.download_client ?? true);
 	let downloadClientPrompt = $derived(servicePrompts.find((p) => p.service === 'download-client'));
-
-	const getOtherPrompts = () => {
-		return servicePrompts.filter((p) => p.service !== 'download-client' && !isDismissed(p.service));
-	};
-	let otherPrompts = $derived(getOtherPrompts());
-
-	function handlePromptDismiss(_service: string) {
-		otherPrompts = getOtherPrompts();
-	}
 </script>
 
 <svelte:head>
@@ -226,14 +215,6 @@
 								Configure Download Client
 							</a>
 						</div>
-					</div>
-				{/if}
-
-				{#if otherPrompts.length > 0 && downloadClientConfigured}
-					<div class="space-y-3">
-						{#each otherPrompts as prompt, i (`prompt-${i}`)}
-							<ServicePromptCard {prompt} ondismiss={handlePromptDismiss} />
-						{/each}
 					</div>
 				{/if}
 

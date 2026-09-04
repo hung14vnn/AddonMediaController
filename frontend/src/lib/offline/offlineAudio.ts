@@ -1,5 +1,6 @@
 import { del, get, getMany, keys, set, createStore } from 'idb-keyval';
 import { api } from '$lib/api/client';
+import { API } from '$lib/constants';
 
 const AUDIO_DB = createStore('hify-offline-audio-v1', 'tracks');
 const METADATA_DB = createStore('hify-offline-audio-metadata-v1', 'tracks');
@@ -106,11 +107,11 @@ export async function getOfflineTrackBlob(userId: string, trackId: string): Prom
 export async function createOfflineTrackUrl(
 	userId: string,
 	trackId: string
-): Promise<{ url: string; revoke: () => void } | null> {
+): Promise<{ url: string; revoke: () => void; source: 'download' } | null> {
 	const blob = await getOfflineTrackBlob(userId, trackId);
 	if (!blob) return null;
 	const url = URL.createObjectURL(blob);
-	return { url, revoke: () => URL.revokeObjectURL(url) };
+	return { url, revoke: () => URL.revokeObjectURL(url), source: 'download' };
 }
 
 export async function listOfflineTrackMetadata(userId: string): Promise<OfflineTrackMetadata[]> {
@@ -122,10 +123,52 @@ export async function listOfflineTrackMetadata(userId: string): Promise<OfflineT
 	return records.filter((record): record is OfflineTrackMetadata => Boolean(record));
 }
 
+export async function findInvalidOfflineTrackIds(userId: string): Promise<string[]> {
+	const records = await listOfflineTrackMetadata(userId);
+	const trackIds = [...new Set(records.map((record) => record.trackId))];
+	const existingTrackIds = new Set<string>();
+	const batchSize = 500;
+
+	for (let offset = 0; offset < trackIds.length; offset += batchSize) {
+		const batch = trackIds.slice(offset, offset + batchSize);
+		const response = await api.global.post<{ existing_file_ids: string[] }>(
+			API.library.trackExistence(),
+			{ file_ids: batch }
+		);
+		for (const trackId of response.existing_file_ids) existingTrackIds.add(trackId);
+	}
+
+	return trackIds.filter((trackId) => !existingTrackIds.has(trackId));
+}
+
 export async function deleteOfflineTrack(userId: string, trackId: string): Promise<void> {
 	if (!isOfflineAudioSupported()) return;
 	const key = encodedKey(userId, trackId);
 	await Promise.all([del(key, AUDIO_DB), del(key, METADATA_DB)]);
+}
+
+export async function deleteOfflineTracks(
+	userId: string,
+	trackIds: Iterable<string>
+): Promise<number> {
+	if (!isOfflineAudioSupported()) return 0;
+	const uniqueTrackIds = [...new Set(trackIds)];
+	await Promise.all(uniqueTrackIds.map((trackId) => deleteOfflineTrack(userId, trackId)));
+	return uniqueTrackIds.length;
+}
+
+export async function deleteAllOfflineTracks(userId: string): Promise<number> {
+	if (!isOfflineAudioSupported()) return 0;
+	const prefix = userKeyPrefix(userId);
+	const allKeys = new Set(
+		[...(await keys(AUDIO_DB)), ...(await keys(METADATA_DB))].filter((key) =>
+			String(key).startsWith(prefix)
+		)
+	);
+	await Promise.all(
+		[...allKeys].map((key) => Promise.all([del(key, AUDIO_DB), del(key, METADATA_DB)]))
+	);
+	return allKeys.size;
 }
 
 export async function downloadOfflineTrack(

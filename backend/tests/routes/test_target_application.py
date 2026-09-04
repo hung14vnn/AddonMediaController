@@ -160,6 +160,8 @@ def test_isolated_target_application_mounts_target_catalog_and_compat_routes() -
     assert "api.compat.jellyfin.router" in route_modules
     assert ("POST", "/api/v1/karaoke") in method_paths
     assert ("GET", "/api/v1/karaoke/{track_file_id}/status") in method_paths
+    assert ("GET", "/api/v1/karaoke/entries") in method_paths
+    assert ("DELETE", "/api/v1/karaoke/entries") in method_paths
     assert {
         "api.v1.routes.stream",
         "api.v1.routes.local_library",

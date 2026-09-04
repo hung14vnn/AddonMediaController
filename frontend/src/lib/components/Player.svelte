@@ -37,6 +37,8 @@
 		Volume2,
 		ExternalLink,
 		Check,
+		CheckCircle2,
+		Database,
 		CircleX,
 		ListMusic,
 		ListPlus,
@@ -162,6 +164,14 @@
 		if (np.sourceType === 'local' && np.coverUrl) return np.coverUrl;
 		return getCoverUrl(np.coverUrl, np.albumId);
 	});
+
+	const playbackOriginTip = $derived(
+		playerStore.playbackOrigin === 'download'
+			? 'Playing from downloaded audio'
+			: playerStore.playbackOrigin === 'cache'
+				? 'Playing from playback cache'
+				: ''
+	);
 </script>
 
 {#if playerStore.isPlayerVisible && playerStore.nowPlaying && !deckFocus.inView}
@@ -220,7 +230,26 @@
 						{/if}
 						<div class="min-w-0 pr-1">
 							{#if playerStore.nowPlaying.trackName}
-								<p class="text-sm font-semibold truncate">{playerStore.nowPlaying.trackName}</p>
+								<div class="flex min-w-0 items-center gap-1">
+									<p class="min-w-0 text-sm font-semibold truncate">
+										{playerStore.nowPlaying.trackName}
+									</p>
+									{#if playerStore.currentQueueItem?.sourceType === 'local' && playbackOriginTip}
+										<div class="tooltip tooltip-right shrink-0" data-tip={playbackOriginTip}>
+											{#if playerStore.playbackOrigin === 'download'}
+												<CheckCircle2
+													class="h-3.5 w-3.5 text-success"
+													aria-label="Playing from downloaded audio"
+												/>
+											{:else}
+												<Database
+													class="h-3.5 w-3.5 text-info"
+													aria-label="Playing from playback cache"
+												/>
+											{/if}
+										</div>
+									{/if}
+								</div>
 								<p class="text-xs opacity-60 truncate">
 									{#if isAlbumLinkable(playerStore.nowPlaying.albumId)}
 										<a
@@ -242,16 +271,33 @@
 									{/if}
 								</p>
 							{:else}
-								<p class="text-sm font-semibold truncate">
-									{#if isAlbumLinkable(playerStore.nowPlaying.albumId)}
-										<a
-											href={withBasePath(`/album/${playerStore.nowPlaying.albumId}`)}
-											class="hover:underline">{playerStore.nowPlaying.albumName}</a
-										>
-									{:else}
-										{playerStore.nowPlaying.albumName}
+								<div class="flex min-w-0 items-center gap-1">
+									<p class="min-w-0 text-sm font-semibold truncate">
+										{#if isAlbumLinkable(playerStore.nowPlaying.albumId)}
+											<a
+												href={withBasePath(`/album/${playerStore.nowPlaying.albumId}`)}
+												class="hover:underline">{playerStore.nowPlaying.albumName}</a
+											>
+										{:else}
+											{playerStore.nowPlaying.albumName}
+										{/if}
+									</p>
+									{#if playerStore.currentQueueItem?.sourceType === 'local' && playbackOriginTip}
+										<div class="tooltip tooltip-right shrink-0" data-tip={playbackOriginTip}>
+											{#if playerStore.playbackOrigin === 'download'}
+												<CheckCircle2
+													class="h-3.5 w-3.5 text-success"
+													aria-label="Playing from downloaded audio"
+												/>
+											{:else}
+												<Database
+													class="h-3.5 w-3.5 text-info"
+													aria-label="Playing from playback cache"
+												/>
+											{/if}
+										</div>
 									{/if}
-								</p>
+								</div>
 								<p class="text-xs opacity-60 truncate">
 									{#if playerStore.nowPlaying.artistId}
 										<a

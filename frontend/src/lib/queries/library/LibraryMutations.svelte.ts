@@ -17,6 +17,19 @@ import type {
 	LibraryScanSchedule
 } from '$lib/types';
 import type { ScanRunRequestedResponse } from './LibraryOperationsTypes';
+import { authStore } from '$lib/stores/authStore.svelte';
+import { deleteOfflineTracks } from '$lib/offline/offlineAudio';
+import { deletePlaybackTracks } from '$lib/player/playbackAudioCache';
+
+async function removeDeviceAudioCopies(trackIds: Iterable<string>): Promise<void> {
+	const userId = authStore.user?.id;
+	if (!userId) return;
+	const uniqueTrackIds = [...new Set(trackIds)];
+	await Promise.allSettled([
+		deleteOfflineTracks(userId, uniqueTrackIds),
+		deletePlaybackTracks(userId, uniqueTrackIds)
+	]);
+}
 
 export function removeLibraryAlbum() {
 	return createMutation(() => ({
@@ -101,9 +114,10 @@ export function saveLibraryScanSchedule() {
 // local-library lists (cross-domain: sizes and sidebars change with the file).
 export function removeLibraryTrack() {
 	return createMutation(() => ({
-		mutationFn: ({ fileId }: { fileId: string; albumMbid?: string }) =>
+		mutationFn: ({ fileId }: { fileId: string; albumMbid?: string; cacheTrackIds?: string[] }) =>
 			api.global.delete<StatusMessageResponse>(API.library.removeTrack(fileId)),
-		onSuccess: async (_data, { albumMbid }) => {
+		onSuccess: async (_data, { albumMbid, fileId, cacheTrackIds }) => {
+			await removeDeviceAudioCopies([fileId, ...(cacheTrackIds ?? [])]);
 			if (albumMbid) {
 				await invalidateQueriesWithPersister({
 					queryKey: LibraryQueryKeyFactory.album(albumMbid)
@@ -117,9 +131,10 @@ export function removeLibraryTrack() {
 
 export function removeLibraryTracks() {
 	return createMutation(() => ({
-		mutationFn: ({ fileIds }: { fileIds: string[] }) =>
+		mutationFn: ({ fileIds }: { fileIds: string[]; cacheTrackIds?: string[] }) =>
 			api.global.post<StatusMessageResponse>(API.library.removeTracks(), { file_ids: fileIds }),
-		onSuccess: async () => {
+		onSuccess: async (_data, { fileIds, cacheTrackIds }) => {
+			await removeDeviceAudioCopies([...fileIds, ...(cacheTrackIds ?? [])]);
 			await invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.stats() });
 			await invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root });
 		}

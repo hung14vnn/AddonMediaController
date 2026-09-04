@@ -137,7 +137,9 @@ export const API = {
 	karaoke: {
 		prepare: () => '/api/v1/karaoke',
 		job: (jobId: string) => `/api/v1/karaoke/jobs/${encodeURIComponent(jobId)}`,
-		status: (trackFileId: string) => `/api/v1/karaoke/${encodeURIComponent(trackFileId)}/status`
+		status: (trackFileId: string) => `/api/v1/karaoke/${encodeURIComponent(trackFileId)}/status`,
+		entries: () => '/api/v1/karaoke/entries',
+		deleteEntry: () => '/api/v1/karaoke/entries'
 	},
 	lyrics: (
 		source: string,
@@ -208,6 +210,7 @@ export const API = {
 	library: {
 		mbids: () => '/api/v1/library/mbids',
 		membership: () => '/api/v1/library/membership',
+		trackExistence: () => '/api/v1/library/tracks/existence',
 		adminTrackOwnershipAssignment: (trackId: string) =>
 			`/api/v1/library/admin/track-ownership/${encodeURIComponent(trackId)}`,
 		albums: (page = 1, sort = 'recent', q?: string, format?: string, pageSize = 50) => {

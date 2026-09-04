@@ -3,14 +3,38 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from api.v1.schemas.karaoke import KaraokeJobResponse, KaraokePrepareRequest
+from api.v1.schemas.common import StatusMessageResponse
+from api.v1.schemas.karaoke import (
+    KaraokeCacheEntriesResponse,
+    KaraokeCacheEntryDeleteRequest,
+    KaraokeJobResponse,
+    KaraokePrepareRequest,
+)
 from core.dependencies import get_karaoke_service
 from core.exceptions import RangeNotSatisfiableError
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
-from middleware import CurrentUserDep
+from middleware import CurrentAdminDep, CurrentUserDep
 from services.karaoke_service import KaraokeService
 
 router = APIRouter(route_class=MsgSpecRoute, prefix="/karaoke", tags=["karaoke"])
+
+
+@router.get("/entries", response_model=KaraokeCacheEntriesResponse)
+async def list_karaoke_entries(
+    _admin: CurrentAdminDep,
+    service: KaraokeService = Depends(get_karaoke_service),
+) -> KaraokeCacheEntriesResponse:
+    return await service.list_entries()
+
+
+@router.delete("/entries", response_model=StatusMessageResponse)
+async def delete_karaoke_entry(
+    _admin: CurrentAdminDep,
+    body: KaraokeCacheEntryDeleteRequest = MsgSpecBody(KaraokeCacheEntryDeleteRequest),
+    service: KaraokeService = Depends(get_karaoke_service),
+) -> StatusMessageResponse:
+    await service.delete_entry(body.id)
+    return StatusMessageResponse(status="ok", message="Karaoke cache entry removed")
 
 
 @router.post("", response_model=KaraokeJobResponse)

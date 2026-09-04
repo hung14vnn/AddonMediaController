@@ -263,36 +263,22 @@ class HomeSectionBuilders:
 
     @staticmethod
     def build_service_prompts(
-        lb_enabled: bool,
         download_client_configured: bool = True,
-        lfm_enabled: bool = False,
     ) -> list[ServicePrompt]:
-        prompts = []
-        if not download_client_configured:
-            prompts.append(ServicePrompt(
+        if download_client_configured:
+            return []
+        return [
+            ServicePrompt(
                 service="download-client",
                 title="Connect a download client",
                 description="DroppedNeedle needs a download source (slskd for Soulseek, or SABnzbd + an indexer for Usenet) to fetch the albums and tracks you request. Add one in Settings to start downloading into your library.",
                 icon="🎶",
                 color="accent",
-                features=["Album & track requests", "Automatic downloads", "Direct-to-library imports", "Queue management"],
-            ))
-        if not lb_enabled and not lfm_enabled:
-            prompts.append(ServicePrompt(
-                service="listenbrainz",
-                title="Connect ListenBrainz",
-                description="Get recommendations from your listening history, spot new releases from artists you already love, and keep an eye on your top genres. Connect Last.fm too if you want global listener stats.",
-                icon="🎵",
-                color="primary",
-                features=["Personalized recommendations", "New release alerts", "Listening stats", "Top genres"],
-            ))
-        if not lfm_enabled and not lb_enabled:
-            prompts.append(ServicePrompt(
-                service="lastfm",
-                title="Connect Last.fm",
-                description="Track your listening, compare stats, and discover music that matches your taste.",
-                icon="🎸",
-                color="primary",
-                features=["Scrobbling", "Global listener stats", "Artist recommendations", "Play history"],
-            ))
-        return prompts
+                features=[
+                    "Album & track requests",
+                    "Automatic downloads",
+                    "Direct-to-library imports",
+                    "Queue management",
+                ],
+            )
+        ]

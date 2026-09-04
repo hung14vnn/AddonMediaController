@@ -195,6 +195,7 @@ def test_every_target_library_route_rejects_unauthenticated(app: FastAPI) -> Non
         ("GET", "/library/artists", None),
         ("GET", "/library/albums", None),
         ("GET", "/library/tracks", None),
+        ("POST", "/library/tracks/existence", {"file_ids": []}),
         ("GET", "/library/stats", None),
         ("GET", "/library/mbids", None),
         ("POST", "/library/membership", {"album_ids": []}),
@@ -271,6 +272,23 @@ def test_album_detail_exposes_current_management_identity_readiness(
     assert response.status_code == 200
     assert response.json()["management_identity_readiness"] == (
         "track_mapping_required"
+    )
+
+
+def test_target_track_existence_is_scoped_to_the_current_user(app: FastAPI) -> None:
+    override_user_auth(app, role="user")
+    native = app.dependency_overrides[get_target_native_library_service]()
+    native.get_active_tracks_by_ids.return_value = {"file-1": object()}
+
+    response = build_test_client(app).post(
+        "/library/tracks/existence",
+        json={"file_ids": ["file-1", "missing", "file-1"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"existing_file_ids": ["file-1"]}
+    native.get_active_tracks_by_ids.assert_awaited_once_with(
+        ["file-1", "missing"], user_id="test-user-id"
     )
 
 
@@ -621,6 +639,7 @@ def test_target_library_route_inventory_is_complete() -> None:
         ("GET", "/library/artists"),
         ("GET", "/library/albums"),
         ("GET", "/library/tracks"),
+        ("POST", "/library/tracks/existence"),
         ("GET", "/library/stats"),
         ("GET", "/library/mbids"),
         ("POST", "/library/membership"),

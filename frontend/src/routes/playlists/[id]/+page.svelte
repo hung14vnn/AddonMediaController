@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import {
 		deletePlaylist,
 		resolvePlaylistSources,
@@ -21,8 +22,14 @@
 	import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
 	import { getApiUrl } from '$lib/api/api-utils';
+	import { API } from '$lib/constants';
+	import {
+		deleteOfflineTracks,
+		downloadOfflineTrack,
+		listOfflineTrackMetadata
+	} from '$lib/offline/offlineAudio';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { Music, Lock, Download, Loader2 } from 'lucide-svelte';
+	import { Music, Lock, Download, Loader2, Trash2, Check } from 'lucide-svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import type { PageData } from './$types';
@@ -42,6 +49,8 @@
 	// applying optimistic updates; redaction/loading/error leave it null.
 	let playlist = $state<PlaylistDetail | null>(null);
 	let deleting = $state(false);
+	let playlistOfflineIds = new SvelteSet<string>();
+	let offlineBusy = $state(false);
 
 	let deleteModal = $state<ReturnType<typeof DeletePlaylistModal> | null>(null);
 	let trackList = $state<ReturnType<typeof PlaylistTrackList> | null>(null);
@@ -62,6 +71,121 @@
 	let isOwner = $derived(playlist?.is_owner ?? false);
 	let canDelete = $derived((playlist?.is_owner ?? false) || authStore.isAdmin);
 	let isLocalPlaylist = $derived(!playlist?.source_ref);
+
+	function offlineTrackId(track: PlaylistDetail['tracks'][number]): string | null {
+		if (track.library_file_id) return track.library_file_id;
+		if (track.source_type === 'local' && track.track_source_id) return track.track_source_id;
+		return null;
+	}
+
+	let offlineEligibleTracks = $derived.by(() => {
+		const seen = new SvelteSet<string>();
+		return (playlist?.tracks ?? []).filter((track) => {
+			const id = offlineTrackId(track);
+			if (!id || seen.has(id)) return false;
+			seen.add(id);
+			return true;
+		});
+	});
+	let downloadedPlaylistCount = $derived(
+		offlineEligibleTracks.filter((track) => playlistOfflineIds.has(offlineTrackId(track)!)).length
+	);
+	let remainingOfflineCount = $derived(offlineEligibleTracks.length - downloadedPlaylistCount);
+
+	async function refreshPlaylistOfflineStatus(): Promise<void> {
+		const userId = authStore.user?.id;
+		if (!userId) {
+			playlistOfflineIds.clear();
+			return;
+		}
+		try {
+			const records = await listOfflineTrackMetadata(userId);
+			playlistOfflineIds.clear();
+			for (const record of records) playlistOfflineIds.add(record.trackId);
+		} catch {
+			// Offline storage is optional; playlist playback remains available.
+		}
+	}
+
+	function playlistOfflineInput(track: PlaylistDetail['tracks'][number]) {
+		const trackId = offlineTrackId(track)!;
+		return {
+			userId: authStore.user?.id ?? '',
+			trackId,
+			libraryTrackId: track.library_file_id ?? undefined,
+			sourceUrl: API.stream.local(trackId),
+			title: track.track_name,
+			artistName: track.artist_name,
+			albumName: track.album_name,
+			albumId: track.album_id ?? undefined,
+			artistId: track.artist_id ?? undefined,
+			coverUrl: track.cover_url,
+			trackNumber: track.track_number ?? undefined,
+			discNumber: track.disc_number,
+			format: (track.format ?? '').toLowerCase(),
+			durationSeconds: track.duration
+		};
+	}
+
+	async function downloadPlaylistOffline(): Promise<void> {
+		if (offlineBusy || !authStore.user?.id || remainingOfflineCount === 0) return;
+		const pending = offlineEligibleTracks.filter(
+			(track) => !playlistOfflineIds.has(offlineTrackId(track)!)
+		);
+		offlineBusy = true;
+		let saved = 0;
+		let failed = 0;
+		try {
+			for (const track of pending) {
+				try {
+					await downloadOfflineTrack(playlistOfflineInput(track));
+					playlistOfflineIds.add(offlineTrackId(track)!);
+					saved++;
+				} catch {
+					failed++;
+				}
+			}
+			toastStore.show({
+				message:
+					failed > 0
+						? `Saved ${saved} track${saved === 1 ? '' : 's'} offline; ${failed} failed`
+						: `Saved ${saved} playlist track${saved === 1 ? '' : 's'} for offline playback`,
+				type: failed > 0 ? 'error' : 'success'
+			});
+		} finally {
+			offlineBusy = false;
+			await refreshPlaylistOfflineStatus();
+		}
+	}
+
+	async function clearPlaylistOffline(): Promise<void> {
+		const userId = authStore.user?.id;
+		if (!userId || offlineBusy || downloadedPlaylistCount === 0) return;
+		if (
+			!confirm(
+				`Remove ${downloadedPlaylistCount} downloaded playlist track${downloadedPlaylistCount === 1 ? '' : 's'} from this device?`
+			)
+		) {
+			return;
+		}
+		offlineBusy = true;
+		try {
+			const ids = offlineEligibleTracks
+				.map(offlineTrackId)
+				.filter((id): id is string => Boolean(id && playlistOfflineIds.has(id)));
+			const removed = await deleteOfflineTracks(userId, ids);
+			ids.forEach((id) => playlistOfflineIds.delete(id));
+			toastStore.show({
+				message: `Removed ${removed} offline track${removed === 1 ? '' : 's'} from this playlist`,
+				type: 'success'
+			});
+		} catch {
+			toastStore.show({ message: "Couldn't clear downloaded playlist tracks", type: 'error' });
+		} finally {
+			offlineBusy = false;
+			await refreshPlaylistOfflineStatus();
+		}
+	}
 
 	let missingTrackCount = $derived.by(() => {
 		if (!playlist) return 0;
@@ -173,6 +297,7 @@
 				// Clone so optimistic child mutations never touch the query cache.
 				playlist = { ...d, tracks: d.tracks.map((t) => ({ ...t })) };
 				void resolveAndCacheSources(d.id);
+				void refreshPlaylistOfflineStatus();
 			} else {
 				playlist = null;
 			}
@@ -377,6 +502,45 @@
 					/>
 				</div>
 			</div>
+
+			{#if offlineEligibleTracks.length > 0}
+				<div
+					class="flex flex-wrap items-center gap-3 rounded-xl border border-base-300/40 bg-base-200/40 px-4 py-3"
+				>
+					<Download class="h-4 w-4 shrink-0 text-base-content/50" />
+					<p class="min-w-48 flex-1 text-sm text-base-content/70">
+						{downloadedPlaylistCount} of {offlineEligibleTracks.length} playlist tracks available offline
+					</p>
+					<button
+						class="btn btn-secondary btn-sm"
+						onclick={() => void downloadPlaylistOffline()}
+						disabled={offlineBusy || !authStore.user || remainingOfflineCount === 0}
+					>
+						{#if offlineBusy}
+							<Loader2 class="h-3.5 w-3.5 animate-spin" />
+						{:else if remainingOfflineCount === 0}
+							<Check class="h-3.5 w-3.5" />
+						{:else}
+							<Download class="h-3.5 w-3.5" />
+						{/if}
+						{remainingOfflineCount === 0
+							? 'Available offline'
+							: downloadedPlaylistCount > 0
+								? `Download remaining (${remainingOfflineCount})`
+								: `Download playlist (${remainingOfflineCount})`}
+					</button>
+					{#if downloadedPlaylistCount > 0}
+						<button
+							class="btn btn-outline btn-error btn-sm"
+							onclick={() => void clearPlaylistOffline()}
+							disabled={offlineBusy}
+						>
+							<Trash2 class="h-3.5 w-3.5" />
+							Clear downloaded ({downloadedPlaylistCount})
+						</button>
+					{/if}
+				</div>
+			{/if}
 
 			{#if isOwner && missingTrackCount > 0}
 				<div

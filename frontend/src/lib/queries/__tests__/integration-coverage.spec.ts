@@ -85,6 +85,9 @@ const COVERAGE: Array<[string, string, string]> = [
 	['quarantine delete', API.downloads.quarantineDelete(7), '/api/v1/downloads/quarantine/7'],
 	// track request (user-scoped)
 	['track request', API.tracks.request('R1'), '/api/v1/tracks/R1/request'],
+	['karaoke cache entries', API.karaoke.entries(), '/api/v1/karaoke/entries'],
+	['karaoke cache entry delete', API.karaoke.deleteEntry(), '/api/v1/karaoke/entries'],
+	['karaoke prepare', API.karaoke.prepare(), '/api/v1/karaoke'],
 	// library reads (user)
 	[
 		'library albums',
@@ -92,6 +95,7 @@ const COVERAGE: Array<[string, string, string]> = [
 		'/api/v1/library/albums?page=1&page_size=50&sort=recent'
 	],
 	['library tracks', API.library.tracks(), '/api/v1/library/tracks?limit=48&offset=0&sort=recent'],
+	['offline track existence', API.library.trackExistence(), '/api/v1/library/tracks/existence'],
 	[
 		'library artists',
 		API.library.artists(),

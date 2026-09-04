@@ -9,6 +9,9 @@ export type PlaybackState =
 
 export type SourceType = 'youtube' | 'local' | 'jellyfin' | 'navidrome' | 'plex';
 
+/** Where the currently playing media bytes came from. */
+export type PlaybackOrigin = 'download' | 'cache' | 'https';
+
 export type QueueOrigin = 'context' | 'manual';
 
 export interface PlaybackSource {
@@ -20,6 +23,8 @@ export interface PlaybackSource {
 		token?: string;
 		format?: string;
 		duration?: number;
+		/** Start the media element as soon as the new source is ready. */
+		autoplay?: boolean;
 	}): Promise<void>;
 	play(): void;
 	pause(): void;

@@ -2625,7 +2625,11 @@ class NativeLibraryStore(PersistenceBase):
         return await self._read(operation)
 
     async def get_target_track(
-        self, track_id: str, *, user_id: str | None = None
+        self,
+        track_id: str,
+        *,
+        user_id: str | None = None,
+        indexed_only: bool = False,
     ) -> dict[str, Any] | None:
         def operation(connection: sqlite3.Connection) -> dict[str, Any] | None:
             resolved = self._resolve_target_id(
@@ -2635,6 +2639,8 @@ class NativeLibraryStore(PersistenceBase):
                 return None
             where = " WHERE t.id = ?"
             parameters: list[Any] = [resolved]
+            if indexed_only:
+                where += " AND t.availability = 'indexed' AND a.retired_into_album_id IS NULL"
             if user_id is not None:
                 where += " AND " + _user_track_access_clause()
                 parameters.append(user_id)
@@ -2790,17 +2796,29 @@ class NativeLibraryStore(PersistenceBase):
         return await self._read(operation)
 
     async def get_target_tracks_by_ids(
-        self, track_ids: list[str]
+        self,
+        track_ids: list[str],
+        *,
+        user_id: str | None = None,
+        indexed_only: bool = False,
     ) -> dict[str, dict[str, Any]]:
-        if not track_ids:
+        ids = list(dict.fromkeys(track_ids))
+        if not ids:
             return {}
 
         def operation(
             connection: sqlite3.Connection,
         ) -> dict[str, dict[str, Any]]:
-            placeholders = ",".join("?" for _ in track_ids)
+            placeholders = ",".join("?" for _ in ids)
+            where = f" WHERE t.id IN ({placeholders})"
+            parameters: list[Any] = list(ids)
+            if indexed_only:
+                where += " AND t.availability = 'indexed' AND a.retired_into_album_id IS NULL"
+            if user_id is not None:
+                where += " AND " + _user_track_access_clause()
+                parameters.append(user_id)
             rows = connection.execute(
-                _TARGET_TRACK_SELECT + f" WHERE t.id IN ({placeholders})", track_ids
+                _TARGET_TRACK_SELECT + where, parameters
             ).fetchall()
             return {str(row["id"]): dict(row) for row in rows}
 

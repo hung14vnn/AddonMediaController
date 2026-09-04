@@ -483,6 +483,20 @@ def test_remove_tracks_batch_requires_curator():
     service.remove_file.assert_not_called()
 
 
+def test_track_existence_returns_only_library_file_ids(client, manager, monkeypatch):
+    lookup = AsyncMock(return_value={"file-1": object(), "file-3": object()})
+    monkeypatch.setattr(manager, "get_active_tracks_by_ids", lookup)
+
+    response = client.post(
+        "/library/tracks/existence",
+        json={"file_ids": ["file-1", "missing", "file-3", "file-1", " "]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"existing_file_ids": ["file-1", "file-3"]}
+    lookup.assert_awaited_once_with(["file-1", "missing", "file-3"])
+
+
 def test_remove_track_missing_404():
     service = AsyncMock()
     service.remove_file.side_effect = ResourceNotFoundError("Library file not found")

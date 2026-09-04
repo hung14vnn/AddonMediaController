@@ -5,6 +5,7 @@
 		FolderCog,
 		History,
 		LayoutDashboard,
+		Mic2,
 		ScanSearch,
 		Settings2
 	} from 'lucide-svelte';
@@ -16,6 +17,7 @@
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import LibraryScanningPanel from '$lib/components/library/LibraryScanningPanel.svelte';
 	import LibraryManagementControlRoom from '$lib/components/library/LibraryManagementControlRoom.svelte';
+	import LibraryKaraokePanel from '$lib/components/library/LibraryKaraokePanel.svelte';
 	import LibraryOverviewPanel from '$lib/components/library/LibraryOverviewPanel.svelte';
 	import SettingsLibraryManagement from '$lib/components/settings/SettingsLibraryManagement.svelte';
 	import { getLibraryActivityQuery } from '$lib/queries/library/LibraryActivityQueries.svelte';
@@ -51,7 +53,7 @@
 		return managementWork.state === 'queued' ? 'Queued' : 'Previewing';
 	});
 
-	const tabIds = ['overview', 'scanning', 'organize', 'automation'] as const;
+	const tabIds = ['overview', 'scanning', 'karaoke', 'organize', 'automation'] as const;
 	type TabId = (typeof tabIds)[number];
 
 	const requestedTab = $derived(page.url.searchParams.get('tab'));
@@ -169,6 +171,17 @@
 			</button>
 			<button
 				role="tab"
+				id="management-tab-karaoke"
+				aria-controls="management-panel-karaoke"
+				class={segmentClass('karaoke')}
+				aria-selected={activeTab === 'karaoke'}
+				onclick={() => selectTab('karaoke')}
+			>
+				<Mic2 class="h-4 w-4" />
+				Karaoke
+			</button>
+			<button
+				role="tab"
 				id="management-tab-organize"
 				aria-controls="management-panel-organize"
 				class={segmentClass('organize')}
@@ -204,6 +217,10 @@
 		{:else if activeTab === 'scanning'}
 			<div role="tabpanel" id="management-panel-scanning" aria-labelledby="management-tab-scanning">
 				<LibraryScanningPanel />
+			</div>
+		{:else if activeTab === 'karaoke'}
+			<div role="tabpanel" id="management-panel-karaoke" aria-labelledby="management-tab-karaoke">
+				<LibraryKaraokePanel />
 			</div>
 		{:else if activeTab === 'organize'}
 			<div role="tabpanel" id="management-panel-organize" aria-labelledby="management-tab-organize">

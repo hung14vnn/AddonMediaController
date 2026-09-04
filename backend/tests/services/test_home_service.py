@@ -338,49 +338,6 @@ class TestHomeServiceCacheKeyUserAware:
         assert key_linked != key_unlinked
 
 
-class TestBuildServicePrompts:
-    def test_source_prompts_hidden_when_one_source_enabled(self):
-        service, _, _, _ = _make_service()
-        prompts = service._build_service_prompts(
-            lb_enabled=True, download_client_configured=True, lfm_enabled=False
-        )
-        services = [p.service for p in prompts]
-        assert "lastfm" not in services
-        assert "listenbrainz" not in services
-
-    def test_source_prompts_hidden_when_lastfm_enabled(self):
-        service, _, _, _ = _make_service()
-        prompts = service._build_service_prompts(
-            lb_enabled=False, download_client_configured=True, lfm_enabled=True
-        )
-        services = [p.service for p in prompts]
-        assert "listenbrainz" not in services
-        assert "lastfm" not in services
-
-    def test_no_prompts_when_all_enabled(self):
-        service, _, _, _ = _make_service()
-        prompts = service._build_service_prompts(
-            lb_enabled=True, download_client_configured=True, lfm_enabled=True
-        )
-        assert prompts == []
-
-    def test_all_prompts_when_nothing_enabled(self):
-        service, _, _, _ = _make_service()
-        prompts = service._build_service_prompts(
-            lb_enabled=False, download_client_configured=False, lfm_enabled=False
-        )
-        services = {p.service for p in prompts}
-        assert services == {"download-client", "listenbrainz", "lastfm"}
-
-    def test_lb_prompt_mentions_lastfm(self):
-        service, _, _, _ = _make_service()
-        prompts = service._build_service_prompts(
-            lb_enabled=False, download_client_configured=True, lfm_enabled=False
-        )
-        lb_prompt = next(p for p in prompts if p.service == "listenbrainz")
-        assert "last.fm" in lb_prompt.description.lower()
-
-
 class TestWhatsHotAlwaysBuilt:
     # section visibility is per-user at read time (section_catalog.apply_section_prefs);
     # the build always fetches trending so the shared cache entry stays complete
