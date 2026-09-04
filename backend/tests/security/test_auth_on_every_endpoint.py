@@ -391,6 +391,7 @@ _ADMIN_ENDPOINTS = [
     ),
     ("GET", "/api/v1/library/management/previews/job-1", None),
     ("GET", "/api/v1/library/management/previews/job-1/items", None),
+    ("POST", "/api/v1/library/management/previews/job-1/reissue", None),
     (
         "POST",
         "/api/v1/settings/library/policy-apply-preview",
