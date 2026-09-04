@@ -13,7 +13,6 @@
 	import EqPanel from '$lib/components/EqPanel.svelte';
 	import LyricsPanel from '$lib/components/LyricsPanel.svelte';
 	import { openGlobalPlaylistModal } from '$lib/components/AddToPlaylistModal.svelte';
-	import AudioQualityBadge from '$lib/components/AudioQualityBadge.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
@@ -270,11 +269,6 @@
 									Track {playerStore.currentTrackNumber} of {playerStore.queueLength}
 								</p>
 							{/if}
-							{#if playerStore.nowPlaying.format}
-								<div class="hidden sm:block">
-									<AudioQualityBadge codec={playerStore.nowPlaying.format} compact />
-								</div>
-							{/if}
 							{#if playerStore.playbackState === 'error'}
 								<p class="text-xs text-error truncate">This track isn't available right now.</p>
 							{/if}
@@ -359,14 +353,33 @@
 					</button>
 
 					<button
-						class="btn btn-ghost btn-sm btn-circle md:hidden"
-						class:text-accent={lyricsPanelOpen}
-						onclick={toggleLyrics}
-						disabled={!supportsLyrics}
-						aria-label="Open lyrics"
+						class="btn btn-ghost btn-sm btn-circle relative"
+						class:text-accent={queueDrawerOpen}
+						onclick={toggleQueueDrawer}
+						aria-label="Toggle queue"
 					>
-						<Music2 class="h-4 w-4" />
+						<ListMusic class="h-4 w-4" />
+						{#if playerStore.upcomingQueueLength > 0}
+							<span class="badge badge-xs badge-accent absolute -top-1 -right-1"
+								>{playerStore.upcomingQueueLength}</span
+							>
+						{/if}
 					</button>
+
+					<div
+						class="tooltip"
+						data-tip={supportsLyrics ? 'Lyrics' : 'Lyrics unavailable for this track'}
+					>
+						<button
+							class="btn btn-ghost btn-sm btn-circle"
+							class:text-accent={lyricsPanelOpen}
+							onclick={toggleLyrics}
+							disabled={!supportsLyrics}
+							aria-label="Toggle lyrics"
+						>
+							<Music2 class="h-4 w-4" />
+						</button>
+					</div>
 				</div>
 
 				<div class="hidden sm:flex items-center gap-2 w-full max-w-lg">
@@ -396,22 +409,6 @@
 			</div>
 
 			<div class="hidden md:flex items-center gap-3 lg:gap-7 lg:w-1/4 justify-end">
-				<div class="tooltip tooltip-left" data-tip="Queue">
-					<button
-						class="btn btn-ghost btn-sm btn-circle relative"
-						class:text-accent={queueDrawerOpen}
-						onclick={toggleQueueDrawer}
-						aria-label="Toggle queue"
-					>
-						<ListMusic class="h-4 w-4" />
-						{#if playerStore.upcomingQueueLength > 0}
-							<span class="badge badge-xs badge-accent absolute -top-1 -right-1"
-								>{playerStore.upcomingQueueLength}</span
-							>
-						{/if}
-					</button>
-				</div>
-
 				{#if playerStore.currentQueueItem?.sourceType === 'local'}
 					<div class="tooltip tooltip-left" data-tip={karaokeTip()}>
 						<button
@@ -436,21 +433,6 @@
 						</button>
 					</div>
 				{/if}
-
-				<div
-					class="tooltip tooltip-left"
-					data-tip={supportsLyrics ? 'Lyrics' : 'Lyrics unavailable for this track'}
-				>
-					<button
-						class="btn btn-ghost btn-sm btn-circle"
-						class:text-accent={lyricsPanelOpen}
-						onclick={toggleLyrics}
-						disabled={!supportsLyrics}
-						aria-label="Toggle lyrics"
-					>
-						<Music2 class="h-4 w-4" />
-					</button>
-				</div>
 
 				<div
 					class="tooltip tooltip-left"

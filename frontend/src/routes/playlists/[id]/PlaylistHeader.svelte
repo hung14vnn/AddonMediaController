@@ -399,11 +399,11 @@
 				</label>
 			{:else if !playlist.is_owner && playlist.owner_name}
 				<span class="ml-1 inline-flex items-center gap-1.5 text-sm text-base-content/60">
-					<span class="avatar avatar-placeholder">
-						<span class="w-5 h-5 rounded-full bg-accent text-accent-content">
+					<div class="avatar avatar-placeholder">
+						<div class="w-5 h-5 rounded-full bg-accent text-accent-content">
 							<span class="text-[9px] font-semibold leading-none">{ownerInitials}</span>
-						</span>
-					</span>
+						</div>
+					</div>
 					Shared by {playlist.owner_name}
 				</span>
 			{/if}
