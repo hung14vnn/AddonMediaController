@@ -1,5 +1,6 @@
 import { browser } from '$app/environment';
 import { api } from '$lib/api/client';
+import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -29,6 +30,7 @@ function createPendingApprovalCountStore() {
 		if (!browser) return;
 		void poll();
 		stopPolling();
+		if (usesMobileLowPowerVisuals()) return;
 		pollInterval = setInterval(() => void poll(), POLL_INTERVAL_MS);
 	}
 

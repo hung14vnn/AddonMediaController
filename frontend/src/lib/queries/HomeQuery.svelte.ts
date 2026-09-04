@@ -4,6 +4,7 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { ttl } from '$lib/stores/cacheTtl.svelte';
 import type { HomeResponse } from '$lib/types';
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
+import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 import { HomeQueryKeyFactory } from './HomeQueryKeyFactory';
 
 function sectionCount(d: HomeResponse | null | undefined): number {
@@ -50,5 +51,5 @@ export const getHomeQuery = () =>
 	createQuery(() => ({
 		...getHomeQueryOptions(authStore.user?.id),
 		refetchInterval: (query: { state: { data?: HomeResponse | undefined } }) =>
-			query.state.data?.refreshing ? 10_000 : false
+			!usesMobileLowPowerVisuals() && query.state.data?.refreshing ? 10_000 : false
 	}));

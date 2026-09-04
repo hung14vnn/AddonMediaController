@@ -52,6 +52,11 @@
 	let queuePinned = $state(false);
 
 	let lyricsPanelOpen = $state(false);
+	const SWIPE_THRESHOLD_PX = 48;
+	let swipePointerId: number | null = null;
+	let swipeStartX = 0;
+	let swipeStartY = 0;
+	let swipeWasHandled = false;
 	const karaokeStatus = $derived(karaokeController.status);
 	const karaokeError = $derived(karaokeController.error);
 	const lyricsQuery = getLyricsQuery(
@@ -122,6 +127,58 @@
 	function handleVolume(e: Event): void {
 		const target = e.target as HTMLInputElement;
 		playerStore.setVolume(Number(target.value));
+	}
+
+	function handlePlayerPointerDown(e: PointerEvent): void {
+		// Keep the gesture mobile-first. Desktop still uses the visible previous/
+		// next controls, while touch and pen input can advance the queue without
+		// taking up space in the compact player.
+		if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+		swipePointerId = e.pointerId;
+		swipeStartX = e.clientX;
+		swipeStartY = e.clientY;
+		swipeWasHandled = false;
+		(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+	}
+
+	function handlePlayerPointerMove(e: PointerEvent): void {
+		if (swipePointerId !== e.pointerId) return;
+		const deltaX = e.clientX - swipeStartX;
+		const deltaY = e.clientY - swipeStartY;
+		if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) >= 10) {
+			e.preventDefault();
+		}
+		if (Math.abs(deltaX) >= SWIPE_THRESHOLD_PX) swipeWasHandled = true;
+	}
+
+	function handlePlayerPointerUp(e: PointerEvent): void {
+		if (swipePointerId !== e.pointerId) return;
+		const deltaX = e.clientX - swipeStartX;
+		const deltaY = e.clientY - swipeStartY;
+		const shouldAdvance =
+			deltaX <= -SWIPE_THRESHOLD_PX && Math.abs(deltaX) > Math.abs(deltaY) && playerStore.hasNext;
+
+		if (swipeWasHandled) e.preventDefault();
+		swipePointerId = null;
+		if (shouldAdvance) playerStore.nextTrack();
+	}
+
+	function handlePlayerPointerCancel(): void {
+		swipePointerId = null;
+		swipeWasHandled = false;
+	}
+
+	function handlePlayerLostPointerCapture(): void {
+		// Keep swipeWasHandled until the synthetic click has had a chance to be
+		// suppressed after a swipe that started on the artwork link.
+		swipePointerId = null;
+	}
+
+	function suppressClickAfterSwipe(e: MouseEvent): void {
+		if (!swipeWasHandled) return;
+		e.preventDefault();
+		e.stopPropagation();
+		swipeWasHandled = false;
 	}
 
 	async function toggleKaraoke(): Promise<void> {
@@ -196,7 +253,13 @@
 		</button>
 
 		<div
-			class="droppedneedle-player-inner flex items-center gap-2 px-3 pr-9 sm:gap-4 sm:px-4 sm:pr-10 max-w-screen-2xl mx-auto"
+			class="droppedneedle-player-inner flex items-center gap-2 px-3 pr-9 sm:gap-4 sm:px-4 sm:pr-10 max-w-screen-2xl mx-auto touch-pan-y"
+			onpointerdown={handlePlayerPointerDown}
+			onpointermove={handlePlayerPointerMove}
+			onpointerup={handlePlayerPointerUp}
+			onpointercancel={handlePlayerPointerCancel}
+			onlostpointercapture={handlePlayerLostPointerCapture}
+			onclick={suppressClickAfterSwipe}
 		>
 			<div class="flex min-w-0 flex-1 items-center gap-2 sm:gap-3 lg:w-1/4 lg:flex-none">
 				{#key playerStore.nowPlaying.trackSourceId}
@@ -356,7 +419,7 @@
 					{/if}
 
 					<button
-						class="btn btn-ghost btn-sm btn-circle"
+						class="btn btn-ghost btn-sm btn-circle hidden md:inline-flex"
 						class:opacity-30={!playerStore.hasPrevious}
 						class:cursor-not-allowed={!playerStore.hasPrevious}
 						disabled={!playerStore.hasPrevious}
@@ -388,7 +451,7 @@
 					</button>
 
 					<button
-						class="btn btn-ghost btn-sm btn-circle"
+						class="btn btn-ghost btn-sm btn-circle hidden md:inline-flex"
 						class:opacity-30={!playerStore.hasNext}
 						class:cursor-not-allowed={!playerStore.hasNext}
 						disabled={!playerStore.hasNext}
@@ -399,7 +462,7 @@
 					</button>
 
 					<button
-						class="btn btn-ghost btn-sm btn-circle relative"
+						class="btn btn-ghost btn-sm btn-circle relative hidden md:inline-flex"
 						class:text-accent={queueDrawerOpen}
 						onclick={toggleQueueDrawer}
 						aria-label="Toggle queue"
@@ -413,7 +476,7 @@
 					</button>
 
 					<div
-						class="tooltip"
+						class="tooltip hidden md:block"
 						data-tip={supportsLyrics ? 'Lyrics' : 'Lyrics unavailable for this track'}
 					>
 						<button

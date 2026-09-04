@@ -447,6 +447,9 @@ async def test_presence_reconcile_external_replaces_and_noops_when_empty():
     assert len(svc.snapshot()) == 1
     # external sessions carry no user_id, so they're never redacted
     assert svc.snapshot()[0].redacted is False
+    published_count = len(sse.published)
+    await svc.reconcile_source("jellyfin", [session])
+    assert len(sse.published) == published_count
     await svc.reconcile_source("jellyfin", [])
     assert svc.snapshot() == []
 

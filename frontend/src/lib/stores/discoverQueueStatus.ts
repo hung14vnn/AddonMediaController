@@ -3,6 +3,7 @@ import { browser } from '$app/environment';
 import { API } from '$lib/constants';
 import { getCacheTTLs } from '$lib/stores/cacheTtl.svelte';
 import { api, ApiError } from '$lib/api/client';
+import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 
 export type QueueBuildStatus = 'idle' | 'building' | 'ready' | 'error' | 'unknown';
 
@@ -86,7 +87,7 @@ function createDiscoverQueueStatusStore() {
 	}
 
 	function startPolling(): void {
-		if (pollTimer || !browser) return;
+		if (pollTimer || !browser || usesMobileLowPowerVisuals()) return;
 		isPolling = true;
 		const interval = getPollingInterval();
 		pollTimer = setInterval(async () => {

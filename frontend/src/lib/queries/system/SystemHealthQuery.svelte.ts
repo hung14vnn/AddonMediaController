@@ -2,6 +2,7 @@ import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
 import type { SystemHealthResponse } from '$lib/types';
 import { createQuery } from '@tanstack/svelte-query';
+import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 import { SystemQueryKeyFactory } from './SystemQueryKeyFactory';
 
 /** Which external services are currently degraded - drives the header health dot.
@@ -11,7 +12,7 @@ export const getSystemHealthQuery = () =>
 	createQuery(() => ({
 		queryKey: SystemQueryKeyFactory.health(),
 		queryFn: ({ signal }) => api.global.get<SystemHealthResponse>(API.system.health(), { signal }),
-		refetchInterval: 60_000,
+        refetchInterval: () => (usesMobileLowPowerVisuals() ? false : 60_000),
 		refetchOnWindowFocus: true,
 		staleTime: 30_000
 	}));

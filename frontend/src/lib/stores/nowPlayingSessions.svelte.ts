@@ -18,6 +18,7 @@ function createNowPlayingStore() {
 	let sessions = $state<NowPlayingSession[]>([]);
 	let source: EventSource | null = null;
 	let tickTimer: ReturnType<typeof setInterval> | undefined;
+	let visibilityHandler: (() => void) | undefined;
 	let running = false;
 
 	const interpBasis = new SvelteMap<string, InterpolationBasis>();
@@ -53,24 +54,45 @@ function createNowPlayingStore() {
 			}
 			return s;
 		});
+		updateTickTimer();
+	}
+
+	function updateTickTimer(): void {
+		const shouldTick =
+			running &&
+			(typeof document === 'undefined' || !document.hidden) &&
+			sessions.some((s) => !s.is_paused && s.duration_ms && s.progress_ms != null);
+		if (shouldTick && !tickTimer) {
+			tickTimer = setInterval(tick, TICK_MS);
+		} else if (!shouldTick && tickTimer) {
+			clearInterval(tickTimer);
+			tickTimer = undefined;
+		}
 	}
 
 	function tick(): void {
 		if (typeof document !== 'undefined' && document.hidden) return;
 		const now = Date.now();
-		sessions = sessions.map((s) => {
+		let changed = false;
+		const nextSessions = sessions.map((s) => {
 			if (s.is_paused || !s.duration_ms || s.progress_ms == null) return s;
 			const basis = interpBasis.get(s.id);
 			if (!basis) {
 				const next = Math.min(s.progress_ms + TICK_MS, s.duration_ms);
-				return next === s.progress_ms ? s : { ...s, progress_ms: next };
+				if (next === s.progress_ms) return s;
+				changed = true;
+				return { ...s, progress_ms: next };
 			}
 			const basisAge = now - basis.updatedAt;
 			if (basisAge > FROZEN_BASIS_MS) return s;
 			const elapsed = Math.min(basisAge, MAX_INTERPOLATION_ADVANCE_MS);
 			const interpolated = Math.min(basis.serverProgress + elapsed, s.duration_ms);
-			return interpolated === s.progress_ms ? s : { ...s, progress_ms: interpolated };
+			if (interpolated === s.progress_ms) return s;
+			changed = true;
+			return { ...s, progress_ms: interpolated };
 		});
+		if (changed) sessions = nextSessions;
+		updateTickTimer();
 	}
 
 	function onSnapshot(event: MessageEvent): void {
@@ -91,24 +113,46 @@ function createNowPlayingStore() {
 		}
 	}
 
-	function start(): void {
-		if (running) return;
-		running = true;
+	function openConnection(): void {
+		if (!running || (typeof document !== 'undefined' && document.hidden) || source) return;
 		void hydrate();
 		source = new EventSource(getApiUrl(API.nowPlaying.events()), { withCredentials: true });
 		source.addEventListener('snapshot', onSnapshot as EventListener);
-		tickTimer = setInterval(tick, TICK_MS);
+		updateTickTimer();
+	}
+
+	function handleVisibilityChange(): void {
+		if (!running) return;
+		if (document.hidden) {
+			source?.close();
+			source = null;
+			updateTickTimer();
+		} else {
+			openConnection();
+		}
+	}
+
+	function start(): void {
+		if (running) return;
+		running = true;
+		if (typeof document !== 'undefined') {
+			visibilityHandler = handleVisibilityChange;
+			document.addEventListener('visibilitychange', visibilityHandler);
+		}
+		openConnection();
 	}
 
 	function stop(): void {
 		running = false;
-		if (source) {
-			source.close();
-			source = null;
-		}
+		source?.close();
+		source = null;
 		if (tickTimer) {
 			clearInterval(tickTimer);
 			tickTimer = undefined;
+		}
+		if (visibilityHandler && typeof document !== 'undefined') {
+			document.removeEventListener('visibilitychange', visibilityHandler);
+			visibilityHandler = undefined;
 		}
 		sessions = [];
 		interpBasis.clear();

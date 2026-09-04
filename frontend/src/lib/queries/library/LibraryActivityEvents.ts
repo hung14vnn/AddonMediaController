@@ -96,10 +96,14 @@ export function createLibraryActivityEvents() {
 		unsubscribeQueryCache = queryClient.getQueryCache().subscribe(() => {
 			reconcilePendingInitialRevisions();
 		});
-		activitySource = new EventSource(getApiUrl(API.library.activityStream()));
+		activitySource = new EventSource(getApiUrl(API.library.activityStream()), {
+			withCredentials: true
+		});
 		activitySource.addEventListener('activity.changed', activityChanged);
 		if (isAdmin) {
-			operationsSource = new EventSource(getApiUrl(API.library.operationsStream()));
+			operationsSource = new EventSource(getApiUrl(API.library.operationsStream()), {
+				withCredentials: true
+			});
 			operationsSource.addEventListener('open', invalidateOperations);
 			operationsSource.addEventListener('activity.changed', activityChanged);
 		}

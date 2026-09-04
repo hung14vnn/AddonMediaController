@@ -4,6 +4,7 @@
 	import type { SpotifyTrackResult, SuggestResult } from '$lib/types';
 	import { API } from '$lib/constants';
 	import { isAbortError } from '$lib/utils/errorHandling';
+	import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 	import { api } from '$lib/api/client';
 	import { requestSpotifyTrack } from '$lib/queries/downloads/DownloadMutations.svelte';
 
@@ -69,6 +70,15 @@
 		activeIndex = -1;
 
 		if (query.trim().length < 2) {
+			suggestions = [];
+			showDropdown = false;
+			loading = false;
+			return;
+		}
+
+		// Autocomplete is optional and can trigger a request for every search term.
+		// Keep the full search action available on mobile, but do not call /search/suggest.
+		if (usesMobileLowPowerVisuals()) {
 			suggestions = [];
 			showDropdown = false;
 			loading = false;

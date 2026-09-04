@@ -1,6 +1,7 @@
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
 import { playerStore } from '$lib/stores/player.svelte';
+import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 
 // The web player reports presence only for native content. jellyfin/navidrome/plex
 // playback is surfaced to other users by the server-side poll of those upstream
@@ -68,6 +69,7 @@ function createNowPlayingReporter() {
 		if (timer) return;
 		cleared = true;
 		tick();
+		if (usesMobileLowPowerVisuals()) return;
 		timer = setInterval(tick, HEARTBEAT_MS);
 	}
 

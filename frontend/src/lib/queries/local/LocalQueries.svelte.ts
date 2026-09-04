@@ -10,6 +10,7 @@ import type {
 	LocalSearchResponse,
 	LocalStorageStats
 } from '$lib/types';
+import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 
 export const LOCAL_KEYS = {
 	root: ['local'] as const,
@@ -54,6 +55,7 @@ export const getLocalSuggestionsQuery = (getDecade: Getter<number | undefined>) 
 	createQuery(() => {
 		const decade = getDecade();
 		return queryOptions({
+			enabled: !usesMobileLowPowerVisuals(),
 			// crate should feel alive, never serve stale
 			staleTime: 0,
 			gcTime: 0,

@@ -19,7 +19,7 @@ export function derivedDownloadStatus(task: DownloadTask): DerivedDownloadStatus
 }
 
 // mirrors the backend _ACTIVE_STATUSES - a task still in flight (not a terminal state)
-const ACTIVE_STATUSES: DownloadStatus[] = ['queued', 'downloading', 'processing'];
+const ACTIVE_STATUSES: DownloadStatus[] = ['queued', 'downloading'];
 
 export function isActiveDownloadStatus(status: DownloadStatus): boolean {
 	return ACTIVE_STATUSES.includes(status);

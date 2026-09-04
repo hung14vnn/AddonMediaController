@@ -45,14 +45,10 @@ import {
 	queueHasAlbums,
 	performCleanup
 } from './playerQueueOps';
-import {
-	resolveSourceUrl,
-	buildPrefetchUrl,
-	buildNowPlayingMetadata
-} from './playerSourceResolver';
+import { resolveSourceUrl, buildNowPlayingMetadata } from './playerSourceResolver';
 import { resumeAudioEngine } from '$lib/player/audioElement';
-import { createOfflineTrackUrl, getOfflineTrackMetadata } from '$lib/offline/offlineAudio';
-import { cachePlaybackTrack, createPlaybackTrackUrl } from '$lib/player/playbackAudioCache';
+import { createOfflineTrackUrl } from '$lib/offline/offlineAudio';
+import { createPlaybackTrackUrl } from '$lib/player/playbackAudioCache';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { KaraokePlaybackSource } from '$lib/player/KaraokePlaybackSource';
 import {
@@ -421,32 +417,6 @@ function createPlayerStore() {
 		}
 	}
 
-	function prefetchNext(): void {
-		const nextIdx = getNextIndex();
-		if (nextIdx === null) return;
-		const nextItem = queue[nextIdx];
-		if (!nextItem) return;
-		if (nextItem.sourceType === 'local' && authStore.user?.id) {
-			const userId = authStore.user.id;
-			const url = resolveSourceUrl(nextItem);
-			if (!url) return;
-			void (async () => {
-				// A user-requested offline copy is durable and always takes precedence;
-				// never duplicate it in the disposable playback cache.
-				if (await getOfflineTrackMetadata(userId, nextItem.trackSourceId)) return;
-				await cachePlaybackTrack({
-					userId,
-					trackId: nextItem.trackSourceId,
-					sourceUrl: url,
-					format: nextItem.format
-				});
-			})().catch(() => undefined);
-			return;
-		}
-		const url = buildPrefetchUrl(nextItem);
-		if (url) void api.global.head(url).catch(() => {});
-	}
-
 	function updateMediaSessionControls(): void {
 		setMediaSessionActionHandler('play', playCurrent);
 		setMediaSessionActionHandler('pause', pauseCurrent);
@@ -530,7 +500,6 @@ function createPlayerStore() {
 						progress,
 						isPaused: playbackState !== 'playing'
 					}));
-				prefetchNext();
 			}
 			if (state === 'paused') {
 				const jf = getJellyfinItem();

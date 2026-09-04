@@ -116,12 +116,12 @@
 	function playCrateTrack(t: CrateTrack) {
 		rememberEra(t);
 		playerStore.playQueue([crateToQueueItem(t)], 0, false);
-		void suggestionsQuery.refetch();
+		if (!mobileLowPower) void suggestionsQuery.refetch();
 	}
 
 	function queueCrateTrack(t: CrateTrack) {
 		playerStore.addToQueue(crateToQueueItem(t));
-		void suggestionsQuery.refetch();
+		if (!mobileLowPower) void suggestionsQuery.refetch();
 	}
 
 	async function playAlbum(album: LocalAlbumSummary, shuffle = false) {
@@ -191,6 +191,7 @@
 		if (items.length) playerStore.playQueue(items, 0, true);
 	}
 	function surprise() {
+		if (mobileLowPower) return;
 		const pool = crateTracks;
 		if (!pool.length) {
 			void suggestionsQuery.refetch();

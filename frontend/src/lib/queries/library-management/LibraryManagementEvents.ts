@@ -70,7 +70,9 @@ export function createLibraryManagementEvents() {
 
 	function start(): void {
 		stop();
-		source = new EventSource(getApiUrl(API.library.operationsStream()));
+		source = new EventSource(getApiUrl(API.library.operationsStream()), {
+			withCredentials: true
+		});
 		source.addEventListener('open', refresh);
 		source.addEventListener('activity.changed', handleActivity);
 	}

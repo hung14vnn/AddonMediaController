@@ -144,11 +144,41 @@ class NowPlayingService:
         """
         now = time.time()
         async with self._lock:
-            had_any = any(
-                e.source == source and e.user_id is None for e in self._entries.values()
-            )
+            existing = {
+                k: e for k, e in self._entries.items() if e.source == source and e.user_id is None
+            }
+            had_any = bool(existing)
             if not sessions and not had_any:
                 return
+
+            # The presence poller runs every few seconds. Refresh timestamps for
+            # unchanged upstream sessions so they do not expire, but avoid
+            # broadcasting an identical snapshot (and waking every connected PWA)
+            # on every poll cycle.
+            incoming_keys = {s.key for s in sessions}
+            unchanged = incoming_keys == set(existing) and all(
+                self._external_entry_matches(existing[s.key], s) for s in sessions
+            )
+            if unchanged:
+                for key, entry in existing.items():
+                    self._entries[key] = _Entry(
+                        key=entry.key,
+                        user_id=entry.user_id,
+                        user_name=entry.user_name,
+                        source=entry.source,
+                        device_name=entry.device_name,
+                        track_name=entry.track_name,
+                        artist_name=entry.artist_name,
+                        album_name=entry.album_name,
+                        cover_url=entry.cover_url,
+                        is_paused=entry.is_paused,
+                        progress_ms=entry.progress_ms,
+                        duration_ms=entry.duration_ms,
+                        updated_at=now,
+                        track_file_id=entry.track_file_id,
+                    )
+                return
+
             self._entries = {
                 k: e
                 for k, e in self._entries.items()
@@ -171,6 +201,21 @@ class NowPlayingService:
                     updated_at=now,
                 )
         await self._publish()
+
+    @staticmethod
+    def _external_entry_matches(entry: _Entry, session: ExternalSession) -> bool:
+        return (
+            entry.key == session.key
+            and entry.user_name == session.user_name
+            and entry.device_name == session.device_name
+            and entry.track_name == session.track_name
+            and entry.artist_name == session.artist_name
+            and entry.album_name == session.album_name
+            and entry.cover_url == session.cover_url
+            and entry.is_paused == session.is_paused
+            and entry.progress_ms == session.progress_ms
+            and entry.duration_ms == session.duration_ms
+        )
 
     async def sweep(self) -> None:
         """Drop sessions that stopped heartbeating; publish only if any were removed."""

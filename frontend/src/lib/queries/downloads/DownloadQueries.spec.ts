@@ -119,7 +119,7 @@ describe('download queue queries', () => {
 
 		expect(mockGet.mock.calls.at(-1)?.[0]).toBe('/api/v1/downloads/activity-summary');
 		expect(opts.queryKey).toEqual(['downloads', 'tasks', 'user-1', 'activity']);
-		expect(opts.refetchInterval({ state: { data: { active_count: 1 } } })).toBe(750);
+		expect(opts.refetchInterval({ state: { data: { active_count: 1 } } })).toBe(5000);
 		expect(opts.refetchInterval({ state: { data: { active_count: 0 } } })).toBe(120_000);
 		expect(opts.refetchIntervalInBackground).toBe(false);
 		expect(opts.refetchOnReconnect).toBe('always');

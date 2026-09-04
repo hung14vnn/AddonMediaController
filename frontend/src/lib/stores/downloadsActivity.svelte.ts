@@ -7,6 +7,7 @@ import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFact
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { libraryStore } from '$lib/stores/library';
 import type { DownloadListResponse, DownloadStatus } from '$lib/types';
+import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 
 // nav-badge active-downloads count; light 10s poll so background downloads show
 // anywhere (the /downloads page polls faster). best-effort, transient errors ignored
@@ -56,6 +57,7 @@ export const downloadsActivity = {
 		if (!browser || started) return;
 		started = true;
 		void poll();
+		if (usesMobileLowPowerVisuals()) return;
 		timer = setInterval(() => void poll(), 10000);
 	},
 	refresh(): void {

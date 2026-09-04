@@ -6,6 +6,7 @@ import { createQuery } from '@tanstack/svelte-query';
 
 import { DiagnosticsQueryKeyFactory } from './DiagnosticsQueryKeyFactory';
 import type { ProviderStats, QueueStats } from './types';
+import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 
 /** Gauges must stay fresh; polling is cheap - the backend counters are plain
  * dict reads. */
@@ -20,7 +21,7 @@ export const getQueueStatsQuery = (getEnabled: Getter<boolean> = () => true) =>
 		queryKey: DiagnosticsQueryKeyFactory.queueStats(),
 		enabled: getEnabled(),
 		staleTime: 0, // gauges must be live: never serve a persisted snapshot on re-entry
-		refetchInterval: POLL_INTERVAL_MS,
+		refetchInterval: () => (usesMobileLowPowerVisuals() ? false : POLL_INTERVAL_MS),
 		// library default, spelled out: no polling while the tab is hidden
 		refetchIntervalInBackground: false,
 		refetchOnWindowFocus: false,
@@ -36,7 +37,7 @@ export const getProviderStatsQuery = (getEnabled: Getter<boolean> = () => true) 
 		queryKey: DiagnosticsQueryKeyFactory.providerStats(),
 		enabled: getEnabled(),
 		staleTime: 0,
-		refetchInterval: POLL_INTERVAL_MS,
+		refetchInterval: () => (usesMobileLowPowerVisuals() ? false : POLL_INTERVAL_MS),
 		refetchIntervalInBackground: false,
 		refetchOnWindowFocus: false,
 		queryFn: ({ signal }) => api.global.get<ProviderStats>(API.system.providerStats(), { signal })

@@ -3,6 +3,7 @@ import { API, CACHE_TTL } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { ttl } from '$lib/stores/cacheTtl.svelte';
 import { discoverHasContent } from '$lib/utils/discoverContent';
+import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 import type { DiscoverResponse, HomeSection, PlaylistSuggestionsResponse } from '$lib/types';
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
@@ -56,7 +57,7 @@ export const getDiscoverQuery = () =>
 		queryKey: DiscoverQueryKeyFactory.discover(authStore.user?.id),
 		queryFn: ({ signal }) => fetchDiscover(authStore.user?.id, signal),
 		refetchInterval: (query: { state: { data?: DiscoverResponse | undefined } }) =>
-			query.state.data?.refreshing ? 10_000 : false
+			!usesMobileLowPowerVisuals() && query.state.data?.refreshing ? 10_000 : false
 	}));
 
 export const getRadioQuery = (
