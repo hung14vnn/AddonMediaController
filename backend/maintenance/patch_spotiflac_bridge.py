@@ -9,8 +9,106 @@ from pathlib import Path
 _WORKER_ANCHOR = """    download: (url, outputPath, opts) =>
       bridgeCall('file.download', { url, outputPath, opts: opts || {} }),
 """
+
+# Deezer's extension encrypts every Nth fixed-size block.  The operation is
+# synchronous because extension methods run synchronously in the worker; doing
+# it there also avoids sending the file contents through the JSON bridge.
+_PATTERNED_BLOCKS_FUNCTION = r'''  const transformPatternedBlocks = (inputPath, outputPath, opts, onProgress) => {
+    let inputFd = -1;
+    let outputFd = -1;
+    let completed = false;
+    try {
+      const options = opts || {};
+      const operation = String(options.operation || 'decrypt').toLowerCase();
+      const algorithm = String(options.algorithm || 'blowfish').toLowerCase();
+      const mode = String(options.mode || 'cbc').toLowerCase();
+      if (operation !== 'decrypt') {
+        return { success: false, error: `Unsupported patterned-block operation: ${operation}` };
+      }
+      if (algorithm !== 'blowfish' || mode !== 'cbc') {
+        return { success: false, error: `Unsupported patterned-block cipher: ${algorithm}-${mode}` };
+      }
+
+      const input = String(inputPath || '');
+      const output = String(outputPath || '');
+      if (!input || !output) {
+        return { success: false, error: 'Input and output paths are required' };
+      }
+      if (path.resolve(input) === path.resolve(output)) {
+        return { success: false, error: 'Input and output paths must differ' };
+      }
+
+      const segmentSize = Math.max(8, Number(options.segmentSize) || 2048);
+      const transformEvery = Math.max(1, Number(options.transformEvery) || 3);
+      const transformOffset = Math.max(0, Number(options.transformOffset) || 0);
+      const transformPartial = options.transformPartial === true;
+      const key = Buffer.from(String(options.key || ''), options.keyEncoding || 'hex');
+      const iv = Buffer.from(String(options.iv || ''), options.ivEncoding || 'hex');
+      if (!key.length || !iv.length) {
+        return { success: false, error: 'Patterned-block cipher key and IV are required' };
+      }
+
+      const totalSize = fs.statSync(input).size;
+      fs.mkdirSync(path.dirname(output), { recursive: true });
+      inputFd = fs.openSync(input, 'r');
+      outputFd = fs.openSync(output, 'w');
+
+      const inputBuffer = Buffer.alloc(segmentSize);
+      let position = 0;
+      let blockIndex = 0;
+      while (position < totalSize) {
+        const bytesRead = fs.readSync(inputFd, inputBuffer, 0, segmentSize, position);
+        if (!bytesRead) break;
+
+        const isPatternBlock = blockIndex >= transformOffset &&
+          ((blockIndex - transformOffset) % transformEvery === 0);
+        const canTransform = bytesRead === segmentSize ||
+          (transformPartial && bytesRead >= 8 && bytesRead % 8 === 0);
+        let transformed = inputBuffer.subarray(0, bytesRead);
+
+        if (isPatternBlock && canTransform) {
+          const decipher = require('crypto').createDecipheriv('bf-cbc', key, iv);
+          if (options.padding === 'none') decipher.setAutoPadding(false);
+          transformed = Buffer.concat([decipher.update(transformed), decipher.final()]);
+        }
+
+        let written = 0;
+        while (written < transformed.length) {
+          written += fs.writeSync(outputFd, transformed, written, transformed.length - written);
+        }
+        position += bytesRead;
+        blockIndex += 1;
+        if (typeof onProgress === 'function') onProgress(position, totalSize);
+      }
+
+      fs.closeSync(inputFd);
+      inputFd = -1;
+      fs.closeSync(outputFd);
+      outputFd = -1;
+      completed = true;
+      return { success: true, path: output, size: totalSize };
+    } catch (error) {
+      return { success: false, error: error && error.message ? error.message : String(error) };
+    } finally {
+      if (inputFd !== -1) {
+        try { fs.closeSync(inputFd); } catch (_) {}
+      }
+      if (outputFd !== -1) {
+        try { fs.closeSync(outputFd); } catch (_) {}
+      }
+      if (!completed) {
+        try { fs.unlinkSync(String(outputPath || '')); } catch (_) {}
+      }
+    }
+  };
+
+'''
+
 _WORKER_REPLACEMENT = _WORKER_ANCHOR + """    downloadSegments: (urls, outputPath, opts) =>
       bridgeCall('file.downloadSegments', { urls, outputPath, opts: opts || {} }),
+"""
+_PATTERNED_BLOCKS_METHOD = """    transformPatternedBlocks: (inputPath, outputPath, opts, onProgress) =>
+      transformPatternedBlocks(inputPath, outputPath, opts || {}, onProgress),
 """
 _MAIN_ANCHOR = """    } else if (method === 'file.download') {
       result = await nodeFileDownload(args.url, args.outputPath, args.opts, callId);"""
@@ -188,12 +286,26 @@ def _bridge_paths() -> list[Path]:
 
 def patch_bridge(path: Path) -> bool:
     source = path.read_text(encoding="utf-8")
-    if "downloadSegments: (urls, outputPath, opts)" in source:
+    if "transformPatternedBlocks:" in source:
         return False
-    if _WORKER_ANCHOR not in source or _MAIN_ANCHOR not in source:
+    if "global.file = {\n" not in source or _MAIN_ANCHOR not in source:
         raise RuntimeError(f"Unsupported SpotiFLAC bridge layout: {path}")
-    source = source.replace(_WORKER_ANCHOR, _WORKER_REPLACEMENT, 1)
-    source = source.replace(_MAIN_ANCHOR, _MAIN_REPLACEMENT, 1)
+
+    source = source.replace(
+        "global.file = {\n",
+        _PATTERNED_BLOCKS_FUNCTION + "global.file = {\n",
+        1,
+    )
+    if "downloadSegments: (urls, outputPath, opts)" not in source:
+        if _WORKER_ANCHOR not in source:
+            raise RuntimeError(f"Unsupported SpotiFLAC bridge layout: {path}")
+        source = source.replace(_WORKER_ANCHOR, _WORKER_REPLACEMENT, 1)
+    if "transformPatternedBlocks:" not in source:
+        if _WORKER_ANCHOR not in source:
+            raise RuntimeError(f"Unsupported SpotiFLAC bridge layout: {path}")
+        source = source.replace(_WORKER_ANCHOR, _WORKER_ANCHOR + _PATTERNED_BLOCKS_METHOD, 1)
+    if "method === 'file.downloadSegments'" not in source:
+        source = source.replace(_MAIN_ANCHOR, _MAIN_REPLACEMENT, 1)
     startup_anchor = "const worker = new Worker(__filename"
     if startup_anchor not in source:
         raise RuntimeError(f"Could not find worker startup anchor: {path}")

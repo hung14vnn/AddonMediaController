@@ -4,6 +4,7 @@
 	import { fly, fade } from 'svelte/transition';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
+	import { registerBackDismiss } from '$lib/stores/backDismissStack.svelte';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import type { QueueItem } from '$lib/player/types';
@@ -177,6 +178,10 @@
 			currentTrackEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
 		}
 	}
+
+	$effect(() => {
+		if (open && !pinned) return registerBackDismiss(handleClose);
+	});
 
 	$effect(() => {
 		if (open && !pinned) {

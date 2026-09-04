@@ -213,4 +213,16 @@ describe('Player.svelte lyrics button', () => {
 
 		await expect.element(page.getByLabelText('Start karaoke')).not.toBeInTheDocument();
 	});
+
+	it('closes the queue when mobile back navigation is attempted', async () => {
+		playerStore.playQueue([makeTrack('navidrome')]);
+		render(Player);
+
+		await page.getByLabelText('Toggle queue').click();
+		await expect.element(page.getByRole('heading', { name: 'Queue' })).toBeVisible();
+
+		const { dismissTopBackOverlay } = await import('$lib/stores/backDismissStack.svelte');
+		expect(dismissTopBackOverlay()).toBe(true);
+		await expect.element(page.getByRole('heading', { name: 'Queue' })).not.toBeInTheDocument();
+	});
 });

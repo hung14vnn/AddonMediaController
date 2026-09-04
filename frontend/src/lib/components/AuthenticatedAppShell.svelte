@@ -11,6 +11,7 @@
 	import { migratePageSourceKeys } from '$lib/stores/musicSource';
 	import { watchMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScope.svelte';
 	import { errorModal } from '$lib/stores/errorModal';
+	import { dismissTopBackOverlay } from '$lib/stores/backDismissStack.svelte';
 	import { libraryStore } from '$lib/stores/library';
 	import { integrationStore } from '$lib/stores/integration';
 	import { initCacheTTLs } from '$lib/stores/cacheTtl.svelte';
@@ -126,6 +127,13 @@
 	}
 
 	beforeNavigate((navigation) => {
+		// Mobile edge-swipe/back is a popstate navigation. Dismiss the topmost
+		// registered overlay first, and only route back when none is open.
+		if (navigation.type === 'popstate' && dismissTopBackOverlay()) {
+			navigation.cancel();
+			return;
+		}
+
 		const fromPath = navigation.from?.url.pathname;
 		const toPath = navigation.to?.url.pathname;
 		const fromSection = fromPath ? topLevelPath(fromPath) : '';
