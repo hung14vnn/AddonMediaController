@@ -4,8 +4,8 @@ import { api } from '$lib/api/client';
 const AUDIO_DB = createStore('hify-playback-audio-cache-v1', 'audio');
 const METADATA_DB = createStore('hify-playback-audio-cache-metadata-v1', 'tracks');
 
-export const PLAYBACK_CACHE_MAX_BYTES = 512 * 1024 * 1024;
-export const PLAYBACK_CACHE_MAX_TRACKS = 50;
+export const PLAYBACK_CACHE_MAX_BYTES = 256 * 1024 * 1024;
+export const PLAYBACK_CACHE_MAX_TRACKS = 25;
 export const PLAYBACK_CACHE_MAX_TRACK_BYTES = 64 * 1024 * 1024;
 
 export interface PlaybackCacheInput {
