@@ -65,6 +65,7 @@
 		Compass,
 		Menu,
 		Download,
+		Ellipsis,
 		PanelLeft,
 		TriangleAlert,
 		Info,
@@ -421,15 +422,30 @@
 		return isNavActive('/library') && !isNavActive('/library/management');
 	}
 
+	function openMoreNav(): void {
+		(document.getElementById('more_nav_sheet') as HTMLDialogElement | null)?.showModal();
+	}
+
+	function closeMoreNav(): void {
+		(document.getElementById('more_nav_sheet') as HTMLDialogElement | null)?.close();
+	}
+
+	function isMoreNavActive(): boolean {
+		return (
+			isNavActive('/downloads') ||
+			isNavActive('/following') ||
+			isNavActive('/playlists') ||
+			isNavActive('/requests') ||
+			isNavActive('/library/management')
+		);
+	}
+
 	const integrations = fromStore(integrationStore);
 	const downloadClientConfigured = $derived(
 		integrations.current.download_client || !integrations.current.loaded
 	);
 	const mobileNavItemCount = $derived(
-		3 +
-			(authStore.isTrusted ? 1 : 0) +
-			(downloadClientConfigured ? 1 : 0) +
-			(authStore.isAdmin ? 1 : 0)
+		4 + (authStore.isAdmin ? 1 : 0) + 1
 	);
 </script>
 
@@ -770,6 +786,16 @@
 			<Compass />
 			<span>Discover</span>
 		</a>
+		<button
+			type="button"
+			class="droppedneedle-bottom-nav__item"
+			class:active={isNavActive('/search')}
+			onclick={() => (document.getElementById('search_modal') as HTMLDialogElement)?.showModal()}
+			aria-label="Search"
+		>
+			<Search />
+			<span>Search</span>
+		</button>
 		<a
 			href={withBasePath('/library')}
 			class="droppedneedle-bottom-nav__item"
@@ -782,29 +808,6 @@
 				<span class="droppedneedle-bottom-nav__badge" aria-label="Library sync in progress"></span>
 			{/if}
 		</a>
-		{#if authStore.isTrusted}
-			<a
-				href={withBasePath('/downloads')}
-				class="droppedneedle-bottom-nav__item"
-				class:active={isNavActive('/downloads')}
-				aria-current={isNavActive('/downloads') ? 'page' : undefined}
-			>
-				<Download />
-				<span>Downloads</span>
-				<DownloadsNavBadge />
-			</a>
-		{/if}
-		{#if downloadClientConfigured}
-			<a
-				href={withBasePath('/playlists')}
-				class="droppedneedle-bottom-nav__item"
-				class:active={isNavActive('/playlists')}
-				aria-current={isNavActive('/playlists') ? 'page' : undefined}
-			>
-				<ListMusic />
-				<span>Playlists</span>
-			</a>
-		{/if}
 		{#if authStore.isAdmin}
 			<a
 				href={versionUpdateAvailable
@@ -823,8 +826,108 @@
 				{/if}
 			</a>
 		{/if}
+		<button
+			type="button"
+			class="droppedneedle-bottom-nav__item"
+			class:active={isMoreNavActive()}
+			onclick={openMoreNav}
+			aria-label="More navigation options"
+			aria-haspopup="dialog"
+		>
+			<Ellipsis />
+			<span>More</span>
+		</button>
 	</nav>
 {/if}
+
+<dialog id="more_nav_sheet" class="modal modal-bottom sm:modal-middle" aria-label="More navigation">
+	<div class="modal-box p-2">
+		<form method="dialog">
+			<button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Close">
+				<X class="h-4 w-4" />
+			</button>
+		</form>
+		<h3 class="font-bold text-lg px-2 pt-1 pb-2">More</h3>
+		<ul class="menu w-full">
+			{#if authStore.isTrusted}
+				<li>
+					<a
+						href={withBasePath('/downloads')}
+						class:menu-active={isNavActive('/downloads')}
+						aria-current={isNavActive('/downloads') ? 'page' : undefined}
+						onclick={closeMoreNav}
+					>
+						<Download class="h-6 w-6" />
+						Downloads
+						<DownloadsNavBadge />
+					</a>
+				</li>
+			{/if}
+			<li>
+				<a
+					href={withBasePath('/following')}
+					class:menu-active={isNavActive('/following')}
+					aria-current={isNavActive('/following') ? 'page' : undefined}
+					onclick={closeMoreNav}
+				>
+					<Heart class="h-6 w-6" />
+					Following
+				</a>
+			</li>
+			{#if downloadClientConfigured}
+				<li>
+					<a
+						href={withBasePath('/playlists')}
+						class:menu-active={isNavActive('/playlists')}
+						aria-current={isNavActive('/playlists') ? 'page' : undefined}
+						onclick={closeMoreNav}
+					>
+						<ListMusic class="h-6 w-6" />
+						Playlists
+					</a>
+				</li>
+				<li>
+					<a
+						href={withBasePath('/requests')}
+						class:menu-active={isNavActive('/requests')}
+						aria-current={isNavActive('/requests') ? 'page' : undefined}
+						onclick={closeMoreNav}
+					>
+						<Inbox class="h-6 w-6" />
+						Requests
+					</a>
+				</li>
+			{/if}
+			{#if authStore.isAdmin}
+				<li>
+					<a
+						href={withBasePath('/library/management')}
+						class:menu-active={isNavActive('/library/management')}
+						aria-current={isNavActive('/library/management') ? 'page' : undefined}
+						onclick={closeMoreNav}
+					>
+						<LibraryBig class="h-6 w-6" />
+						Library Management
+					</a>
+				</li>
+				<li>
+					<a
+						href={withBasePath('/requests?tab=approvals')}
+						class:menu-active={isNavActive('/requests')}
+						aria-current={isNavActive('/requests') ? 'page' : undefined}
+						onclick={closeMoreNav}
+					>
+						<ShieldCheck class="h-6 w-6" />
+						Approvals
+					</a>
+				</li>
+			{/if}
+		</ul>
+	</div>
+	<form method="dialog" class="modal-backdrop">
+		<button aria-label="Close more navigation">close</button>
+	</form>
+</dialog>
 
 {#if $errorModal.show}
 	<dialog class="modal modal-open">
