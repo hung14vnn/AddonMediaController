@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { fade, fly } from 'svelte/transition';
 	import type { Component } from 'svelte';
 
 	import { loadSettingsTab } from './settingsTabs';
@@ -46,9 +47,11 @@
 </script>
 
 {#if ActiveTab && loadedTab === tab}
-	<ActiveTab />
+	<div in:fly={{ y: 8, opacity: 0.92, duration: 220 }}>
+		<ActiveTab />
+	</div>
 {:else if loadFailed}
-	<div class="alert alert-error" role="alert">
+	<div class="alert alert-error" role="alert" in:fade={{ duration: 140 }}>
 		<div>
 			<p class="font-semibold">This settings section did not load.</p>
 			<p class="mt-1 text-sm opacity-80">Check your connection, then try again.</p>
@@ -56,7 +59,7 @@
 		<button class="btn btn-sm" type="button" onclick={retryLoad}>Try again</button>
 	</div>
 {:else}
-	<div class="space-y-4" aria-busy="true" aria-label="Loading settings">
+	<div class="space-y-4" aria-busy="true" aria-label="Loading settings" in:fade={{ duration: 140 }}>
 		<div class="skeleton h-8 w-52"></div>
 		<div class="skeleton h-24 w-full"></div>
 		<div class="skeleton h-40 w-full"></div>

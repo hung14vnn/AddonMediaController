@@ -44,9 +44,10 @@ export const getUpdateCheckQuery = () =>
 		refetchOnReconnect: false
 	}));
 
-export const getReleaseHistoryQuery = () =>
+export const getReleaseHistoryQuery = (getEnabled: () => boolean = () => true) =>
 	createQuery(() => ({
 		staleTime: CACHE_TTL.RELEASE_HISTORY,
+		enabled: getEnabled(),
 		queryKey: VersionQueryKeyFactory.releases(),
 		queryFn: ({ signal }) => api.global.get<GitHubRelease[]>(API.version.releases(), { signal }),
 		refetchOnWindowFocus: false,

@@ -98,8 +98,9 @@
 
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		class="fixed bottom-24.5 right-4 z-70 w-120 max-w-[calc(100vw-2rem)]
+		class="fixed bottom-24.5 right-4 z-[70] w-120 max-w-[calc(100vw-2rem)]
 			   rounded-box bg-base-300 shadow-[0_-8px_40px_rgba(0,0,0,0.45)] border border-base-content/5"
+		style="z-index: 1000;"
 		transition:fly={{ y: 20, duration: 200 }}
 		onkeydown={handleKeydown}
 	>

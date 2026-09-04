@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../../app.css';
 	import { browser } from '$app/environment';
+	import { page } from '$app/state';
 	import { goto, beforeNavigate, afterNavigate } from '$app/navigation';
 	import { base, resolve } from '$app/paths';
 	import { withBasePath, withoutBasePath } from '$lib/utils/basePath';
@@ -47,7 +48,9 @@
 	import VersionOverlays from '$lib/components/VersionOverlays.svelte';
 	import SearchSuggestions from '$lib/components/SearchSuggestions.svelte';
 	import type { SuggestResult } from '$lib/types';
+	import { cubicOut } from 'svelte/easing';
 	import { onMount, onDestroy, untrack } from 'svelte';
+	import { fly } from 'svelte/transition';
 	import { cancelPendingImages } from '$lib/utils/lazyImage';
 	import { abortAllPageRequests } from '$lib/utils/navigationAbort';
 	import { installMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
@@ -102,6 +105,8 @@
 	let currentPath = $state('/');
 	let versionUpdateAvailable = $state(false);
 	let isDesktopViewport = $state(false);
+	type RouteTransitionAxis = 'x' | 'y';
+	let routeTransitionAxis = $state<RouteTransitionAxis>('y');
 
 	const NAV_PROGRESS_DELAY_MS = 120;
 	const NAV_PROGRESS_MIN_VISIBLE_MS = 220;
@@ -113,9 +118,16 @@
 		}
 	});
 
+	function topLevelPath(path: string): string {
+		return withoutBasePath(path).split('/').filter(Boolean)[0] ?? '';
+	}
+
 	beforeNavigate((navigation) => {
 		const fromPath = navigation.from?.url.pathname;
 		const toPath = navigation.to?.url.pathname;
+		const fromSection = fromPath ? topLevelPath(fromPath) : '';
+		const toSection = toPath ? topLevelPath(toPath) : '';
+		routeTransitionAxis = fromSection && fromSection === toSection ? 'x' : 'y';
 		if (fromPath !== toPath) {
 			abortAllPageRequests();
 			serviceStatusStore.clear();
@@ -482,7 +494,19 @@
 			class="droppedneedle-main-content flex-1"
 			class:droppedneedle-player-visible={playerStore.isPlayerVisible}
 		>
-			{@render children()}
+			{#key page.url.pathname}
+				<div
+					in:fly={{
+						x: routeTransitionAxis === 'x' ? 12 : 0,
+						y: routeTransitionAxis === 'y' ? 8 : 0,
+						opacity: 0.82,
+						duration: 320,
+						easing: cubicOut
+					}}
+				>
+					{@render children()}
+				</div>
+			{/key}
 		</div>
 	</div>
 
@@ -550,7 +574,9 @@
 						>
 							<div class="relative">
 								<Download class="h-6 w-6" />
-								<DownloadsNavBadge />
+								{#if isDesktopViewport}
+									<DownloadsNavBadge />
+								{/if}
 							</div>
 							<span class="is-drawer-close:hidden">Downloads</span>
 						</a>
@@ -568,8 +594,10 @@
 						<div class="relative">
 							<Heart class="h-6 w-6" />
 							<!-- overlapping badge pair (U8): releases left, concerts right -->
-							<ConcertsNavBadge />
-							<NewReleasesNavBadge />
+							{#if isDesktopViewport}
+								<ConcertsNavBadge />
+								<NewReleasesNavBadge />
+							{/if}
 						</div>
 						<span class="is-drawer-close:hidden">Following</span>
 					</a>
@@ -650,7 +678,9 @@
 						>
 							<div class="relative">
 								<ShieldCheck class="h-6 w-6" />
-								<PendingApprovalNavBadge />
+								{#if isDesktopViewport}
+									<PendingApprovalNavBadge />
+								{/if}
 							</div>
 							<span class="is-drawer-close:hidden">Approvals</span>
 						</a>
@@ -705,83 +735,85 @@
 	</div>
 </div>
 
-<nav
-	class="droppedneedle-bottom-nav md:hidden"
-	style:--mobile-nav-items={mobileNavItemCount}
-	aria-label="Primary navigation"
->
-	<a
-		href={withBasePath('/')}
-		class="droppedneedle-bottom-nav__item"
-		class:active={currentPath === '/'}
-		aria-current={currentPath === '/' ? 'page' : undefined}
+{#if !isDesktopViewport}
+	<nav
+		class="droppedneedle-bottom-nav md:hidden"
+		style:--mobile-nav-items={mobileNavItemCount}
+		aria-label="Primary navigation"
 	>
-		<House />
-		<span>Home</span>
-	</a>
-	<a
-		href={withBasePath('/discover')}
-		class="droppedneedle-bottom-nav__item"
-		class:active={isNavActive('/discover')}
-		aria-current={isNavActive('/discover') ? 'page' : undefined}
-	>
-		<Compass />
-		<span>Discover</span>
-	</a>
-	<a
-		href={withBasePath('/library')}
-		class="droppedneedle-bottom-nav__item"
-		class:active={isLibraryNavActive()}
-		aria-current={isLibraryNavActive() ? 'page' : undefined}
-	>
-		<Menu />
-		<span>Library</span>
-		{#if syncStatus.isActive}
-			<span class="droppedneedle-bottom-nav__badge" aria-label="Library sync in progress"></span>
-		{/if}
-	</a>
-	{#if authStore.isTrusted}
 		<a
-			href={withBasePath('/downloads')}
+			href={withBasePath('/')}
 			class="droppedneedle-bottom-nav__item"
-			class:active={isNavActive('/downloads')}
-			aria-current={isNavActive('/downloads') ? 'page' : undefined}
+			class:active={currentPath === '/'}
+			aria-current={currentPath === '/' ? 'page' : undefined}
 		>
-			<Download />
-			<span>Downloads</span>
-			<DownloadsNavBadge />
+			<House />
+			<span>Home</span>
 		</a>
-	{/if}
-	{#if downloadClientConfigured}
 		<a
-			href={withBasePath('/playlists')}
+			href={withBasePath('/discover')}
 			class="droppedneedle-bottom-nav__item"
-			class:active={isNavActive('/playlists')}
-			aria-current={isNavActive('/playlists') ? 'page' : undefined}
+			class:active={isNavActive('/discover')}
+			aria-current={isNavActive('/discover') ? 'page' : undefined}
 		>
-			<ListMusic />
-			<span>Playlists</span>
+			<Compass />
+			<span>Discover</span>
 		</a>
-	{/if}
-	{#if authStore.isAdmin}
 		<a
-			href={versionUpdateAvailable
-				? withBasePath('/settings?tab=about')
-				: withBasePath('/settings')}
+			href={withBasePath('/library')}
 			class="droppedneedle-bottom-nav__item"
-			class:active={isNavActive('/settings')}
-			aria-current={isNavActive('/settings') ? 'page' : undefined}
+			class:active={isLibraryNavActive()}
+			aria-current={isLibraryNavActive() ? 'page' : undefined}
 		>
-			<Settings />
-			<span>Settings</span>
-			{#if versionUpdateAvailable}
-				<span class="droppedneedle-bottom-nav__badge" aria-label="Update available">
-					<ArrowUpCircle class="h-3 w-3" />
-				</span>
+			<Menu />
+			<span>Library</span>
+			{#if syncStatus.isActive}
+				<span class="droppedneedle-bottom-nav__badge" aria-label="Library sync in progress"></span>
 			{/if}
 		</a>
-	{/if}
-</nav>
+		{#if authStore.isTrusted}
+			<a
+				href={withBasePath('/downloads')}
+				class="droppedneedle-bottom-nav__item"
+				class:active={isNavActive('/downloads')}
+				aria-current={isNavActive('/downloads') ? 'page' : undefined}
+			>
+				<Download />
+				<span>Downloads</span>
+				<DownloadsNavBadge />
+			</a>
+		{/if}
+		{#if downloadClientConfigured}
+			<a
+				href={withBasePath('/playlists')}
+				class="droppedneedle-bottom-nav__item"
+				class:active={isNavActive('/playlists')}
+				aria-current={isNavActive('/playlists') ? 'page' : undefined}
+			>
+				<ListMusic />
+				<span>Playlists</span>
+			</a>
+		{/if}
+		{#if authStore.isAdmin}
+			<a
+				href={versionUpdateAvailable
+					? withBasePath('/settings?tab=about')
+					: withBasePath('/settings')}
+				class="droppedneedle-bottom-nav__item"
+				class:active={isNavActive('/settings')}
+				aria-current={isNavActive('/settings') ? 'page' : undefined}
+			>
+				<Settings />
+				<span>Settings</span>
+				{#if versionUpdateAvailable}
+					<span class="droppedneedle-bottom-nav__badge" aria-label="Update available">
+						<ArrowUpCircle class="h-3 w-3" />
+					</span>
+				{/if}
+			</a>
+		{/if}
+	</nav>
+{/if}
 
 {#if $errorModal.show}
 	<dialog class="modal modal-open">

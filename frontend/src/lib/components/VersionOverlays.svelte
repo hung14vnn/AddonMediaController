@@ -4,6 +4,7 @@
 		getVersionQuery,
 		getReleaseHistoryQuery
 	} from '$lib/queries/VersionQuery.svelte';
+	import { isWhatsNewDismissed } from '$lib/stores/version.svelte';
 	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
 	import WhatsNewModal from '$lib/components/WhatsNewModal.svelte';
 
@@ -11,11 +12,21 @@
 
 	const updateCheckQuery = getUpdateCheckQuery();
 	const versionQuery = getVersionQuery();
-	const releaseHistoryQuery = getReleaseHistoryQuery();
 
 	const currentVersion = $derived(versionQuery.data?.version ?? null);
 	const buildDate = $derived(versionQuery.data?.build_date ?? null);
 	const isDev = $derived(currentVersion === 'dev' || currentVersion === 'hosting-local');
+
+	// Release history is only needed for the global What's New modal. Once a user
+	// has dismissed the current release, avoid mounting the query observer and its
+	// release-history request on every authenticated page.
+	const releaseHistoryQuery = getReleaseHistoryQuery(() => {
+		if (!currentVersion) return false;
+		if (isDev) return true;
+		const latestTag =
+			updateCheckQuery.data?.latest_release?.tag_name ?? updateCheckQuery.data?.latest_version;
+		return !latestTag || !isWhatsNewDismissed(latestTag);
+	});
 
 	function getMinorPrefix(tag: string): string | null {
 		const m = tag.replace(/^v/, '').match(/^(\d+\.\d+)\./);

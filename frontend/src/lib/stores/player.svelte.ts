@@ -469,6 +469,7 @@ function createPlayerStore() {
 				updateMediaSessionPlaybackState('paused');
 			else updateMediaSessionPlaybackState('none');
 			if (state === 'playing') {
+				updateMediaSessionControls();
 				consecutiveErrors = 0;
 				failedTrackNames = [];
 				if (getJellyfinItem())

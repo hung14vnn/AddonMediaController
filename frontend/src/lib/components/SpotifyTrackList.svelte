@@ -10,11 +10,20 @@
 	}: { tracks: SpotifyTrackResult[]; title?: string; variant?: 'list' | 'grid' } = $props();
 	const download = requestSpotifyTrack();
 	let requested = $state<Set<string>>(new Set());
+	let pending = $state<Set<string>>(new Set());
 
-	function request(track: SpotifyTrackResult) {
-		download.mutate(track.spotify_id, {
-			onSuccess: () => (requested = new Set([...requested, track.spotify_id]))
-		});
+	async function request(track: SpotifyTrackResult) {
+		if (pending.has(track.spotify_id) || requested.has(track.spotify_id)) return;
+		pending = new Set([...pending, track.spotify_id]);
+		try {
+			await download.mutateAsync(track.spotify_id);
+			requested = new Set([...requested, track.spotify_id]);
+		} catch {
+			// The mutation owns the error toast; keep this handler from producing an
+			// unhandled rejection while allowing the row to be retried.
+		} finally {
+			pending = new Set([...pending].filter((id) => id !== track.spotify_id));
+		}
 	}
 </script>
 
@@ -52,11 +61,12 @@
 					<button
 						class="btn btn-square btn-md absolute bottom-2 right-2 z-20 border-none bg-accent text-accent-content opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 shadow-lg transition-opacity duration-200"
 						onclick={() => request(track)}
-						disabled={download.isPending || requested.has(track.spotify_id)}
+						disabled={pending.has(track.spotify_id) || requested.has(track.spotify_id)}
 						aria-label="Request this track"
+						aria-busy={pending.has(track.spotify_id)}
 						title="Request this track"
 					>
-						{#if download.isPending}
+						{#if pending.has(track.spotify_id)}
 							<span class="loading loading-spinner loading-sm"></span>
 						{:else}
 							<Download class="h-5 w-5" aria-hidden="true" />
@@ -88,11 +98,14 @@
 					<button
 						class="btn btn-ghost btn-xs btn-circle"
 						onclick={() => request(track)}
-						disabled={download.isPending || requested.has(track.spotify_id)}
+						disabled={pending.has(track.spotify_id) || requested.has(track.spotify_id)}
 						aria-label="Request this track"
+						aria-busy={pending.has(track.spotify_id)}
 						title="Request this track"
 					>
-						{#if requested.has(track.spotify_id)}✓{:else}<Download class="h-3.5 w-3.5" />{/if}
+						{#if pending.has(track.spotify_id)}
+							<span class="loading loading-spinner loading-xs"></span>
+						{:else if requested.has(track.spotify_id)}✓{:else}<Download class="h-3.5 w-3.5" />{/if}
 					</button>
 				</div>
 			{/each}

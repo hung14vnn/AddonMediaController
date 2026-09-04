@@ -89,7 +89,10 @@
 					{@render actions()}
 				{:else}
 					{#if isUpdating}
-						<LiveUpdatingBadge label="Refreshing" />
+						<LiveUpdatingBadge
+							label="Refreshing"
+							className="absolute right-4 top-4 sm:static"
+						/>
 					{:else if lastUpdated && !loading}
 						<span class="hidden text-xs text-base-content/50 sm:inline">
 							Updated {formatLastUpdated(lastUpdated)}
