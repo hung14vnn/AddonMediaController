@@ -168,3 +168,27 @@ def test_frontend_entry_and_named_assets_keep_intended_cache_policy(
     assert root_response.headers["cache-control"] == "no-cache"
     assert env_response.headers["cache-control"] == "no-cache"
     assert logo_response.headers["cache-control"] == "public, max-age=604800"
+
+
+def test_service_worker_is_served_as_javascript_instead_of_spa_fallback(
+    tmp_path, monkeypatch
+):
+    frontend_build = tmp_path / "frontend" / "build"
+    frontend_build.mkdir(parents=True)
+    (frontend_build / "index.html").write_text("<main>test</main>", encoding="utf-8")
+    (frontend_build / "service-worker.js").write_text(
+        "self.addEventListener('install', () => {});", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        static_server, "__file__", str(tmp_path / "backend" / "static_server.py")
+    )
+
+    app = FastAPI()
+    mount_frontend(app)
+
+    response = TestClient(app).get("/service-worker.js")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/javascript")
+    assert response.headers["cache-control"] == "no-cache"
+    assert "self.addEventListener" in response.text

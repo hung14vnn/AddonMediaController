@@ -249,6 +249,16 @@ def mount_frontend(app: FastAPI) -> None:
             )
         raise HTTPException(status_code=404, detail="Not found")
 
+    @app.get("/service-worker.js")
+    async def serve_service_worker():
+        if service_worker := resolve_asset("service-worker.js"):
+            return FileResponse(
+                service_worker,
+                media_type="application/javascript",
+                headers=_NO_CACHE_HEADERS,
+            )
+        raise HTTPException(status_code=404, detail="Not found")
+
     @app.get("/")
     async def serve_root():
         if index_html.exists():

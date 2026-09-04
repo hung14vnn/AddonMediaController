@@ -513,7 +513,6 @@
 					{@render children()}
 				</div>
 			{/key}
-			{#if !isSettingsPane}<Footer />{/if}
 		</div>
 	</div>
 
