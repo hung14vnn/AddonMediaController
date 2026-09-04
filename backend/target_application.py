@@ -235,6 +235,7 @@ from services.native.target_application_lifecycle import (
 )
 from services.native.target_startup_validator import TargetStartupValidator
 from services.native.wal_checkpoint_service import start_target_wal_checkpoint_task
+from services.version_service import legacy_image_notice
 from static_server import mount_frontend
 
 logger = logging.getLogger(__name__)
@@ -703,6 +704,9 @@ async def production_target_lifespan(app: FastAPI):
             auth_store=auth_store,
         )
         logger.info("target_startup.operational_runtime_started")
+        retirement_notice = legacy_image_notice(os.environ.get("COMMIT_TAG", "dev"))
+        if retirement_notice is not None:
+            logger.warning(retirement_notice)
         logger.info("DroppedNeedle target application started")
 
     try:
