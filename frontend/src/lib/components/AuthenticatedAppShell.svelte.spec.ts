@@ -487,4 +487,23 @@ describe('AuthenticatedAppShell mobile overflow menu (#182)', () => {
 			throw new Error('Downloads entry did not render');
 		expect(downloads.getAttribute('aria-current')).toBe('page');
 	});
+
+	it('keeps Playlists and Requests visible when no download client is configured', async () => {
+		authStore.setUser(testUser());
+		integrationState.download_client = false;
+		try {
+			renderLayout();
+			await expect.element(page.getByTestId('page-content')).toBeInTheDocument();
+
+			const sheet = openMoreSheet();
+			await vi.waitFor(() => expect(sheet.open).toBe(true));
+			const text = sheet.textContent ?? '';
+			expect(text).toContain('Downloads');
+			expect(text).toContain('Following');
+			expect(text).toContain('Playlists');
+			expect(text).toContain('Requests');
+		} finally {
+			integrationState.download_client = true;
+		}
+	});
 });

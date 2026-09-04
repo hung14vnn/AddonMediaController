@@ -874,30 +874,28 @@
 					Following
 				</a>
 			</li>
-			{#if downloadClientConfigured}
-				<li>
-					<a
-						href={withBasePath('/playlists')}
-						class:menu-active={isNavActive('/playlists')}
-						aria-current={isNavActive('/playlists') ? 'page' : undefined}
-						onclick={closeMoreNav}
-					>
-						<ListMusic class="h-6 w-6" />
-						Playlists
-					</a>
-				</li>
-				<li>
-					<a
-						href={withBasePath('/requests')}
-						class:menu-active={isNavActive('/requests')}
-						aria-current={isNavActive('/requests') ? 'page' : undefined}
-						onclick={closeMoreNav}
-					>
-						<Inbox class="h-6 w-6" />
-						Requests
-					</a>
-				</li>
-			{/if}
+			<li>
+				<a
+					href={withBasePath('/playlists')}
+					class:menu-active={isNavActive('/playlists')}
+					aria-current={isNavActive('/playlists') ? 'page' : undefined}
+					onclick={closeMoreNav}
+				>
+					<ListMusic class="h-6 w-6" />
+					Playlists
+				</a>
+			</li>
+			<li>
+				<a
+					href={withBasePath('/requests')}
+					class:menu-active={isNavActive('/requests')}
+					aria-current={isNavActive('/requests') ? 'page' : undefined}
+					onclick={closeMoreNav}
+				>
+					<Inbox class="h-6 w-6" />
+					Requests
+				</a>
+			</li>
 			{#if authStore.isAdmin}
 				<li>
 					<a
