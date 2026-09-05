@@ -550,6 +550,7 @@ class LibraryIndexer:
             album_sort=tag.album_sort,
             album_artist_sort=tag.album_artist_sort,
             disc_subtitle=tag.disc_subtitle,
+            release_type=tag.release_type,
             is_compilation=tag.compilation,
             embedded_release_group_mbid=tag.musicbrainz_release_group_id,
             embedded_release_mbid=tag.musicbrainz_release_id,

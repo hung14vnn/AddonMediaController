@@ -10,6 +10,7 @@ import json
 import logging
 import sqlite3
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -30,6 +31,21 @@ logger = logging.getLogger(__name__)
 def _escape_like(term: str) -> str:
     """Escape SQL LIKE metacharacters so they match literally."""
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _dominant_release_type(concatenated: str | None) -> str | None:
+    """Dominant non-empty stripped release type from an ordered CHAR(31)-joined
+    per-track value list (disc/track order); ties keep the earliest value."""
+    if not concatenated:
+        return None
+    counts: Counter[str] = Counter()
+    for raw in concatenated.split("\x1f"):
+        value = raw.strip()
+        if value:
+            counts[value] += 1
+    if not counts:
+        return None
+    return counts.most_common(1)[0][0]
 
 
 # On UPDATE, id / imported_at / download_task_id are preserved, never overwritten.
@@ -71,6 +87,7 @@ _LIBRARY_FILE_VALUE_COLUMNS = (
     "replaygain_album_gain",
     "replaygain_track_peak",
     "replaygain_album_peak",
+    "release_type",
 )
 
 # SQL mirror of quality_tiers.tier_for (lossless extension set + kbps bands), ranked
@@ -411,6 +428,9 @@ class LibraryDB(PersistenceBase):
         # (no separate backfill). Existing NULL rows fill on the next re-scan.
         _safe_alter(conn, "ALTER TABLE library_files ADD COLUMN genre TEXT")
         _safe_alter(conn, "ALTER TABLE library_files ADD COLUMN channels INTEGER")
+        # File-tag release type (RELEASETYPE/MUSICBRAINZ_ALBUMTYPE); NULL keeps the
+        # legacy Compilation-or-None output until a rescan fills the row.
+        _safe_alter(conn, "ALTER TABLE library_files ADD COLUMN release_type TEXT")
         for column, column_type in (
             ("track_sort_name", "TEXT"),
             ("artist_sort_name", "TEXT"),
@@ -1042,6 +1062,13 @@ class LibraryDB(PersistenceBase):
                         LIMIT 1) AS file_format,
                        MAX(lf.year) AS year,
                        MAX(lf.is_compilation) AS is_compilation,
+                       (SELECT GROUP_CONCAT(ordered_rt.rt, CHAR(31)) FROM (
+                           SELECT q.release_type AS rt FROM library_files q
+                           WHERE q.release_group_mbid = lf.release_group_mbid
+                             AND q.deleted_at IS NULL
+                             AND q.release_type IS NOT NULL AND TRIM(q.release_type) != ''
+                           ORDER BY q.disc_number, q.track_number, q.id
+                       ) AS ordered_rt) AS release_type_values,
                        lam.cover_url AS cover_url
                 FROM library_files lf
                 LEFT JOIN library_album_meta lam
@@ -1053,7 +1080,12 @@ class LibraryDB(PersistenceBase):
                 """,
                 (*params, max(limit, 1), max(offset, 0)),
             ).fetchall()
-            return [dict(r) for r in rows], total
+            out = []
+            for r in rows:
+                row = dict(r)
+                row["release_type"] = _dominant_release_type(row.pop("release_type_values", None))
+                out.append(row)
+            return out, total
 
         return await self._read(operation)
 
@@ -1260,6 +1292,13 @@ class LibraryDB(PersistenceBase):
                        MAX(lf.year) AS year,
                        MAX(lf.is_compilation) AS is_compilation,
                        MAX(lf.imported_at) AS last_imported_at,
+                       (SELECT GROUP_CONCAT(ordered_rt.rt, CHAR(31)) FROM (
+                           SELECT q.release_type AS rt FROM library_files q
+                           WHERE q.release_group_mbid = lf.release_group_mbid
+                             AND q.deleted_at IS NULL
+                             AND q.release_type IS NOT NULL AND TRIM(q.release_type) != ''
+                           ORDER BY q.disc_number, q.track_number, q.id
+                       ) AS ordered_rt) AS release_type_values,
                        lam.cover_url AS cover_url
                 FROM library_files lf
                 LEFT JOIN library_album_meta lam
@@ -1271,7 +1310,12 @@ class LibraryDB(PersistenceBase):
                 """,
                 (artist_mbid,),
             ).fetchall()
-            return [dict(r) for r in rows]
+            out = []
+            for r in rows:
+                row = dict(r)
+                row["release_type"] = _dominant_release_type(row.pop("release_type_values", None))
+                out.append(row)
+            return out
 
         return await self._read(operation)
 

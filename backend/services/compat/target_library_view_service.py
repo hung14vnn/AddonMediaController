@@ -6,7 +6,13 @@ import asyncio
 from collections import Counter
 from typing import TYPE_CHECKING
 
-from services.compat.view_models import ViewAlbum, ViewArtist, ViewGenre, ViewTrack
+from services.compat.view_models import (
+    ViewAlbum,
+    ViewArtist,
+    ViewGenre,
+    ViewTrack,
+    release_types_for_album,
+)
 
 if TYPE_CHECKING:
     from infrastructure.persistence.auth_store import UserRecord
@@ -21,7 +27,22 @@ def _dominant_genre(rows: list[dict]) -> str | None:
 
 
 def _library_user_id(user: "UserRecord | None") -> str | None:
-    return None if user is None or user.role == "admin" else user.id
+	return None if user is None or user.role == "admin" else user.id
+
+
+def _dominant_release_type(rows: list[dict]) -> str | None:
+    """Most frequent non-empty stripped release_type across an album's tracks
+    (tie -> first in disc/track order)."""
+    counts: Counter[str] = Counter()
+    for row in rows:
+        value = row.get("release_type")
+        if isinstance(value, str):
+            value = value.strip()
+            if value:
+                counts[value] += 1
+	if not counts:
+		return None
+	return counts.most_common(1)[0][0]
 
 
 class TargetLibraryViewService:
@@ -367,6 +388,9 @@ class TargetLibraryViewService:
             if row.get("last_imported_at")
             else None,
             is_compilation=bool(row.get("is_compilation")),
+            release_types=release_types_for_album(
+                row.get("release_type"), bool(row.get("is_compilation"))
+            ),
             sort_name=row.get("album_sort_name"),
             original_release_date=row.get("original_release_date"),
             musicbrainz_release_group_id=row.get("provider_release_group_mbid"),
@@ -391,6 +415,9 @@ class TargetLibraryViewService:
             cover_available=bool(first.get("cover_url")),
             date_added=int(max(float(row.get("imported_at") or 0) for row in rows)),
             is_compilation=bool(first.get("is_compilation")),
+            release_types=release_types_for_album(
+                _dominant_release_type(rows), bool(first.get("is_compilation"))
+            ),
             sort_name=first.get("album_sort_name"),
             original_release_date=first.get("original_release_date"),
             disc_titles=list(

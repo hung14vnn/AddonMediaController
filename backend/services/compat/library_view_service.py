@@ -9,7 +9,13 @@ from __future__ import annotations
 from collections import Counter
 from typing import TYPE_CHECKING
 
-from services.compat.view_models import ViewAlbum, ViewArtist, ViewGenre, ViewTrack
+from services.compat.view_models import (
+    ViewAlbum,
+    ViewArtist,
+    ViewGenre,
+    ViewTrack,
+    release_types_for_album,
+)
 
 if TYPE_CHECKING:
     from infrastructure.persistence.auth_store import UserRecord
@@ -33,6 +39,21 @@ def _dominant_genre(rows: list[dict]) -> str | None:
         g = row.get("genre")
         if g:
             counts[g] += 1
+    if not counts:
+        return None
+    return counts.most_common(1)[0][0]
+
+
+def _dominant_release_type(rows: list[dict]) -> str | None:
+    """Most frequent non-empty stripped release_type across an album's tracks
+    (tie -> first in disc/track order)."""
+    counts: Counter[str] = Counter()
+    for row in rows:
+        value = row.get("release_type")
+        if isinstance(value, str):
+            value = value.strip()
+            if value:
+                counts[value] += 1
     if not counts:
         return None
     return counts.most_common(1)[0][0]
@@ -187,6 +208,9 @@ class LibraryViewService:
                 if r.get("last_imported_at")
                 else None,
                 is_compilation=bool(r.get("is_compilation")),
+                release_types=release_types_for_album(
+                    r.get("release_type"), bool(r.get("is_compilation"))
+                ),
             )
             for r in rows
         ]
@@ -338,6 +362,9 @@ class LibraryViewService:
             if s.last_imported_at is not None
             else None,
             is_compilation=s.is_compilation,
+            release_types=release_types_for_album(
+                getattr(s, "release_type", None), s.is_compilation
+            ),
             artist_mbid=s.album_artist_mbid,
             sort_name=s.album_sort_name,
             original_release_date=s.original_release_date,
@@ -366,6 +393,9 @@ class LibraryViewService:
             cover_available=etag is not None,
             date_added=int(date_added) if date_added else None,
             is_compilation=bool(first.get("is_compilation")),
+            release_types=release_types_for_album(
+                _dominant_release_type(rows), bool(first.get("is_compilation"))
+            ),
             sort_name=first.get("album_sort_name"),
             original_release_date=first.get("original_release_date"),
             disc_titles=list(

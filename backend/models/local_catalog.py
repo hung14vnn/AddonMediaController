@@ -93,6 +93,8 @@ class LocalTrack(AppStruct):
     album_sort: str | None = None
     album_artist_sort: str | None = None
     disc_subtitle: str | None = None
+    # Raw file-tag release type (RELEASETYPE/MUSICBRAINZ_ALBUMTYPE); display mapping lives in compat.
+    release_type: str | None = None
     is_compilation: bool = False
     embedded_release_group_mbid: str | None = None
     embedded_release_mbid: str | None = None

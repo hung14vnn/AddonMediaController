@@ -692,6 +692,9 @@ class LegacyCatalogImporter:
                     disc_subtitle=str(row.get("disc_subtitle"))
                     if row.get("disc_subtitle")
                     else None,
+                    release_type=str(row.get("release_type"))
+                    if row.get("release_type")
+                    else None,
                     is_compilation=is_compilation,
                     duration_seconds=_as_float(row.get("duration_seconds")) or None,
                     file_format=str(row.get("file_format") or "unknown"),
