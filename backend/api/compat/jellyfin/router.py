@@ -356,6 +356,51 @@ async def _decode_artist(services: CompatServices, jf_id: str) -> str | None:
         return None
     return internal if kind == "artist" else None
 
+# SortBy allowlist (Jellyfin names, lower-cased): first known value wins, unknown
+# values are ignored so the legacy default order keeps working.
+_SORT_NATIVE = {
+    "datecreated": "recent",
+    "sortname": "title",
+    "productionyear": "year",
+    "premieredate": "year",  # Jellify sends PremiereDate first; year desc by default
+    "random": "random",
+}
+_SORT_HISTORY = {"dateplayed", "playcount"}
+_SORT_KNOWN = frozenset(_SORT_NATIVE) | _SORT_HISTORY
+# SortOrder omitted: these keys default to descending (legacy lists are newest-first).
+_SORT_DESC_DEFAULT = frozenset(
+    {"datecreated", "dateplayed", "playcount", "premieredate"}
+)
+
+
+def _browse_sort(request: Request) -> tuple[str | None, bool]:
+    """(SortBy key or None for legacy order, descending). Case-insensitive via
+    the shared helpers; comma-separated SortBy resolves first-known-wins and
+    unknown values are ignored (legacy default)."""
+    key: str | None = None
+    for value in _csv_param(request, "SortBy"):
+        candidate = value.strip().lower()
+        if candidate in _SORT_KNOWN:
+            key = candidate
+            break
+    if key is None:
+        return None, False
+    order = (_params(request).get("SortOrder") or "").strip().lower()
+    if order.startswith("desc"):
+        return key, True
+    if order.startswith("asc"):
+        return key, False
+    return key, key in _SORT_DESC_DEFAULT
+
+
+def _sort_list_key(sort_key: str) -> str:
+    """Map a resolved SortBy key onto a discover in-memory sort name."""
+    if sort_key == "dateplayed":
+        return "played"
+    if sort_key == "playcount":
+        return "playcount"
+    return _SORT_NATIVE[sort_key]
+
 
 async def _build_qr(build_fn, items, total, start):
     built = [await build_fn(i) for i in items]
@@ -426,6 +471,8 @@ async def _browse(request, services, user, **_) -> jm.BaseItemDtoQueryResult:
     ids = _csv_param(request, "Ids")
     album_artist_ids = _csv_param(request, "AlbumArtistIds")
     artist_ids = _csv_param(request, "ArtistIds")
+    contributing_ids = _csv_param(request, "ContributingArtistIds")
+    sort_key, sort_desc = _browse_sort(request)
 
     if ids:
         items = await _items_by_ids(services, b, ids, user)
@@ -478,23 +525,91 @@ async def _browse(request, services, user, **_) -> jm.BaseItemDtoQueryResult:
             tracks = await services.view.get_tracks_by_album_artist_mbids(
                 mbids, user=user
             )
+            if sort_key is not None:
+                tracks = services.discover.sort_tracks(
+                    tracks, sort=_sort_list_key(sort_key), descending=sort_desc
+                )
             return await _build_page(b.audio, tracks, start, limit)
         if artist_ids:
             mbids = [m for i in artist_ids if (m := await _decode_artist(services, i))]
             tracks = await services.view.get_tracks_by_artist_mbids(mbids, user=user)
+            if sort_key is not None:
+                tracks = services.discover.sort_tracks(
+                    tracks, sort=_sort_list_key(sort_key), descending=sort_desc
+                )
             return await _build_page(b.audio, tracks, start, limit)
+        if sort_key in _SORT_HISTORY:
+            tracks, total = await services.discover.get_history_tracks_page(
+                user_id=user.id,
+                frequent=sort_key == "playcount",
+                descending=sort_desc,
+                limit=limit or 100,
+                offset=start,
+                user=user,
+            )
+            return await _build_qr(b.audio, tracks, total, start)
+        if sort_key is not None:
+            tracks, total = await services.discover.get_sorted_tracks(
+                sort=_SORT_NATIVE[sort_key],
+                descending=sort_desc,
+                limit=limit or 100,
+                offset=start,
+                q=search,
+                user=user,
+            )
+            return await _build_qr(b.audio, tracks, total, start)
         tracks, total = await services.view.get_tracks_page(
             limit=limit or 100, offset=start, q=search, user=user
         )
         return await _build_qr(b.audio, tracks, total, start)
 
+    if contributing_ids:
+        mbids = [
+            m for i in contributing_ids if (m := await _decode_artist(services, i))
+        ]
+        if not mbids:
+            # A contributor filter must never fall through to the full catalog.
+            return jm.BaseItemDtoQueryResult(
+                Items=[], TotalRecordCount=0, StartIndex=start
+            )
+        albums = await services.discover.get_appears_on_albums(
+            mbids,
+            sort=_sort_list_key(sort_key) if sort_key is not None else "recent",
+            descending=sort_desc if sort_key is not None else True,
+            user=user,
+        )
+        return await _build_page(b.album, albums, start, limit)
     if album_artist_ids or artist_ids:
         albums = []
         for jf_id in album_artist_ids or artist_ids:
             mb = await _decode_artist(services, jf_id)
             if mb:
                 albums += await services.view.get_albums_for_artist(mb, user=user)
+        if sort_key is not None:
+            albums = services.discover.sort_albums(
+                albums, sort=_sort_list_key(sort_key), descending=sort_desc
+            )
         return await _build_page(b.album, albums, start, limit)
+    if sort_key in _SORT_HISTORY:
+        albums, total = await services.discover.get_history_albums_page(
+            user_id=user.id,
+            frequent=sort_key == "playcount",
+            descending=sort_desc,
+            limit=limit or 100,
+            offset=start,
+            user=user,
+        )
+        return await _build_qr(b.album, albums, total, start)
+    if sort_key is not None:
+        albums, total = await services.discover.get_sorted_albums(
+            sort=_SORT_NATIVE[sort_key],
+            descending=sort_desc,
+            limit=limit or 100,
+            offset=start,
+            q=search,
+            user=user,
+        )
+        return await _build_qr(b.album, albums, total, start)
     page = start // limit + 1 if limit else 1
     albums, total = await services.view.get_albums(
         page=page, page_size=limit or 100, q=search, user=user
@@ -567,6 +682,44 @@ async def items_modern(
     request: Request, services: CompatServices = Depends(get_compat_services)
 ) -> Response:
     return await _handle(request, services, _browse)
+
+
+async def _latest(request, services, user, **_) -> list:
+    """Jellify Recently Added (getLatestMedia): a plain JSON array of the newest
+    MusicAlbums. ParentId, when given, must be the music library; anything else
+    (unknown id, non-library kind) yields an empty array like _browse."""
+    parent = _params(request).get("ParentId")
+    if parent:
+        try:
+            kind, _ = await services.id_map.from_jf(parent)
+        except JellyfinError:
+            return []
+        if kind != "library":
+            return []
+    limit = _qint(request, "Limit", 10)
+    if limit <= 0:
+        limit = 10
+    b = _builder(services)
+    albums, _total = await services.view.get_albums_offset(
+        limit=limit, offset=0, sort="recent", user=user
+    )
+    return [await b.album(a) for a in albums]
+
+
+@router.get("/UserItems/Latest")
+async def user_items_latest(
+    request: Request, services: CompatServices = Depends(get_compat_services)
+) -> Response:
+    return await _handle(request, services, _latest)
+
+
+@router.get("/Users/{user_id}/Items/Latest")
+async def user_items_latest_legacy(
+    user_id: str,
+    request: Request,
+    services: CompatServices = Depends(get_compat_services),
+) -> Response:
+    return await _handle(request, services, _latest)
 
 
 async def _artists(

@@ -1692,7 +1692,7 @@ export interface LibraryAlbumSummary {
 	musicbrainz_artist_id: string | null;
 	album_identity_state: AlbumIdentityState;
 	track_count: number;
-	total_duration_seconds: number;
+	total_duration_seconds: number | null;
 	total_size_bytes: number;
 	format: string | null;
 	year: number | null;

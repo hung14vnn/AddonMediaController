@@ -1049,6 +1049,7 @@ class LibraryDB(PersistenceBase):
                        MAX(lf.imported_at) AS last_imported_at,
                        COUNT(*) AS track_count,
                        SUM(lf.file_size_bytes) AS total_size_bytes,
+                       SUM(COALESCE(lf.duration_seconds, 0)) AS total_duration_seconds,
                        -- highest-quality format present, not MIN() which is
                        -- alphabetical (would pick 'alac' over 'flac', 'mp3' over 'wav')
                        (SELECT q.file_format FROM library_files q
@@ -1289,6 +1290,7 @@ class LibraryDB(PersistenceBase):
                        MAX(lf.album_artist_mbid) AS album_artist_mbid,
                        COUNT(*) AS track_count,
                        SUM(lf.file_size_bytes) AS total_size_bytes,
+                       SUM(COALESCE(lf.duration_seconds, 0)) AS total_duration_seconds,
                        MAX(lf.year) AS year,
                        MAX(lf.is_compilation) AS is_compilation,
                        MAX(lf.imported_at) AS last_imported_at,
@@ -1371,21 +1373,26 @@ class LibraryDB(PersistenceBase):
         return await self._read(operation)
 
     async def get_files_by_artist_mbids(
-        self, mbids: list[str], *, limit: int = 50
+        self, mbids: list[str], *, limit: int = 50, order: str = "random"
     ) -> list[dict[str, Any]]:
         """Active files whose track OR album artist is one of the given MBIDs
-        (Q12 same-artist + related pools; Q23 union semantics). Random order."""
+        (Q12 same-artist + related pools; Q23 union semantics). Random order by
+        default; ``order=\"recent\"`` returns newest imports first for callers
+        that need a deterministic subset (appears-on fan-out)."""
         if not mbids:
             return []
 
         def operation(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             ph = ", ".join("?" for _ in mbids)
+            order_sql = (
+                "imported_at DESC, id" if order == "recent" else "RANDOM()"
+            )
             rows = conn.execute(
                 f"""
                 SELECT * FROM library_files
                 WHERE deleted_at IS NULL AND release_group_mbid IS NOT NULL
                   AND (artist_mbid IN ({ph}) OR album_artist_mbid IN ({ph}))
-                ORDER BY RANDOM()
+                ORDER BY {order_sql}
                 LIMIT ?
                 """,
                 (*mbids, *mbids, max(limit, 1)),

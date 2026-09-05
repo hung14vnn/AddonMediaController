@@ -203,6 +203,11 @@ class LibraryViewService:
                 artist_mbid=r.get("album_artist_mbid"),
                 year=r.get("year"),
                 track_count=r.get("track_count"),
+                total_duration_seconds=(
+                    float(r["total_duration_seconds"])
+                    if r.get("total_duration_seconds")
+                    else None
+                ),
                 cover_available=bool(r.get("cover_url")),
                 date_added=int(r["last_imported_at"])
                 if r.get("last_imported_at")
@@ -357,6 +362,7 @@ class LibraryViewService:
             artist_name=s.album_artist_name,
             year=s.year,
             track_count=s.track_count,
+            total_duration_seconds=getattr(s, "total_duration_seconds", None),
             cover_available=bool(s.cover_url),
             date_added=int(s.last_imported_at)
             if s.last_imported_at is not None
@@ -378,7 +384,12 @@ class LibraryViewService:
 
     async def _album_from_rows(self, rg_mbid: str, rows: list[dict]) -> ViewAlbum:
         first = rows[0]
-        total_duration = sum(float(r.get("duration_seconds") or 0.0) for r in rows)
+        has_duration = any(r.get("duration_seconds") for r in rows)
+        total_duration = (
+            sum(float(r.get("duration_seconds") or 0.0) for r in rows)
+            if has_duration
+            else None
+        )
         date_added = max((r.get("imported_at") or 0) for r in rows)
         etag = await self._cover.get_release_group_cover_etag(rg_mbid)
         return ViewAlbum(
