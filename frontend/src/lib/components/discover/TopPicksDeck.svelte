@@ -15,6 +15,7 @@
 	import { integrationStore } from '$lib/stores/integration';
 	import { libraryStore } from '$lib/stores/library';
 	import { getApiUrl } from '$lib/api/api-utils';
+	import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 
 	interface Props {
 		section: TopPicksSection;
@@ -78,7 +79,7 @@
 			class="relative overflow-hidden rounded-2xl border border-primary/15 bg-base-200/40 p-5 shadow-[0_4px_24px_oklch(from_var(--color-primary)_l_c_h_/_0.08)] sm:p-6"
 		>
 			<HeroBackdrop
-				imageUrl={featured.album.mbid
+			imageUrl={!usesMobileLowPowerVisuals() && featured.album.mbid
 					? getApiUrl(`/api/v1/covers/release-group/${featured.album.mbid}?size=500`)
 					: null}
 				opacity={0.1}

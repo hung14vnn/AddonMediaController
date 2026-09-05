@@ -8,7 +8,6 @@ import type {
 } from '$lib/player/types';
 import { createPlaybackSource } from '$lib/player/createSource';
 import { API } from '$lib/constants';
-import { api } from '$lib/api/client';
 import {
 	reportProgress as reportJellyfinProgress,
 	reportStop as reportJellyfinStop,
@@ -30,6 +29,7 @@ import {
 	getStoredVolume,
 	storeVolume,
 	storeSessionData,
+	storeSessionProgress,
 	stampOrigin,
 	stampSingleOrigin,
 	showQueueMutationToast,
@@ -83,7 +83,8 @@ const MAX_CONSECUTIVE_ERRORS = 3;
 const PREVIEW_FADE_S = 2;
 const ERROR_SKIP_DELAY_MS = 2000;
 const MAX_HISTORY_LENGTH = 3;
-const SESSION_PERSIST_INTERVAL_MS = 5000;
+const SESSION_PERSIST_INTERVAL_MS = 30_000;
+const PROGRESS_UI_INTERVAL_MS = 250;
 const JELLYFIN_REPORT_INTERVAL_MS = 10_000;
 const MAX_JELLYFIN_REPORT_FAILURES = 3;
 
@@ -93,7 +94,10 @@ function createPlayerStore() {
 	let playbackState = $state<PlaybackState>('idle');
 	let isSeekable = $state(true);
 	let volume = $state(getStoredVolume());
-	let progress = $state(0);
+	let progress = 0;
+	let visibleProgress = $state(0);
+	let lastProgressPublishTime = -Infinity;
+	let progressLifecycleRegistered = false;
 	let duration = $state(0);
 	let playbackOrigin = $state<PlaybackOrigin>('https');
 	let isPlayerVisible = $state(false);
@@ -172,6 +176,42 @@ function createPlayerStore() {
 	}
 	function persist(): void {
 		doPersistSession(nowPlaying, queue, currentIndex, progress, shuffleEnabled, shuffleOrder);
+		lastPersistTime = Date.now();
+	}
+
+	function setProgress(value: number, force = true): void {
+		progress = value;
+		if (typeof document !== 'undefined' && document.hidden) return;
+		const now = Date.now();
+		if (force || now - lastProgressPublishTime >= PROGRESS_UI_INTERVAL_MS) {
+			visibleProgress = value;
+			lastProgressPublishTime = now;
+		}
+	}
+
+	function checkpointProgress(): void {
+		if (!nowPlaying) return;
+		storeSessionProgress(progress);
+		lastPersistTime = Date.now();
+	}
+
+	function handleProgressVisibility(): void {
+		if (document.hidden) checkpointProgress();
+		else setProgress(progress);
+	}
+
+	function registerProgressLifecycle(): void {
+		if (progressLifecycleRegistered || typeof document === 'undefined') return;
+		document.addEventListener('visibilitychange', handleProgressVisibility);
+		window.addEventListener('pagehide', checkpointProgress);
+		progressLifecycleRegistered = true;
+	}
+
+	function unregisterProgressLifecycle(): void {
+		if (!progressLifecycleRegistered) return;
+		document.removeEventListener('visibilitychange', handleProgressVisibility);
+		window.removeEventListener('pagehide', checkpointProgress);
+		progressLifecycleRegistered = false;
 	}
 
 	function registerBeforeUnload(): void {
@@ -198,6 +238,7 @@ function createPlayerStore() {
 	}
 
 	function applyResetState(): void {
+		unregisterProgressLifecycle();
 		radioSession.end();
 		currentSource?.destroy();
 		currentSource = null;
@@ -216,7 +257,7 @@ function createPlayerStore() {
 		isSeekable = true;
 		isPlayerVisible = false;
 		karaokeActive = false;
-		progress = 0;
+		setProgress(0);
 		duration = 0;
 		queue = [];
 		currentIndex = 0;
@@ -329,7 +370,7 @@ function createPlayerStore() {
 		updateMediaSessionControls();
 		playbackState = 'loading';
 		playbackOrigin = 'https';
-		progress = 0;
+		setProgress(0);
 		duration = 0;
 		if (prevItem) {
 			// Reporting the previous track must not hold up the new native media
@@ -447,16 +488,16 @@ function createPlayerStore() {
 		if (item?.sourceType === 'plex' && item.plexRatingKey)
 			void reportPlexStopped(item.plexRatingKey);
 		if (item?.sourceType === 'navidrome') void reportNavidromeStopped(item.trackSourceId);
-		persist();
+		checkpointProgress();
 	}
 
 	function seekCurrent(seconds: number): void {
 		if (!isSeekable) return;
 		const target = duration > 0 ? Math.max(0, Math.min(seconds, duration)) : Math.max(0, seconds);
 		currentSource?.seekTo(target);
-		progress = target;
+		setProgress(target);
 		updateMediaSessionPosition(progress, duration);
-		persist();
+		checkpointProgress();
 	}
 
 	function nextTrack(): void {
@@ -483,6 +524,8 @@ function createPlayerStore() {
 	}
 
 	function subscribeToSource(source: PlaybackSource, gen: number): void {
+		registerProgressLifecycle();
+		lastProgressPublishTime = -Infinity;
 		source.onStateChange((state) => {
 			if (gen !== loadGeneration) return;
 			playbackState = state;
@@ -502,6 +545,8 @@ function createPlayerStore() {
 					}));
 			}
 			if (state === 'paused') {
+				setProgress(progress);
+				checkpointProgress();
 				const jf = getJellyfinItem();
 				if (jf?.playSessionId)
 					void reportJellyfinProgress(jf.trackSourceId, jf.playSessionId, progress, true);
@@ -535,7 +580,7 @@ function createPlayerStore() {
 		});
 		source.onProgress((t, d) => {
 			if (gen !== loadGeneration) return;
-			progress = t;
+			setProgress(t, false);
 			duration = d;
 			// Do not publish MediaSession position on every native `timeupdate`.
 			// iOS fires this event several times per second, and each
@@ -552,9 +597,11 @@ function createPlayerStore() {
 				}
 			}
 			const now = Date.now();
-			if (now - lastPersistTime >= SESSION_PERSIST_INTERVAL_MS) {
-				lastPersistTime = now;
-				persist();
+			if (
+				(typeof document === 'undefined' || !document.hidden) &&
+				now - lastPersistTime >= SESSION_PERSIST_INTERVAL_MS
+			) {
+				checkpointProgress();
 			}
 		});
 		source.onError(() => {
@@ -581,7 +628,7 @@ function createPlayerStore() {
 		}
 		subscribeToSource(source, gen);
 		source.seekTo(startAt);
-		progress = startAt;
+		setProgress(startAt);
 		if (resume) source.play();
 		else playbackState = 'paused';
 	}
@@ -620,6 +667,10 @@ function createPlayerStore() {
 			return volume;
 		},
 		get progress() {
+			return visibleProgress;
+		},
+		// Non-reactive clock for reporting/scrobbling while the UI is suspended.
+		get playbackProgress() {
 			return progress;
 		},
 		get duration() {
@@ -1047,7 +1098,7 @@ function createPlayerStore() {
 			playbackState = 'loading';
 			playbackOrigin = 'https';
 			isSeekable = true;
-			progress = 0;
+			setProgress(0);
 			duration = 0;
 			const gen = ++loadGeneration;
 
@@ -1078,8 +1129,10 @@ function createPlayerStore() {
 					duration = source.getDuration();
 					if (resume.progress > 0) {
 						source.seekTo(resume.progress);
-						progress = resume.progress;
+						setProgress(resume.progress);
 					}
+					// Establish a checkpoint identity even for legacy stored sessions.
+					persist();
 				} catch {
 					if (gen !== loadGeneration) return;
 					playbackState = 'error';

@@ -12,6 +12,7 @@
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import AlbumDownloadStatus from '$lib/components/downloads/AlbumDownloadStatus.svelte';
 	import { formatArtistCredit, formatTotalDuration } from '$lib/utils/formatting';
+	import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 	import {
 		Check,
 		Trash2,
@@ -281,7 +282,9 @@
 	}
 
 	let backdropUrl = $derived(
-		album.musicbrainz_id.startsWith('spotify:')
+		usesMobileLowPowerVisuals()
+			? null
+			: album.musicbrainz_id.startsWith('spotify:')
 			? album.album_thumb_url || album.cover_url || null
 			: album.musicbrainz_id
 			? getApiUrl(`/api/v1/covers/release-group/${album.musicbrainz_id}?size=500`)

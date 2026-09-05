@@ -3,6 +3,18 @@ import { playbackToast } from '$lib/stores/playbackToast.svelte';
 
 const VOLUME_STORAGE_KEY = 'droppedneedle_player_volume';
 const SESSION_STORAGE_KEY = 'droppedneedle_player_session';
+const PROGRESS_STORAGE_KEY = `${SESSION_STORAGE_KEY}_progress`;
+let checkpointId: string | null = null;
+
+/** Save only the position; never traverse the queue on playback ticks. */
+export function storeSessionProgress(progress: number): void {
+	if (!checkpointId || !Number.isFinite(progress) || progress < 0) return;
+	try {
+		localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify({ checkpointId, progress }));
+	} catch {
+		// Session persistence is best effort.
+	}
+}
 
 export type StoredSession = {
 	nowPlaying: NowPlaying;
@@ -95,7 +107,23 @@ export function getStoredSession(): StoredSession | null {
 		const stored = localStorage.getItem(SESSION_STORAGE_KEY);
 		if (!stored) return null;
 		const parsed = JSON.parse(stored);
-		if (parsed && parsed.nowPlaying) return parsed as StoredSession;
+		if (parsed && parsed.nowPlaying) {
+			checkpointId = parsed.checkpointId ?? null;
+			try {
+				const position = JSON.parse(localStorage.getItem(PROGRESS_STORAGE_KEY) ?? 'null');
+				if (
+					checkpointId &&
+					position?.checkpointId === checkpointId &&
+					Number.isFinite(position.progress) &&
+					position.progress >= 0
+				) {
+					parsed.progress = position.progress;
+				}
+			} catch {
+				// A damaged checkpoint must not prevent restoring the queue.
+			}
+			return parsed as StoredSession;
+		}
 	} catch {
 		/* empty */
 	}
@@ -103,12 +131,16 @@ export function getStoredSession(): StoredSession | null {
 }
 
 export function storeSessionData(data: StoredSession | null): void {
+	checkpointId = null;
 	try {
 		if (data) {
-			localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(data));
+			const nextId = `${Date.now()}-${Math.random()}`;
+			localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ ...data, checkpointId: nextId }));
+			checkpointId = nextId;
 		} else {
 			localStorage.removeItem(SESSION_STORAGE_KEY);
 		}
+		localStorage.removeItem(PROGRESS_STORAGE_KEY);
 	} catch {
 		/* empty */
 	}

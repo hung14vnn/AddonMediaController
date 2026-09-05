@@ -15,6 +15,7 @@
 		X
 	} from 'lucide-svelte';
 	import { getApiUrl } from '$lib/api/api-utils';
+	import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 	import { api } from '$lib/api/client';
 	import { API } from '$lib/constants';
 	import { discoverQueueDeck } from '$lib/stores/discoverQueueDeck.svelte';
@@ -224,7 +225,9 @@
 >
 	{#if current}
 		<HeroBackdrop
-			imageUrl={getApiUrl(`/api/v1/covers/release-group/${current.release_group_mbid}?size=500`)}
+			imageUrl={usesMobileLowPowerVisuals()
+				? null
+				: getApiUrl(`/api/v1/covers/release-group/${current.release_group_mbid}?size=500`)}
 			opacity={0.16}
 			hoverOpacity={0.22}
 			blur={22}

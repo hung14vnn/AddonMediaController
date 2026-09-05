@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kiểm tra phát audio</title>
+  <style>
+    body { font: 16px system-ui; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+    label, audio, button, input, select { display: block; margin: 1rem 0; }
+    input, select, audio { width: 100%; box-sizing: border-box; }
+    input, select, button { font: inherit; padding: .6rem; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <h1>Kiểm tra phát audio</h1>
+  <p>Đăng nhập ứng dụng trước, rồi mở trang này trên cùng địa chỉ máy chủ.
+    Dừng nhạc và đóng các tab ứng dụng khác trước khi thử.</p>
+  <label for="source">URL stream local hoặc ID bài hát</label>
+  <input id="source" autocomplete="off" placeholder="ID hoặc /api/v1/stream/local/…">
+  <label for="mode">Cách phát</label>
+  <select id="mode">
+    <option value="http">HTTP trực tiếp</option>
+    <option value="blob">Tải cùng file rồi phát bằng Blob</option>
+  </select>
+  <button id="load">Nạp bài</button>
+  <button id="stop">Dừng và giải phóng file</button>
+  <audio id="audio" controls preload="none"></audio>
+  <p>Sau khi nạp xong, nhấn Play trên thanh audio rồi khóa màn hình nghe 10 phút.
+    Để máy nguội về mức ban đầu trước khi thử chế độ còn lại. Giữ nguyên bài hát,
+    âm lượng, kết nối và thiết bị phát; không sạc trong hai lượt so sánh.</p>
+  <p>Trang này không chạy bộ đếm giờ, cập nhật tiến độ bằng JavaScript, lưu queue,
+    kết nối realtime hoặc Web Audio. Blob ở đây được tải trực tiếp, chưa đi qua IndexedDB.
+    Kết quả giúp khoanh vùng, không phải phép đo nhiệt độ hay CPU.</p>
+  <pre id="status" role="status">Chưa nạp bài.</pre>
+  <script>
+    const audio = document.getElementById('audio');
+    const source = document.getElementById('source');
+    const mode = document.getElementById('mode');
+    const status = document.getElementById('status');
+    let objectUrl = null;
+    let controller = null;
+    let generation = 0;
+
+    function stop() {
+      generation++;
+      controller?.abort();
+      controller = null;
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+    }
+
+    function streamUrl(value) {
+      if (!value) throw new Error('Nhập ID hoặc URL stream local.');
+      const basePath = location.pathname.slice(0, location.pathname.lastIndexOf('/') + 1);
+      const streamPath = `${basePath}api/v1/stream/local/`;
+      const url = new URL(value.includes('/') ? value : streamPath + encodeURIComponent(value), location.href);
+      if (url.origin !== location.origin || !url.pathname.startsWith(streamPath)) {
+        throw new Error('Chỉ chấp nhận URL stream local trên cùng máy chủ và đường dẫn ứng dụng.');
+      }
+      return url.href;
+    }
+
+    document.getElementById('load').addEventListener('click', async () => {
+      stop();
+      const currentGeneration = generation;
+      try {
+        const url = streamUrl(source.value.trim());
+        const selectedMode = mode.value;
+        audio.crossOrigin = 'use-credentials';
+        audio.preload = 'auto';
+        if (selectedMode === 'blob') {
+          status.textContent = 'Đang tải file để tạo Blob…';
+          controller = new AbortController();
+          const response = await fetch(url, { credentials: 'include', cache: 'no-store', signal: controller.signal });
+          if (!response.ok || response.status === 206) throw new Error(`Không tải được toàn bộ file: HTTP ${response.status}`);
+          const blob = await response.blob();
+          if (currentGeneration !== generation) return;
+          if (!blob.size) throw new Error('File rỗng.');
+          objectUrl = URL.createObjectURL(blob);
+          audio.src = objectUrl;
+          status.textContent = `Blob: ${(blob.size / 1024 / 1024).toFixed(1)} MiB. Nhấn Play rồi khóa màn hình.`;
+        } else {
+          audio.src = url;
+          status.textContent = 'HTTP trực tiếp. Nhấn Play rồi khóa màn hình.';
+        }
+        audio.load();
+      } catch (error) {
+        if (currentGeneration === generation) status.textContent = error.message;
+      }
+    });
+    document.getElementById('stop').addEventListener('click', () => {
+      stop();
+      status.textContent = 'Đã dừng và giải phóng file.';
+    });
+    audio.addEventListener('error', () => {
+      if (audio.hasAttribute('src')) status.textContent = `Lỗi audio ${audio.error?.code}: ${audio.error?.message || 'Không phát được file.'}`;
+    });
+  </script>
+</body>
+</html>

@@ -48,14 +48,14 @@ describe('automatic playback audio cache', () => {
 		await clearPlaybackCache();
 	});
 
-	it('pre-downloads once and reuses the cached Blob URL', async () => {
+	it('pre-downloads once and reuses the cached URL', async () => {
 		expect(await cachePlaybackTrack(input('track-1'))).toBe(true);
 
 		const first = await createPlaybackTrackUrl(input('track-1'));
 		const second = await createPlaybackTrackUrl(input('track-1'));
 
-		expect(first?.url).toMatch(/^blob:/);
-		expect(second?.url).toMatch(/^blob:/);
+		expect(first?.url).toMatch(/^(blob:|.*__hify_audio_cache__)/);
+		expect(second?.url).toMatch(/^(blob:|.*__hify_audio_cache__)/);
 		expect(first?.source).toBe('cache');
 		expect(second?.source).toBe('cache');
 		expect(mockApiGet).toHaveBeenCalledTimes(1);
@@ -85,7 +85,7 @@ describe('automatic playback audio cache', () => {
 		expect(await deletePlaybackTracks(userId, ['removed'])).toBe(1);
 
 		const downloadedAgain = await createPlaybackTrackUrl(input('removed'));
-		expect(downloadedAgain?.url).toMatch(/^blob:/);
+		expect(downloadedAgain?.url).toMatch(/^(blob:|.*__hify_audio_cache__)/);
 		expect(mockApiGet).toHaveBeenCalledTimes(2);
 		downloadedAgain?.revoke();
 	});
@@ -98,7 +98,7 @@ describe('automatic playback audio cache', () => {
 		expect(mockApiGet).toHaveBeenCalledTimes(PLAYBACK_CACHE_MAX_TRACKS + 1);
 
 		const evicted = await createPlaybackTrackUrl(input('lru-00'));
-		expect(evicted?.url).toMatch(/^blob:/);
+		expect(evicted?.url).toMatch(/^(blob:|.*__hify_audio_cache__)/);
 		expect(mockApiGet).toHaveBeenCalledTimes(PLAYBACK_CACHE_MAX_TRACKS + 2);
 		evicted?.revoke();
 	});

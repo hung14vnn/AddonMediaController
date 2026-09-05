@@ -63,7 +63,7 @@ describe('offline audio storage', () => {
 		);
 	});
 
-	it('marks an object URL from an offline download as downloaded', async () => {
+	it('returns a cache URL from an offline download', async () => {
 		const body = new Blob(['offline audio'], { type: 'audio/mpeg' });
 		mockApiGet.mockResolvedValue(new Response(body, { status: 200 }));
 		await downloadOfflineTrack({
@@ -77,7 +77,7 @@ describe('offline audio storage', () => {
 		});
 
 		const url = await createOfflineTrackUrl(userId, trackId);
-		expect(url?.url).toMatch(/^blob:/);
+		expect(url?.url).toMatch(/^(blob:|.*__hify_audio_cache__)/);
 		expect(url?.source).toBe('download');
 		url?.revoke();
 	});

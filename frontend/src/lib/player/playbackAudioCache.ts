@@ -1,5 +1,6 @@
 import { createStore, del, get, getMany, keys, set } from 'idb-keyval';
 import { api } from '$lib/api/client';
+import { createServiceWorkerAudioUrl } from '$lib/utils/serviceWorkerAudio';
 
 const AUDIO_DB = createStore('hify-playback-audio-cache-v1', 'audio');
 const METADATA_DB = createStore('hify-playback-audio-cache-metadata-v1', 'tracks');
@@ -204,7 +205,7 @@ export async function cachePlaybackTrack(input: PlaybackCacheInput): Promise<boo
 	return (await task) !== null;
 }
 
-/** Return an object URL, downloading the complete track first when it is not cached yet. */
+/** Return a cache URL, downloading the complete track first when it is not cached yet. */
 export async function createPlaybackTrackUrl(
 	input: PlaybackCacheInput
 ): Promise<{ url: string; revoke: () => void; source: 'cache' } | null> {
@@ -223,6 +224,10 @@ export async function createPlaybackTrackUrl(
 		return null;
 	}
 	await set(key, { ...metadata, lastAccessedAt: Date.now() }, METADATA_DB).catch(() => undefined);
+	const serviceWorkerUrl = await createServiceWorkerAudioUrl('playback', key);
+	if (serviceWorkerUrl) {
+		return { url: serviceWorkerUrl, revoke: () => undefined, source: 'cache' };
+	}
 	const url = URL.createObjectURL(blob);
 	return { url, revoke: () => URL.revokeObjectURL(url), source: 'cache' };
 }

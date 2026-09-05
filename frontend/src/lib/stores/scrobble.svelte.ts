@@ -194,7 +194,7 @@ function createScrobbleManager() {
 				track = {
 					trackKey: currentKey,
 					accumulatedMs: 0,
-					lastProgressS: playerStore.progress,
+					lastProgressS: playerStore.playbackProgress,
 					nowPlayingSent: false,
 					scrobbled: false,
 					startedAt: Math.floor(Date.now() / 1000),
@@ -210,7 +210,7 @@ function createScrobbleManager() {
 
 			progressInterval = setInterval(() => {
 				if (!track) return;
-				const progressS = playerStore.progress;
+				const progressS = playerStore.playbackProgress;
 				const currentDurationMs = Math.round(playerStore.duration * 1000);
 				const currentNp = playerStore.nowPlaying;
 

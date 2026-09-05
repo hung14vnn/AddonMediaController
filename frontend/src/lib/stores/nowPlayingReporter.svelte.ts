@@ -39,7 +39,7 @@ function createNowPlayingReporter() {
 				source: np.sourceType,
 				device: 'web',
 				is_paused: state === 'paused' || state === 'buffering' || state === 'loading',
-				progress_ms: Math.round(playerStore.progress * 1000),
+				progress_ms: Math.round(playerStore.playbackProgress * 1000),
 				duration_ms: Math.round(playerStore.duration * 1000)
 			});
 			cleared = false;

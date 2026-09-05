@@ -1,6 +1,7 @@
 import { del, get, getMany, keys, set, createStore } from 'idb-keyval';
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
+import { createServiceWorkerAudioUrl } from '$lib/utils/serviceWorkerAudio';
 
 const AUDIO_DB = createStore('hify-offline-audio-v1', 'tracks');
 const METADATA_DB = createStore('hify-offline-audio-metadata-v1', 'tracks');
@@ -110,6 +111,11 @@ export async function createOfflineTrackUrl(
 ): Promise<{ url: string; revoke: () => void; source: 'download' } | null> {
 	const blob = await getOfflineTrackBlob(userId, trackId);
 	if (!blob) return null;
+	const key = encodedKey(userId, trackId);
+	const serviceWorkerUrl = await createServiceWorkerAudioUrl('offline', key);
+	if (serviceWorkerUrl) {
+		return { url: serviceWorkerUrl, revoke: () => undefined, source: 'download' };
+	}
 	const url = URL.createObjectURL(blob);
 	return { url, revoke: () => URL.revokeObjectURL(url), source: 'download' };
 }

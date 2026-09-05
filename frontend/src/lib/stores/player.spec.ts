@@ -1,6 +1,15 @@
 /* eslint-disable @typescript-eslint/no-unsafe-function-type */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { QueueItem } from '$lib/player/types';
+import { createOfflineTrackUrl } from '$lib/offline/offlineAudio';
+import { createPlaybackTrackUrl } from '$lib/player/playbackAudioCache';
+import { createPlaybackSource } from '$lib/player/createSource';
+import { authStore } from '$lib/stores/authStore.svelte';
+
+vi.mock('$lib/offline/offlineAudio', () => ({ createOfflineTrackUrl: vi.fn(async () => null) }));
+vi.mock('$lib/player/playbackAudioCache', () => ({
+	createPlaybackTrackUrl: vi.fn(async () => null)
+}));
 
 type StateCallback = (state: import('$lib/player/types').PlaybackState) => void;
 type ProgressCallback = (currentTime: number, duration: number) => void;
@@ -126,6 +135,107 @@ function makeItems(count: number): QueueItem[] {
 		makeItem({ trackSourceId: `vid-${i}`, trackName: `Track ${i + 1}`, trackNumber: i + 1 })
 	);
 }
+
+describe('low power playback', () => {
+	let doc: EventTarget & { hidden: boolean };
+	let savedStorage: Storage;
+	beforeEach(() => {
+		savedStorage = localStorage;
+		playerStore.stop();
+		storage.clear();
+		vi.clearAllMocks();
+		vi.useFakeTimers();
+		doc = Object.assign(new EventTarget(), { hidden: false });
+		vi.stubGlobal('document', doc);
+		vi.stubGlobal('window', new EventTarget());
+	});
+	afterEach(() => {
+		playerStore.stop();
+		vi.restoreAllMocks();
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+		vi.stubGlobal('localStorage', savedStorage);
+	});
+	async function start() {
+		playerStore.playQueue(makeItems(100));
+		await vi.advanceTimersByTimeAsync(0);
+	}
+	it('throttles visible progress while keeping the hidden playback clock exact', async () => {
+		await start();
+		capturedProgressCallbacks[0](1, 180);
+		capturedProgressCallbacks[0](1.1, 180);
+		expect(playerStore.progress).toBe(1);
+		expect(playerStore.playbackProgress).toBe(1.1);
+		await vi.advanceTimersByTimeAsync(250);
+		capturedProgressCallbacks[0](1.25, 180);
+		expect(playerStore.progress).toBe(1.25);
+		doc.hidden = true;
+		doc.dispatchEvent(new Event('visibilitychange'));
+		await vi.advanceTimersByTimeAsync(60_000);
+		capturedProgressCallbacks[0](61, 180);
+		expect(playerStore.progress).toBe(1.25);
+		expect(playerStore.playbackProgress).toBe(61);
+		doc.hidden = false;
+		doc.dispatchEvent(new Event('visibilitychange'));
+		expect(playerStore.progress).toBe(61);
+	});
+	it('checkpoints only position and stops periodic writes when hidden', async () => {
+		await start();
+		const snapshot = storage.get('droppedneedle_player_session');
+		vi.mocked(localStorage.setItem).mockClear();
+		await vi.advanceTimersByTimeAsync(30_000);
+		capturedProgressCallbacks[0](30, 180);
+		expect(localStorage.setItem).toHaveBeenCalledTimes(1);
+		expect(storage.get('droppedneedle_player_session')).toBe(snapshot);
+		expect(playerStore.restoreSession()?.progress).toBe(30);
+		doc.hidden = true;
+		doc.dispatchEvent(new Event('visibilitychange'));
+		vi.mocked(localStorage.setItem).mockClear();
+		await vi.advanceTimersByTimeAsync(60_000);
+		capturedProgressCallbacks[0](90, 180);
+		expect(localStorage.setItem).not.toHaveBeenCalled();
+		window.dispatchEvent(new Event('pagehide'));
+		expect(playerStore.restoreSession()?.progress).toBe(90);
+		playerStore.seekTo(42);
+		expect(playerStore.restoreSession()?.progress).toBe(42);
+		expect(storage.get('droppedneedle_player_session')).toBe(snapshot);
+		const stale = storage.get('droppedneedle_player_session_progress')!;
+		playerStore.seekTo(50);
+		playerStore.addToQueue(makeItem());
+		storage.set('droppedneedle_player_session_progress', stale);
+		expect(playerStore.restoreSession()?.progress).toBe(50);
+	});
+	it('keeps playback cache on online iPhones and downloaded audio offline', async () => {
+		vi.spyOn(authStore, 'user', 'get').mockReturnValue({ id: 'test-user' } as NonNullable<
+			typeof authStore.user
+		>);
+		const nav = { userAgent: 'iPhone', onLine: true };
+		vi.stubGlobal('navigator', nav);
+		vi.mocked(createPlaybackTrackUrl).mockResolvedValueOnce({
+			url: 'blob:cached',
+			source: 'cache',
+			revoke: vi.fn()
+		});
+		await start();
+		expect(createOfflineTrackUrl).toHaveBeenCalled();
+		expect(createPlaybackTrackUrl).toHaveBeenCalled();
+		expect(createPlaybackSource).toHaveBeenLastCalledWith('local', {
+			url: 'blob:cached',
+			seekable: true,
+			cleanup: expect.any(Function)
+		});
+		expect(playerStore.playbackOrigin).toBe('cache');
+		nav.onLine = false;
+		vi.mocked(createOfflineTrackUrl).mockResolvedValueOnce({
+			url: 'blob:offline',
+			source: 'download',
+			revoke: vi.fn()
+		});
+		await start();
+		expect(createOfflineTrackUrl).toHaveBeenCalled();
+		expect(playerStore.playbackOrigin).toBe('download');
+	});
+});
 
 describe('playerStore queue methods', () => {
 	beforeEach(() => {
