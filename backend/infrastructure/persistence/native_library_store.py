@@ -29163,6 +29163,39 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def summarize_active_maintenance_work(self) -> dict[str, Any]:
+        """Uncapped aggregate over the panel's groupable maintenance rows.
+
+        The activity feed collapses non-failed maintenance cards into one summed
+        card (#345), so it needs honest totals beyond the feed's LIMIT 20 window.
+        Mirrors the feed's mapping: repair rows whose scope purpose is not
+        management_readiness (readiness renders as identity_preparation) in a
+        non-terminal visible state. Failed rows stay individual and are excluded.
+        """
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any]:
+            row = connection.execute(
+                "SELECT COUNT(*) jobs, "
+                "COALESCE(SUM(job.completed_count), 0) processed, "
+                "COALESCE(SUM(job.expected_work_count), 0) total, "
+                "COALESCE(SUM(job.succeeded_count), 0) succeeded, "
+                "COALESCE(SUM(job.failed_count), 0) failed, "
+                "COALESCE(SUM(job.skipped_count), 0) skipped, "
+                "MIN(COALESCE(job.started_at, job.created_at)) started_at, "
+                "MAX(job.updated_at) updated_at, "
+                "MAX(job.state = 'running') running, "
+                "MAX(job.state = 'paused') paused "
+                "FROM library_operation_jobs job "
+                "LEFT JOIN library_repair_snapshots repair ON repair.job_id = job.id "
+                "WHERE job.kind = 'repair' "
+                "AND COALESCE(json_extract(repair.scope_json, '$.purpose'), "
+                "'existing_matches') != 'management_readiness' "
+                "AND job.state IN ('queued', 'running', 'paused')",
+            ).fetchone()
+            return dict(row)
+
+        return await self._read(operation)
+
     async def list_repair_operation_jobs(
         self,
         *,

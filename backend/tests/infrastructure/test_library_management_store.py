@@ -2,6 +2,7 @@ import hashlib
 import json
 import sqlite3
 import threading
+import uuid
 from pathlib import Path
 
 import msgspec
@@ -2282,3 +2283,87 @@ async def test_management_preview_seal_reports_per_source_deferred_breakdown(
         strict=False,
     )
     assert response.deferred_sources == summary["deferred_sources"]
+
+
+def _repair_job(key: str, created_at: float) -> OperationJob:
+    return OperationJob(
+        id=str(uuid.uuid4()),
+        kind="repair",
+        requested_by_user_id=None,
+        input_catalog_revision=0,
+        idempotency_key=key,
+        created_at=created_at,
+    )
+
+
+@pytest.mark.asyncio
+async def test_maintenance_summary_aggregates_only_visible_repairs(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT OR IGNORE INTO local_albums "
+            "(id, root_id, grouping_key, title, title_folded, album_artist_name, "
+            "album_artist_name_folded, album_artist_id, grouping_source, created_at, updated_at) "
+            "VALUES ('album-2', 'root-1', 'group-2', 'Album Two', 'album two', 'Artist', "
+            "'artist', 'artist-1', 'automatic', 1, 1)"
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO local_tracks "
+            "(id, local_album_id, root_id, file_path, relative_path, path_hash, "
+            "file_size_bytes, file_mtime_ns, stat_revision, stat_revision_kind, "
+            "tag_revision, title, title_folded, artist_name, artist_name_folded, "
+            "album_title, album_title_folded, album_artist_name, "
+            "album_artist_name_folded, disc_number, track_number, file_format, "
+            "ingest_source, imported_at, membership_source) "
+            "VALUES ('track-2', 'album-2', 'root-1', '/music/track2.flac', "
+            "'track2.flac', 'path-hash-2', 100, 10, 'stat-2', 'exact', 'tag-2', "
+            "'Track Two', 'track two', 'Artist', 'artist', 'Album Two', 'album two', "
+            "'Artist', 'artist', 1, 1, 'flac', 'scan', 1, 'automatic')"
+        )
+    hygiene_a = await store.create_repair_operation(
+        _repair_job("summary:a", 1),
+        scope={"purpose": "catalog_identity_hygiene", "album_ids": ["album-1"]},
+        source_matcher_version=None,
+        target_matcher_version="v1",
+    )
+    await store.create_repair_operation(
+        _repair_job("summary:b", 2),
+        scope={"purpose": "artist_identity_reconciliation", "album_ids": ["album-2"]},
+        source_matcher_version=None,
+        target_matcher_version="v1",
+    )
+    await store.create_repair_operation(
+        _repair_job("summary:c", 3),
+        scope={"purpose": "management_readiness", "root_ids": []},
+        source_matcher_version=None,
+        target_matcher_version="v1",
+    )
+    doomed = await store.create_repair_operation(
+        _repair_job("summary:d", 4),
+        scope={"purpose": "catalog_identity_hygiene", "album_ids": ["album-1"]},
+        source_matcher_version=None,
+        target_matcher_version="v1",
+    )
+    for _ in range(4):
+        claimed = await store.claim_operation_job(
+            "worker", now=10, lease_seconds=60, kind="repair"
+        )
+        assert claimed is not None
+    await store.finish_operation_job(
+        str(doomed["id"]), "worker", state="failed", terminal_code="NOPE", now=11
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_operation_jobs SET completed_count = 1 WHERE id = ?",
+            (str(hygiene_a["id"]),),
+        )
+
+    summary = await store.summarize_active_maintenance_work()
+
+    assert summary["jobs"] == 2
+    assert (summary["processed"], summary["total"]) == (1, 2)
+    assert (summary["succeeded"], summary["failed"], summary["skipped"]) == (0, 0, 0)
+    assert (summary["running"], summary["paused"]) == (1, 0)
+    assert summary["started_at"] == 10.0
+    assert summary["updated_at"] == 10.0
