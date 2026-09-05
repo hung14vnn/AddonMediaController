@@ -205,6 +205,7 @@ from core.task_registry import TaskRegistry
 from core.tasks import (
     start_cache_cleanup_task,
     start_disk_cache_cleanup_task,
+    start_navidrome_playlist_export_task,
     start_memory_maintenance_task,
 )
 from infrastructure.msgspec_fastapi import MsgSpecJSONResponse
@@ -668,6 +669,7 @@ async def production_target_lifespan(app: FastAPI):
             cover_disk_cache=get_target_consumer_composition().covers.disk_cache,
         )
         get_target_karaoke_service().start()
+        start_navidrome_playlist_export_task()
 
         def root_paths() -> dict[str, Path]:
             return {
