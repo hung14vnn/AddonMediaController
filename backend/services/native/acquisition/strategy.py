@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from core.exceptions import NewznabApiError
 from models.acquisition_quality import AcquisitionQualitySnapshot
 from models.download import ScoredCandidate, TargetAlbum, TargetTrack
 from models.download_identity import soulseek_identity, usenet_identity
@@ -834,6 +835,31 @@ class UsenetStrategy:
             },
         )
 
+    async def _blocklist_content_rejected_release(self, task, release) -> None:  # noqa: ANN001
+        """Quarantine a release whose NZB fetch returned an indexer error/limit page.
+
+        A non-NZB body is deterministic (propagation can't fix an indexer error
+        page), so no age leniency applies - unlike ``maybe_blocklist_on_failure``.
+        Same title+size identity and ``download_failed`` reason vocabulary so a
+        follow-up search/score run skips this release.
+        """
+        identity = usenet_identity(release.title, release.size_bytes)
+        await self._store.record_quarantine(
+            source="usenet",
+            identity=identity,
+            reason="download_failed",
+            release_group_mbid=task.release_group_mbid,
+        )
+        logger.info(
+            "download.quarantined",
+            extra={
+                "task_id": task.id,
+                "source": "usenet",
+                "reason": "nzb_content_rejected",
+                "identity": identity,
+            },
+        )
+
     async def search_and_score(self, task, *, timeout, auto, manual, snapshot):  # noqa: ANN001, ANN201
         # A track upgrade still fetches the album NZB (D4), but its floor is the
         # RECORDING's held tier - _upgrade_held_tier scopes by download_type.
@@ -949,6 +975,18 @@ class UsenetStrategy:
                     post_processing=self._post_processing,
                 )
             )
+        except NewznabApiError as exc:
+            if getattr(exc, "content_rejection", False):
+                # Deterministic indexer content rejection (an HTML error/limit page
+                # instead of an NZB): blocklist this release by title+size so a
+                # re-search skips it, then fail over surfacing the safe message.
+                # ``exc.message`` (not ``str(exc)``) - ``str`` appends ``details``,
+                # which carries the indexer body snippet that must never reach the
+                # user-facing task error.
+                await self._blocklist_content_rejected_release(task, release)
+                raise OrchestrationError(exc.message) from exc
+            logger.exception("Usenet enqueue failed for task %s", task.id)
+            raise OrchestrationError("enqueue failed") from exc
         except Exception as exc:  # noqa: BLE001 - any client error -> task failed
             logger.exception("Usenet enqueue failed for task %s", task.id)
             raise OrchestrationError("enqueue failed") from exc

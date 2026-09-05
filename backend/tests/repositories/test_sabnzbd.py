@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from core.exceptions import NewznabApiError
 from repositories.protocols.download_client import EnqueueRequest, TaskHandle
 from repositories.sabnzbd.sabnzbd_client import SabnzbdApiError, SabnzbdClient
 from repositories.sabnzbd.sabnzbd_download_client import SabnzbdDownloadClient
@@ -463,3 +464,57 @@ async def test_addfile_is_not_retried():
     with pytest.raises(SabnzbdApiError):
         await client.add_file("droppedneedle-t1", b"<nzb></nzb>")
     assert calls["n"] == 1  # one attempt only - no retry
+
+
+# --- fetch_nzb: indexer error/limit page vs real NZB (issue #266) ------------------
+
+
+def _nzb_client(body: bytes, *, status=200, content_type="text/html; charset=utf-8"):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status, content=body, headers={"Content-Type": content_type}
+        )
+
+    return SabnzbdClient(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        "http://sab:8080",
+        "key",
+        retry_backoff=0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_fetch_nzb_html_error_page_raises_with_details():
+    # An indexer answering the enclosure URL with an HTML error/limit page (HTTP
+    # 200) must raise with structured details + code so the enqueue path can tell
+    # a deterministic content rejection from a retry-worthy transport error.
+    body = (
+        b'<html><head><title>Indexer error</title></head><body><error code="300"'
+        b' description="Limit reached, maximum downloads exceeded"/>'
+        b"<!-- padding to push past truncation " + b"x" * 300 + b" --></body></html>"
+    )
+    client = _nzb_client(body)
+    with pytest.raises(NewznabApiError) as exc_info:
+        await client.fetch_nzb("http://indexer.example/getnzb/abc&i=1&r=key")
+    exc = exc_info.value
+    assert exc.message == (
+        "indexer returned a non-NZB body (likely an error/limit page), not an NZB"
+    )
+    assert exc.code == 200
+    assert exc.details == {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "snippet": body.decode("ascii")[:200],
+    }
+    assert len(exc.details["snippet"]) <= 200
+    assert getattr(exc, "content_rejection", False) is True
+
+
+@pytest.mark.asyncio
+async def test_fetch_nzb_valid_nzb_returns_bytes():
+    nzb = (
+        b'<?xml version="1.0" encoding="utf-8"?>'
+        b'<nzb xmlns="http://www.newzbin.com/DTD/nzb/nzb-1.1"><file></file></nzb>'
+    )
+    client = _nzb_client(nzb, content_type="application/x-nzb")
+    assert await client.fetch_nzb("http://indexer.example/getnzb/abc") == nzb

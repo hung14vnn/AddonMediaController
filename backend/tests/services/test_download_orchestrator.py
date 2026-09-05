@@ -22,6 +22,7 @@ import pytest
 
 from core.exceptions import (
     ConflictError,
+    NewznabApiError,
     PermissionDeniedError,
     ResourceNotFoundError,
     ValidationError,
@@ -31,7 +32,7 @@ from infrastructure.persistence.download_store import DownloadStore
 from infrastructure.sse_publisher import SSEPublisher
 from models.common import ServiceStatus
 from models.download import DownloadTask, ScoredCandidate
-from models.download_identity import soulseek_identity
+from models.download_identity import soulseek_identity, usenet_identity
 from models.download_manifest import (
     DownloadManifest,
     ExpectedFile,
@@ -44,6 +45,7 @@ from repositories.protocols.download_client import (
     MountDiagnosis,
     TaskHandle,
 )
+from repositories.protocols.indexer import UsenetRelease
 from services.native.download_orchestrator import (
     _OUT_COMPLETED,
     _OUT_NO_TRANSFER,
@@ -372,6 +374,7 @@ def _build(
     soulseek_enabled=True,
     album_service=None,
     wanted_store=None,
+    usenet_client=None,
 ):
     db_path = tmp_path / "library.db"
     store = DownloadStore(db_path=db_path, write_lock=threading.Lock())
@@ -428,6 +431,7 @@ def _build(
         soulseek_enabled=soulseek_enabled,
         album_service=album_service,
         wanted_store=wanted_store,
+        usenet_client=usenet_client,
     )
     return store, orch, file_processor, library
 
@@ -1124,6 +1128,131 @@ async def test_failover_skips_dead_peer_and_completes_via_next_candidate(
     assert final.status == "completed"
     assert final.source_username == "goodpeer"  # advanced past the dead peer
     assert len(lib.rows) == 2
+
+
+class _RejectFirstNzbClient:
+    """Fake SABnzbd client: the first NZB fetch hits an indexer error/limit page
+    (HTTP 200 HTML body), the retry fetches a real NZB and completes."""
+
+    def __init__(self):
+        self.enqueue_calls = 0
+        self.cancel = AsyncMock(return_value=True)
+        self.abort = AsyncMock(return_value=True)
+
+    @property
+    def client_name(self):
+        return "sabnzbd"
+
+    def is_configured(self):
+        return True
+
+    async def health_check(self):
+        return ServiceStatus(status="ok")
+
+    async def enqueue(self, request):
+        self.enqueue_calls += 1
+        if self.enqueue_calls == 1:
+            error = NewznabApiError(
+                "indexer returned a non-NZB body (likely an error/limit page),"
+                " not an NZB",
+                details={
+                    "status": 200,
+                    "content_type": "text/html",
+                    "snippet": "<html>Limit reached</html>",
+                },
+                code=200,
+            )
+            error.content_rejection = True
+            raise error
+        return TaskHandle(
+            source="usenet", job_name=request.job_name, nzo_id="nzo-2"
+        )
+
+    async def get_status(self, handle):
+        return _status(
+            "completed",
+            succeeded=["track.flac"],
+            files_total=1,
+            files_completed=1,
+            bytes_=100,
+        )
+
+    async def list_completed_files(self, handle):
+        return [Path("/fake/track.flac")]
+
+    async def diagnose_downloads_mount(self):
+        return MountDiagnosis(supported=False)
+
+
+def _usenet_candidate(title, size_bytes, score=0.9):
+    return ScoredCandidate(
+        source="usenet",
+        files=[],
+        usenet_release=UsenetRelease(
+            indexer_id="ds",
+            indexer_name="DS",
+            guid=title,
+            title=title,
+            nzb_url=f"https://indexer.example/getnzb/{title}",
+            size_bytes=size_bytes,
+        ),
+        coherence=score,
+        file_confidence=score,
+        final_score=score,
+        tier="auto",
+    )
+
+
+@pytest.mark.asyncio
+async def test_usenet_nzb_content_rejection_fails_over_to_next_candidate(
+    tmp_path: Path,
+):
+    """The first candidate's NZB fetch returns an indexer error page: the release
+    is blocklisted, the loop advances, and the second candidate completes."""
+    sab = _RejectFirstNzbClient()
+    store, orch, fp, lib = _build(tmp_path, usenet_client=sab, max_failover=3)
+    fp.process_downloaded_folder = AsyncMock(
+        return_value=ProcessResult(succeeded=[str(tmp_path / "lib" / "t.flac")], failed=[])
+    )
+    task = await _new_task(
+        store,
+        source="usenet",
+        download_type="track",
+        track_count=1,
+        release_mbid="release-1",
+        release_track_mbid="release-track-1",
+        recording_mbid="recording-1",
+        track_title="Track 1",
+        track_number=1,
+        disc_number=1,
+        track_duration_seconds=200.0,
+    )
+    first = _usenet_candidate("Artist - Album [FLAC]", 350 * 1024 * 1024)
+    second = _usenet_candidate("Artist - Album [MP3]", 120 * 1024 * 1024, score=0.85)
+    job = await store.create_search_job(
+        user_id="user-a",
+        artist_name="Artist",
+        album_title="Album",
+        year=2020,
+        track_count=1,
+        release_group_mbid="rg-1",
+        search_query="Artist - Album",
+    )
+    await store.set_search_job_candidates(job.id, [first, second])
+    await store.link_picked_candidate(
+        task.id, job.id, 0, "", "", 0.9, source="usenet", download_client="sabnzbd"
+    )
+    task = await store.get_task(task.id)
+
+    await orch._run_with_failover(task)
+
+    final = await store.get_task(task.id)
+    assert sab.enqueue_calls == 2  # the second candidate was attempted
+    assert final.status == "completed"
+    assert final.candidate_index == 1
+    assert ("usenet", usenet_identity("Artist - Album [FLAC]", 350 * 1024 * 1024)) in (
+        await store.load_quarantine_set()
+    )
 
 
 @pytest.mark.asyncio

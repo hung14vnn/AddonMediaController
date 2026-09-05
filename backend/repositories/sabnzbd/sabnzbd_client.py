@@ -200,9 +200,19 @@ class SabnzbdClient:
         content = response.content
         head = content[:512].lstrip().lower()
         if not (head.startswith(b"<?xml") or head.startswith(b"<nzb") or b"<nzb" in head):
-            raise NewznabApiError(
-                "indexer returned a non-NZB body (likely an error/limit page), not an NZB"
+            error = NewznabApiError(
+                "indexer returned a non-NZB body (likely an error/limit page), not an NZB",
+                details={
+                    "status": response.status_code,
+                    "content_type": response.headers.get("content-type"),
+                    "snippet": response.text[:200],
+                },
+                code=response.status_code,
             )
+            # Deterministic content rejection (an indexer error/limit page, not a
+            # transport failure): the Usenet enqueue path blocklists on this marker.
+            error.content_rejection = True
+            raise error
         return content
 
     async def _get(self, extra: dict[str, str], *, timeout: float) -> Any:
