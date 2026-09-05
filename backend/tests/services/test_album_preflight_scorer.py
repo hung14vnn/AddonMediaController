@@ -837,3 +837,21 @@ async def test_high_score_deadmau5_candidate_reaches_auto():
     assert candidates
     top = candidates[0]
     assert top.tier == "auto"
+
+
+@pytest.mark.asyncio
+async def test_severely_incomplete_candidate_capped_to_manual():
+    """#388: a 1-file candidate for an 11-track album scores above the auto
+    threshold on identity signals but must not auto-accept - it stays listed
+    for manual review instead."""
+    parent = "Radiohead OK Computer 1997"
+    files = [_mk(parent, "Radiohead - OK Computer - 01 Airbag.flac")]
+    target = TargetAlbum(
+        artist_name="Radiohead", album_title="OK Computer", year=1997, track_count=11
+    )
+    scorer = AlbumPreflightScorer(_store())
+    candidates = await scorer.rank(target, files, snapshot=policy_snapshot())
+    assert candidates
+    top = candidates[0]
+    assert top.final_score >= 0.70
+    assert top.tier == "manual"

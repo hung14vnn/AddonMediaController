@@ -579,6 +579,22 @@ class AlbumPreflightScorer:
             else:
                 tier = "rejected"
 
+            if tier == "auto" and target.track_count and target.track_count > 1:
+                count_ratio = len(audio) / target.track_count
+                if count_ratio < 0.5:
+                    if final >= manual_threshold and coherence >= manual_threshold:
+                        tier = "manual"
+                        logger.info(
+                            "preflight.completeness_capped",
+                            extra={
+                                "parent_directory": parent,
+                                "final_score": round(final, 4),
+                                "count_ratio": round(count_ratio, 4),
+                                "track_count": target.track_count,
+                            },
+                        )
+                    else:
+                        tier = "rejected"
             # Folder-worst evidence from per-file projections; attached so the
             # orchestrator's stored-snapshot recheck and the review UI reuse the
             # SAME evaluation instead of re-deriving from raw files.

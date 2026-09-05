@@ -496,6 +496,8 @@ class SoulseekStrategy:
                 for value in candidate.files
                 if _file_serves_expected(value, expected_tracks)
             ]
+            if not serving:
+                raise OrchestrationError("candidate has no files serving the remaining tracks")
 
         files = [
             DownloadFileRef(
