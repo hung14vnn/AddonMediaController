@@ -1,4 +1,5 @@
 import { withBasePath } from './basePath';
+import { isIosDevice } from './mobilePerformance';
 
 export type ServiceWorkerAudioKind = 'playback' | 'offline';
 
@@ -94,14 +95,6 @@ function supportsAudioRoute(controller: ServiceWorker): Promise<boolean> {
 		}
 	});
 	return capabilityPromise;
-}
-
-function isIosDevice(): boolean {
-	const userAgent = navigator.userAgent;
-	return (
-		/iPhone|iPad|iPod/.test(userAgent) ||
-		(/Macintosh/.test(userAgent) && navigator.maxTouchPoints > 1)
-	);
 }
 
 function buildAudioUrl(kind: ServiceWorkerAudioKind, key: string): string {

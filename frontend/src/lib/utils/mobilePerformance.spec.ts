@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	installMobileLowPowerVisuals,
 	MOBILE_LOW_POWER_CLASS,
+	isIosDevice,
 	usesMobileLowPowerVisuals
 } from './mobilePerformance';
 
@@ -16,6 +17,20 @@ describe('mobile low-power visuals', () => {
 
 		vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)' });
 		expect(usesMobileLowPowerVisuals()).toBe(true);
+	});
+
+	it('recognizes iPadOS desktop user agents for WebKit-specific workarounds', () => {
+		vi.stubGlobal('navigator', {
+			userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)',
+			maxTouchPoints: 5
+		});
+		expect(isIosDevice()).toBe(true);
+
+		vi.stubGlobal('navigator', {
+			userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)',
+			maxTouchPoints: 0
+		});
+		expect(isIosDevice()).toBe(false);
 	});
 
 	it('recognizes touch-first tablets with desktop user agents', () => {

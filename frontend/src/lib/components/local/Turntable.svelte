@@ -260,7 +260,7 @@
 		<div class="flex w-full max-w-md flex-col items-center gap-1 text-center">
 			<div class="flex items-center gap-2">
 				{#if isPlaying}
-					<div class="now-playing-bars now-playing-bars--sm">
+					<div class="now-playing-bars now-playing-bars--sm now-playing-bars--playing">
 						<span></span><span></span><span></span>
 					</div>
 				{/if}

@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { AlertCircle, Loader2 } from 'lucide-svelte';
+	import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 
 	type AmLyricsElement = HTMLElement & {
 		currentTime: number;
 		duration: number;
+		interpolate: boolean;
 	};
 
 	const AM_LYRICS_CDN_URL =
@@ -68,6 +70,7 @@
 	let loading = $state(true);
 	let failed = $state(false);
 	let lyricsObserver: MutationObserver | undefined;
+	const disableWordInterpolation = usesMobileLowPowerVisuals();
 
 	function applyAttributes(target: AmLyricsElement) {
 		target.setAttribute('song-title', title);
@@ -84,7 +87,17 @@
 		target.setAttribute('highlight-color', '#ffffff');
 		target.setAttribute('hover-background-color', 'rgba(255, 255, 255, 0.08)');
 		target.setAttribute('autoscroll', '');
-		target.setAttribute('interpolate', '');
+		// am-lyrics defaults interpolate=true and keeps a requestAnimationFrame
+		// loop alive for smooth syllable highlighting. That loop is the dominant
+		// CPU cost observed on mobile while lyrics are open, so use discrete word
+		// updates there while retaining synchronized lyrics and auto-scroll.
+		if (disableWordInterpolation) {
+			target.removeAttribute('interpolate');
+			target.interpolate = false;
+		} else {
+			target.setAttribute('interpolate', '');
+			target.interpolate = true;
+		}
 	}
 
 	function injectMonochromeStyle(target: AmLyricsElement, attempts = 0) {
@@ -118,6 +131,24 @@
 			.lyrics-line.pre-active { opacity: .58; }
 			.lyrics-line-container { transition: transform .55s cubic-bezier(.22,1,.36,1) !important; }
 			.no-lyrics { color: rgba(255,255,255,.55) !important; font-size: 1rem !important; }
+			${
+				disableWordInterpolation
+					? `
+					.lyrics-line::before,
+					.lyrics-line-container,
+					.lyrics-word,
+					.lyrics-syllable,
+					.lyrics-syllable span.char {
+						animation: none !important;
+						transition: none !important;
+						transform: none !important;
+					}
+					/* Keep am-lyrics' scroll-animate transform so line scrolling remains smooth. */
+					.lyrics-line.active:not(.scroll-animate) { transform: none !important; }
+					.lyrics-line-container { transform: none !important; }
+					`
+					: ''
+			}
 		`;
 		root.appendChild(style);
 	}

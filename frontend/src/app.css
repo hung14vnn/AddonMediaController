@@ -898,6 +898,12 @@ textarea {
 	animation: none !important;
 }
 
+/* The tiny bars beside the active track are a playback status indicator. Keep
+   this animation on mobile even when larger decorative animations are paused. */
+.mobile-low-power-playback .now-playing-bars--playing span {
+	animation: now-playing-bar 1.2s ease-in-out infinite !important;
+}
+
 .mobile-low-power-playback .local-lyrics-artwork {
 	display: none !important;
 }
