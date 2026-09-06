@@ -69,6 +69,7 @@ if TYPE_CHECKING:
     )
     from services.native.target_import_library_service import TargetImportLibraryService
     from services.preferences_service import PreferencesService
+    from services.plugin_sources import PluginSourceRegistry
     from infrastructure.audio.fingerprinter import AudioFingerprinter
 
 
@@ -104,6 +105,7 @@ class EditionConversionService:
         import_library: "TargetImportLibraryService",
         audio: AudioMetadataEngine | None = None,
         clock: Callable[[], float] = time.time,
+        plugin_sources: "PluginSourceRegistry | None" = None,
     ) -> None:
         self._store = store
         self._albums = album_service
@@ -118,6 +120,19 @@ class EditionConversionService:
         self._audio = audio or AudioMetadataEngine()
         self._import_library = import_library
         self._clock = clock
+        self._plugin_sources = plugin_sources
+
+    def _is_download_source_ready(self) -> bool:
+        if self._preferences.is_download_source_ready():
+            return True
+        return bool(
+            self._plugin_sources is not None and self._plugin_sources.is_any_source_ready()
+        )
+
+    def _is_plugin_source_ready(self) -> bool:
+        return bool(
+            self._plugin_sources is not None and self._plugin_sources.is_any_source_ready()
+        )
 
     async def create_preflight(
         self,
@@ -227,7 +242,7 @@ class EditionConversionService:
             expected_input_revision=input_revision,
             expected_identity_revision=identity_revision,
             preflight_token_hash=hashlib.sha256(token.encode()).hexdigest(),
-            download_source_ready=self._preferences.is_download_source_ready(),
+            download_source_ready=self._is_download_source_ready(),
             required_temporary_bytes=(
                 sum(int(track["file_size_bytes"]) for track in tracks)
                 + kept_size
@@ -268,7 +283,7 @@ class EditionConversionService:
         if not hmac.compare_digest(token_hash, job.preflight_token_hash):
             raise ValidationError("The edition-conversion preflight token is invalid.")
         await self._assert_current(job)
-        if job.acquire_count and not self._preferences.is_download_source_ready():
+        if job.acquire_count and not self._is_download_source_ready():
             raise ValidationError(
                 "Set up a music acquisition source before matching this edition."
             )
@@ -320,7 +335,7 @@ class EditionConversionService:
         target_ordinals: list[int],
         expected_row_revision: int,
     ) -> EditionConversionStatusResponse:
-        if not self._preferences.is_download_source_ready():
+        if not self._is_download_source_ready():
             raise ValidationError(
                 "Set up a music acquisition source before retrying these tracks."
             )
@@ -454,7 +469,7 @@ class EditionConversionService:
         uncovered = set(target_by_ordinal) - reusable - set(kept_by_ordinal)
         if (
             uncovered - active_downloads
-            and not self._preferences.is_download_source_ready()
+            and not self._is_download_source_ready()
         ):
             raise ValidationError(
                 "Set up a music acquisition source before continuing this conversion."
@@ -589,11 +604,16 @@ class EditionConversionService:
         self, job: EditionConversionJob, selected: set[int] | None = None
     ) -> None:
         album = await self._albums.get_album_info(job.target_release_group_mbid)
-        source_kind = (
-            "download"
-            if self._preferences.is_builtin_download_ready()
-            else "free_music"
-        )
+        # Plugin acquisitions resolve through the download service (the
+        # orchestrator fans out to plugin clients), so they share the
+        # "download" bookkeeping kind - the CHECK only allows
+        # download/free_music. The elif keeps plugin-only installs off Free Music.
+        if self._preferences.is_builtin_download_ready():
+            source_kind = "download"
+        elif self._is_plugin_source_ready():
+            source_kind = "download"
+        else:
+            source_kind = "free_music"
         for target in job.targets:
             if target.state != "pending" or (
                 selected is not None and target.ordinal not in selected
@@ -1386,7 +1406,7 @@ class EditionConversionService:
             album_title=job.target_album_title,
             artist_name=job.target_artist_name,
             state=job.state,
-            download_source_ready=self._preferences.is_download_source_ready(),
+            download_source_ready=self._is_download_source_ready(),
             required_temporary_bytes=job.required_temporary_bytes,
             kept_count=job.kept_count,
             acquire_count=job.acquire_count,

@@ -20,7 +20,7 @@ from typing import Protocol, runtime_checkable
 
 from infrastructure.msgspec_fastapi import AppStruct
 from models.common import ServiceStatus
-from repositories.protocols.download_client import DownloadSearchResult
+from repositories.protocols.download_client import DownloadFileRef, DownloadSearchResult
 
 
 class UsenetRelease(AppStruct):
@@ -50,13 +50,32 @@ class UsenetRelease(AppStruct):
     password: int = 0
 
 
+class PluginSearchResult(AppStruct):
+    """One release-shaped result from a plugin indexer (v1 acquisition API).
+
+    The plugin ranks its own source (it knows it best); DroppedNeedle applies the
+    policy gates. ``files`` non-empty = per-file mode (exact files are enqueued and
+    imported, like the Soulseek path); empty = folder mode (the client downloads the
+    release and ``list_completed_files`` feeds the MB-tracklist folder import, like
+    the Usenet path). ``payload`` is the plugin's opaque correlation token, handed
+    back verbatim at enqueue - it is what the client matches to its own records."""
+
+    title: str
+    size_bytes: int = 0
+    score: float = 0.0  # plugin-provided confidence 0..1 (clamped)
+    quality_tier: str = ""  # optional; "" = unknown (spec pipeline handles)
+    files: list[DownloadFileRef] = []  # per-file mode
+    payload: str = ""  # opaque; must be msgspec-serialisable-safe (str)
+
+
 class IndexerResult(AppStruct):
     """A single search result, tagged by ``source`` so both pipelines share one
-    protocol return type. Exactly one of ``soulseek``/``usenet`` is set."""
+    protocol return type. Exactly one of ``soulseek``/``usenet``/``plugin`` is set."""
 
     source: str
     soulseek: DownloadSearchResult | None = None
     usenet: UsenetRelease | None = None
+    plugin: PluginSearchResult | None = None
 
 
 @runtime_checkable

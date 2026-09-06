@@ -143,6 +143,7 @@ class WantedWatcherService:
         get_acquisition: "Callable[[], AcquisitionDispatcher] | None" = None,
         inter_want_delay: float = 5.0,
         provider_available: Callable[[], bool] | None = None,
+        plugin_host=None,  # noqa: ANN001 - PluginHost, optional (01b events)
     ) -> None:
         self._store = wanted_store
         self._requests = request_history
@@ -160,6 +161,32 @@ class WantedWatcherService:
         self._preferences = preferences
         self._inter_want_delay = inter_want_delay
         self._provider_available = provider_available
+        self._plugin_host = plugin_host
+        self._plugin_tasks: set[asyncio.Task] = set()
+
+    def _emit_request_fulfilled(self, *, request_id: str, user_id: str) -> None:
+        host = getattr(self, "_plugin_host", None)
+        if host is None:
+            return
+        try:
+            import uuid as _uuid
+
+            from infrastructure.plugins.protocols import PluginEvent, RequestEvent
+
+            event = PluginEvent(
+                kind="request_fulfilled",
+                payload=RequestEvent(
+                    request_id=request_id,
+                    user_id=user_id or "",
+                    release_group_mbid=request_id,
+                    status="imported",
+                ),
+                causation_id=_uuid.uuid4().hex,
+            )
+            task = asyncio.create_task(host.dispatch_event(event))
+            task.add_done_callback(self._plugin_tasks.discard)
+        except Exception:  # noqa: BLE001 - events never break the watcher
+            pass
 
     async def run_sweep(self) -> WantedSweepSummary:
         # Read fresh every sweep so flipping the toggle needs no restart (§5.3).
@@ -1037,6 +1064,7 @@ class WantedWatcherService:
                 "wanted.request_flip_failed", extra={"release_group_mbid": mbid}
             )
         logger.info("wanted.fulfilled", extra={"release_group_mbid": mbid})
+        self._emit_request_fulfilled(request_id=mbid, user_id=getattr(want, "user_id", ""))
         await self._publish(want, "wanted_fulfilled", {})
 
     async def _publish(self, want: WantedWatch, event: str, extra: dict) -> None:

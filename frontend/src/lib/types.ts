@@ -1594,10 +1594,7 @@ export type AlbumSort = 'recent' | 'title' | 'artist';
 export type TrackSort = 'recent' | 'title' | 'artist' | 'album';
 
 export type AlbumIdentityState =
-	| 'local_only'
-	| 'release_group_linked'
-	| 'release_linked'
-	| 'custom_edition';
+	'local_only' | 'release_group_linked' | 'release_linked' | 'custom_edition';
 
 export type ArtistIdentityState = 'local_only' | 'musicbrainz_linked';
 
@@ -1749,14 +1746,7 @@ export interface LibraryAlbumDetail extends LibraryAlbumSummary {
 }
 
 export type ContributionState =
-	| 'draft'
-	| 'ready'
-	| 'seeded'
-	| 'verifying'
-	| 'linked'
-	| 'needs_review'
-	| 'stale'
-	| 'cancelled';
+	'draft' | 'ready' | 'seeded' | 'verifying' | 'linked' | 'needs_review' | 'stale' | 'cancelled';
 
 export type ContributionNextAction =
 	| 'edit_draft'
@@ -2164,17 +2154,7 @@ export interface LibraryStats {
 }
 
 export type ScanFrequency =
-	| 'manual'
-	| '5min'
-	| '10min'
-	| '30min'
-	| '1hr'
-	| '6hr'
-	| '12hr'
-	| '24hr'
-	| '3d'
-	| '7d'
-	| 'daily';
+	'manual' | '5min' | '10min' | '30min' | '1hr' | '6hr' | '12hr' | '24hr' | '3d' | '7d' | 'daily';
 
 export interface LibraryScanSchedule {
 	scan_frequency: ScanFrequency;
@@ -2498,14 +2478,33 @@ export interface UsenetRelease {
 	usenet_date?: number | null;
 }
 
+export interface PluginFileRef {
+	username: string;
+	filename: string;
+	size: number;
+}
+
+// Hand-mirrors backend PluginSearchResult (repositories/protocols/indexer.py).
+export interface PluginSearchResult {
+	title: string;
+	size_bytes: number;
+	score: number;
+	quality_tier: string;
+	files: PluginFileRef[];
+	payload: string;
+}
+
 export interface ScoredCandidate {
-	// "soulseek" | "usenet" - selects the review-card variant (D16). Optional for
+	// "soulseek" | "usenet" | "plugin:<name>" - selects the review-card variant (D16). Optional for
 	// backward-compat with older cached candidate blobs (default soulseek).
 	source?: string;
 	username: string;
 	parent_directory: string;
 	files: DownloadSearchResultFile[];
 	usenet_release?: UsenetRelease | null;
+	// Plugin release for a "plugin:<name>" candidate; null for soulseek/usenet.
+	// Optional for backward-compat with older cached candidate blobs.
+	plugin_release?: PluginSearchResult | null;
 	coherence: number;
 	file_confidence: number;
 	final_score: number;
@@ -2513,6 +2512,61 @@ export interface ScoredCandidate {
 	candidate_index?: number | null;
 	quality_evidence?: AudioQualityEvidence | null;
 	quality_decision?: QualityDecision | null;
+}
+
+// Hand-mirrors backend PluginSourceInfo (api/v1/schemas/plugins.py).
+export type PluginSourceHealth = 'ok' | 'degraded' | 'error' | 'unknown';
+export interface PluginSourceInfo {
+	key: string;
+	plugin: string;
+	display_name: string;
+	has_client: boolean;
+	has_indexer: boolean;
+	target_source: string;
+	configured: boolean;
+	health: PluginSourceHealth;
+}
+
+// Hand-mirrors backend PluginSourcesResponse (api/v1/schemas/plugins.py).
+export interface PluginSourcesResponse {
+	sources: PluginSourceInfo[];
+}
+// Alias used by acquisition surfaces; same wire shape as PluginSourcesResponse.
+export type PluginSourceListResponse = PluginSourcesResponse;
+
+// Hand-mirrors backend PluginStreamRef (infrastructure/plugins/protocols.py).
+// Exactly one of path/url is set; url may carry transcode hints.
+export interface PluginStreamRef {
+	path: string;
+	url: string;
+	content_type: string;
+	duration_seconds: number | null;
+}
+
+// Hand-mirrors backend PluginRouteRequest/PluginRouteResponse
+// (infrastructure/plugins/protocols.py). Typed transport for one /ext/ call.
+export interface PluginRouteRequest {
+	method: string;
+	subpath: string;
+	query: Record<string, string>;
+	body: unknown;
+}
+export interface PluginRouteResponse {
+	status: number;
+	body: unknown;
+}
+
+// Envelope for the admin-only plugin UI bundle (panel.js) RPC channel.
+export interface PluginUiRpcRequest {
+	request_id: string;
+	method: string;
+	params: Record<string, unknown>;
+}
+export interface PluginUiRpcResponse {
+	request_id: string;
+	ok: boolean;
+	result: unknown;
+	error: string | null;
 }
 
 export interface SearchAlbumResponse {
@@ -2544,13 +2598,7 @@ export interface DismissReviewResponse {
 }
 
 export type DownloadStatus =
-	| 'queued'
-	| 'downloading'
-	| 'processing'
-	| 'completed'
-	| 'partial'
-	| 'failed'
-	| 'cancelled';
+	'queued' | 'downloading' | 'processing' | 'completed' | 'partial' | 'failed' | 'cancelled';
 
 // mirrors backend DownloadTaskResponse (api/v1/schemas/download.py)
 export interface DownloadTask {
@@ -2594,12 +2642,7 @@ export interface DownloadTask {
 	// [15, 30, 60, 120, 240, 480]. Empty when auto-retry is off. Drives the Wanted ladder.
 	retry_ladder_minutes: number[];
 	acquisition_cleanup_state:
-		| 'not_tracked'
-		| 'in_use'
-		| 'pending'
-		| 'complete'
-		| 'preserved'
-		| 'needs_attention';
+		'not_tracked' | 'in_use' | 'pending' | 'complete' | 'preserved' | 'needs_attention';
 	quality_format: string | null;
 	quality_bitrate?: number | null;
 	quality_bit_depth: number | null;
@@ -2736,13 +2779,7 @@ export interface DownloadProgress extends DownloadSourceUpdate {
 
 // mirrors backend RequestAcceptedResponse (api/v1/schemas/request.py)
 export type RequestAcceptedStatus =
-	| 'pending'
-	| 'awaiting_approval'
-	| 'queued'
-	| 'downloading'
-	| 'cancelling'
-	| 'failed'
-	| 'imported';
+	'pending' | 'awaiting_approval' | 'queued' | 'downloading' | 'cancelling' | 'failed' | 'imported';
 
 export interface RequestAccepted {
 	success: boolean;

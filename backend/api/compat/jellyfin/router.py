@@ -949,6 +949,54 @@ def _audio_stream_model(track) -> jm.MediaStream:
     )
 
 
+async def _plugin_user(request, services, user):
+    if user is not None and getattr(user, "id", None):
+        uid = getattr(user, "id", None)
+        if isinstance(uid, str) and uid:
+            return user
+    try:
+        token = extract_token(request)
+    except Exception:  # noqa: BLE001 - token failure means no plugin fallback
+        return None
+    if not token:
+        return None
+    try:
+        found = await services.app_passwords.verify_token(token)
+    except Exception:  # noqa: BLE001 - token verify failure means no plugin fallback
+        return None
+    return found
+
+
+async def _plugin_audio_fallback(request, services, user, *, mbid: str, req_fmt: str | None, max_kbps: int | None, start_s: float, force: bool) -> Response | None:
+    authed = await _plugin_user(request, services, user)
+    if authed is None:
+        return None
+    user_id = getattr(authed, "id", None)
+    if not user_id or not isinstance(user_id, str):
+        return None
+    if not mbid or not isinstance(mbid, str):
+        return None
+    try:
+        from services.compat.plugin_stream_service import get_plugin_stream_service, stream_plugin_ref_response
+    except Exception:  # noqa: BLE001 - missing plugin service falls back to local audio
+        return None
+    try:
+        svc = get_plugin_stream_service()
+        ref = await svc.resolve(str(mbid), str(user_id))
+    except Exception:  # noqa: BLE001 - plugin resolve failure falls back to local audio
+        return None
+    if ref is None:
+        return None
+    try:
+        settings = services.preferences.get_connect_apps_settings()
+    except Exception:  # noqa: BLE001 - settings read failure falls back to local audio
+        return None
+    try:
+        return await stream_plugin_ref_response(service=svc, ref=ref, recording_mbid=str(mbid), user_id=str(user_id), requested_format=req_fmt, max_bitrate_kbps=max_kbps, force_original=force, start_seconds=start_s, settings=settings, concurrency=services.stream_concurrency, transcode=services.transcode, range_header=request.headers.get("Range"), is_disconnected=request.is_disconnected, estimate=False)
+    except Exception:  # noqa: BLE001 - plugin stream failure falls back to local handling
+        return None
+
+
 async def _serve_direct(services, file_id, request) -> Response:
     from services.compat.stream_concurrency import StreamCapacityError, leased_chunks
 
@@ -976,7 +1024,7 @@ async def _serve_direct(services, file_id, request) -> Response:
             media_type=headers.get("Content-Type", "application/octet-stream"),
             background=BackgroundTask(lease.release),
         )
-    except BaseException:
+    except BaseException:  # noqa: BLE001 - lease must release on any failure before re-raise
         await lease.release()
         raise
 
@@ -990,37 +1038,22 @@ async def _media_principal(request, services) -> str:
     return f"ip:{trusted_client_ip(request)}"
 
 
-async def _stream_decided(
-    request, services, internal, *, req_fmt, max_kbps, start_s, force
-):
+async def _stream_decided(request, services, internal, *, req_fmt, max_kbps, start_s, force, user=None):
     from services.compat.transcode_service import decide, ffmpeg_available
-
     track = await services.view.get_track(internal)
     if track is None:
+        plugin_resp = await _plugin_audio_fallback(request, services, user, mbid=internal, req_fmt=req_fmt, max_kbps=max_kbps, start_s=start_s, force=force)
+        if plugin_resp is not None:
+            return plugin_resp
         raise JellyfinError(404, "Item not found")
     settings = services.preferences.get_connect_apps_settings()
-    plan = decide(
-        track,
-        requested_format=req_fmt,
-        max_bitrate_kbps=max_kbps,
-        force_original=force,
-        start_seconds=start_s,
-        settings=settings,
-        ffmpeg_available=ffmpeg_available(),
-    )
+    plan = decide(track, requested_format=req_fmt, max_bitrate_kbps=max_kbps, force_original=force, start_seconds=start_s, settings=settings, ffmpeg_available=ffmpeg_available())
     if not plan.transcode:
         return await _serve_direct(services, internal, request)
     path = await services.local_files.resolve_validated_path(internal)
     from services.compat.stream_concurrency import StreamCapacityError
-
     try:
-        return await services.transcode.stream(
-            str(path),
-            plan,
-            principal=await _media_principal(request, services),
-            is_disconnected=request.is_disconnected,
-            estimate=False,
-        )
+        return await services.transcode.stream(str(path), plan, principal=await _media_principal(request, services), is_disconnected=request.is_disconnected, estimate=False)
     except StreamCapacityError:
         return Response(status_code=429, headers={"Retry-After": "1"})
 
@@ -1036,28 +1069,33 @@ async def _decode_track(services, item_id) -> str:
 
 
 async def _universal(request, services, user, *, item_id):
-    internal = await _decode_track(services, item_id)
+    try:
+        internal = await _decode_track(services, item_id)
+    except JellyfinError:
+        q0 = _params(request)
+        max_bps0 = _qint(request, "MaxStreamingBitrate", 0)
+        max_kbps0 = round(max_bps0 / 1000) if max_bps0 else None
+        start_s0 = _qint(request, "StartTimeTicks", 0) / JELLYFIN_TICKS_PER_SECOND
+        plugin_resp = await _plugin_audio_fallback(request, services, user, mbid=item_id, req_fmt=_map_jf_codec(q0.get("AudioCodec")), max_kbps=max_kbps0, start_s=start_s0, force=False)
+        if plugin_resp is not None:
+            return plugin_resp
+        raise
     q = _params(request)
-    max_bps = _qint(request, "MaxStreamingBitrate", 0)  # tolerate non-numeric -> 0
+    max_bps = _qint(request, "MaxStreamingBitrate", 0)
     max_kbps = round(max_bps / 1000) if max_bps else None
     start_s = _qint(request, "StartTimeTicks", 0) / JELLYFIN_TICKS_PER_SECOND
     accepted = _accepted_containers(q.get("Container"))
     track = await services.view.get_track(internal)
     if track is None:
+        plugin_resp = await _plugin_audio_fallback(request, services, user, mbid=internal, req_fmt=_map_jf_codec(q.get("AudioCodec")), max_kbps=max_kbps, start_s=start_s, force=False)
+        if plugin_resp is not None:
+            return plugin_resp
         raise JellyfinError(404, "Item not found")
     if accepted and track.file_format in accepted:
         req_fmt = None
     else:
         req_fmt = _map_jf_codec(q.get("AudioCodec"))
-    return await _stream_decided(
-        request,
-        services,
-        internal,
-        req_fmt=req_fmt,
-        max_kbps=max_kbps,
-        start_s=start_s,
-        force=False,
-    )
+    return await _stream_decided(request, services, internal, req_fmt=req_fmt, max_kbps=max_kbps, start_s=start_s, force=False, user=user)
 
 
 # Streaming is anonymous (auth=False): real Jellyfin's audio routes have no [Authorize],
@@ -1073,22 +1111,29 @@ async def audio_universal(
 
 
 async def _audio_stream(request, services, user, *, item_id):
-    internal = await _decode_track(services, item_id)
+    try:
+        internal = await _decode_track(services, item_id)
+    except JellyfinError:
+        q0 = _params(request)
+        audio_bps0 = _qint(request, "audioBitRate", 0)
+        max_kbps0 = round(audio_bps0 / 1000) if audio_bps0 else None
+        start_s0 = _qint(request, "startTimeTicks", 0) / JELLYFIN_TICKS_PER_SECOND
+        plugin_resp = await _plugin_audio_fallback(request, services, user, mbid=item_id, req_fmt=_map_jf_codec(q0.get("audioCodec")), max_kbps=max_kbps0, start_s=start_s0, force=False)
+        if plugin_resp is not None:
+            return plugin_resp
+        raise
     q = _params(request)
     if (q.get("static") or "").lower() == "true":
+        track = await services.view.get_track(internal)
+        if track is None:
+            plugin_resp = await _plugin_audio_fallback(request, services, user, mbid=internal, req_fmt=None, max_kbps=None, start_s=0.0, force=True)
+            if plugin_resp is not None:
+                return plugin_resp
         return await _serve_direct(services, internal, request)
-    audio_bps = _qint(request, "audioBitRate", 0)  # tolerate non-numeric -> 0
+    audio_bps = _qint(request, "audioBitRate", 0)
     max_kbps = round(audio_bps / 1000) if audio_bps else None
     start_s = _qint(request, "startTimeTicks", 0) / JELLYFIN_TICKS_PER_SECOND
-    return await _stream_decided(
-        request,
-        services,
-        internal,
-        req_fmt=_map_jf_codec(q.get("audioCodec")),
-        max_kbps=max_kbps,
-        start_s=start_s,
-        force=False,
-    )
+    return await _stream_decided(request, services, internal, req_fmt=_map_jf_codec(q.get("audioCodec")), max_kbps=max_kbps, start_s=start_s, force=False, user=user)
 
 
 @router.get("/Audio/{item_id}/stream")

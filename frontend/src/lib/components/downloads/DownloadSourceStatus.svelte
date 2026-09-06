@@ -178,6 +178,8 @@
 		</a>
 	</div>
 {/if}
+<!-- Plugin sources (source "plugin:<name>") intentionally take the generic path:
+	no remote-queue hints below - only Soulseek peers report queue telemetry. -->
 {#if source === 'spotiflac' && task.status === 'downloading' && !task.held_for_review}
 	<div
 		class:source-telemetry-compact={compact}
@@ -196,6 +198,7 @@
 			</div>
 		{/if}
 	</div>
+{:else if source === 'soulseek' && task.status === 'downloading' && !task.held_for_review}
 {:else if source === 'soulseek' && task.status === 'downloading' && !task.held_for_review}
 	<div
 		class:source-telemetry-compact={compact}

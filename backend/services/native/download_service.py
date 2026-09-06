@@ -169,6 +169,8 @@ class DownloadService:
         ownership_service: "LibraryOwnershipService | None" = None,
         library_reconciler=None,
         snapshot_factory=None,  # Callable[[], AcquisitionQualitySnapshot] (post-cutover)
+        plugin_sources=None,  # PluginSourceRegistry | None - live per-call, never cached
+        plugin_scorer=None,  # PluginReleaseScorer | None
     ):
         self._client = download_client
         self._indexer = indexer
@@ -196,6 +198,8 @@ class DownloadService:
         self._auto = auto_accept_threshold
         self._manual = manual_threshold
         self._enabled = enabled
+        self._plugin_sources = plugin_sources
+        self._plugin_scorer = plugin_scorer
         self._quota = quota_service
         self._pins = release_pin_store
         self._ownership = ownership_service
@@ -244,13 +248,50 @@ class DownloadService:
                 else:
                     _ordinary_held_action_lock_users[held_id] = users
 
+    def _client_for_source(self, source: str) -> str:
+        if source in _CLIENT_FOR_SOURCE:
+            return _CLIENT_FOR_SOURCE[source]
+        if source and source.startswith("plugin:"):
+            registry = self._plugin_sources
+            if registry is not None:
+                try:
+                    spec = registry.spec_for(source)
+                except Exception:  # noqa: BLE001 - absence reads as unknown
+                    spec = None
+                if spec is not None:
+                    return source
+            from core.exceptions import ValidationError as _VE
+
+            raise _VE(f"Unknown source {source}")
+        from core.exceptions import ValidationError as _VE2
+
+        raise _VE2(f"Unknown source {source}")
+
+    def _plugin_search_specs(self) -> list:
+        registry = self._plugin_sources
+        if registry is None:
+            return []
+        try:
+            specs = registry.specs
+        except Exception:  # noqa: BLE001 - absence reads as no plugins
+            return []
+        return [s for s in specs if getattr(s, "key", "") and getattr(s, "target_source", s.key) == s.key and getattr(s, "has_indexer", False)]
+
     def _ensure_enabled(self) -> None:
         # flag captured at construction; the config-save PUT clears the
-        # DownloadService singleton to pick up changes
-        if not self._enabled:
-            raise ConfigurationError(
-                "The download client is disabled. Enable it in Settings to start downloads."
-            )
+        # DownloadService singleton to pick up changes. Plugin state reads live.
+        if self._enabled:
+            return
+        registry = self._plugin_sources
+        if registry is not None:
+            try:
+                if registry.is_any_source_ready():
+                    return
+            except Exception:  # noqa: BLE001 - absence reads as disabled
+                pass
+        raise ConfigurationError(
+            "The download client is disabled. Enable it in Settings to start downloads."
+        )
 
     async def _already_satisfied(
         self, release_group_mbid: str, origin: str = "user"
@@ -540,7 +581,17 @@ class DownloadService:
                 candidates.extend(await self._search_usenet(target, snapshot=snapshot))
             except Exception:
                 logger.exception("usenet album search failed for job %s", job_id)
-
+        for spec in self._plugin_search_specs():
+            try:
+                candidates.extend(
+                    await self._search_plugin(target, spec, snapshot=snapshot)
+                )
+            except Exception:
+                logger.exception(
+                    "plugin album search failed for job %s source=%s",
+                    job_id,
+                    getattr(spec, "key", "?"),
+                )
         if not candidates and not soulseek_ok:
             await self._store.update_search_job_status(
                 job_id, "failed", error="search failed"
@@ -626,6 +677,61 @@ class DownloadService:
             track_count=target.track_count,
         )
 
+    async def _search_plugin(
+        self, target: TargetAlbum, spec, *, snapshot=None
+    ) -> list[ScoredCandidate]:
+        snapshot = snapshot or self._search_snapshot()
+        registry = self._plugin_sources
+        if registry is None:
+            return []
+        try:
+            indexers = registry.indexers_for_target(spec.key)
+        except Exception:  # noqa: BLE001 - absence reads as no results
+            return []
+        if not indexers:
+            return []
+        results = await asyncio.gather(
+            *(
+                idx.search_album(
+                    target.artist_name,
+                    target.album_title,
+                    target.year,
+                    target.track_count,
+                )
+                for idx in indexers
+            ),
+            return_exceptions=True,
+        )
+        releases = []
+        for res in results:
+            if isinstance(res, Exception):
+                continue
+            for row in res or []:
+                plugin = getattr(row, "plugin", None)
+                if plugin is not None:
+                    releases.append(plugin)
+        if not releases:
+            return []
+        scorer = self._plugin_scorer
+        if scorer is None:
+            try:
+                from services.native.plugin_release_scorer import (  # type: ignore
+                    PluginReleaseScorer as _PluginScorer,
+                )
+
+                scorer = _PluginScorer(self._store)
+            except Exception:  # noqa: BLE001 - absence reads as no results
+                return []
+        return await scorer.rank(
+            target,
+            releases,
+            snapshot=snapshot,
+            auto_accept_threshold=self._auto,
+            manual_threshold=self._manual,
+            track_count=target.track_count,
+            source_key=spec.key,
+        )
+
     async def scout_album(
         self,
         artist_name: str,
@@ -683,6 +789,17 @@ class DownloadService:
             except Exception:
                 logger.exception(
                     "usenet scout search failed for %s", release_group_mbid
+                )
+        for spec in self._plugin_search_specs():
+            try:
+                candidates.extend(
+                    await self._search_plugin(target, spec, snapshot=snapshot)
+                )
+            except Exception:
+                logger.exception(
+                    "plugin scout search failed for %s source=%s",
+                    release_group_mbid,
+                    getattr(spec, "key", "?"),
                 )
         return candidates
 
@@ -807,7 +924,7 @@ class DownloadService:
                 source_directory=candidate.parent_directory,
                 preflight_score=candidate.final_score,
                 source=candidate.source,
-                download_client=_CLIENT_FOR_SOURCE.get(candidate.source, "slskd"),
+                download_client=self._client_for_source(candidate.source),
                 quality_preference_step=(
                     selected_decision.preference_step
                     if selected_decision is not None
@@ -878,7 +995,7 @@ class DownloadService:
             track_duration_seconds=track_duration_seconds,
             origin="user",
             source=candidate.source,
-            download_client=_CLIENT_FOR_SOURCE.get(candidate.source, "slskd"),
+            download_client=self._client_for_source(candidate.source),
             source_username=candidate.username,
             source_directory=candidate.parent_directory,
             preflight_score=candidate.final_score,

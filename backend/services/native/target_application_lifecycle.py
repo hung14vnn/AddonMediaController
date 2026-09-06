@@ -273,6 +273,54 @@ async def start_target_operational_runtime(
         await asyncio.to_thread(get_plugin_host().load_all)
     except Exception as error:  # noqa: BLE001 - one plugin cannot block startup
         logger.warning("startup.plugin_load_failed", extra={"error": str(error)})
+    try:
+        from core.dependencies import (
+            get_acquisition_cleanup_service,
+            get_acquisition_dispatcher,
+            get_album_preflight_scorer,
+            get_discover_service,
+            get_download_orchestrator,
+            get_download_service,
+            get_file_processor,
+            get_home_service,
+            get_status_service,
+            get_target_acquisition_dispatcher,
+            get_target_discover_service,
+            get_target_download_orchestrator,
+            get_target_download_service,
+            get_target_file_processor,
+            get_target_home_service,
+            get_target_status_service,
+        )
+
+        for provider in (
+            get_album_preflight_scorer,
+            get_download_orchestrator,
+            get_target_download_orchestrator,
+            get_download_service,
+            get_target_download_service,
+            get_acquisition_dispatcher,
+            get_target_acquisition_dispatcher,
+            get_file_processor,
+            get_target_file_processor,
+            get_status_service,
+            get_target_status_service,
+            get_acquisition_cleanup_service,
+            get_home_service,
+            get_target_home_service,
+            get_discover_service,
+            get_target_discover_service,
+        ):
+            try:
+                provider.cache_clear()
+            except Exception:  # noqa: BLE001 - startup cache clear is best-effort
+                pass
+    except Exception:  # noqa: BLE001 - one plugin cannot block startup
+        logger.warning("startup.plugin_cache_clear_failed")
+    try:
+        await get_plugin_host().sync_ticks()
+    except Exception as error:  # noqa: BLE001 - one plugin cannot block startup
+        logger.warning("startup.plugin_ticks_failed", extra={"error": str(error)})
 
     staging = preferences.get_typed_library_settings().staging_path
     _register_task(

@@ -2335,7 +2335,7 @@ async def test_isolated_target_compat_routes_browse_play_and_write_stable_refere
     provider_covers.get_release_group_cover_etag.return_value = None
     provider_covers.get_artist_image.return_value = None
     provider_covers.get_artist_image_etag.return_value = None
-    plugin_host = SimpleNamespace(dispatch_scrobble=AsyncMock())
+    plugin_host = SimpleNamespace(dispatch_event=AsyncMock(), dispatch_scrobble=AsyncMock())
     target = build_target_consumer_composition(
         store=store,
         preferences=preferences,
@@ -2563,7 +2563,7 @@ async def test_isolated_target_compat_routes_browse_play_and_write_stable_refere
             "SELECT local_track_id FROM library_compat_play_queue_items"
         ).fetchone() == (LOCAL_TRACK_ID,)
 
-    plugin_calls = plugin_host.dispatch_scrobble.await_count
+    plugin_calls = plugin_host.dispatch_event.await_count
     await target.scrobble_service.submit_scrobble(
         ScrobbleRequest(
             track_name="Target Track",
@@ -2574,7 +2574,12 @@ async def test_isolated_target_compat_routes_browse_play_and_write_stable_refere
         user_id="user-1",
     )
     await asyncio.gather(*target.scrobble_service._plugin_tasks)
-    assert plugin_host.dispatch_scrobble.await_count == plugin_calls + 1
+    assert plugin_host.dispatch_event.await_count == plugin_calls + 2
+    kinds = [
+        call.args[0].kind
+        for call in plugin_host.dispatch_event.await_args_list[plugin_calls:]
+    ]
+    assert kinds == ["scrobble", "playback_started"]
 
     with sqlite3.connect(store.db_path) as connection:
         connection.execute(

@@ -4100,6 +4100,38 @@ class LibraryManagementPublisher:
             handle.flush()
             os.fsync(handle.fileno())
 
+    def write_plugin_managed_file(
+        self, *, root_id: str, root: Path, rel_path: str, data: bytes
+    ) -> Path:
+        """Atomically store plugin bytes at ``rel_path`` under one library root.
+
+        Sync blocking helper: callers run it in a worker thread under their own
+        timeout/lease. ``rel_path`` is already charset-validated by the caller;
+        containment (symlink root/components, ``..``/absolute) is enforced here
+        via :meth:`_safe_path` and raises :class:`ValidationError` on escape.
+        The write is atomic (temp file in the same directory + ``os.replace``)
+        with file + directory fsyncs, mirroring the staged-publication path."""
+        if not root_id:
+            raise ValidationError("A plugin library write requires a library root.")
+        root = Path(root)
+        if not root.is_dir():
+            raise ValidationError("The library root is not available.")
+        target = self._safe_path(root, rel_path, create_parent=True)
+        if target.exists() and not target.is_file():
+            raise ValidationError("A plugin library write must target a file.")
+        temporary = target.parent / f".plugin-{uuid.uuid4().hex}.tmp"
+        try:
+            with temporary.open("xb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, target)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+        self._fsync_directory(target)
+        return target
+
     @staticmethod
     def _hash_file(path: Path) -> str:
         digest = hashlib.sha256()

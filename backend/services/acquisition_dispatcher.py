@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from services.native.free_music_service import FreeMusicService
     from services.preferences_service import PreferencesService
     from services.native.library_ownership_service import LibraryOwnershipService
+    from services.plugin_sources import PluginSourceRegistry
 
 
 class AcquisitionDispatcher:
@@ -42,6 +43,7 @@ class AcquisitionDispatcher:
         preferences_service: "PreferencesService",
         ownership_service: "LibraryOwnershipService | None" = None,
         get_album_service: "Callable[[], AlbumService] | None" = None,
+        plugin_sources: "PluginSourceRegistry | None" = None,
     ) -> None:
         self._get_download_service = get_download_service
         self._get_free_music_service = get_free_music_service
@@ -49,9 +51,17 @@ class AcquisitionDispatcher:
         self._prefs = preferences_service
         self._ownership = ownership_service
         self._get_album_service = get_album_service
+        self._plugin_sources = plugin_sources
+
+    def _use_plugin_sources(self) -> bool:
+        return bool(
+            self._plugin_sources is not None and self._plugin_sources.is_any_source_ready()
+        )
 
     def _use_free_music(self) -> bool:
         if self._prefs.is_builtin_download_ready():
+            return False
+        if self._use_plugin_sources():
             return False
         return self._get_free_music_service().is_ready()
 

@@ -174,6 +174,15 @@ class DropImportService:
         on_import: OnImport,
         staging_root: Path,
         native_library: "TargetNativeLibraryService | None" = None,
+        publish_import_bundle: (
+            Callable[
+                [LibraryManagementImportBundle],
+                Awaitable[LibraryManagementImportResult],
+            ]
+            | None
+        ) = None,
+        policy_revision_getter: Callable[[], str] | None = None,
+        plugin_host=None,  # noqa: ANN001 - PluginHost, optional (01b events)
     ) -> None:
         self._store = store
         self._tagger = tagger
@@ -189,7 +198,27 @@ class DropImportService:
         self._on_import = on_import
         self._staging_root = staging_root
         self._native_library = native_library
+        self._publish_import_bundle = publish_import_bundle
+        self._policy_revision_getter = policy_revision_getter
+        self._plugin_host = plugin_host
+        self._plugin_tasks: set[asyncio.Task] = set()
         self._tasks: dict[str, asyncio.Task] = {}
+
+    def _emit_plugin_event(self, kind: str, payload: object) -> None:
+        host = getattr(self, "_plugin_host", None)
+        if host is None:
+            return
+        try:
+            import uuid as _uuid
+
+            from infrastructure.plugins.protocols import PluginEvent
+
+            event = PluginEvent(kind=kind, payload=payload, causation_id=_uuid.uuid4().hex)
+            task = asyncio.create_task(host.dispatch_event(event))
+            self._plugin_tasks.add(task)
+            task.add_done_callback(self._plugin_tasks.discard)
+        except Exception:  # noqa: BLE001 - events never break imports
+            pass
 
     def incoming_dir(self) -> Path:
         """Where the route streams uploads before a job exists. Same filesystem
@@ -1643,6 +1672,19 @@ class DropImportService:
 
         # F-NL-05: a partial import keeps the catalog fresh but leaves the
         # durable request and wanted watch open for normal recovery.
+        try:
+            from infrastructure.plugins.protocols import ImportEvent
+
+            self._emit_plugin_event(
+                "import_finished",
+                ImportEvent(
+                    release_group_mbid=rg,
+                    track_count=len(getattr(ident, "tracks", []) or []),
+                    source="drop",
+                ),
+            )
+        except Exception:  # noqa: BLE001 - events never break imports
+            pass
         if not fulfills_request:
             return
 
@@ -1679,6 +1721,20 @@ class DropImportService:
                 )
             except Exception as exc:  # noqa: BLE001 - notification is best-effort
                 logger.debug("request_imported publish failed: %s", exc)
+        try:
+            from infrastructure.plugins.protocols import RequestEvent
+
+            self._emit_plugin_event(
+                "request_fulfilled",
+                RequestEvent(
+                    request_id=rg,
+                    user_id=getattr(record, "user_id", None) or getattr(job, "user_id", ""),
+                    release_group_mbid=rg,
+                    status="imported",
+                ),
+            )
+        except Exception:  # noqa: BLE001 - events never break imports
+            pass
 
     async def _publish_job(self, job: DropImportJob) -> None:
         try:

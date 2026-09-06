@@ -19,12 +19,10 @@ original) are penalised x0.3.
 
 import logging
 import re
-import unicodedata
 from collections import Counter, defaultdict
 
 import msgspec
 from rapidfuzz import fuzz
-from unidecode import unidecode
 
 from infrastructure.persistence.download_store import DownloadStore
 from models.acquisition_quality import (
@@ -54,6 +52,12 @@ from services.native.acquisition.decision import (
     RejectCode,
     SpecPolicy,
 )
+from services.native.acquisition.scoring_core import (
+    artist_from_path as _artist_from_path,  # noqa: F401 - re-exported for tests/callers
+    file_confidence as _core_file_confidence,
+    normalize_for_match as _normalize_for_match,
+    strip_edition_suffix as _strip_edition_suffix,
+)
 from services.native.acquisition.specs.quarantine import quarantine
 from services.native.title_match import (
     artist_evidence,
@@ -71,52 +75,12 @@ from services.native.quality_tiers import (
     tier_rank,
 )
 
-_EDITION_SUFFIXES = re.compile(
-    r"\b(deluxe|remastered|remaster|edition|anniversary|special|expanded|"
-    r"complete|bonus|acoustic|live|demo|radio edit|extended|instrumental)\b",
-    re.IGNORECASE,
-)
-_VERSION_MARKERS = re.compile(
-    r"\b(remix|live|acoustic|instrumental|demo|radio edit|karaoke|cover|commentary)\b",
-    re.IGNORECASE,
-)
-_CJK_RANGES = (
-    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
-    (0x3040, 0x309F),  # Hiragana
-    (0x30A0, 0x30FF),  # Katakana
-    (0x3400, 0x4DBF),  # CJK Extension A
-)
 _JUNK_KEYWORDS = ("various", "unknown album", "untitled", "misc")
 _LEADING_RELEASE_YEAR = re.compile(r"^\s*(?:\[\d{4}\]|\(\d{4}\)|\d{4}\s*[-–]\s*)\s*")
 
 logger = logging.getLogger(__name__)
 
 _ACCEPTANCE_RANK = {"rejected": 0, "manual": 1, "auto": 2}
-
-
-def _has_cjk(text: str) -> bool:
-    for char in text:
-        codepoint = ord(char)
-        for low, high in _CJK_RANGES:
-            if low <= codepoint <= high:
-                return True
-    return False
-
-
-def _normalize_for_match(text: str) -> str:
-    """NFC + lowercase + unidecode, but never mangle CJK."""
-    text = unicodedata.normalize("NFC", text or "").lower()
-    if _has_cjk(text):
-        return text
-    return unidecode(text)
-
-
-def _strip_edition_suffix(title: str) -> str:
-    return _EDITION_SUFFIXES.sub("", title or "").strip()
-
-
-def _version_markers(text: str) -> frozenset[str]:
-    return frozenset(marker.lower() for marker in _VERSION_MARKERS.findall(text or ""))
 
 
 def _ext_from_filename(filename: str) -> str:
@@ -296,21 +260,6 @@ def rank_stored_candidates(
     return projected
 
 
-def _artist_from_path(parent_directory: str, target_artist: str = "") -> str:
-    """Heuristic artist extraction: try "Artist - Album", then a "Artist/Album"
-    layout (first path component), then the target artist, else ""."""
-    if not parent_directory:
-        return ""
-    if " - " in parent_directory:
-        return parent_directory.split(" - ", 1)[0].strip()
-    parts = [p for p in re.split(r"[\\/]", parent_directory) if p]
-    if len(parts) >= 2:
-        return parts[0].strip()
-    if target_artist:
-        return target_artist
-    return parts[0].strip() if parts else ""
-
-
 def _file_confidence(
     target_title: str,
     target_artist: str,
@@ -321,63 +270,19 @@ def _file_confidence(
 ) -> float:
     """Per-file confidence (shared by the album scorer and the track matcher).
 
-    ``(0.55*title + 0.20*artist + 0.25*duration) * version_penalty`` when a target
-    duration is available, else the duration term drops and weights redistribute
-    to ``0.65*title + 0.35*artist``.
-
-    ``strict_title`` (the track matcher + 1-track album fallbacks, P3.4): the title
-    term becomes CONTAINMENT-based - a filename must name the target and nothing
-    else. ``token_set_ratio`` ignored extra tokens, so "the arrival" scored 0.78
-    against "02. Arrival in Ashford" and 1.0 against "Arrival - The Waking Hour" -
-    both real auto-tier candidates in the 2026-07-05 incident's search job. The
-    artist's own words are excluded from the foreign-token penalty ("01 - Yan Qing -
-    the arrival.flac" is not naming another work). Deliberately OFF for multi-track
-    albums: their per-file names are TRACK titles, and comparing those to the ALBUM
-    title is uniform noise under any metric - the replay corpus showed containment's
-    lower noise floor demoting legitimate albums (Inferno, 0.801 -> 0.698), so the
-    calibrated token_set noise stays. CJK titles always keep token_set (containment
-    tokenisation needs word boundaries)."""
-    file_title = re.split(r"[\\/]", file.filename)[-1]
-    file_title = re.sub(r"\.\w+$", "", file_title)
-
-    if strict_title and not (_has_cjk(target_title) or _has_cjk(file_title)):
-        artist_words = frozenset(
-            t for t in _normalize_for_match(target_artist).split() if len(t) >= 2
-        )
-        title_score = title_containment_score(
-            _strip_edition_suffix(target_title), file_title, ignore=artist_words
-        )
-    else:
-        title_score = (
-            fuzz.token_set_ratio(
-                _normalize_for_match(_strip_edition_suffix(target_title)),
-                _normalize_for_match(_strip_edition_suffix(file_title)),
-            )
-            / 100.0
-        )
-
-    file_artist = _artist_from_path(file.parent_directory, target_artist)
-    artist_score = (
-        fuzz.token_set_ratio(
-            _normalize_for_match(target_artist),
-            _normalize_for_match(file_artist),
-        )
-        / 100.0
+    Thin compat wrapper over ``scoring_core.file_confidence``; the formula lives
+    there so plugins score with identical calibration. See its docstring for the
+    weighting / strict_title / version-penalty contract.
+    """
+    return _core_file_confidence(
+        target_title,
+        target_artist,
+        target_duration,
+        file.filename,
+        file.parent_directory,
+        file.duration,
+        strict_title=strict_title,
     )
-
-    # penalise when exactly one side carries a version marker
-    version_penalty = (
-        0.3 if _version_markers(target_title) != _version_markers(file_title) else 1.0
-    )
-
-    if target_duration and file.duration:
-        diff = abs(file.duration - target_duration)
-        duration_score = 1.0 if diff <= 15 else (0.5 if diff <= 25 else 0.0)
-        base = 0.55 * title_score + 0.20 * artist_score + 0.25 * duration_score
-    else:
-        base = 0.65 * title_score + 0.35 * artist_score
-
-    return base * version_penalty
 
 
 class AlbumPreflightScorer:

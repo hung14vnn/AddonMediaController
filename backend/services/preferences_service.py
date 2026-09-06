@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import threading
 import uuid
 from pathlib import Path
@@ -92,7 +93,9 @@ T = TypeVar("T", bound=msgspec.Struct)
 SPOTIFY_CALLBACK_PATH = "/api/v1/me/connections/spotify/auth/callback"
 
 _RELEASE_TYPE_POLICY_REVISION_KEY = "release_type_policy_revision"
-
+# Bundled sources plus manifest-charset plugin keys (v1 closed set is checked at
+# the PUT route against the live registry; persistence stays charset-lenient).
+_PLUGIN_KEY_RE = re.compile(r"^plugin:[a-z0-9][a-z0-9-]{0,31}$")
 
 class PreferencesService:
     def __init__(self, settings: Settings):
@@ -558,26 +561,37 @@ class PreferencesService:
         unknown/missing sources are appended so the list always covers every
         configured source type."""
         raw = self._load_config().get("source_priority")
-        order = (
-            ["spotiflac" if s == "spotdl" else s for s in raw if s in ("soulseek", "usenet", "spotdl", "spotiflac")]
-            if isinstance(raw, list)
-            else []
-        )
+        order: list[str] = []
+        if isinstance(raw, list):
+            for s in raw:
+                if s == "spotdl":
+                    s = "spotiflac"
+                if s in ("soulseek", "usenet", "spotiflac") or (
+                    isinstance(s, str) and _PLUGIN_KEY_RE.match(s)
+                ):
+                    if s not in order:
+                        order.append(s)
         for source in ("soulseek", "usenet", "spotiflac"):
             if source not in order:
                 order.append(source)
         return order
 
     def save_source_priority(self, order: list[str]) -> None:
-        clean = ["spotiflac" if s == "spotdl" else s for s in order if s in ("soulseek", "usenet", "spotdl", "spotiflac")]
-        clean = list(dict.fromkeys(clean))
+        clean: list[str] = []
+        for s in order:
+            if s == "spotdl":
+                s = "spotiflac"
+            if s in ("soulseek", "usenet", "spotiflac") or (
+                isinstance(s, str) and _PLUGIN_KEY_RE.match(s)
+            ):
+                if s not in clean:
+                    clean.append(s)
         for source in ("soulseek", "usenet", "spotiflac"):
             if source not in clean:
                 clean.append(source)
         config = self._load_config().copy()
         config["source_priority"] = clean
         self._save_config(config)
-
     # --- SABnzbd download client (D5) - in the download_clients map -----------------
 
     def get_sabnzbd_connection(self) -> SabnzbdConnectionSettings:

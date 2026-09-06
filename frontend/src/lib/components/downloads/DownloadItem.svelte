@@ -153,6 +153,11 @@
 						title="A whole album NZB was fetched to extract this one track">via album NZB</span
 					>
 				{/if}
+				<!-- Plugin sources take the generic path: no client-specific badges or
+					remote-queue hints, just the source key. -->
+				{#if task.source && task.source !== 'soulseek' && task.source !== 'usenet'}
+					<span class="badge badge-ghost badge-sm">{task.source}</span>
+				{/if}
 				{#if isOwnedByOther}
 					<span class="text-[11px] text-base-content/50">(another user's download)</span>
 				{/if}

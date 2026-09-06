@@ -63,6 +63,7 @@ if TYPE_CHECKING:
     from services.native.library_ownership_service import LibraryOwnershipService
     from services.home.genre_artwork_service import GenreArtworkService
     from services.native.background_workload_gate import BackgroundWorkloadGate
+    from services.plugin_sources import PluginSourceRegistry
 
 # full cache entries live long; freshness is governed by the SWR window below so an
 # expired-but-present copy is still served instantly while a rebuild runs behind it
@@ -99,6 +100,7 @@ class HomeService:
         ownership_service: "LibraryOwnershipService | None" = None,
         genre_artwork_service: "GenreArtworkService | None" = None,
         workload_gate: "BackgroundWorkloadGate | None" = None,
+        plugin_sources: "PluginSourceRegistry | None" = None,
     ):
         self._lb_repo = listenbrainz_repo
         self._jf_repo = jellyfin_repo
@@ -116,7 +118,7 @@ class HomeService:
         self._workload_gate = workload_gate
         self._transformers = HomeDataTransformers(jellyfin_repo)
 
-        self._helpers = HomeIntegrationHelpers(preferences_service)
+        self._helpers = HomeIntegrationHelpers(preferences_service, plugin_sources)
         # SWR bookkeeping: per-user in-flight guard. Last-attempt times live in a
         # cache sidecar swept with the payload (see _home_built_sidecar_key) so
         # freshness bookkeeping shares fate with the data it describes.

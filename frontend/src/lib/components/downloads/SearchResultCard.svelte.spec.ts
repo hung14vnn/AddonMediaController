@@ -126,6 +126,29 @@ describe('SearchResultCard.svelte', () => {
 		await expect.element(page.getByText('2.2 GB')).toBeInTheDocument();
 	});
 
+	it('renders the plugin variant with title, size, tier and score first', async () => {
+		const plugin = makeCandidate({
+			source: 'plugin:bandcamp',
+			username: '',
+			parent_directory: '',
+			files: [],
+			plugin_release: {
+				title: 'bc-exclusive-master',
+				size_bytes: 400_000_000,
+				score: 0.9,
+				quality_tier: 'hi-res',
+				files: [{ username: 'bc', filename: 'track.flac', size: 200_000_000 }],
+				payload: 'opaque-token'
+			}
+		});
+		renderCard({ candidate: plugin });
+		await expect.element(page.getByText('bc-exclusive-master')).toBeVisible();
+		await expect.element(page.getByText('381 MB')).toBeVisible();
+		await expect.element(page.getByText('hi-res')).toBeVisible();
+		await expect.element(page.getByText('plugin score 90%')).toBeVisible();
+		await expect.element(page.getByText('1 file')).toBeVisible();
+	});
+
 	it('shows "unknown" format when an obfuscated title has no quality category', async () => {
 		const usenet = makeCandidate({
 			source: 'usenet',

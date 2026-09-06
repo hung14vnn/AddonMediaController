@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
 		not_importable: 0,
 		needs_review: 0
 	} as QualityRejectionSummary,
+	pluginSources: [] as { key: string; display_name: string }[],
 	pick: vi.fn(),
 	cancel: vi.fn(),
 	dismiss: vi.fn()
@@ -37,11 +38,15 @@ vi.mock('$lib/queries/downloads/SearchQueries.svelte', () => ({
 	}),
 	pickSearchCandidate: () => ({ mutate: h.pick, isPending: false }),
 	dismissReview: () => ({ mutate: h.dismiss, isPending: false })
-}));
+	}));
 
-vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
-	cancelDownload: () => ({ mutate: h.cancel, isPending: false })
-}));
+	vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
+		cancelDownload: () => ({ mutate: h.cancel, isPending: false })
+	}));
+
+	vi.mock('$lib/queries/plugins/PluginSourceQueries.svelte', () => ({
+		getPluginSourcesQuery: () => ({ data: { sources: h.pluginSources }, isLoading: false })
+	}));
 
 import ReviewCandidates from './ReviewCandidates.svelte';
 
@@ -94,6 +99,7 @@ describe('ReviewCandidates.svelte', () => {
 		h.pick = vi.fn();
 		h.cancel = vi.fn();
 		h.dismiss = vi.fn();
+		h.pluginSources = [];
 	});
 	it('renders the authoritative snapshot summary and documented aggregates', async () => {
 		h.summary = 'Lossless preferred; lossy 320 kbps fallback.';
@@ -217,5 +223,29 @@ describe('ReviewCandidates.svelte', () => {
 			name: /Blocked: outside the accepted quality policy/
 		});
 		await expect.element(blocked).toBeDisabled();
+	});
+
+	it('groups plugin candidates under the source display name', async () => {
+		h.pluginSources = [{ key: 'plugin:bandcamp', display_name: 'Bandcamp' }];
+		h.candidates = [
+			{
+				...candidate('peer-a', 'manual', 0.6, 0),
+				source: 'plugin:bandcamp',
+				plugin_release: {
+					title: 'bc-exclusive-master',
+					size_bytes: 400_000_000,
+					score: 0.9,
+					quality_tier: 'hi-res',
+					files: [],
+					payload: 'opaque-token'
+				}
+			}
+		];
+		renderReview(makeTask());
+
+		await expect.element(page.getByText('Bandcamp', { exact: true })).toBeVisible();
+		await expect.element(page.getByText('hi-res')).toBeVisible();
+		await expect.element(page.getByText('381 MB')).toBeVisible();
+		await expect.element(page.getByText('plugin score 90%')).toBeVisible();
 	});
 });

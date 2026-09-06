@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     )
     from services.home.genre_artwork_service import GenreArtworkService
     from services.native.background_workload_gate import BackgroundWorkloadGate
-
+    from services.plugin_sources import PluginSourceRegistry
 from fastapi import HTTPException
 
 from api.v1.schemas.discover import (
@@ -86,8 +86,9 @@ class DiscoverService:
         discovery_snapshot_store: "DiscoverySnapshotStore | None" = None,
         workload_gate: "BackgroundWorkloadGate | None" = None,
         mb_canonical_store: Any = None,
+        plugin_sources: "PluginSourceRegistry | None" = None,
     ):
-        self._integration = IntegrationHelpers(preferences_service)
+        self._integration = IntegrationHelpers(preferences_service, plugin_sources)
         self._client_factory = client_factory
         self._prefs_store = listening_prefs_store
         self._ownership = ownership_service

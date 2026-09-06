@@ -127,7 +127,7 @@ _DOWNLOAD_ATTEMPTS_DDL = """
 CREATE TABLE IF NOT EXISTS download_attempts (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL,
-    source TEXT NOT NULL CHECK(source IN ('soulseek','usenet')),
+    source TEXT NOT NULL CHECK(source IN ('soulseek','usenet') OR source LIKE 'plugin:%'),
     candidate_index INTEGER NOT NULL CHECK(candidate_index >= 0),
     job_name TEXT NOT NULL DEFAULT '',
     handle_json TEXT NOT NULL,
@@ -650,7 +650,7 @@ class DownloadStore(PersistenceBase):
             self._migrate_quarantine(conn)
             conn.executescript(_HELD_IMPORTS_DDL)
             conn.executescript(_DOWNLOAD_ACTIVITY_DDL)
-            conn.executescript(_DOWNLOAD_ATTEMPTS_DDL)
+            self._migrate_download_attempts(conn)
             conn.executescript(_DOWNLOAD_ATTEMPT_ACTIVITY_DDL)
             # One-shot acquisition-snapshot backfill marker; CREATE IF NOT
             # EXISTS makes re-running _ensure_tables a no-op after marking.
@@ -736,6 +736,50 @@ class DownloadStore(PersistenceBase):
             conn.execute("DROP TABLE download_quarantine_legacy")
         else:
             conn.executescript(_QUARANTINE_DDL)
+
+    def _migrate_download_attempts(self, conn: sqlite3.Connection) -> None:
+        """Create ``download_attempts``, rebuilding the old source CHECK in place.
+
+        SQLite can't ALTER a CHECK, so a table whose ``source`` CHECK lacks the
+        ``plugin:%`` arm is rebuilt via ``download_attempts_new`` + copy + drop +
+        rename, then indexes/triggers are recreated. Old rows are preserved;
+        ``download_tasks``/quarantine free-text and ``free_music`` are untouched.
+        Re-running on the new schema is a no-op (construct-twice safe)."""
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='download_attempts'"
+        ).fetchone()
+        if row is None or row["sql"] is None:
+            conn.executescript(_DOWNLOAD_ATTEMPTS_DDL)
+            return
+        if "plugin:" in str(row["sql"]):
+            conn.executescript(_DOWNLOAD_ATTEMPTS_DDL)
+            return
+        existing = {
+            entry["name"]
+            for entry in conn.execute("PRAGMA table_info(download_attempts)").fetchall()
+        }
+        full = (
+            "id", "task_id", "source", "candidate_index", "job_name", "handle_json",
+            "remote_storage", "mount_root", "workspace_path",
+            "materialized_paths_json", "materialized_fingerprints_json",
+            "publisher_bundle_ids_json", "legacy_reconciled", "state", "disposition",
+            "cleanup_failures", "next_retry_at", "lease_owner", "lease_expires_at",
+            "error_code", "created_at", "updated_at", "completed_at", "row_revision",
+        )
+        cols = [name for name in full if name in existing]
+        col_list = ", ".join(cols)
+        table_body = _DOWNLOAD_ATTEMPTS_DDL.split(
+            "CREATE TABLE IF NOT EXISTS download_attempts (", 1
+        )[1].split(");", 1)[0]
+        conn.execute(f"CREATE TABLE download_attempts_new ({table_body});")
+        conn.execute(
+            f"INSERT INTO download_attempts_new ({col_list}) "
+            f"SELECT {col_list} FROM download_attempts"
+        )
+        conn.execute("DROP TABLE download_attempts")
+        conn.execute("ALTER TABLE download_attempts_new RENAME TO download_attempts")
+        conn.executescript(_DOWNLOAD_ATTEMPTS_DDL)
+        conn.executescript(_DOWNLOAD_ATTEMPT_ACTIVITY_DDL)
 
     async def create_task(
         self,

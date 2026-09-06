@@ -16,7 +16,7 @@ swaps their generator for a one-event fake, so admitted requests end after the
 status/headers instead of hanging TestClient on the infinite poll loop.
 """
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -440,12 +440,14 @@ _ADMIN_ENDPOINTS = [
     ("GET", "/api/v1/lidarr-import/config", None),
     ("PUT", "/api/v1/lidarr-import/config", {}),
     ("POST", "/api/v1/lidarr-import/test", {}),
-    # Plugin API (phase 01b): admin-only. No source surfaces exist (D22).
-    # (both reject a plain user with 403, so they live in the admin list).
+    # Plugin API (phase 01b): management + the panel bundle are admin-only
+    # (a plain user sees 403, so they live in the admin list).
     ("GET", "/api/v1/plugins", None),
     ("POST", "/api/v1/plugins/install", {"repository_url": "https://github.com/o/r"}),
     ("PUT", "/api/v1/plugins/demo", {"enabled": False, "settings": {}}),
     ("DELETE", "/api/v1/plugins/demo", None),
+    ("GET", "/api/v1/plugins/ext/demo/admin-thing", None),
+    ("GET", "/api/v1/plugins/demo/ui/panel.js", None),
     # Drop importer (phase 01c): curator-gated (admin + trusted) - a plain user
     # must see 403. POST /import/uploads is multipart and can't be driven here;
     # its auth posture is covered in tests/routes/test_import_drop_routes.py.
@@ -921,6 +923,11 @@ _USER_ENDPOINTS = [
     ("GET", "/api/v1/discover/batches/b-1", None),
     ("DELETE", "/api/v1/discover/batches/b-1", None),
     ("GET", "/api/v1/system/health", None),
+    # Plugin v1 user surfaces: the read-only sources listing plus ext routes a
+    # plugin declares with user auth. Admin-authed ext routes and the panel
+    # bundle stay admin-only (above).
+    ("GET", "/api/v1/plugins/sources", None),
+    ("GET", "/api/v1/plugins/ext/demo/lookup", None),
     # Spotify per-user linking + browsing, and request-missing on an owned playlist.
     # (POST /me/spotify/playlists/{id}/import is intentionally omitted: it spawns a real
     # background task through the DI getters that can't be driven by the mock harness; it
@@ -1007,6 +1014,42 @@ def finite_sse_streams(monkeypatch: pytest.MonkeyPatch) -> None:
         yield "id: activity:test\nevent: activity.changed\ndata: {}\n\n"
 
     monkeypatch.setattr(target_library_scan_routes, "activity_events", one_event)
+
+
+@pytest.fixture(autouse=True)
+def _fake_plugin_ext_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Canned publisher plugin for the ext auth rows.
+
+    The ext surface calls get_plugin_host() directly instead of via Depends,
+    so the dependency_overrides in _client never reach it. Without this the
+    admin ext row would 404 (no plugin) instead of exercising the 403 gate.
+    """
+    from infrastructure.plugins.host import LoadedPlugin, PluginRouteResult
+    from infrastructure.plugins.manifest import PluginManifest, PluginRouteSpec
+
+    plugin = LoadedPlugin(
+        manifest=PluginManifest(
+            name="demo",
+            version="1.0.0",
+            api_version=1,
+            entrypoint="plugin:Demo",
+            capabilities=["publisher"],
+            display_name="Demo",
+            routes=[
+                PluginRouteSpec(path="lookup", method="GET", auth="user"),
+                PluginRouteSpec(path="admin-thing", method="GET", auth="admin"),
+            ],
+        ),
+        enabled=True,
+        active_capabilities=["publisher"],
+    )
+    plugin.instance = object()
+    host = MagicMock()
+    host.get = MagicMock(side_effect=lambda name: plugin if name == "demo" else None)
+    host.handle_plugin_route = AsyncMock(
+        return_value=PluginRouteResult(status=200, body={"ok": True})
+    )
+    monkeypatch.setattr(plugins_routes, "get_plugin_host", lambda: host)
 
 
 def _deny_admin():

@@ -327,7 +327,7 @@ Any provider with the authorization code flow works (Authelia, Keycloak, Authent
 
 Interactive API docs (Swagger UI) live at `/api/v1/docs` on your instance. Every `/api/v1/*` route takes a Bearer token or the session cookie, everything under `/api/v1/settings/*` also needs Admin, and `/health` stays public for the container check.
 
-Plugins are experimental (`api_version = 0`): Python running in-process with your server's full privileges and no sandbox. Install from a GitHub URL or a copied folder, read the code before you enable it, and expect nothing bundled. The full contract is [PLUGINS.md](PLUGINS.md).
+Plugins are stable (`api_version = 1`, v0 still loads): Python running in-process with your server's full privileges and no sandbox. Install from a GitHub URL or a copied folder, read the code before you enable it. Nothing is bundled. Contract: [PLUGINS.md](PLUGINS.md). Walkthrough: [docs/PLUGIN-CREATION.md](docs/PLUGIN-CREATION.md).
 
 Bug reports and feature requests go to [Issues](https://github.com/DroppedNeedle/DroppedNeedle/issues), code via PRs. Dev setup, tests, and style rules are in [CONTRIBUTING.md](CONTRIBUTING.md).
 

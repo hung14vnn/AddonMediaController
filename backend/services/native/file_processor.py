@@ -752,6 +752,7 @@ class FileProcessor:
         library_paths: list[Path] | None = None,
         client: "DownloadClientProtocol | None" = None,
         slskd_downloads_path: Path | None = None,
+        client_resolver: "Callable[[str], DownloadClientProtocol | None] | None" = None,
         fingerprinter: "AudioFingerprinter | None" = None,
         verify_downloads: bool = True,
         saving_storage_mode: bool = False,
@@ -777,6 +778,7 @@ class FileProcessor:
         self._slskd_downloads_path = (
             Path(slskd_downloads_path) if slskd_downloads_path else None
         )
+        self._client_resolver = client_resolver
         self._fingerprinter = fingerprinter
         self._verify_downloads = verify_downloads
         self._saving_storage_mode = saving_storage_mode
@@ -792,6 +794,31 @@ class FileProcessor:
         self._library_root_ids = library_root_ids or []
         self._publish_import_bundle = publish_import_bundle
         self._policy_revision_getter = policy_revision_getter
+
+    def _resolve_client(self, source: str | None) -> "DownloadClientProtocol | None":
+        """Client owning ``source``. Soulseek (None/empty/"soulseek") always uses the
+        legacy injected client; any other key goes through ``client_resolver`` and
+        never falls back to slskd, so an unknown plugin key returns None (fail
+        closed) instead of misrouting to the wrong backend."""
+        if not source or source == "soulseek":
+            return self._client
+        if self._client_resolver is None:
+            return None
+        return self._client_resolver(source)
+
+    def _client_for_manifest(self, manifest: DownloadManifest) -> "DownloadClientProtocol | None":
+        """Resolve the client for one manifest via its handle source."""
+        handle = getattr(manifest, "handle", None)
+        source = getattr(handle, "source", None) if handle is not None else None
+        return self._resolve_client(source)
+
+    def _downloads_root_for(self, client: "DownloadClientProtocol | None") -> Path | None:
+        """Mount root guarding ``client``'s files. Only the legacy slskd client has a
+        configured downloads mount; plugin clients resolve to None so the slskd
+        mount never gates (or fails) another backend's files."""
+        if client is None or client is not self._client:
+            return None
+        return self._slskd_downloads_path
 
     def _target_location(self, path: Path) -> tuple[str, str]:
         resolved = path.resolve(strict=False)
@@ -1045,7 +1072,7 @@ class FileProcessor:
         manifest: DownloadManifest,
         only_filenames: set[str] | None = None,
     ) -> ProcessResult:
-        """Import each expected file from slskd's download dir into the library.
+        """Import each expected file from the owning download client's dir into the library.
 
         Continue-on-failure: a bad file is recorded and skipped, the rest still
         import. The orchestrator quarantines each failure and derives
@@ -1060,7 +1087,7 @@ class FileProcessor:
             self._naming is None
             or self._library is None
             or not self._library_paths
-            or self._client is None
+            or (self._client is None and self._client_resolver is None)
         ):
             # Production injects every dependency through the target provider.
             raise RuntimeError("FileProcessor is not configured for downloads")
@@ -1203,15 +1230,17 @@ class FileProcessor:
     async def process_downloaded_folder(
         self, manifest: DownloadManifest, files: list[Path]
     ) -> ProcessResult:
-        """Import an UNPACKED Usenet folder (D18). Unlike the slskd path, the filenames
-        are unknown up front (often obfuscated) and the per-track tags may be ENTIRELY
-        ABSENT (verified against a real rip: only ``album`` was set), so this matches
-        each on-disk file to the manifest's expected MusicBrainz tracklist by
-        **duration** (the one always-available signal), with tagged track/title/MBID and
-        the filename track number as tie-breakers. Only files that match a tracklist
-        position import; the rest (bonus tracks not in MB, scene samples, a merged-track
-        file) are dropped (owner Q1). The matched MB track supplies the metadata stamped
-        onto the file, since the file's own tags can't be trusted."""
+        """Import an UNPACKED Usenet folder (D18) or a plugin folder-mode release.
+        Unlike the slskd path, the filenames are unknown up front (often obfuscated)
+        and the per-track tags may be ENTIRELY ABSENT (verified against a real rip:
+        only ``album`` was set), so this matches each on-disk file to the manifest's
+        expected MusicBrainz tracklist by **duration** (the one always-available
+        signal), with tagged track/title/MBID and the filename track number as
+        tie-breakers. Only files that match a tracklist position import; the rest
+        (bonus tracks not in MB, scene samples, a merged-track file) are dropped
+        (owner Q1). The matched MB track supplies the metadata stamped onto the
+        file, since the file's own tags can't be trusted. Source-agnostic: the caller
+        enumerates ``files`` via its own download client."""
         if self._naming is None or self._library is None or not self._library_paths:
             raise RuntimeError("FileProcessor is not configured for downloads")
 
@@ -2112,7 +2141,7 @@ class FileProcessor:
         separate method so ``get_file_path`` stays byte-identical); other
         clients simply have no partial fallback.
         """
-        locate = getattr(self._client, "locate_partial", None)
+        locate = getattr(self._client_for_manifest(manifest), "locate_partial", None)
         if locate is None:
             return None
         try:
@@ -2129,15 +2158,22 @@ class FileProcessor:
     ) -> Path | _PlannedImport:
         """Verify and plan one file for the shared bundle publisher. Raises ``VerificationFailed``
         (per-file) or ``AlreadyImported`` (crash-idempotency)."""
-        source = await self._client.get_file_path(
+        client = self._client_for_manifest(manifest)
+        if client is None:
+            raise VerificationFailed(
+                f"Missing file: {expected.filename}",
+                reason=SOURCE_FILE_MISSING,
+                filename=expected.filename,
+            )
+        source = await client.get_file_path(
             manifest.handle, expected.filename, expected.size
         )
 
         # distinguish a bad downloads mount (environment fault) from a single missing
         # file: a bad mount fails this file with a sanitized reason but never
         # quarantines (not the source's fault)
-        downloads_root = self._slskd_downloads_path
-        if (
+        downloads_root = self._downloads_root_for(client)
+        if client is self._client and (
             downloads_root is None
             or not downloads_root.is_dir()
             or not os.access(downloads_root, os.R_OK)

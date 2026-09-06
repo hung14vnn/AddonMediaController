@@ -52,3 +52,14 @@ def usenet_identity(title: str, size_bytes: int) -> str:
     norm = _WS.sub(" ", title.strip().lower())
     size_mb = size_bytes // (1024 * 1024)
     return f"{norm}{_UNIT}{size_mb}"
+
+
+def plugin_identity(source: str, key: str) -> str:
+    """Identity of a plugin release: ``<source><UNIT><key>``.
+
+    ``source`` is the plugin key (``plugin:<name>``); ``key`` is the opaque
+    correlation token (``PluginSearchResult.payload``) when present, else the
+    usenet-style title + size-rounded-to-MB bucket. Quarantine rows store
+    ``source`` free-text under the existing reason CHECK vocab.
+    """
+    return f"{source}{_UNIT}{key}"

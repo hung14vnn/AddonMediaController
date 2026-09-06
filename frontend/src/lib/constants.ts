@@ -793,8 +793,12 @@ export const API = {
 	plugins: {
 		list: () => '/api/v1/plugins',
 		install: () => '/api/v1/plugins/install',
-		update: (name: string) => `/api/v1/plugins/${name}`,
-		uninstall: (name: string) => `/api/v1/plugins/${name}`
+		sources: () => '/api/v1/plugins/sources',
+		ext: (name: string, subpath: string) =>
+			`/api/v1/plugins/ext/${encodeURIComponent(name)}/${subpath.replace(/^\/+/, '')}`,
+		uiBundle: (name: string) => `/api/v1/plugins/${encodeURIComponent(name)}/ui/panel.js`,
+		update: (name: string) => `/api/v1/plugins/${encodeURIComponent(name)}`,
+		uninstall: (name: string) => `/api/v1/plugins/${encodeURIComponent(name)}`
 	},
 	dropImport: {
 		uploads: () => '/api/v1/import/uploads',
@@ -1129,3 +1133,7 @@ export const API = {
 		decades: () => '/api/v1/local/decades'
 	}
 } as const;
+
+// URL builder for the admin-only plugin UI bundle; kept beside API so the
+// Settings -> Plugins panel mount stays a pure URL (no fetching here).
+export const getPluginUiBundleUrl = (name: string): string => API.plugins.uiBundle(name);

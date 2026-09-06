@@ -80,6 +80,30 @@ logger = logging.getLogger(__name__)
 # Fixed v1 source -> client_type map (the DownloadTask.download_client value).
 _CLIENT_FOR_SOURCE = {"soulseek": "slskd", "usenet": "sabnzbd"}
 
+class _EmptyPluginIndexer:
+    """Search stub for a plugin client with no indexer: always empty, never configured."""
+
+    def __init__(self, key: str) -> None:
+        self._key = key
+
+    @property
+    def indexer_name(self) -> str:
+        return self._key
+
+    def is_configured(self) -> bool:
+        return False
+
+    async def health_check(self):  # noqa: ANN201
+        from models.common import ServiceStatus
+
+        return ServiceStatus(status="error", message="No indexer configured")
+
+    async def search_album(self, *args, **kwargs):  # noqa: ANN001, ANN201
+        return []
+
+    async def search_track(self, *args, **kwargs):  # noqa: ANN001, ANN201
+        return []
+
 # 6-hour ceiling on a single download's poll loop (absolute backstop; the
 # minutes-scale stall/queued watchdogs normally resolve a stuck transfer long
 # before this).
@@ -256,6 +280,8 @@ class DownloadOrchestrator:
         probe_tagger=None,  # AudioTagger for the pre-publication quality probe
         wanted_store=None,  # WantedStore | None
         cleanup_service: AcquisitionCleanupService | None = None,
+        plugin_sources=None,  # PluginSourceRegistry | None - live per-call, never cached
+        plugin_host=None,  # noqa: ANN001 - PluginHost, optional (01b events)
     ) -> None:
         self._client = client
         self._naming_template = naming_template
@@ -303,6 +329,11 @@ class DownloadOrchestrator:
         self._wanted_store = wanted_store
         self._cleanup = cleanup_service
         self._usenet_scorer = usenet_scorer  # for the Usenet re-gate tier (Phase 2)
+        self._plugin_sources = plugin_sources
+        self._plugin_host = plugin_host
+        self._plugin_tasks: set[asyncio.Task] = set()
+        self._file_processor = file_processor
+        self._track_matcher = track_matcher
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._operation_locks: dict[str, asyncio.Lock] = {}
 
@@ -351,6 +382,174 @@ class DownloadOrchestrator:
                 policy_extras=self._spec_policy_extras,
                 probe_tagger=probe_tagger,
             )
+        self._build_plugin_strategies()
+
+    def _build_plugin_strategies(self) -> None:
+        """Build one PluginSourceStrategy per registry spec with a client."""
+        registry = self._plugin_sources
+        if registry is None:
+            return
+        try:
+            specs = registry.specs
+        except Exception:  # noqa: BLE001 - absence reads as no plugins
+            return
+        if not specs:
+            return
+        try:
+            from services.native.acquisition.plugin_strategy import (  # type: ignore
+                PluginSourceStrategy as _PluginStrategy,
+            )
+        except ImportError:
+            try:
+                from services.native.acquisition.plugin_strategy import (  # type: ignore
+                    PluginStrategy as _PluginStrategy,
+                )
+            except ImportError:
+                logger.warning("plugin strategy unavailable, skipping plugin sources")
+                return
+        try:
+            from services.native.plugin_release_scorer import (  # type: ignore
+                PluginReleaseScorer as _PluginScorer,
+            )
+        except ImportError:
+            logger.warning("plugin scorer unavailable, skipping plugin sources")
+            return
+        try:
+            scorer = _PluginScorer(self._store)
+        except Exception:  # noqa: BLE001 - a bad store never blocks bundled sources
+            logger.warning("plugin scorer init failed, skipping plugin sources")
+            return
+        for spec in specs:
+            try:
+                key = spec.key
+            except AttributeError:
+                continue
+            if key in self._strategies:
+                continue
+            if getattr(spec, "target_source", key) != key:
+                # Indexer-only / foreign-target specs pool via CompositeIndexer
+                # (usenet) and never get a direct strategy; same gate as
+                # _source_enabled. Only client-owning specs build one here.
+                continue
+            try:
+                client = registry.client_for(key)
+            except Exception:  # noqa: BLE001 - one bad plugin never blocks
+                continue
+            if client is None:
+                continue
+            try:
+                indexers = registry.indexers_for_target(key)
+            except Exception:  # noqa: BLE001 - absence reads as no indexer
+                indexers = []
+            indexer = indexers[0] if indexers else _EmptyPluginIndexer(key)
+            try:
+                strategy = _PluginStrategy(
+                    indexer=indexer,
+                    scorer=scorer,
+                    track_matcher=self._track_matcher,
+                    client=client,
+                    store=self._store,
+                    file_processor=self._file_processor,
+                    staging=self._staging,
+                    manifest_codec=self._manifest_codec,
+                    naming_template=self._naming_template,
+                    album_service=self._album_service,
+                    library=self._library,
+                    policy_extras=self._spec_policy_extras,
+                    probe_tagger=self._probe_tagger,
+                    source_key=key,
+                    display_name=getattr(spec, "display_name", None) or key,
+                )
+            except Exception:  # noqa: BLE001 - one bad plugin never blocks bundled
+                logger.warning("plugin strategy build failed for %s", key)
+                continue
+            self._strategies[key] = strategy
+
+    def _ensure_plugin_strategy(self, source: str):  # noqa: ANN201
+        """Build the strategy for a plugin source appearing after construction."""
+        if source in self._strategies:
+            return self._strategies[source]
+        registry = self._plugin_sources
+        if registry is None:
+            return None
+        try:
+            spec = registry.spec_for(source)
+        except Exception:  # noqa: BLE001 - absence reads as unknown
+            return None
+        if spec is None:
+            return None
+        before = set(self._strategies)
+        self._build_plugin_strategies()
+        if source in self._strategies and source not in before:
+            return self._strategies[source]
+        return self._strategies.get(source)
+
+    def _emit_plugin_event(self, kind: str, payload: object) -> None:
+        host = getattr(self, "_plugin_host", None)
+        if host is None:
+            return
+        try:
+            import uuid as _uuid
+
+            from infrastructure.plugins.protocols import PluginEvent
+
+            event = PluginEvent(kind=kind, payload=payload, causation_id=_uuid.uuid4().hex)
+            task = asyncio.create_task(host.dispatch_event(event))
+            self._plugin_tasks.add(task)
+            task.add_done_callback(self._plugin_tasks.discard)
+        except Exception:  # noqa: BLE001 - events never break downloads
+            pass
+
+    def _emit_download(self, *, task_id: str, user_id: str = "", release_group_mbid: str = "", source: str = "", outcome: str) -> None:
+        kind = "download_failed" if outcome == "failed" else ("download_completed" if outcome in ("completed", "partial") else "download_started")
+        if kind not in ("download_started", "download_completed", "download_failed"):
+            return
+        try:
+            from infrastructure.plugins.protocols import DownloadTaskEvent
+
+            self._emit_plugin_event(
+                kind,
+                DownloadTaskEvent(
+                    task_id=task_id,
+                    user_id=user_id or "",
+                    release_group_mbid=release_group_mbid or "",
+                    source=source or "",
+                    outcome=outcome,
+                ),
+            )
+        except Exception:  # noqa: BLE001 - events never break downloads
+            pass
+
+    def _emit_request_fulfilled(self, *, request_id: str, user_id: str = "", release_group_mbid: str = "") -> None:
+        try:
+            from infrastructure.plugins.protocols import RequestEvent
+
+            self._emit_plugin_event(
+                "request_fulfilled",
+                RequestEvent(
+                    request_id=request_id,
+                    user_id=user_id or "",
+                    release_group_mbid=release_group_mbid or "",
+                    status="imported",
+                ),
+            )
+        except Exception:  # noqa: BLE001 - events never break downloads
+            pass
+
+    def _emit_import_finished(self, *, release_group_mbid: str, track_count: int = 0, source: str = "") -> None:
+        try:
+            from infrastructure.plugins.protocols import ImportEvent
+
+            self._emit_plugin_event(
+                "import_finished",
+                ImportEvent(
+                    release_group_mbid=release_group_mbid,
+                    track_count=track_count,
+                    source=source or "",
+                ),
+            )
+        except Exception:  # noqa: BLE001 - events never break downloads
+            pass
 
     def dispatch(self, task_id: str) -> "asyncio.Task":
         """Run ``process_task`` for ``task_id`` in the background (AUD-3): wrapped in
@@ -404,6 +603,7 @@ class DownloadOrchestrator:
                     "complete",
                     {"status": DownloadStatus.FAILED, "error": user_msg},
                 )
+                self._emit_download(task_id=task_id, outcome="failed")
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to mark task %s failed after error", task_id)
 
@@ -415,7 +615,6 @@ class DownloadOrchestrator:
         if task is None:
             logger.error("Download task %s not found", task_id)
             return
-
         logger.info(
             "download.started",
             extra={
@@ -425,11 +624,16 @@ class DownloadOrchestrator:
                 "release_group_mbid": task.release_group_mbid,
             },
         )
+        self._emit_download(
+            task_id=task.id,
+            user_id=getattr(task, "user_id", ""),
+            release_group_mbid=getattr(task, "release_group_mbid", "") or "",
+            source=getattr(task, "source", "") or "",
+            outcome="started",
+        )
 
         try:
-            if not self._source_enabled("soulseek") and not self._source_enabled(
-                "usenet"
-            ):
+            if not self._any_source_enabled():
                 # Disabled-but-configured slskd shouldn't read as "not configured".
                 if self._client.is_configured():
                     raise OrchestrationError(
@@ -458,6 +662,13 @@ class DownloadOrchestrator:
                 f"download:{task_id}",
                 "complete",
                 {"status": DownloadStatus.FAILED, "error": user_msg},
+            )
+            self._emit_download(
+                task_id=task_id,
+                user_id=getattr(task, "user_id", ""),
+                release_group_mbid=getattr(task, "release_group_mbid", "") or "",
+                source=getattr(task, "source", "") or "",
+                outcome="failed",
             )
             await self._sync_request_on_terminal(task, DownloadStatus.FAILED)
 
@@ -499,6 +710,28 @@ class DownloadOrchestrator:
             return self._soulseek_enabled and self._client.is_configured()
         if source == "usenet":
             return self._usenet_enabled
+        if source and source.startswith("plugin:"):
+            registry = self._plugin_sources
+            if registry is None:
+                return False
+            try:
+                spec = registry.spec_for(source)
+            except Exception:  # noqa: BLE001 - absence reads as disabled
+                return False
+            if spec is None or not getattr(spec, "has_client", False):
+                return False
+            if getattr(spec, "target_source", spec.key) != spec.key:
+                return False
+            try:
+                client = registry.client_for(source)
+            except Exception:  # noqa: BLE001 - absence reads as disabled
+                return False
+            if client is None:
+                return False
+            try:
+                return bool(client.is_configured())
+            except Exception:  # noqa: BLE001 - absence, not failure
+                return False
         return False
 
     def _next_source(self, source: str) -> str | None:
@@ -524,14 +757,56 @@ class DownloadOrchestrator:
             return list(self._source_priority)
         return self._source_priority[index + 1 :] or list(self._source_priority)
 
+    def _any_source_enabled(self) -> bool:
+        if self._source_enabled("soulseek") or self._source_enabled("usenet"):
+            return True
+        registry = self._plugin_sources
+        if registry is None:
+            return False
+        try:
+            specs = registry.specs
+        except Exception:  # noqa: BLE001 - absence reads as disabled
+            return False
+        return any(self._source_enabled(spec.key) for spec in specs)
+
+    def _ordered_enabled_sources(self) -> list[str]:
+        # Persisted positions win (bundled + plugin keys in stored order); only
+        # newly installed plugin specs append after, never a bundled reset.
+        ordered: list[str] = []
+        for s in self._source_priority:
+            if s and s not in ordered and self._source_enabled(s):
+                ordered.append(s)
+        registry = self._plugin_sources
+        if registry is not None:
+            try:
+                specs = registry.specs
+            except Exception:  # noqa: BLE001 - absence reads as no plugins
+                specs = []
+            for spec in specs:
+                key = getattr(spec, "key", "")
+                if key and key not in self._source_priority and key not in ordered:
+                    if self._source_enabled(key):
+                        ordered.append(key)
+        return ordered
+
     def _enabled_source_names(self) -> list[str]:
         """Display names of the sources actually searched - so failure messages name what
         was tried, never a source that's switched off."""
-        return [
+        names = [
             name
             for source, name in (("soulseek", "Soulseek"), ("usenet", "Usenet"))
             if self._source_enabled(source)
         ]
+        registry = self._plugin_sources
+        if registry is not None:
+            try:
+                specs = registry.specs
+            except Exception:  # noqa: BLE001 - absence reads as no plugins
+                specs = []
+            for spec in specs:
+                if self._source_enabled(spec.key):
+                    names.append(spec.display_name or spec.plugin)
+        return names
 
     def _no_source_message(self) -> str:
         """The 'nothing usable came back' message, naming the sources that were actually
@@ -555,7 +830,7 @@ class DownloadOrchestrator:
         if snapshot is None:
             snapshot = await self._task_quality_snapshot(task)
         timeout = 30.0 + 15.0 * min(task.retry_count, 4)
-        return await self._strategies[source].search_and_score(
+        return await self._strategy(source).search_and_score(
             task,
             timeout=timeout,
             auto=self._auto,
@@ -599,7 +874,7 @@ class DownloadOrchestrator:
         or slow source never erases another's candidates."""
         if snapshot is None:
             snapshot = await self._task_quality_snapshot(task)
-        enabled = [s for s in self._source_priority if self._source_enabled(s)]
+        enabled = self._ordered_enabled_sources()
 
         async def run_one(source):
             try:
@@ -682,6 +957,13 @@ class DownloadOrchestrator:
             "complete",
             {"status": DownloadStatus.FAILED, "error": "no match"},
         )
+        self._emit_download(
+            task_id=task.id,
+            user_id=getattr(task, "user_id", ""),
+            release_group_mbid=getattr(task, "release_group_mbid", "") or "",
+            source=getattr(task, "source", "") or "",
+            outcome="failed",
+        )
 
     async def _search_score_autopick(self, task) -> bool:  # noqa: ANN001 - DownloadTask
         """Route the automatic path across ``source_priority``. DEFAULT
@@ -709,9 +991,8 @@ class DownloadOrchestrator:
         remembered: list[list] = []
         if self._source_selection_mode(snapshot) == "quality_first":
             by_source = await self._concurrent_search_and_score(task, snapshot=snapshot)
-            for source in self._source_priority:
-                if self._source_enabled(source):
-                    remembered.append(by_source.get(source, []))
+            for source in self._ordered_enabled_sources():
+                remembered.append(by_source.get(source, []))
             pooled_flat = [c for group in remembered for c in group]
             await self._store.set_search_job_candidates(job.id, pooled_flat)
             picked = self._global_preference_pick(
@@ -729,7 +1010,7 @@ class DownloadOrchestrator:
                     source_directory=selected.parent_directory,
                     preflight_score=selected.final_score,
                     source=selected.source,
-                    download_client=_CLIENT_FOR_SOURCE.get(selected.source, "slskd"),
+                    download_client=self._client_for_source(selected.source),
                     quality_preference_step=(
                         selected_decision.preference_step
                         if selected_decision is not None
@@ -759,9 +1040,7 @@ class DownloadOrchestrator:
             await self._finish_no_candidates(job.id, task)
             return False
 
-        for source in source_order:
-            if not self._source_enabled(source):
-                continue
+        for source in self._ordered_enabled_sources():
             candidates = await self._search_and_score(task, source, snapshot=snapshot)
             remembered.append(candidates)
             logger.info(
@@ -796,7 +1075,7 @@ class DownloadOrchestrator:
                     source_directory=selected.parent_directory,
                     preflight_score=selected.final_score,
                     source=selected.source,
-                    download_client=_CLIENT_FOR_SOURCE.get(selected.source, "slskd"),
+                    download_client=self._client_for_source(selected.source),
                     quality_preference_step=(
                         selected_decision.preference_step
                         if selected_decision is not None
@@ -830,16 +1109,40 @@ class DownloadOrchestrator:
         await self._finish_no_candidates(job.id, task)
         return False
 
+    def _client_for_source(self, source: str) -> str:
+        if source in _CLIENT_FOR_SOURCE:
+            return _CLIENT_FOR_SOURCE[source]
+        if source and source.startswith("plugin:"):
+            registry = self._plugin_sources
+            if registry is not None:
+                try:
+                    spec = registry.spec_for(source)
+                except Exception:  # noqa: BLE001 - absence reads as unknown
+                    spec = None
+                if spec is not None:
+                    return source
+            raise OrchestrationError(f"Unknown source {source}")
+        if not source:
+            raise OrchestrationError(self._no_source_message())
+        raise OrchestrationError(f"Unknown source {source}")
+
     def _strategy(self, source: str) -> SourceStrategy:
-        """The strategy for a source, falling back to Soulseek for an unknown/disabled
-        source. This preserves the old ``_download_client_for`` fallback (a Usenet task with
-        no SABnzbd client resolved to the slskd client): the Usenet strategy exists iff a
-        SABnzbd client exists, so a missing one falls through to Soulseek's client here."""
-        return self._strategies.get(source) or self._strategies["soulseek"]
+        """The strategy for a source. Unknown/None raises instead of falling back."""
+        if not source:
+            raise OrchestrationError(self._no_source_message())
+        strat = self._strategies.get(source)
+        if strat is not None:
+            return strat
+        ensured = self._ensure_plugin_strategy(source)
+        if ensured is not None:
+            return ensured
+        raise OrchestrationError(f"Unknown source {source}")
 
     def _candidate_source_identity(self, candidate) -> str:  # noqa: ANN001
         """Return the source-owned identity used to skip a failed candidate."""
-        source = getattr(candidate, "source", "soulseek") or "soulseek"
+        source = getattr(candidate, "source", None) or None
+        if not source:
+            raise OrchestrationError(self._no_source_message())
         return self._strategy(source).candidate_identity(candidate)
 
     def _download_client_for(self, task) -> "DownloadClientProtocol":  # noqa: ANN001
@@ -894,7 +1197,7 @@ class DownloadOrchestrator:
         if task.candidate_index is None or task.candidate_index >= len(candidates):
             raise OrchestrationError("candidate no longer available")
         candidate = candidates[task.candidate_index]
-        await self._strategies[task.source].enqueue(
+        await self._strategy(task.source).enqueue(
             task,
             candidate,
             strict_track_duration=strict_track_duration,
@@ -1465,7 +1768,7 @@ class DownloadOrchestrator:
             cand.parent_directory,
             cand.final_score,
             source=cand.source,
-            download_client=_CLIENT_FOR_SOURCE.get(cand.source, "slskd"),
+            download_client=self._client_for_source(cand.source),
             quality_preference_step=(
                 decision.preference_step if decision is not None else None
             ),
@@ -1529,7 +1832,7 @@ class DownloadOrchestrator:
             if manifest_override is not None
             else self._read_manifest(task.id)
         )
-        return await self._strategies[task.source].import_files(
+        return await self._strategy(task.source).import_files(
             task, manifest, only_filenames=only_filenames, completed=completed
         )
 
@@ -1836,7 +2139,7 @@ class DownloadOrchestrator:
             candidate.parent_directory,
             candidate.final_score,
             source=candidate.source,
-            download_client=_CLIENT_FOR_SOURCE.get(candidate.source, "slskd"),
+            download_client=self._client_for_source(candidate.source),
             quality_preference_step=(
                 decision.preference_step if decision is not None else None
             ),
@@ -2285,6 +2588,12 @@ class DownloadOrchestrator:
         )
         await self._notify_completion(task)
         await self._sync_request_on_terminal(task, status)
+        if status in (DownloadStatus.COMPLETED, DownloadStatus.PARTIAL):
+            self._emit_import_finished(
+                release_group_mbid=getattr(task, "release_group_mbid", "") or "",
+                track_count=present,
+                source=getattr(task, "source", "") or "",
+            )
 
     async def _sync_request_on_terminal(self, task, status: str) -> None:  # noqa: ANN001
         """Bridge a terminal download status into its exact request generation."""
@@ -2347,6 +2656,12 @@ class DownloadOrchestrator:
             )
             if changed is False:
                 return
+            if new_status == "imported":
+                self._emit_request_fulfilled(
+                    request_id=getattr(record, "musicbrainz_id", ""),
+                    user_id=getattr(record, "user_id", "") or "",
+                    release_group_mbid=getattr(task, "release_group_mbid", "") or getattr(record, "musicbrainz_id", ""),
+                )
             # An import (full or partial) added library files - bust the
             # album/library caches and materialise the row for the UI.
             if new_status in ("imported", "incomplete") and self._on_import is not None:
@@ -2366,6 +2681,23 @@ class DownloadOrchestrator:
                 "final_path": final.final_path if final else None,
             },
         )
+        status = getattr(final, "status", None) or getattr(task, "status", "")
+        if status == DownloadStatus.FAILED:
+            self._emit_download(
+                task_id=task.id,
+                user_id=getattr(task, "user_id", ""),
+                release_group_mbid=getattr(task, "release_group_mbid", "") or "",
+                source=getattr(task, "source", "") or "",
+                outcome="failed",
+            )
+        elif status in (DownloadStatus.COMPLETED, DownloadStatus.PARTIAL):
+            self._emit_download(
+                task_id=task.id,
+                user_id=getattr(task, "user_id", ""),
+                release_group_mbid=getattr(task, "release_group_mbid", "") or "",
+                source=getattr(task, "source", "") or "",
+                outcome="completed" if status == DownloadStatus.COMPLETED else "partial",
+            )
 
     async def reap_stale_tasks(self) -> None:
         """Periodic safety net: fail tasks whose in-process poll loop died (a crash,
@@ -2409,6 +2741,13 @@ class DownloadOrchestrator:
                 f"download:{task.id}",
                 "complete",
                 {"status": DownloadStatus.FAILED, "error": "download interrupted"},
+            )
+            self._emit_download(
+                task_id=task.id,
+                user_id=getattr(task, "user_id", ""),
+                release_group_mbid=getattr(task, "release_group_mbid", "") or "",
+                source=getattr(task, "source", "") or "",
+                outcome="failed",
             )
             await self._sync_request_on_terminal(task, DownloadStatus.FAILED)
             logger.warning(
@@ -2470,10 +2809,12 @@ class DownloadOrchestrator:
         except OrchestrationError as exc:
             logger.warning("Resume failed for task %s: %s", task_id, exc)
             await self._fail_task_preserving_attempt(task_id, _user_error_message(exc))
+            self._emit_download(task_id=task_id, outcome="failed")
             await self._sync_request_on_terminal(task, DownloadStatus.FAILED)
         except Exception as exc:  # noqa: BLE001 - resume failure -> mark failed
             logger.exception("Failed to resume task %s", task_id)
             await self._fail_task_preserving_attempt(task_id, _user_error_message(exc))
+            self._emit_download(task_id=task_id, outcome="failed")
             await self._sync_request_on_terminal(task, DownloadStatus.FAILED)
 
     async def try_next_source(
@@ -2595,6 +2936,13 @@ class DownloadOrchestrator:
                         f"download:{task.id}",
                         "complete",
                         {"status": DownloadStatus.FAILED, "error": message},
+                    )
+                    self._emit_download(
+                        task_id=task.id,
+                        user_id=getattr(task, "user_id", ""),
+                        release_group_mbid=getattr(task, "release_group_mbid", "") or "",
+                        source=getattr(task, "source", "") or "",
+                        outcome="failed",
                     )
                     await self._sync_request_on_terminal(task, DownloadStatus.FAILED)
                     raise OrchestrationError(message) from error

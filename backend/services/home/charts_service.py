@@ -38,7 +38,7 @@ from .integration_helpers import HomeIntegrationHelpers, resolve_source_value
 if TYPE_CHECKING:
     from services.genre_cover_prewarm_service import GenreCoverPrewarmService
     from services.home.genre_artwork_service import GenreArtworkService
-
+    from services.plugin_sources import PluginSourceRegistry
 logger = logging.getLogger(__name__)
 
 # B8 1a: overview and first expansion must read the same upstream window. The
@@ -62,6 +62,7 @@ class HomeChartsService:
         client_factory: PerUserClientFactory | None = None,
         listening_prefs_store: UserListeningPrefsStore | None = None,
         genre_artwork_service: "GenreArtworkService | None" = None,
+        plugin_sources: "PluginSourceRegistry | None" = None,
     ):
         self._lb_repo = listenbrainz_repo
         self._library_repo = library_repo
@@ -77,7 +78,7 @@ class HomeChartsService:
 
         self._helpers: HomeIntegrationHelpers | None = None
         if preferences_service:
-            self._helpers = HomeIntegrationHelpers(preferences_service)
+            self._helpers = HomeIntegrationHelpers(preferences_service, plugin_sources)
 
     def _resolve_source(self, source: str | None) -> str:
         if self._helpers:

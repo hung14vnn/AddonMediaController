@@ -848,6 +848,7 @@ const COVERAGE: Array<[string, string, string]> = [
 	// Plugin API (phase 01b): admin roster + curator source surfaces
 	['plugins list', API.plugins.list(), '/api/v1/plugins'],
 	['plugin install', API.plugins.install(), '/api/v1/plugins/install'],
+	['plugin sources', API.plugins.sources(), '/api/v1/plugins/sources'],
 	['plugin update', API.plugins.update('P1'), '/api/v1/plugins/P1'],
 	['plugin uninstall', API.plugins.uninstall('P1'), '/api/v1/plugins/P1'],
 	// Drop importer (Store Sync 01c): curator-gated upload/jobs/match/discard

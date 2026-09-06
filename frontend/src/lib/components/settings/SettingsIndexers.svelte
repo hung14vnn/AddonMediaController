@@ -16,6 +16,7 @@
 		saveIndexerMutation,
 		testIndexerMutation
 	} from '$lib/queries/downloads/IndexerQueries.svelte';
+	import { getPluginSourcesQuery } from '$lib/queries/plugins/PluginSourceQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import type { IndexerSettings, IndexerTestResult } from '$lib/types';
 
@@ -33,9 +34,10 @@
 	const remove = deleteIndexerMutation();
 	const reorder = reorderIndexersMutation();
 	const test = testIndexerMutation();
-
 	const indexers = $derived(indexersQuery.data ?? []);
-
+	const pluginIndexers = $derived(
+		(getPluginSourcesQuery().data?.sources ?? []).filter((source) => source.has_indexer)
+	);
 	let editingId = $state<string | null>(null);
 	let draft = $state<IndexerSettings | null>(null);
 	let showKey = $state(false);
@@ -315,6 +317,36 @@
 			<button type="button" class="btn btn-sm" onclick={startAdd}>
 				<Plus class="size-4" aria-hidden="true" /> Add indexer
 			</button>
+		{/if}
+		{#if pluginIndexers.length > 0}
+			<div class="rounded-box border border-base-300 bg-base-200 px-3 py-2">
+				<p class="text-xs font-semibold uppercase tracking-wide text-base-content/50">
+					Plugin indexers
+				</p>
+				<p class="mt-1 text-xs text-base-content/60">
+					Plugins provide these. Configure them under Plugins; you cannot edit them here. A plugin
+					indexer for Usenet appears with Usenet results; any other target gets its own group in
+					review.
+				</p>
+				<ul class="mt-2 space-y-1.5">
+					{#each pluginIndexers as source (source.key)}
+						<li class="flex flex-wrap items-center gap-1.5 text-sm">
+							<span class="font-medium">{source.display_name || source.key}</span>
+							<span class="badge badge-ghost badge-sm" title="Indexer target">
+								targets {source.target_source || source.key}
+							</span>
+							<span
+								class="badge badge-sm"
+								class:badge-success={source.configured}
+								class:badge-ghost={!source.configured}
+							>
+								{source.configured ? 'Configured' : 'Not configured'}
+							</span>
+							<span class="badge badge-ghost badge-sm">{source.health}</span>
+						</li>
+					{/each}
+				</ul>
+			</div>
 		{/if}
 	{/if}
 </section>

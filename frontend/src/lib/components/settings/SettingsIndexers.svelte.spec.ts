@@ -21,6 +21,10 @@ vi.mock('$lib/queries/downloads/IndexerQueries.svelte', () => ({
 	testIndexerMutation: () => ({ mutateAsync: testMutate, isPending: false })
 }));
 
+vi.mock('$lib/queries/plugins/PluginSourceQueries.svelte', () => ({
+	getPluginSourcesQuery: () => ({ data: { sources: [] }, isLoading: false })
+}));
+
 vi.mock('$lib/stores/toast', () => ({ toastStore: { show: vi.fn() } }));
 
 import SettingsIndexers from './SettingsIndexers.svelte';

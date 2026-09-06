@@ -1,8 +1,8 @@
 import asyncio
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
-from collections.abc import Callable
 
 from api.v1.schemas.download import TrackRequestResponse
 from api.v1.schemas.request import (
@@ -76,6 +76,7 @@ class RequestService:
         ownership_service: "LibraryOwnershipService | None" = None,
         album_service: "AlbumService | None" = None,
         mbid_store: "MBIDStore | None" = None,
+        plugin_host=None,  # noqa: ANN001 - PluginHost, optional (01b events)
     ):
         self._request_history = request_history
         # cancel_task still goes direct to DownloadService, resolved fresh so a settings
@@ -88,6 +89,59 @@ class RequestService:
         self._ownership = ownership_service
         self._album_service = album_service
         self._mbid_store = mbid_store
+        self._plugin_host = plugin_host
+        self._plugin_tasks: set[asyncio.Task] = set()
+
+    def _emit_plugin_event(self, kind: str, payload: object) -> None:
+        """Fire-and-forget one subscriber event; never raises into the caller."""
+        host = getattr(self, "_plugin_host", None)
+        if host is None:
+            return
+        try:
+            from infrastructure.plugins.protocols import PluginEvent
+
+            event = PluginEvent(kind=kind, payload=payload, causation_id=uuid.uuid4().hex)
+            task = asyncio.create_task(host.dispatch_event(event))
+            self._plugin_tasks.add(task)
+            task.add_done_callback(self._plugin_tasks.discard)
+        except Exception:  # noqa: BLE001 - events never break requests
+            pass
+
+    def _emit_request_created(
+        self, *, request_id: str, user_id: str | None, release_group_mbid: str, status: str
+    ) -> None:
+        try:
+            from infrastructure.plugins.protocols import RequestEvent
+
+            self._emit_plugin_event(
+                "request_created",
+                RequestEvent(
+                    request_id=request_id,
+                    user_id=user_id or "",
+                    release_group_mbid=release_group_mbid,
+                    status=status,
+                ),
+            )
+        except Exception:  # noqa: BLE001 - events never break requests
+            pass
+
+    def _emit_request_fulfilled(
+        self, *, request_id: str, user_id: str | None, release_group_mbid: str, status: str
+    ) -> None:
+        try:
+            from infrastructure.plugins.protocols import RequestEvent
+
+            self._emit_plugin_event(
+                "request_fulfilled",
+                RequestEvent(
+                    request_id=request_id,
+                    user_id=user_id or "",
+                    release_group_mbid=release_group_mbid,
+                    status=status,
+                ),
+            )
+        except Exception:  # noqa: BLE001 - events never break requests
+            pass
 
     async def _resolve_album_identity(
         self, musicbrainz_id: str
@@ -379,6 +433,13 @@ class RequestService:
                 request_kwargs=request_kwargs,
             )
             generation = _generation_of(begin_result)
+            if begin_result is not None:
+                self._emit_request_created(
+                    request_id=musicbrainz_id,
+                    user_id=user_id,
+                    release_group_mbid=musicbrainz_id,
+                    status=initial_status,
+                )
             if begin_result is None:
                 status = getattr(winner, "status", None)
                 if status in _ACTIVE_REQUEST_STATUSES:
@@ -477,6 +538,12 @@ class RequestService:
                     musicbrainz_id,
                     "imported",
                     **kwargs,
+                )
+                self._emit_request_fulfilled(
+                    request_id=musicbrainz_id,
+                    user_id=user_id,
+                    release_group_mbid=musicbrainz_id,
+                    status="imported",
                 )
             except Exception as error:  # noqa: BLE001
                 logger.exception(
@@ -594,6 +661,13 @@ class RequestService:
                 request_kwargs=request_kwargs,
             )
             generation = _generation_of(begin_result)
+            if begin_result is not None:
+                self._emit_request_created(
+                    request_id=recording_mbid,
+                    user_id=user_id,
+                    release_group_mbid=release_group_mbid or "",
+                    status=initial_status,
+                )
             if begin_result is None:
                 status = getattr(winner, "status", None)
                 if status in _ACTIVE_REQUEST_STATUSES:
@@ -671,6 +745,12 @@ class RequestService:
                     recording_mbid,
                     "imported",
                     **kwargs,
+                )
+                self._emit_request_fulfilled(
+                    request_id=recording_mbid,
+                    user_id=user_id,
+                    release_group_mbid=release_group_mbid or "",
+                    status="imported",
                 )
             except Exception as error:  # noqa: BLE001
                 logger.exception(
@@ -912,7 +992,13 @@ class RequestService:
                     skipped=skipped,
                     status="failed",
                 )
-
+            for created in created_items:
+                self._emit_request_created(
+                    request_id=str(created["musicbrainz_id"]),
+                    user_id=user_id,
+                    release_group_mbid=str(created["musicbrainz_id"]),
+                    status=initial_status,
+                )
             if needs_approval:
                 return BatchRequestResponse(
                     success=True,
@@ -950,6 +1036,12 @@ class RequestService:
                             mbid,
                             "imported",
                             **kwargs,
+                        )
+                        self._emit_request_fulfilled(
+                            request_id=mbid,
+                            user_id=user_id,
+                            release_group_mbid=mbid,
+                            status="imported",
                         )
                     else:
                         kwargs = {"request_kind": "album"}

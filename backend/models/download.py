@@ -8,8 +8,7 @@ service/persistence-layer domain types.
 from infrastructure.msgspec_fastapi import AppStruct
 from models.acquisition_quality import AudioQualityEvidence, QualityDecision
 from repositories.protocols.download_client import DownloadSearchResult
-from repositories.protocols.indexer import UsenetRelease
-
+from repositories.protocols.indexer import PluginSearchResult, UsenetRelease
 
 class ScoredCandidate(AppStruct):
     """A scored acquisition candidate - the convergence point for both sources
@@ -32,6 +31,9 @@ class ScoredCandidate(AppStruct):
     parent_directory: str = ""
     files: list[DownloadSearchResult] = []
     usenet_release: UsenetRelease | None = None
+    # Plugin release for a ``plugin:<name>`` candidate; None for soulseek/usenet.
+    # Optional + defaulted so pre-feature blobs decode unchanged (strict=False).
+    plugin_release: PluginSearchResult | None = None
     coherence: float = 0.0
     file_confidence: float = 0.0
     final_score: float = 0.0
