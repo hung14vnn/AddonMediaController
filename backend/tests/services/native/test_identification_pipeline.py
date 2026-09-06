@@ -66,6 +66,7 @@ from services.native.identification_queue_service import (
     LEASE_SECONDS,
     MAX_BACKOFF_SECONDS,
     MAX_DEFERRAL_ATTEMPTS,
+    SUBJECT_NOT_AVAILABLE_GRACE_SECONDS,
     IdentificationQueueService,
 )
 from services.native.identification_revisions import (
@@ -1588,6 +1589,213 @@ async def test_empty_subject_defers_until_grace_sweep_terminates(
     assert row[0] == "failed"
     assert row[1] == "SUBJECT_NOT_AVAILABLE"
     assert row[2] == 3 + 25 * 3600
+
+    # The sweep surfaces a review row so the failed album leaves the stuck
+    # attention state and becomes dismissable in the review queue.
+    with sqlite3.connect(db_path) as connection:
+        review = connection.execute(
+            "SELECT local_album_id, state, reason_code, attempt_id, input_revision "
+            "FROM library_identification_reviews"
+        ).fetchone()
+    assert review == (
+        "album-1",
+        "needs_review",
+        "SUBJECT_NOT_AVAILABLE",
+        None,
+        "revision",
+    )
+    snapshot = await store.get_identification_activity_snapshot(now=3 + 25 * 3600)
+    assert snapshot["attention_count"] == 1
+    assert snapshot["needs_review_count"] == 1
+
+    # A repeat sweep fails nothing new and never duplicates the review row.
+    assert (
+        await store.gc_stale_identification_jobs(
+            now=3 + 26 * 3600, grace_seconds=SUBJECT_NOT_AVAILABLE_GRACE_SECONDS
+        )
+        == 0
+    )
+    with sqlite3.connect(db_path) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM library_identification_reviews"
+        ).fetchone()[0]
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_grace_sweep_review_dismiss_clears_attention(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await _seed_album(store)
+    job = await _claimed_job(store)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE local_tracks SET availability = 'missing' WHERE id = 'track-1'"
+        )
+    outcome = await _service(
+        store,
+        FakeProvider(),
+        FakeFingerprinter(FingerprintResult(status="disabled"), enabled=False),
+    ).run_claimed_job(job, "worker", now=3)
+    assert outcome == "provider_deferred"
+    queue = IdentificationQueueService(store)
+    await queue.recover(now=3 + 25 * 3600)
+    assert (await store.get_identification_activity_snapshot(now=3 + 25 * 3600))[
+        "attention_count"
+    ] == 1
+
+    with sqlite3.connect(db_path) as connection:
+        review_id = connection.execute(
+            "SELECT id FROM library_identification_reviews "
+            "WHERE local_album_id = 'album-1'"
+        ).fetchone()[0]
+    catalog_revision = await store.get_catalog_revision()
+    result = await store.apply_review_decision(
+        str(review_id),
+        action="dismiss",
+        actor_user_id="admin",
+        expected_review_revision=1,
+        expected_catalog_revision=catalog_revision,
+        expected_identity_revision=None,
+        action_id="action-dismiss-gc-sna",
+        idempotency_key=None,
+        now=3 + 25 * 3600 + 1,
+    )
+    assert result["review"]["state"] == "resolved"
+    assert result["review"]["reason_code"] == "DISMISS"
+    with sqlite3.connect(db_path) as connection:
+        capped = connection.execute(
+            "SELECT state, last_failure_code, attention_cause "
+            "FROM library_identification_jobs WHERE id = 'job-album-1'"
+        ).fetchone()
+    assert capped == ("failed", None, None)
+    snapshot = await store.get_identification_activity_snapshot(
+        now=3 + 25 * 3600 + 1
+    )
+    assert snapshot["attention_count"] == 0
+    assert snapshot["needs_review_count"] == 0
+
+    # Later sweeps must not resurrect attention for the dismissed album.
+    assert (
+        await store.gc_stale_identification_jobs(
+            now=3 + 26 * 3600, grace_seconds=SUBJECT_NOT_AVAILABLE_GRACE_SECONDS
+        )
+        == 0
+    )
+    with sqlite3.connect(db_path) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM library_identification_reviews"
+        ).fetchone()[0]
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_grace_sweep_heals_pre_existing_stuck_rows(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await _seed_album(store)
+    await _seed_album(store, "2")
+    queue = IdentificationQueueService(store)
+    await queue.enqueue_album("album-1", input_revision="revision", now=1)
+    await queue.enqueue_album("album-2", input_revision="revision", now=1)
+    # Simulate pre-fix sweep damage: failed attention jobs with no review row.
+    sweep_now = 3 + 25 * 3600
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_identification_jobs SET state = 'failed', "
+            "last_failure_code = 'SUBJECT_NOT_AVAILABLE', "
+            "attention_cause = 'SUBJECT_NOT_AVAILABLE', terminal_at = ? "
+            "WHERE local_album_id = 'album-1'",
+            (sweep_now,),
+        )
+        connection.execute(
+            "UPDATE library_identification_jobs SET state = 'failed', "
+            "last_failure_code = 'MAX_DEFERRALS_EXCEEDED', "
+            "attention_cause = 'MAX_DEFERRALS_EXCEEDED', terminal_at = ? "
+            "WHERE local_album_id = 'album-2'",
+            (sweep_now,),
+        )
+
+    before = await store.get_stream_revision("identification")
+    assert (
+        await store.gc_stale_identification_jobs(
+            now=sweep_now, grace_seconds=SUBJECT_NOT_AVAILABLE_GRACE_SECONDS
+        )
+        == 0
+    )
+    assert await store.get_stream_revision("identification") > before
+    with sqlite3.connect(db_path) as connection:
+        reviews = connection.execute(
+            "SELECT local_album_id, state, reason_code, attempt_id, input_revision "
+            "FROM library_identification_reviews ORDER BY local_album_id"
+        ).fetchall()
+    assert reviews == [
+        ("album-1", "needs_review", "SUBJECT_NOT_AVAILABLE", None, "revision"),
+        ("album-2", "needs_review", "MAX_DEFERRALS_EXCEEDED", None, "revision"),
+    ]
+    snapshot = await store.get_identification_activity_snapshot(now=sweep_now)
+    assert snapshot["attention_count"] == 2
+    assert snapshot["needs_review_count"] == 2
+
+    # Healing is idempotent: a repeat sweep changes nothing.
+    healed_revision = await store.get_stream_revision("identification")
+    assert (
+        await store.gc_stale_identification_jobs(
+            now=sweep_now + 1, grace_seconds=SUBJECT_NOT_AVAILABLE_GRACE_SECONDS
+        )
+        == 0
+    )
+    assert await store.get_stream_revision("identification") == healed_revision
+    with sqlite3.connect(db_path) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM library_identification_reviews"
+        ).fetchone()[0]
+    assert count == 2
+
+
+@pytest.mark.asyncio
+async def test_grace_sweep_clears_superseded_attention_without_review(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await _seed_album(store)
+    queue = IdentificationQueueService(store)
+    await queue.enqueue_album("album-1", input_revision="revision", now=1)
+    sweep_now = 3 + 25 * 3600
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_identification_jobs SET state = 'failed', "
+            "last_failure_code = 'SUBJECT_NOT_AVAILABLE', "
+            "attention_cause = 'SUBJECT_NOT_AVAILABLE', terminal_at = ? "
+            "WHERE local_album_id = 'album-1'",
+            (sweep_now,),
+        )
+        # A later successful identification supersedes the stale failure.
+        connection.execute(
+            "INSERT INTO local_album_external_identities "
+            "(local_album_id, provider, release_group_mbid, decision_source, selected_at) "
+            "VALUES ('album-1', 'musicbrainz', 'rg-1', 'automatic', ?)",
+            (sweep_now,),
+        )
+
+    assert (
+        await store.gc_stale_identification_jobs(
+            now=sweep_now, grace_seconds=SUBJECT_NOT_AVAILABLE_GRACE_SECONDS
+        )
+        == 0
+    )
+    with sqlite3.connect(db_path) as connection:
+        capped = connection.execute(
+            "SELECT state, last_failure_code, attention_cause "
+            "FROM library_identification_jobs WHERE local_album_id = 'album-1'"
+        ).fetchone()
+        count = connection.execute(
+            "SELECT COUNT(*) FROM library_identification_reviews"
+        ).fetchone()[0]
+    assert capped == ("failed", None, None)
+    assert count == 0
+    snapshot = await store.get_identification_activity_snapshot(now=sweep_now)
+    assert snapshot["attention_count"] == 0
+    assert snapshot["needs_review_count"] == 0
 
 
 @pytest.mark.asyncio

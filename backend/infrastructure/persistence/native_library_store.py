@@ -172,6 +172,7 @@ AUTOMATIC_SAFE_EVIDENCE_REASONS = frozenset(
 )
 ATTENTION_FAILURE_CODES = frozenset({"MAX_DEFERRALS_EXCEEDED", "SUBJECT_NOT_AVAILABLE"})
 _ACTIVITY_DEFERRED_JOB_LIMIT = 20
+_GC_STALE_IDENTIFICATION_JOB_LIMIT = 500
 BULK_PREVIEW_BATCH_SIZE = 500
 BULK_PREVIEW_CLEANUP_BATCH_SIZE = 5_000
 MANAGEMENT_PERSISTENCE_BATCH_SIZE = 500
@@ -9310,18 +9311,131 @@ class NativeLibraryStore(PersistenceBase):
         """
 
         def operation(connection: sqlite3.Connection) -> int:
-            cursor = connection.execute(
-                "UPDATE library_identification_jobs SET state = 'failed', "
-                "attention_cause = 'SUBJECT_NOT_AVAILABLE', terminal_at = ?, "
-                "updated_at = ?, row_revision = row_revision + 1, "
-                "event_revision = event_revision + 1 WHERE state = 'queued' "
+            newly_failed = 0
+            changed = False
+            # A later identification supersedes an older attention failure: the
+            # success path resolves the album's reviews, so clear the stale
+            # markers instead of healing a review for an identified album.
+            # Fresh post-identity failures still surface through the review
+            # rows created below and by terminal_fail_identification_job.
+            superseded = connection.execute(
+                "SELECT j.id AS id FROM library_identification_jobs j "
+                "WHERE j.state = 'failed' AND j.last_failure_code IN "
+                "('MAX_DEFERRALS_EXCEEDED', 'SUBJECT_NOT_AVAILABLE') "
+                "AND j.local_album_id IS NOT NULL AND j.local_track_id IS NULL "
+                "AND EXISTS (SELECT 1 FROM local_album_external_identities e "
+                "WHERE e.local_album_id = j.local_album_id) "
+                "ORDER BY j.updated_at ASC, j.id ASC LIMIT ?",
+                (_GC_STALE_IDENTIFICATION_JOB_LIMIT,),
+            ).fetchall()
+            for superseded_job in superseded:
+                cleared = connection.execute(
+                    "UPDATE library_identification_jobs SET last_failure_code = NULL, "
+                    "attention_cause = NULL, updated_at = ?, "
+                    "row_revision = row_revision + 1, event_revision = event_revision + 1 "
+                    "WHERE id = ? AND state = 'failed' "
+                    "AND row_revision < ? AND event_revision < ?",
+                    (now, superseded_job["id"], MAX_REVISION, MAX_REVISION),
+                )
+                if cleared.rowcount:
+                    changed = True
+            stale = connection.execute(
+                "SELECT id, local_album_id, local_track_id, input_revision "
+                "FROM library_identification_jobs WHERE state = 'queued' "
                 "AND last_failure_code = 'SUBJECT_NOT_AVAILABLE' "
-                "AND updated_at < ? AND row_revision < ? AND event_revision < ?",
-                (now, now, now - grace_seconds, MAX_REVISION, MAX_REVISION),
-            )
-            if cursor.rowcount:
+                "AND updated_at < ? AND row_revision < ? AND event_revision < ? "
+                "ORDER BY updated_at ASC, id ASC LIMIT ?",
+                (
+                    now - grace_seconds,
+                    MAX_REVISION,
+                    MAX_REVISION,
+                    _GC_STALE_IDENTIFICATION_JOB_LIMIT,
+                ),
+            ).fetchall()
+            for stale_job in stale:
+                updated = connection.execute(
+                    "UPDATE library_identification_jobs SET state = 'failed', "
+                    "attention_cause = 'SUBJECT_NOT_AVAILABLE', terminal_at = ?, "
+                    "updated_at = ?, row_revision = row_revision + 1, "
+                    "event_revision = event_revision + 1 WHERE id = ? "
+                    "AND state = 'queued' "
+                    "AND row_revision < ? AND event_revision < ?",
+                    (now, now, stale_job["id"], MAX_REVISION, MAX_REVISION),
+                )
+                if updated.rowcount != 1:
+                    continue
+                newly_failed += 1
+                changed = True
+                if (
+                    stale_job["local_album_id"] is not None
+                    and stale_job["local_track_id"] is None
+                ):
+                    active_review = connection.execute(
+                        "SELECT id FROM library_identification_reviews "
+                        "WHERE local_album_id = ? AND input_revision = ? "
+                        "AND state != 'resolved'",
+                        (
+                            stale_job["local_album_id"],
+                            stale_job["input_revision"],
+                        ),
+                    ).fetchone()
+                    if active_review is None:
+                        connection.execute(
+                            "INSERT INTO library_identification_reviews "
+                            "(id, local_album_id, state, reason_code, attempt_id, "
+                            "input_revision, created_at, updated_at) "
+                            "VALUES (?, ?, 'needs_review', ?, NULL, ?, ?, ?)",
+                            (
+                                str(uuid.uuid4()),
+                                stale_job["local_album_id"],
+                                "SUBJECT_NOT_AVAILABLE",
+                                stale_job["input_revision"],
+                                now,
+                                now,
+                            ),
+                        )
+                        changed = True
+            stuck = connection.execute(
+                "SELECT DISTINCT j.local_album_id AS local_album_id, "
+                "j.input_revision AS input_revision, "
+                "j.last_failure_code AS last_failure_code "
+                "FROM library_identification_jobs j "
+                "WHERE j.state = 'failed' AND j.last_failure_code IN "
+                "('MAX_DEFERRALS_EXCEEDED', 'SUBJECT_NOT_AVAILABLE') "
+                "AND j.local_album_id IS NOT NULL AND j.local_track_id IS NULL "
+                "AND NOT EXISTS (SELECT 1 FROM library_identification_reviews r "
+                "WHERE r.local_album_id = j.local_album_id "
+                "AND r.input_revision = j.input_revision "
+                "AND r.state != 'resolved') "
+                "ORDER BY j.updated_at ASC, j.id ASC LIMIT ?",
+                (_GC_STALE_IDENTIFICATION_JOB_LIMIT,),
+            ).fetchall()
+            for stuck_job in stuck:
+                active_review = connection.execute(
+                    "SELECT id FROM library_identification_reviews "
+                    "WHERE local_album_id = ? AND input_revision = ? "
+                    "AND state != 'resolved'",
+                    (stuck_job["local_album_id"], stuck_job["input_revision"]),
+                ).fetchone()
+                if active_review is None:
+                    connection.execute(
+                        "INSERT INTO library_identification_reviews "
+                        "(id, local_album_id, state, reason_code, attempt_id, "
+                        "input_revision, created_at, updated_at) "
+                        "VALUES (?, ?, 'needs_review', ?, NULL, ?, ?, ?)",
+                        (
+                            str(uuid.uuid4()),
+                            stuck_job["local_album_id"],
+                            stuck_job["last_failure_code"],
+                            stuck_job["input_revision"],
+                            now,
+                            now,
+                        ),
+                    )
+                    changed = True
+            if changed:
                 self._bump_stream(connection, "identification")
-            return cursor.rowcount
+            return newly_failed
 
         return await self._write(operation)
 
