@@ -568,6 +568,28 @@ class NewznabIndexerSettings(AppStruct):
         self.url = self.url.rstrip("/")
 
 
+class ProwlarrConnectionSettings(AppStruct):
+    """Single Prowlarr connection (Prowlarr multiplexes its own indexers, so one
+    connection is the complete model - not a list). ``api_key`` is a Fernet-encrypted
+    secret, masked on read, preserved on a masked save. URL normalization follows the
+    Lidarr-import precedent (LAN service, ``http://`` default), not SABnzbd's
+    https-forcing."""
+
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+
+    def __post_init__(self) -> None:
+        self.url = self.url.strip()
+        if self.url and not self.url.startswith(("http://", "https://")):
+            self.url = f"http://{self.url}"
+        self.url = self.url.rstrip("/")
+        for suffix in ("/api/v1", "/api"):
+            if self.url.endswith(suffix):
+                self.url = self.url[: -len(suffix)].rstrip("/")
+                break
+
+
 class LidarrImportConnectionSettings(AppStruct):
     """Read-only Lidarr *import* connection (LidarrImport D5): a single admin-configured
     Lidarr the monitored-artist importer reads from. NOT a management integration - the old
@@ -619,6 +641,7 @@ PLEX_TOKEN_MASK = "plex****"
 ACOUSTID_KEY_MASK = "acoustid****"
 DOWNLOAD_CLIENT_API_KEY_MASK = "slskd****"
 INDEXER_API_KEY_MASK = "indexer****"
+PROWLARR_API_KEY_MASK = "prowlarr****"
 SABNZBD_API_KEY_MASK = "sabnzbd****"
 LIDARR_IMPORT_API_KEY_MASK = "lidarr****"
 SPOTIFY_SECRET_MASK = "spotify****"

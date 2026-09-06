@@ -1,12 +1,15 @@
-"""CompositeIndexer - pool Newznab + usenet-targeting plugin indexers.
+"""CompositeIndexer - pool the SELECTED Usenet backend + usenet-targeting plugins.
 
-Wraps ``[NewznabIndexer, *registry.indexers_for_target('usenet')]`` as one
-``IndexerProtocol`` with ``indexer_name == "usenet"``. Fans one logical search
-out across every member with ``return_exceptions`` gather, pools the
+Wraps ``[<selected: NewznabIndexer | ProwlarrIndexer>,
+*registry.indexers_for_target('usenet')]`` as one ``IndexerProtocol`` with
+``indexer_name == "usenet"`` (either/or: the unselected backend never searches,
+so Prowlarr and native rows can't duplicate each other). Fans one logical
+search out across every member with ``return_exceptions`` gather, pools the
 ``UsenetRelease`` results, and dedups by the cross-indexer
 :func:`models.download_identity.usenet_identity` key (first-seen-wins, so the
-configured Newznab priority wins over pooled plugin copies). One member
-erroring never fails the fan-out.
+primary wins over pooled plugin copies). One member erroring never fails the
+fan-out. Health aggregates every member (any-ok reads ok) so no healthy member
+is hidden behind the primary.
 """
 
 import asyncio
@@ -21,9 +24,9 @@ logger = logging.getLogger(__name__)
 class CompositeIndexer:
     """One ``usenet`` indexer pooling Newznab + plugin usenet indexers."""
 
-    def __init__(self, newznab_indexer=None, plugin_indexers=None) -> None:
-        self._primary = newznab_indexer
-        self._extras = list(plugin_indexers or [])
+    def __init__(self, primary_indexer=None, extra_indexers=None) -> None:
+        self._primary = primary_indexer
+        self._extras = list(extra_indexers or [])
 
     @property
     def indexer_name(self) -> str:
@@ -44,25 +47,27 @@ class CompositeIndexer:
         return False
 
     async def health_check(self) -> ServiceStatus:
-        if self._primary is not None:
-            try:
-                return await self._primary.health_check()
-            except Exception:  # noqa: BLE001 - degraded, never fatal
-                pass
-        if not self._extras:
+        """Aggregate every member (primary + extras): any-ok reads ok with a
+        reachable/total count, so a healthy Prowlarr is visible even when the
+        Newznab primary is empty, and vice versa. Never raises."""
+        members = self._members()
+        if not members:
             return ServiceStatus(status="error", message="No indexers configured")
         reachable = 0
-        for extra in self._extras:
+        version: str | None = None
+        for member in members:
             try:
-                status = await extra.health_check()
-            except Exception:  # noqa: BLE001 - one bad plugin never blocks
+                status = await member.health_check()
+            except Exception:  # noqa: BLE001 - one bad member never blocks
                 continue
             if getattr(status, "status", "") == "ok":
                 reachable += 1
+                version = version or getattr(status, "version", None)
         if reachable:
             return ServiceStatus(
                 status="ok",
-                message=f"{reachable}/{len(self._extras)} indexer(s) reachable",
+                version=version,
+                message=f"{reachable}/{len(members)} indexer(s) reachable",
             )
         return ServiceStatus(status="error", message="No indexer reachable")
 

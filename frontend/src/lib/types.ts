@@ -2262,6 +2262,25 @@ export interface IndexerSavedResponse {
 	id: string;
 }
 
+export interface ProwlarrConnectionSettings {
+	enabled: boolean;
+	url: string;
+	api_key: string;
+}
+
+export interface ProwlarrTestResult {
+	valid: boolean;
+	version?: string | null;
+	message: string;
+	indexer_count?: number | null;
+}
+
+export type UsenetSearchBackendName = 'indexers' | 'prowlarr';
+
+export interface UsenetSearchBackend {
+	backend: UsenetSearchBackendName;
+}
+
 export interface OperationResult {
 	success: boolean;
 	message?: string | null;

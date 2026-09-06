@@ -72,6 +72,8 @@ from .repo_providers import (  # noqa: F401
     get_slskd_indexer,
     get_newznab_indexer,
     build_newznab_client,
+    get_prowlarr_indexer,
+    build_prowlarr_client,
     build_slskd_repository,
     get_download_client_repository,
     get_sabnzbd_client,

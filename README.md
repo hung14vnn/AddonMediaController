@@ -61,7 +61,7 @@ Search the full MusicBrainz catalogue, request the album or the single track you
 
 ## Quick start
 
-You need Docker, a music library, and a download client. The example below uses slskd; [SABnzbd](https://sabnzbd.org/) with Newznab indexers works too. DroppedNeedle runs neither for you. See [slskd](#slskd) and [Usenet](#usenet).
+You need Docker, a music library, and a download client. The example below uses slskd; [SABnzbd](https://sabnzbd.org/) with Newznab indexers or Prowlarr works too. DroppedNeedle runs neither for you. See [slskd](#slskd) and [Usenet](#usenet).
 
 ### 1. Save this compose file
 
@@ -167,7 +167,7 @@ The engine searches your client, ranks candidates, and auto-accepts a confident 
 
 | Direction | What plugs in |
 |-|-|
-| In | Your slskd, your SABnzbd with your Newznab indexers, Internet Archive free licences, and drop imports. Identity from MusicBrainz and AcoustID, artwork from the Cover Art Archive and AudioDB |
+| In | Your slskd, your SABnzbd with your Newznab indexers or Prowlarr, Internet Archive free licences, and drop imports. Identity from MusicBrainz and AcoustID, artwork from the Cover Art Archive and AudioDB |
 | Out | Jellyfin, Navidrome, Plex, local files, and YouTube previews, plus OpenSubsonic and Jellyfin APIs so apps like Symfonium, Finamp, Feishin, Amperfy, Jellify, and Manet can play from you |
 | Around | ListenBrainz and Last.fm scrobbling, Spotify playlist import, Ticketmaster and Skiddle gigs, Deezer and iTunes preview clips, and purchase links that put Bandcamp first |
 
@@ -217,11 +217,11 @@ web:
 
 ### Usenet
 
-The second source is Usenet through SABnzbd with Newznab-compatible indexers (NZBGeek, NZBPlanet, NZB.su, Slug, and others). The engine searches your indexers, enqueues NZBs in your SABnzbd, and imports finished files through the same scoring, verification, and quarantine pipeline as slskd.
+The second source is Usenet through SABnzbd. For searching, either add Newznab-compatible indexers one by one (NZBGeek, NZBPlanet, NZB.su, Slug, and others) or point at a Prowlarr that already has them. The engine searches your chosen side, enqueues NZBs in your SABnzbd, and imports finished files through the same scoring, verification, and quarantine pipeline as slskd.
 
 1. Expose SABnzbd's completed-downloads directory read-write, ideally under the same shared parent mount as the library so the [mount rules](#slskd) hold. In SABnzbd, point its Downloads folder setting at the matching path (e.g. `/data/sabnzbd/complete`).
 2. Under Settings > Download Client, enable Usenet and enter your SABnzbd URL and API key.
-3. Add each indexer URL plus API key under Settings > Indexers, then Test and Save each one.
+3. Under Settings > Indexers / Prowlarr, pick one search backend: add each indexer's URL plus API key, or enter your Prowlarr URL plus API key. Then Test and Save.
 
 slskd and Usenet can run side by side; the source priority control picks who goes first.
 

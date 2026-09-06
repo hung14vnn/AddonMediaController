@@ -12,13 +12,33 @@ const testMutate = vi.fn().mockResolvedValue({
 });
 
 let indexersData: unknown[] = [];
+let backendData: string = 'indexers';
+const saveBackendMutate = vi.fn().mockResolvedValue({ success: true });
 
 vi.mock('$lib/queries/downloads/IndexerQueries.svelte', () => ({
 	getIndexersQuery: () => ({ data: indexersData, isLoading: false, isError: false }),
+	getSearchBackendQuery: () => ({ data: { backend: backendData }, isLoading: false }),
+	saveSearchBackendMutation: () => ({ mutateAsync: saveBackendMutate, isPending: false }),
 	saveIndexerMutation: () => ({ mutateAsync: saveMutate, mutate: saveMutate, isPending: false }),
 	deleteIndexerMutation: () => ({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false }),
 	reorderIndexersMutation: () => ({ mutate: vi.fn(), isPending: false }),
 	testIndexerMutation: () => ({ mutateAsync: testMutate, isPending: false })
+}));
+
+vi.mock('$lib/queries/downloads/ProwlarrQueries.svelte', () => ({
+	getProwlarrConfigQuery: () => ({
+		data: { enabled: false, url: '', api_key: '' },
+		isLoading: false,
+		isError: false
+	}),
+	saveProwlarrConfigMutation: () => ({
+		mutateAsync: vi.fn().mockResolvedValue({ success: true }),
+		isPending: false
+	}),
+	testProwlarrMutation: () => ({
+		mutateAsync: vi.fn().mockResolvedValue({ valid: false, message: 'unreachable' }),
+		isPending: false
+	})
 }));
 
 vi.mock('$lib/queries/plugins/PluginSourceQueries.svelte', () => ({
@@ -90,5 +110,26 @@ describe('SettingsIndexers.svelte', () => {
 		expect(testMutate).toHaveBeenLastCalledWith(
 			expect.objectContaining({ url: 'https://idx.test/api' })
 		);
+	});
+
+	it('offers the either/or backend radio with the active side checked', async () => {
+		backendData = 'indexers';
+		indexersData = [];
+		render(SettingsIndexers);
+		await expect.element(page.getByText('Indexers / Prowlarr')).toBeInTheDocument();
+		await expect.element(page.getByText('Search via')).toBeInTheDocument();
+		const radios = page.getByRole('radio');
+		await expect.element(radios.nth(0)).toBeChecked();
+		await expect.element(radios.nth(1)).not.toBeChecked();
+	});
+
+	it('switching the radio saves the backend and shows Prowlarr unconfigured', async () => {
+		backendData = 'indexers';
+		indexersData = [];
+		saveBackendMutate.mockClear();
+		render(SettingsIndexers);
+		await expect.element(page.getByText('Not configured yet')).toBeInTheDocument();
+		await page.getByRole('radio', { name: /Prowlarr/ }).click();
+		expect(saveBackendMutate).toHaveBeenCalledWith('prowlarr');
 	});
 });

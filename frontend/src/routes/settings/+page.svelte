@@ -73,7 +73,7 @@
 						tier: 'setup',
 						icon: HardDriveDownload
 					},
-					{ id: 'indexers', label: 'Indexers', tier: 'setup', icon: Search },
+					{ id: 'indexers', label: 'Indexers / Prowlarr', tier: 'setup', icon: Search },
 					{ id: 'lidarr-import', label: 'Lidarr Import', tier: 'setup', icon: DownloadCloud }
 				]
 			: []),

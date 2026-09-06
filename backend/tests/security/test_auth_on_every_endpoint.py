@@ -32,6 +32,7 @@ from api.v1.routes import following as following_routes
 from api.v1.routes import free_music as free_music_routes
 from api.v1.routes import import_drop as import_drop_routes
 from api.v1.routes import plugins as plugins_routes
+from api.v1.routes import prowlarr as prowlarr_routes
 from api.v1.routes import library_contributions as library_contribution_routes
 from api.v1.routes import library_management as library_management_routes
 from api.v1.routes import library_operations_target as library_operations_target_routes
@@ -440,6 +441,10 @@ _ADMIN_ENDPOINTS = [
     ("GET", "/api/v1/lidarr-import/config", None),
     ("PUT", "/api/v1/lidarr-import/config", {}),
     ("POST", "/api/v1/lidarr-import/test", {}),
+    # Prowlarr: connection config + Test are admin-only (same shape).
+    ("GET", "/api/v1/prowlarr/config", None),
+    ("PUT", "/api/v1/prowlarr/config", {}),
+    ("POST", "/api/v1/prowlarr/test", {}),
     # Plugin API (phase 01b): management + the panel bundle are admin-only
     # (a plain user sees 403, so they live in the admin list).
     ("GET", "/api/v1/plugins", None),
@@ -1088,6 +1093,7 @@ def _client(scenario: str):
         requests_routes.router,
         requests_page_routes.router,
         lidarr_import_routes.router,
+        prowlarr_routes.router,
         import_drop_routes.router,
         free_music_routes.router,
         plugins_routes.router,

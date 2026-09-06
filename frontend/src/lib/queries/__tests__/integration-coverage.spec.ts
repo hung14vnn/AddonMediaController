@@ -806,6 +806,11 @@ const COVERAGE: Array<[string, string, string]> = [
 	// Lidarr import (LidarrImport): admin config/test, user status/artists/import
 	['lidarr-import config', API.lidarrImport.config(), '/api/v1/lidarr-import/config'],
 	['lidarr-import test', API.lidarrImport.test(), '/api/v1/lidarr-import/test'],
+	// Prowlarr: admin config/test (same single-connection shape)
+	['prowlarr config', API.prowlarr.config(), '/api/v1/prowlarr/config'],
+	['prowlarr test', API.prowlarr.test(), '/api/v1/prowlarr/test'],
+	// Usenet search backend selector (either/or)
+	['indexers search-backend', API.indexers.searchBackend(), '/api/v1/indexers/search-backend'],
 	['lidarr-import status', API.lidarrImport.status(), '/api/v1/lidarr-import/status'],
 	['lidarr-import artists', API.lidarrImport.artists(), '/api/v1/lidarr-import/artists'],
 	['lidarr-import import', API.lidarrImport.import(), '/api/v1/lidarr-import/import'],

@@ -43,11 +43,13 @@ from api.v1.schemas.settings import (
     ACOUSTID_KEY_MASK,
     DOWNLOAD_CLIENT_API_KEY_MASK,
     INDEXER_API_KEY_MASK,
+    PROWLARR_API_KEY_MASK,
     SABNZBD_API_KEY_MASK,
     LIDARR_IMPORT_API_KEY_MASK,
     DownloadPolicySettings,
     LidarrImportConnectionSettings,
     NewznabIndexerSettings,
+    ProwlarrConnectionSettings,
     SabnzbdConnectionSettings,
     QualityRecipeEntry,
     SpotifySettings,
@@ -727,6 +729,91 @@ class PreferencesService:
         raw = self.get_lidarr_import_connection_raw()
         return bool(raw.url and raw.api_key)
 
+    # --- Prowlarr connection - single section (Prowlarr multiplexes indexers) -----
+
+    def get_prowlarr_connection(self) -> ProwlarrConnectionSettings:
+        """Prowlarr connection with the ``api_key`` MASKED (safe for API responses)."""
+        data = self._load_config().get("prowlarr", {})
+        settings = (
+            msgspec.convert(data, type=ProwlarrConnectionSettings)
+            if data
+            else ProwlarrConnectionSettings()
+        )
+        if settings.api_key:
+            settings.api_key = PROWLARR_API_KEY_MASK
+        return settings
+
+    def get_prowlarr_connection_raw(self) -> ProwlarrConnectionSettings:
+        """Prowlarr connection with the ``api_key`` DECRYPTED (for the client and
+        the readiness predicate - never the masked getter, whose sentinel is truthy)."""
+        data = self._load_config().get("prowlarr", {})
+        settings = (
+            msgspec.convert(data, type=ProwlarrConnectionSettings)
+            if data
+            else ProwlarrConnectionSettings()
+        )
+        stored = data.get("api_key", "")
+        settings.api_key = decrypt(stored)[0].strip() if stored else ""
+        return settings
+
+    def save_prowlarr_connection(self, settings: ProwlarrConnectionSettings) -> None:
+        """Upsert the single Prowlarr section. The ``api_key`` is encrypted, or
+        preserved when the masked sentinel comes back. Direct ``_load_config`` /
+        ``_save_config`` like ``save_lidarr_import_connection`` (no section lock
+        on this path)."""
+        try:
+            config = self._load_config().copy()
+            current = config.get("prowlarr", {})
+            api_key = settings.api_key.strip()
+            if api_key == PROWLARR_API_KEY_MASK:
+                api_key = current.get("api_key", "")  # preserve on masked sentinel
+            elif api_key:
+                api_key = encrypt(api_key)
+            config["prowlarr"] = {
+                "enabled": settings.enabled,
+                "url": settings.url,
+                "api_key": api_key,
+            }
+            self._save_config(config)
+            logger.info("Saved Prowlarr connection settings")
+        except Exception as e:  # noqa: BLE001
+            logger.error("Failed to save Prowlarr settings: %s", e)
+            raise ConfigurationError(f"Failed to save Prowlarr settings: {e}")
+
+    def is_prowlarr_configured(self) -> bool:
+        """True iff Prowlarr is enabled with a URL and a real (decrypted) API key."""
+        raw = self.get_prowlarr_connection_raw()
+        return bool(raw.enabled and raw.url and raw.api_key)
+
+    # --- Usenet search backend: "indexers" xor "prowlarr" (either/or) ------------
+
+    def get_usenet_search_backend(self) -> str:
+        """Which Usenet search backend is active: ``"indexers"`` (the native
+        Newznab priority list) or ``"prowlarr"`` (the single Prowlarr
+        connection). Unknown/missing values collapse to ``"indexers"`` so every
+        pre-existing setup behaves exactly as before with no migration."""
+        raw = self._load_config().get("usenet_search_backend", "indexers")
+        return raw if raw in ("indexers", "prowlarr") else "indexers"
+
+    def save_usenet_search_backend(self, backend: str) -> None:
+        """Select the active Usenet search backend. Only the selected side is
+        searched (plus usenet-targeting plugins) and only it counts toward
+        ``is_usenet_ready()`` - the unselected side sits untouched so switching
+        back restores it. Unknown values raise (the route surfaces a 400)."""
+        if backend not in ("indexers", "prowlarr"):
+            raise ConfigurationError(
+                f"Unknown Usenet search backend: {backend!r} "
+                "(expected 'indexers' or 'prowlarr')"
+            )
+        try:
+            config = self._load_config().copy()
+            config["usenet_search_backend"] = backend
+            self._save_config(config)
+            logger.info("Usenet search backend set to %s", backend)
+        except Exception as e:  # noqa: BLE001
+            logger.error("Failed to save Usenet search backend: %s", e)
+            raise ConfigurationError(f"Failed to save Usenet search backend: {e}")
+
     # --- Newznab indexers (D6) - a list, each with its own encrypted api_key ------
 
     def get_indexers(self) -> list["NewznabIndexerSettings"]:
@@ -824,14 +911,20 @@ class PreferencesService:
         return dc.enabled and bool(dc.url)
 
     def is_usenet_ready(self) -> bool:
-        """SABnzbd (Usenet) is enabled with a URL AND at least one enabled indexer to
-        search - SABnzbd with no indexer can't find anything to download."""
+        """SABnzbd (Usenet) is enabled with a URL AND a usable search side -
+        SABnzbd with nothing to search can't find anything to download. Only the
+        SELECTED backend counts (either/or): an enabled Newznab row when the
+        backend is ``"indexers"``, a configured Prowlarr connection (raw key -
+        the masked sentinel must never read as ready) when ``"prowlarr"``."""
+        # Masked SAB getter is safe here: only enabled+url are read, never the key.
+        # If a key ever joins this predicate, switch to get_sabnzbd_connection_raw()
+        # (a masked sentinel is truthy and would read as ready).
         sab = self.get_sabnzbd_connection()
-        return (
-            sab.enabled
-            and bool(sab.url)
-            and any(i.enabled for i in self.get_indexers())
-        )
+        if not (sab.enabled and sab.url):
+            return False
+        if self.get_usenet_search_backend() == "prowlarr":
+            return self.is_prowlarr_configured()
+        return any(i.enabled for i in self.get_indexers())
 
     def is_builtin_download_ready(self) -> bool:
         """A user-configured download client (Soulseek OR Usenet) is set up.

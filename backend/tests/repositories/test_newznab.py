@@ -472,6 +472,18 @@ async def test_health_check_ok_when_reachable_and_error_when_not():
     assert bad.status == "error"
 
 
+@pytest.mark.asyncio
+async def test_caps_fetch_failure_keeps_indexer_enabled_on_t_search():
+    # B1: a dead t=caps must not disable the indexer (permissive Lidarr/Prowlarr
+    # defaults) - search proceeds down the free-text path and returns results.
+    indexer = NewznabIndexer(
+        [_entry(newznab_mock.caps_dead_handler, indexer_id="ds", name="DS")]
+    )
+    results = await indexer.search_album("Radiohead", "In Rainbows")
+    assert len(results) >= 1
+    assert all(r.source == "usenet" and r.usenet is not None for r in results)
+
+
 def test_is_configured_reflects_enabled_entries():
     enabled = NewznabIndexer([_entry(newznab_mock.drunkenslug_handler, indexer_id="ds", name="DS")])
     disabled = NewznabIndexer(

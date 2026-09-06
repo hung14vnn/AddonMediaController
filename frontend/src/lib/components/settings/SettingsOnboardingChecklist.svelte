@@ -6,7 +6,11 @@
 		getDownloadClientStatusQuery
 	} from '$lib/queries/downloads/DownloadClientQueries.svelte';
 	import { getSabnzbdConfigQuery } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
-	import { getIndexersQuery } from '$lib/queries/downloads/IndexerQueries.svelte';
+	import {
+		getIndexersQuery,
+		getSearchBackendQuery
+	} from '$lib/queries/downloads/IndexerQueries.svelte';
+	import { getProwlarrConfigQuery } from '$lib/queries/downloads/ProwlarrQueries.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 
 	const libQuery = getTargetLibrarySettingsQuery();
@@ -14,11 +18,21 @@
 	const statusQuery = getDownloadClientStatusQuery();
 	const sabQuery = getSabnzbdConfigQuery();
 	const indexersQuery = getIndexersQuery();
+	const backendQuery = getSearchBackendQuery();
+	const prowlarrQuery = getProwlarrConfigQuery();
 
 	const hasLibraryPath = $derived((libQuery.data?.library_roots?.length ?? 0) > 0);
 	const slskdConfigured = $derived(Boolean(dcQuery.data?.url && dcQuery.data?.api_key));
 	const sabnzbdEnabled = $derived(sabQuery.data?.enabled === true && Boolean(sabQuery.data?.url));
-	const hasIndexer = $derived((indexersQuery.data?.length ?? 0) > 0);
+	// Either/or backends, backend-aware like is_usenet_ready: the SELECTED side is
+	// what counts, so a Prowlarr-only install with backend=indexers still shows the
+	// item (readiness is genuinely false there). Presence-loose like the pre-existing
+	// rows check (enabled flags and masked-vs-real keys are backend-side concerns).
+	const hasIndexer = $derived(
+		backendQuery.data?.backend === 'prowlarr'
+			? Boolean(prowlarrQuery.data?.url && prowlarrQuery.data?.api_key)
+			: (indexersQuery.data?.length ?? 0) > 0
+	);
 	const mountOk = $derived(statusQuery.data?.mount?.ok === true);
 	const hasAcoustid = $derived(Boolean(libQuery.data?.acoustid_api_key));
 

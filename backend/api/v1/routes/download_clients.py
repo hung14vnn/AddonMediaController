@@ -55,6 +55,7 @@ def _clear_download_client_cache() -> None:
         get_file_processor,
         get_newznab_indexer,
         get_newznab_release_scorer,
+        get_prowlarr_indexer,
         get_sabnzbd_client,
         get_sabnzbd_download_client,
         get_target_acquisition_dispatcher,
@@ -72,6 +73,9 @@ def _clear_download_client_cache() -> None:
         get_newznab_release_scorer,
         # the indexer derives its search-cache TTL from the policy's auto-retry interval
         get_newznab_indexer,
+        # same TTL discipline for the Prowlarr member - else SABnzbd/policy saves
+        # leave a stale Prowlarr search cache behind
+        get_prowlarr_indexer,
         get_file_processor,
         get_download_orchestrator,
         get_download_service,

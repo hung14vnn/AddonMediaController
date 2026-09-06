@@ -1046,6 +1046,13 @@ class _FailoverClient:
         return [Path("/fake") / f for f in handle.filenames]
 
     async def get_file_path(self, handle, remote_filename, size=None):
+        # Mirror the real fail-closed contract (SlskdRepository._locate_file
+        # returns a path only when an on-disk file exists): a stalled peer has
+        # nothing on disk, so only 'complete' peers resolve. An unconditional
+        # phantom path defeats the #131 disk fallback's empty check and turns
+        # exhausted failover into a bogus 'completed'.
+        if self.behavior.get(handle.username, "stall") != "complete":
+            return None
         return Path("/fake") / remote_filename
 
     async def diagnose_downloads_mount(self):

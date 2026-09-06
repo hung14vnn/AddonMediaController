@@ -33,6 +33,27 @@ class IndexerSavedResponse(AppStruct):
     id: str
 
 
+class UsenetSearchBackend(AppStruct):
+    """The active Usenet search backend (either/or): ``"indexers"`` for the native
+    Newznab priority list, ``"prowlarr"`` for the single Prowlarr connection.
+    Required ``Literal``: unknown values and empty bodies 422 at decode (never a
+    silent reset to ``"indexers"``)."""
+
+    backend: Literal["indexers", "prowlarr"]
+
+
+class ProwlarrTestResponse(AppStruct):
+    """Result of testing the submitted Prowlarr connection (lidarr-import shape:
+    body-carried valid/version/message, never a leaked 5xx). ``version`` and
+    ``indexer_count`` are degraded-optional until the A0 probe confirms
+    ``system/status`` - the test route must not hard-fail when it 404s."""
+
+    valid: bool
+    version: str | None = None
+    message: str = ""
+    indexer_count: int | None = None
+
+
 class SabnzbdTestResponse(AppStruct):
     """Result of testing SABnzbd: version + the category list (for the picker) + the
     SABnzbd-side completed dir (the mount hint) + the mount diagnosis (how many

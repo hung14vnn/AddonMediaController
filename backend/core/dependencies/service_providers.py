@@ -2709,6 +2709,61 @@ def get_acquisition_cleanup_service() -> "AcquisitionCleanupService":
     )
 
 
+def _select_usenet_primary(selector: str, newznab, prowlarr):
+    """Either/or primary selection (pure, unit-tested): the selected backend is
+    the composite primary and the other side is excluded entirely (no union, no
+    cross-side duplicates). The unselected side sits untouched so switching back
+    restores it. Unknown selectors collapse to ``"indexers"``."""
+    if selector == "prowlarr":
+        return prowlarr
+    return newznab
+
+
+def _build_usenet_indexer():
+    """The pooled ``usenet`` indexer: the SELECTED backend as primary plus any
+    usenet-targeting plugin indexers as extras (either/or - the unselected side
+    never searches, so Prowlarr and native rows can't duplicate each other).
+
+    Shared by the orchestrator and service builders so both pool identically;
+    any construction failure degrades to Newznab-only (composite never blocks
+    bundled sources)."""
+    from services.native.acquisition.composite_indexer import CompositeIndexer
+
+    from .repo_providers import (
+        get_newznab_indexer,
+        get_preferences_service,
+        get_prowlarr_indexer,
+    )
+
+    registry = get_plugin_source_registry()
+    try:
+        base_indexer = get_newznab_indexer()
+        try:
+            prowlarr_indexer = get_prowlarr_indexer()
+        except Exception:  # noqa: BLE001 - absence reads as no Prowlarr member
+            prowlarr_indexer = None
+        try:
+            plugin_usenet = registry.indexers_for_target("usenet")
+        except Exception:  # noqa: BLE001 - absence reads as no pooled indexers
+            plugin_usenet = []
+        selector = get_preferences_service().get_usenet_search_backend()
+        primary = _select_usenet_primary(selector, base_indexer, prowlarr_indexer)
+        if primary is None:
+            if selector == "prowlarr":
+                # Provider failed while Prowlarr is selected: stay on an
+                # unconfigured Prowlarr primary (searches []) so behavior
+                # matches readiness (False) instead of silently searching
+                # the unselected Newznab side.
+                from repositories.prowlarr.prowlarr_indexer import ProwlarrIndexer
+
+                primary = ProwlarrIndexer(None, enabled=False)
+            else:
+                primary = base_indexer
+        return CompositeIndexer(primary, plugin_usenet)
+    except Exception:  # noqa: BLE001 - composite never blocks bundled sources
+        return get_newznab_indexer()
+
+
 def _build_download_orchestrator(
     *, file_processor, library_manager, album_service, on_import_callback
 ) -> "DownloadOrchestrator":
@@ -2720,7 +2775,6 @@ def _build_download_orchestrator(
     from .repo_providers import (
         get_download_client_repository,
         get_download_store,
-        get_newznab_indexer,
         get_sabnzbd_download_client,
         get_slskd_indexer,
         get_wanted_store,
@@ -2739,17 +2793,7 @@ def _build_download_orchestrator(
         else Path(get_settings().cache_dir) / "download-staging"
     )
     registry = get_plugin_source_registry()
-    try:
-        from services.native.acquisition.composite_indexer import CompositeIndexer
-
-        base_indexer = get_newznab_indexer()
-        try:
-            plugin_usenet = registry.indexers_for_target("usenet")
-        except Exception:  # noqa: BLE001 - absence reads as no pooled indexers
-            plugin_usenet = []
-        usenet_indexer = CompositeIndexer(base_indexer, plugin_usenet)
-    except Exception:  # noqa: BLE001 - composite never blocks bundled sources
-        usenet_indexer = get_newznab_indexer()
+    usenet_indexer = _build_usenet_indexer()
     return DownloadOrchestrator(
         spec_policy_extras=lambda: _build_spec_policy(
             get_preferences_service().get_download_policy()
@@ -2839,7 +2883,6 @@ def _build_download_service(
         get_album_release_pin_store,
         get_download_client_repository,
         get_download_store,
-        get_newznab_indexer,
         get_slskd_indexer,
     )
 
@@ -2848,17 +2891,7 @@ def _build_download_service(
     policy = prefs.get_download_policy()
     usenet_enabled = prefs.is_usenet_ready()
     registry = get_plugin_source_registry()
-    try:
-        from services.native.acquisition.composite_indexer import CompositeIndexer
-
-        base_indexer = get_newznab_indexer()
-        try:
-            plugin_usenet = registry.indexers_for_target("usenet")
-        except Exception:  # noqa: BLE001 - absence reads as no pooled indexers
-            plugin_usenet = []
-        usenet_indexer = CompositeIndexer(base_indexer, plugin_usenet)
-    except Exception:  # noqa: BLE001 - composite never blocks bundled sources
-        usenet_indexer = get_newznab_indexer()
+    usenet_indexer = _build_usenet_indexer()
     try:
         plugin_scorer = get_plugin_release_scorer()
     except Exception:  # noqa: BLE001 - absence reads as no plugin scorer
