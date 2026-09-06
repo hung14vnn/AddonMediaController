@@ -155,7 +155,11 @@ vi.mock('$lib/components/AlbumImage.svelte', emptyComponent);
 vi.mock('$lib/components/HeroBackdrop.svelte', emptyComponent);
 vi.mock('$lib/components/downloads/AlbumDownloadStatus.svelte', emptyComponent);
 
+const blob = vi.hoisted(() => ({ download: vi.fn() }));
+vi.mock('$lib/utils/blobDownload', () => ({ downloadBlob: blob.download }));
+
 import AlbumHeader from './AlbumHeader.svelte';
+import AlbumDownloadButton from './AlbumDownloadButton.svelte';
 
 const album: AlbumBasicInfo = {
 	title: 'Avalon',
@@ -178,7 +182,8 @@ function renderHeader({
 	libraryBelowCutoff = false,
 	localCopies = [],
 	trackData = tracksInfo,
-	loadingTracks = false
+	loadingTracks = false,
+	downloadAllowed = true
 }: {
 	onrefresh?: () => void;
 	libraryTrackCount?: number;
@@ -186,6 +191,7 @@ function renderHeader({
 	localCopies?: LibraryAlbumSummary[];
 	trackData?: AlbumTracksInfo;
 	loadingTracks?: boolean;
+	downloadAllowed?: boolean;
 } = {}) {
 	render(AlbumHeader, {
 		album,
@@ -201,6 +207,7 @@ function renderHeader({
 		libraryTrackCount,
 		libraryBelowCutoff,
 		localCopies,
+		downloadAllowed,
 		mbTrackCount: 20,
 		releaseGroupMbid: album.musicbrainz_id,
 		onrequest: vi.fn(),
@@ -426,5 +433,86 @@ describe('AlbumHeader automatic edition selection', () => {
 			);
 		});
 		await expectConflictDialogClosed();
+	});
+});
+
+describe('AlbumHeader album download button', () => {
+	beforeEach(() => {
+		blob.download.mockReset();
+		blob.download.mockResolvedValue(undefined);
+	});
+
+	it('downloads the string-id variant with a total-size caption', async () => {
+		expect.assertions(3);
+		renderHeader({ localCopies: [localAlbum] });
+
+		const button = page.getByRole('button', { name: /Download album/ });
+		await expect.element(button).toBeVisible();
+		await expect.element(page.getByText('ZIP · 1 B')).toBeVisible();
+		await button.click();
+		expect(blob.download).toHaveBeenCalledWith('/api/v1/download/local/album/local-album-1');
+	});
+
+	it('falls back to the RG-MBID variant with a bare ZIP caption', async () => {
+		expect.assertions(3);
+		renderHeader({ localCopies: [] });
+
+		const button = page.getByRole('button', { name: /Download album/ });
+		await expect.element(button).toBeVisible();
+		await expect.element(page.getByText('ZIP', { exact: true })).toBeVisible();
+		await button.click();
+		expect(blob.download).toHaveBeenCalledWith(
+			'/api/v1/download/local/album/mbid/4b6276da-e7c7-36df-8771-34b92f774d3b'
+		);
+	});
+
+	it('disables the button when zero local tracks are known', async () => {
+		expect.assertions(2);
+		renderHeader({ localCopies: [localAlbum], libraryTrackCount: 0 });
+
+		const button = page.getByRole('button', { name: /Download album/ });
+		await expect.element(button).toBeVisible();
+		await expect.element(button).toBeDisabled();
+	});
+
+	it('toasts on blob failure and stays live for retry', async () => {
+		blob.download.mockRejectedValueOnce(new Error('gone'));
+		const show = vi.mocked(toastStore.show);
+		show.mockClear();
+		renderHeader({ localCopies: [localAlbum] });
+
+		const button = page.getByRole('button', { name: /Download album/ });
+		await button.click();
+		await vi.waitFor(() => {
+			expect(show).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
+		});
+		const messages = show.mock.calls.map((call) => String(call[0].message));
+		expect(messages.every((message) => !message.includes('/api/v1/download'))).toBe(true);
+		await expect.element(button).toBeEnabled();
+	});
+
+	it('renders nothing when neither id nor mbid is known', async () => {
+		expect.assertions(1);
+		render(AlbumDownloadButton, {
+			albumId: null,
+			mbid: null,
+			totalSizeBytes: null,
+			trackCount: 5,
+			downloadAllowed: true
+		});
+
+		await expect
+			.element(page.getByRole('button', { name: /Download album/ }))
+			.not.toBeInTheDocument();
+	});
+
+	it('renders nothing when downloads are restricted', async () => {
+		expect.assertions(2);
+		renderHeader({ localCopies: [localAlbum], downloadAllowed: false });
+
+		await expect.element(page.getByRole('heading', { name: 'Avalon' })).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: /Download album/ }))
+			.not.toBeInTheDocument();
 	});
 });

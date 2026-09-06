@@ -63,6 +63,10 @@ class ActiveEditionConversionSummary(AppStruct):
 class TargetNativeAlbumDetail(TargetNativeAlbum):
     row_revision: int = 1
     input_revision: str = ""
+    # Whether the caller may download this album's files (setting + role,
+    # computed per request by get_target_album; default True keeps other
+    # producers fail-open).
+    download_allowed: bool = True
     identification_status: Literal[
         "identified",
         "needs_review",

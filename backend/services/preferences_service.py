@@ -2637,3 +2637,12 @@ class PreferencesService:
         except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to save security settings: {e}")
             raise ConfigurationError("Failed to save security settings")
+
+    def is_library_download_allowed(self, role: str) -> bool:
+        """Whether `role` may download library files (album zips + tracks)."""
+        access = self.get_security_settings().library_download_access
+        if access == "everyone":
+            return True
+        if access == "trusted":
+            return role in ("admin", "trusted")
+        return role == "admin"

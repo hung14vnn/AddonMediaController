@@ -5,6 +5,8 @@ import type { LibraryAlbumDetail, NativeTrackListItem } from '$lib/types';
 
 	const h = vi.hoisted(() => ({
 		playQueue: vi.fn(),
+		addToQueue: vi.fn(),
+		playNext: vi.fn(),
 		goto: vi.fn(),
 		isAdmin: false,
 		isTrusted: false,
@@ -48,7 +50,11 @@ import type { LibraryAlbumDetail, NativeTrackListItem } from '$lib/types';
 		LAST_USER_ID_KEY: 'test:last-user'
 	}));
 	vi.mock('$lib/stores/player.svelte', () => ({
-		playerStore: { playQueue: (...args: unknown[]) => h.playQueue(...args) }
+		playerStore: {
+			playQueue: (...args: unknown[]) => h.playQueue(...args),
+			addToQueue: (...args: unknown[]) => h.addToQueue(...args),
+			playNext: (...args: unknown[]) => h.playNext(...args)
+		}
 	}));
 	vi.mock('$lib/stores/integration', () => ({
 		integrationStore: {
@@ -224,6 +230,9 @@ vi.mock('$lib/queries/libraryContributions/LibraryContributionMutations.svelte',
 	createLibraryContributionMutation: () => ({ isPending: false, mutate: vi.fn() })
 }));
 
+const blob = vi.hoisted(() => ({ download: vi.fn() }));
+vi.mock('$lib/utils/blobDownload', () => ({ downloadBlob: blob.download }));
+
 import LocalAlbumPage from './LocalAlbumPage.svelte';
 
 	beforeEach(() => {
@@ -238,6 +247,7 @@ import LocalAlbumPage from './LocalAlbumPage.svelte';
 		album.identification_status = 'local_metadata';
 		album.musicbrainz_release_group_id = null;
 		album.musicbrainz_release_id = null;
+		delete album.download_allowed;
 	});
 
 describe('local-only album page', () => {
@@ -395,5 +405,93 @@ describe('local-only album page', () => {
 			.element(page.getByText('Link a MusicBrainz release group to compare editions.'))
 			.toBeVisible();
 		await expect.element(page.getByRole('button', { name: /Edition: / })).not.toBeInTheDocument();
+	});
+});
+
+describe('local album page download button', () => {
+	beforeEach(() => {
+		blob.download.mockResolvedValue(undefined);
+	});
+
+	function renderPage() {
+		render(LocalAlbumPage, {
+			props: { albumId: album.id }
+		} as unknown as Parameters<typeof render>[1]);
+	}
+
+	it('downloads the album zip with a total-size caption', async () => {
+		expect.assertions(3);
+		renderPage();
+
+		const button = page.getByRole('button', { name: /Download album/ });
+		await expect.element(button).toBeVisible();
+		await expect.element(page.getByText('ZIP · 1.0 KB')).toBeVisible();
+		await button.click();
+		expect(blob.download).toHaveBeenCalledWith('/api/v1/download/local/album/local-album-1');
+	});
+
+	it('toasts a user-safe error when the download fails', async () => {
+		blob.download.mockRejectedValueOnce(new Error('gone'));
+		h.toast.mockClear();
+		renderPage();
+
+		await page.getByRole('button', { name: /Download album/ }).click();
+		await vi.waitFor(() => {
+			expect(h.toast).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
+		});
+		const messages = h.toast.mock.calls.map((call) => String(call[0].message));
+		expect(messages.every((message) => !message.includes('/api/v1/download'))).toBe(true);
+	});
+});
+
+describe('local album page track menu', () => {
+	beforeEach(() => {
+		blob.download.mockResolvedValue(undefined);
+	});
+
+	function renderPage() {
+		render(LocalAlbumPage, {
+			props: { albumId: album.id }
+		} as unknown as Parameters<typeof render>[1]);
+	}
+
+	it('opens the shared 4-item menu with a working Download', async () => {
+		expect.assertions(7);
+		renderPage();
+
+		await expect.element(page.getByText('Unmatched Song')).toBeVisible();
+		expect(page.getByLabelText('More actions').elements()).toHaveLength(1);
+
+		await (await page.getByLabelText('More actions').all())[0].click();
+		for (const label of ['Add to Queue', 'Play Next', 'Add to Playlist', 'Download']) {
+			await expect.element(page.getByRole('menuitem', { name: label })).toBeVisible();
+		}
+		await page.getByRole('menuitem', { name: 'Download' }).click();
+		expect(blob.download).toHaveBeenCalledWith('/api/v1/download/local/track/local-track-1');
+	});
+
+	it('queues the local track through the menu', async () => {
+		expect.assertions(3);
+		renderPage();
+
+		await expect.element(page.getByText('Unmatched Song')).toBeVisible();
+		await (await page.getByLabelText('More actions').all())[0].click();
+		await page.getByRole('menuitem', { name: 'Add to Queue' }).click();
+		expect(h.addToQueue).toHaveBeenCalledTimes(1);
+		expect(h.addToQueue.mock.calls[0][0]).toMatchObject({ trackSourceId: 'local-track-1' });
+	});
+
+	it('hides the button and omits the menu Download item when restricted', async () => {
+		expect.assertions(4);
+		album.download_allowed = false;
+		renderPage();
+
+		await expect.element(page.getByText('Unmatched Song')).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: /Download album/ }))
+			.not.toBeInTheDocument();
+		await (await page.getByLabelText('More actions').all())[0].click();
+		await expect.element(page.getByRole('menuitem', { name: 'Add to Queue' })).toBeVisible();
+		expect(page.getByRole('menuitem', { name: 'Download' }).elements()).toHaveLength(0);
 	});
 });

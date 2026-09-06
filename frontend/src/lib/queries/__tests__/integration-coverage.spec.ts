@@ -44,6 +44,15 @@ const COVERAGE: Array<[string, string, string]> = [
 		API.downloads.restartWithPolicy('T1'),
 		'/api/v1/downloads/T1/restart-with-current-policy'
 	],
+	// local file downloads (album viewer)
+	['download access', API.download.access(), '/api/v1/download/access'],
+	['local track download', API.download.localTrack('F1'), '/api/v1/download/local/track/F1'],
+	['local album zip', API.download.localAlbum('A1'), '/api/v1/download/local/album/A1'],
+	[
+		'local album zip by MBID',
+		API.download.localAlbumByMbid('M1'),
+		'/api/v1/download/local/album/mbid/M1'
+	],
 	// download-clients policy (Acquisition plan)
 	[
 		'download-client policy summary',
@@ -113,6 +122,7 @@ const COVERAGE: Array<[string, string, string]> = [
 	['library provider IDs', API.library.mbids(), '/api/v1/library/mbids'],
 	['library membership', API.library.membership(), '/api/v1/library/membership'],
 	['local track lyrics', API.local.lyrics('T1'), '/api/v1/local/tracks/T1/lyrics'],
+	['local album match', API.local.albumMatch('M1'), '/api/v1/local/albums/match/M1'],
 	['recently added albums', API.library.recentlyAdded(), '/api/v1/library/recently-added?limit=20'],
 	['local album detail', API.library.albumDetail('A1'), '/api/v1/library/albums/A1'],
 	[

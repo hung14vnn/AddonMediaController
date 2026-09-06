@@ -1000,6 +1000,10 @@ class SecuritySettings(AppStruct):
     hsts_include_subdomains: bool = False
     hsts_preload: bool = False
 
+    # Who may download library files (album zips + single tracks).
+    # "trusted" admits trusted AND admin roles (curator semantics).
+    library_download_access: Literal["everyone", "trusted", "admin"] = "everyone"
+
 
 class MusicBrainzConnectionSettings(AppStruct):
     source_mode: MusicBrainzSourceMode = "official"

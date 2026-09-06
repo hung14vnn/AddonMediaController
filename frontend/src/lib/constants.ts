@@ -774,8 +774,9 @@ export const API = {
 	},
 	download: {
 		localTrack: (trackId: string) => `/api/v1/download/local/track/${trackId}`,
-		localAlbum: (albumId: number) => `/api/v1/download/local/album/${albumId}`,
-		localAlbumByMbid: (mbid: string) => `/api/v1/download/local/album/mbid/${mbid}`
+		localAlbum: (albumId: string) => `/api/v1/download/local/album/${albumId}`,
+		localAlbumByMbid: (mbid: string) => `/api/v1/download/local/album/mbid/${mbid}`,
+		access: () => '/api/v1/download/access'
 	},
 	downloadClient: {
 		config: () => '/api/v1/download-client/config',

@@ -27,6 +27,7 @@ from api.v1.routes import cache_status as cache_status_routes
 from api.v1.routes import connect_apps_routes
 from api.v1.routes import download_client as download_client_routes
 from api.v1.routes import download_clients as download_clients_routes
+from api.v1.routes import download as download_routes
 from api.v1.routes import indexers as indexers_routes
 from api.v1.routes import lastfm as lastfm_routes
 from api.v1.routes import downloads as downloads_routes
@@ -821,6 +822,13 @@ _ADMIN_ENDPOINTS = [
     ("POST", "/api/v1/indexers/test", {}),
 ]
 _USER_ENDPOINTS = [
+    # Local file downloads: authenticated users admitted by default; the E5
+    # setting can narrow this to trusted/admin (covered per-role in
+    # tests/routes/test_download_routes.py).
+    ("GET", "/api/v1/download/local/track/file-1", None),
+    ("GET", "/api/v1/download/local/album/album-1", None),
+    ("GET", "/api/v1/download/local/album/mbid/mbid-1", None),
+    ("GET", "/api/v1/download/access", None),
     ("POST", "/api/v1/discover/activity", {"feature": "queue"}),
     ("POST", "/api/v1/discover/queue/preview/074aa5b0-712e-4d6c-8d14-8aedc43e84fd", None),
     # Request submission surfaces: both album and exact-track asks are user
@@ -1099,6 +1107,7 @@ def _client(scenario: str):
         cache_status_routes.router,
         download_client_routes.router,
         download_clients_routes.router,
+        download_routes.router,
         indexers_routes.router,
         lastfm_routes.router,
         quarantine_routes.router,

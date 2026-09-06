@@ -26,7 +26,6 @@ import type {
 } from '$lib/types';
 import { libraryStore } from '$lib/stores/library';
 import { integrationStore } from '$lib/stores/integration';
-import { API } from '$lib/constants';
 import { ApiError } from '$lib/api/client';
 import { isAbortError } from '$lib/utils/errorHandling';
 import { extractServiceStatus } from '$lib/utils/serviceStatus';
@@ -45,7 +44,6 @@ import { launchJellyfinPlayback } from '$lib/player/launchJellyfinPlayback';
 import { launchLocalPlayback } from '$lib/player/launchLocalPlayback';
 import { launchNavidromePlayback } from '$lib/player/launchNavidromePlayback';
 import { launchPlexPlayback } from '$lib/player/launchPlexPlayback';
-import { downloadFile } from '$lib/utils/downloadHelper';
 import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 import {
 	fetchAlbumBasic,
@@ -66,6 +64,7 @@ import { createEventHandlers } from './albumEventHandlers';
 import {
 	playSourceTrack as playSourceTrackImpl,
 	getTrackContextMenuItems as getTrackContextMenuItemsImpl,
+	buildLocalAlbumDownloadCallback,
 	buildSourceCallbacks
 } from './albumPlaybackHandlers';
 import { getLibraryAlbumStatusQuery } from '$lib/queries/library/LibraryQueries.svelte';
@@ -787,18 +786,17 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 			resolvedJellyfin,
 			resolvedNavidrome,
 			resolvedPlex,
-			playlistModalRef
+			playlistModalRef,
+			localMatch?.download_allowed !== false
 		);
 	}
 
-	const localDownloadCallback = $derived<{ callback: (() => void) | undefined }>(
-		(() => {
-			const mbid = localMatch?.musicbrainz_id;
-			return {
-				callback: mbid ? () => downloadFile(API.download.localAlbumByMbid(mbid)) : undefined
-			};
-		})()
-	);
+	const localDownloadCallback = $derived<{ callback: (() => void) | undefined }>({
+		callback: buildLocalAlbumDownloadCallback(
+			localMatch?.musicbrainz_id,
+			localMatch?.download_allowed !== false
+		)
+	});
 
 	const jellyfinCallbacks: SourceCallbacks = buildSourceCallbacks(
 		() => jellyfinMatch,

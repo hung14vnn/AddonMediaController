@@ -18,6 +18,11 @@
 	import AlbumOrganizationDialog from '$lib/components/library/AlbumOrganizationDialog.svelte';
 	import LocalAlbumTrackList from '$lib/components/library/LocalAlbumTrackList.svelte';
 	import DeleteAlbumModal from '$lib/components/DeleteAlbumModal.svelte';
+	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
+	import AddToPlaylistModal from '$lib/components/AddToPlaylistModal.svelte';
+	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+	import { getTrackContextMenuItems } from './albumPlaybackHandlers';
+	import type { QueueItem } from '$lib/player/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { integrationStore } from '$lib/stores/integration';
 	import { toastStore } from '$lib/stores/toast';
@@ -33,7 +38,12 @@
 		getLocalAlbumEditionPinQuery,
 		setLocalAlbumEditionPin
 	} from '$lib/queries/albums/EditionQueries.svelte';
-	import type { AlbumEditionItem } from '$lib/types';
+	import type {
+		AlbumBasicInfo,
+		AlbumEditionItem,
+		LocalTrackInfo,
+		NativeTrackListItem
+	} from '$lib/types';
 	import { createLibraryContributionMutation } from '$lib/queries/libraryContributions/LibraryContributionMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { artistHref } from '$lib/utils/entityRoutes';
@@ -113,6 +123,40 @@
 		const queue = buildDiscoveryQueueFromLocal(tracks);
 		if (!queue.length) return;
 		playerStore.playQueue(queue, 0, shuffle);
+	}
+
+	let playlistModal = $state<{ open: (tracks: QueueItem[]) => void } | null>(null);
+
+	// Same 4-item menu as provider rows, via the shared builder: the native
+	// track adapts to the provider shapes (the backend download param is the
+	// file id, which is track.id on this path).
+	function getLocalTrackMenuItems(track: NativeTrackListItem): MenuItem[] {
+		const albumForMenu: AlbumBasicInfo = {
+			title: track.album_title,
+			musicbrainz_id: track.musicbrainz_release_group_id ?? track.album_id,
+			artist_name: track.artist_name,
+			artist_id: track.artist_id,
+			in_library: true
+		};
+		const resolvedLocal: LocalTrackInfo = {
+			track_file_id: track.id,
+			title: track.title,
+			track_number: track.track_number,
+			disc_number: track.disc_number,
+			duration_seconds: track.duration_seconds,
+			size_bytes: track.file_size_bytes,
+			format: track.format
+		};
+		return getTrackContextMenuItems(
+			{ position: track.track_number, disc_number: track.disc_number, title: track.title },
+			albumForMenu,
+			resolvedLocal,
+			null,
+			null,
+			null,
+			playlistModal,
+			album?.download_allowed !== false
+		);
 	}
 
 	function openContribution(): void {
@@ -240,6 +284,13 @@
 					<button class="btn btn-ghost gap-2" disabled={!tracks.length} onclick={() => play(true)}
 						><Shuffle class="h-4 w-4" /> Shuffle</button
 					>
+					<AlbumDownloadButton
+						albumId={album.id}
+						mbid={null}
+						totalSizeBytes={album.total_size_bytes}
+						trackCount={tracks.length}
+						downloadAllowed={album.download_allowed !== false}
+					/>
 					{#if authStore.isTrusted && album.album_identity_state === 'local_only'}
 						<button
 							class="btn btn-ghost gap-2"
@@ -290,7 +341,7 @@
 					<p class="mt-2">No playable tracks are attached to this album.</p>
 				</div>
 			{:else}
-				<LocalAlbumTrackList {tracks} />
+				<LocalAlbumTrackList {tracks} getTrackMenuItems={getLocalTrackMenuItems} />
 			{/if}
 		</section>
 
@@ -402,6 +453,7 @@
 				</p>
 			{/if}
 		</section>
+		<AddToPlaylistModal bind:this={playlistModal} />
 	{/if}
 </main>
 

@@ -30,7 +30,7 @@ import { launchPlexPlayback } from '$lib/player/launchPlexPlayback';
 import { playerStore } from '$lib/stores/player.svelte';
 import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 import { ListPlus, ListStart, ListMusic, Download } from 'lucide-svelte';
-import { downloadFile } from '$lib/utils/downloadHelper';
+import { downloadAlbumArchive, downloadTrackFile } from '$lib/utils/downloadActions';
 import { API } from '$lib/constants';
 import type { SourceCallbacks } from './albumPageState.svelte';
 
@@ -186,7 +186,8 @@ export function getTrackContextMenuItems(
 	resolvedJellyfin: JellyfinTrackInfo | null,
 	resolvedNavidrome: NavidromeTrackInfo | null,
 	resolvedPlex: PlexTrackInfo | null,
-	playlistModalRef: { open: (tracks: QueueItem[]) => void } | null
+	playlistModalRef: { open: (tracks: QueueItem[]) => void } | null,
+	showDownload: boolean = true
 ): MenuItem[] {
 	const queueItem = buildTrackQueueItem(
 		track,
@@ -223,14 +224,29 @@ export function getTrackContextMenuItems(
 			disabled: !hasSource
 		}
 	];
-	if (resolvedLocal) {
+	if (resolvedLocal && showDownload) {
 		items.push({
 			label: 'Download',
 			icon: Download,
-			onclick: () => downloadFile(API.download.localTrack(resolvedLocal.track_file_id))
+			onclick: () =>
+				void downloadTrackFile(API.download.localTrack(resolvedLocal.track_file_id), track.title)
 		});
 	}
 	return items;
+}
+
+/**
+ * Source-bar "Download Album" callback: undefined when there is no local match
+ * or the viewer may not download (fail-open on a missing bit, like the header
+ * button). Pure so the gating logic is unit-testable outside the page state.
+ */
+export function buildLocalAlbumDownloadCallback(
+	mbid: string | null | undefined,
+	downloadAllowed: boolean
+): (() => void) | undefined {
+	if (!mbid || !downloadAllowed) return undefined;
+	const url = API.download.localAlbumByMbid(mbid);
+	return () => void downloadAlbumArchive(url);
 }
 
 function getSourceQueueItems(
