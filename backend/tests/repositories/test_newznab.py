@@ -184,6 +184,37 @@ async def test_rate_limit_error_raises_rate_limited():
         await _client(newznab_mock.rate_limit_handler).search("q", [3000])
 
 
+def _timeout_handler(request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadTimeout("")
+
+
+@pytest.mark.asyncio
+async def test_transport_timeout_names_the_cause():
+    # httpx timeouts stringify to '' - the error must still name it (#389).
+    assert str(httpx.ReadTimeout("")) == ""
+    with pytest.raises(NewznabApiError) as exc:
+        await _client(_timeout_handler).search("Metallica", [3000, 3010, 3040])
+    assert "ReadTimeout" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_transport_error_message_preserved_when_present():
+    def _boom(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("boom")
+
+    with pytest.raises(NewznabApiError) as exc:
+        await _client(_boom).search("Metallica", [3000, 3010, 3040])
+    assert str(exc.value) == "newznab request failed: boom"
+
+
+@pytest.mark.asyncio
+async def test_fan_out_timeout_warning_names_the_cause(caplog):
+    idx = NewznabIndexer([_entry(_timeout_handler, indexer_id="t", name="Slow")])
+    with caplog.at_level(logging.WARNING):
+        assert await idx.search_album("Metallica", "Master of Puppets") == []
+    assert "ReadTimeout" in caplog.text
+
+
 # --- indexer: query strategy ----------------------------------------------------
 
 @pytest.mark.asyncio
