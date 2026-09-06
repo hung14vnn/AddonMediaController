@@ -139,7 +139,6 @@
 					.lyrics-word,
 					.lyrics-syllable,
 					.lyrics-syllable span.char {
-						animation: none !important;
 						transition: none !important;
 						transform: none !important;
 					}
