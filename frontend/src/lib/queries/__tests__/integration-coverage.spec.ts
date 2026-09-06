@@ -716,6 +716,19 @@ const COVERAGE: Array<[string, string, string]> = [
 	['connect jellyfin', API.me.jellyfin(), '/api/v1/me/connections/jellyfin'],
 	['plex link pin', API.me.plexAuthPin(), '/api/v1/me/connections/plex/auth/pin'],
 	['plex link poll', API.me.plexAuthPoll(7), '/api/v1/me/connections/plex/auth/poll?pin_id=7'],
+	['connections list', API.me.connections(), '/api/v1/me/connections'],
+	['connection by service', API.me.connection('plex'), '/api/v1/me/connections/plex'],
+	['lastfm link token', API.me.lastfmAuthToken(), '/api/v1/me/connections/lastfm/auth/token'],
+	['lastfm link session', API.me.lastfmAuthSession(), '/api/v1/me/connections/lastfm/auth/session'],
+	['connect listenbrainz', API.me.listenbrainz(), '/api/v1/me/connections/listenbrainz'],
+	['spotify auth url', API.me.spotifyAuthUrl(), '/api/v1/me/connections/spotify/auth/url'],
+	['spotify playlists', API.me.spotifyPlaylists(), '/api/v1/me/spotify/playlists'],
+	[
+		'spotify playlist import',
+		API.me.spotifyImport('PL1'),
+		'/api/v1/me/spotify/playlists/PL1/import'
+	],
+	['scrobble preferences', API.me.scrobblePreferences(), '/api/v1/me/scrobble-preferences'],
 	[
 		'Jellyfin user playlist image',
 		API.jellyfinLibrary.playlistImage('P1', 'I1', 300),

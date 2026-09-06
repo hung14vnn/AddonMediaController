@@ -589,20 +589,20 @@ class DownloadService:
                         target, single_identity, snapshot=snapshot
                     )
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 - fan-out drops only the soulseek group (D15/D16)
                 logger.exception("soulseek album search failed for job %s", job_id)
                 soulseek_ok = False
         if self._usenet_enabled:
             try:
                 candidates.extend(await self._search_usenet(target, snapshot=snapshot))
-            except Exception:
+            except Exception:  # noqa: BLE001 - fan-out drops only the usenet group (D15/D16)
                 logger.exception("usenet album search failed for job %s", job_id)
         for spec in self._plugin_search_specs():
             try:
                 candidates.extend(
                     await self._search_plugin(target, spec, snapshot=snapshot)
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 - fan-out drops only the plugin group (D15/D16)
                 logger.exception(
                     "plugin album search failed for job %s source=%s",
                     job_id,
@@ -795,14 +795,14 @@ class DownloadService:
                         target, single_identity, snapshot=snapshot
                     )
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 - scout fan-out drops only the soulseek group
                 logger.exception(
                     "soulseek scout search failed for %s", release_group_mbid
                 )
         if self._usenet_enabled:
             try:
                 candidates.extend(await self._search_usenet(target, snapshot=snapshot))
-            except Exception:
+            except Exception:  # noqa: BLE001 - scout fan-out drops only the usenet group
                 logger.exception(
                     "usenet scout search failed for %s", release_group_mbid
                 )
@@ -811,7 +811,7 @@ class DownloadService:
                 candidates.extend(
                     await self._search_plugin(target, spec, snapshot=snapshot)
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 - scout fan-out drops only the plugin group
                 logger.exception(
                     "plugin scout search failed for %s source=%s",
                     release_group_mbid,

@@ -1970,6 +1970,7 @@ async def test_recover_stopping_is_idempotent_and_sets_cleanup(
 
 
 
+@pytest.mark.asyncio
 async def test_scheduler_anchor_is_not_hidden_by_many_policy_reconciliations(
     target_store: NativeLibraryStore, tmp_path: Path
 ) -> None:

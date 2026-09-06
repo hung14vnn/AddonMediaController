@@ -322,7 +322,7 @@ class LibraryManagementWorker:
                     failure_code="PUBLICATION_FAILED",
                     completed_at=time.time(),
                 )
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - F-107 poison bundle must terminate durably, not requeue
                 # F-107: an unclassified failure must still terminate the work
                 # row durably; otherwise a deterministic poison bundle requeues
                 # forever with no administrator-visible outcome.

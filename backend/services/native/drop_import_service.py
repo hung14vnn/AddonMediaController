@@ -638,7 +638,7 @@ class DropImportService:
                 requested_track_title,
                 requested_cover_url,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - job boundary records FAILED instead of raising
             logger.exception("Drop import job %s failed", job_id)
             try:
                 await self._store.set_job_status(
@@ -701,7 +701,7 @@ class DropImportService:
                     requested_track_title=requested_track_title,
                     requested_cover_url=requested_cover_url,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 - failing folder must not abort sibling folders
                 logger.exception("Drop import item %s failed", item_id)
                 await self._store.update_item(
                     item_id,

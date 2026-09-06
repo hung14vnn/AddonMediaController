@@ -23,9 +23,12 @@ from fastapi import APIRouter, FastAPI, HTTPException
 
 from api.v1.routes import requests as requests_routes
 from api.v1.routes import auth as auth_routes
+from api.v1.routes import cache_status as cache_status_routes
 from api.v1.routes import connect_apps_routes
 from api.v1.routes import download_client as download_client_routes
 from api.v1.routes import download_clients as download_clients_routes
+from api.v1.routes import indexers as indexers_routes
+from api.v1.routes import lastfm as lastfm_routes
 from api.v1.routes import downloads as downloads_routes
 from api.v1.routes import downloads_search as downloads_search_routes
 from api.v1.routes import following as following_routes
@@ -59,6 +62,7 @@ from core.dependencies import (
     get_auth_service,
     get_auth_store,
     get_cache,
+    get_cache_status_service,
     get_discovery_batch_service,
     get_discover_service,
     get_youtube_repo,
@@ -127,6 +131,7 @@ _SERVICE_PROVIDERS = (
     get_auth_service,
     get_auth_store,
     get_cache,
+    get_cache_status_service,
     get_discovery_batch_service,
     get_discover_service,
     get_youtube_repo,
@@ -800,6 +805,20 @@ _ADMIN_ENDPOINTS = [
     ("GET", "/api/v1/library/operations/stream", None),
     ("POST", "/api/v1/downloads/held/management/task-1/retry", None),
     ("POST", "/api/v1/downloads/held/management/task-1/discard", None),
+    # F-16: global Last.fm linking is admin-only (per-user flow lives at /me).
+    ("POST", "/api/v1/lastfm/auth/token", None),
+    ("POST", "/api/v1/lastfm/auth/session", {"token": "tok-123"}),
+    # F-17: precache cancel is curator-gated (status/stream stay user-open).
+    ("POST", "/api/v1/cache/sync/cancel", None),
+    # F-18: indexer management is admin-only.
+    ("GET", "/api/v1/indexers", None),
+    ("POST", "/api/v1/indexers", {}),
+    ("GET", "/api/v1/indexers/search-backend", None),
+    ("PUT", "/api/v1/indexers/search-backend", {}),
+    ("PUT", "/api/v1/indexers/idx-1", {}),
+    ("DELETE", "/api/v1/indexers/idx-1", None),
+    ("POST", "/api/v1/indexers/reorder", {}),
+    ("POST", "/api/v1/indexers/test", {}),
 ]
 _USER_ENDPOINTS = [
     ("POST", "/api/v1/discover/activity", {"feature": "queue"}),
@@ -1077,8 +1096,11 @@ def _client(scenario: str):
     # routers MUST precede the /downloads/{task_id} catch-all.
     for router in (
         auth_routes.router,
+        cache_status_routes.router,
         download_client_routes.router,
         download_clients_routes.router,
+        indexers_routes.router,
+        lastfm_routes.router,
         quarantine_routes.router,
         downloads_search_routes.router,
         downloads_routes.router,

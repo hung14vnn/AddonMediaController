@@ -94,7 +94,7 @@ class DiscoveryDemandService:
                     pass
                 except asyncio.CancelledError:
                     raise
-                except Exception:
+                except Exception:  # noqa: BLE001 - failing feature reschedules; the demand loop continues
                     retry = 900
                     logger.exception("Optional discovery feature failed: %s", feature)
                 await self._store.finish_activity(row, time.time(), success=success, retry_seconds=retry)

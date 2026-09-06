@@ -163,7 +163,7 @@ class LegacyPendingMigrationService:
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 - run boundary logs; the done-callback reports the task
             logger.exception("legacy_pending_migration failed run=%s", run_id)
         finally:
             self._running = False

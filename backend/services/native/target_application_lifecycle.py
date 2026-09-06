@@ -173,8 +173,17 @@ async def run_target_one_time_migrations(
     )
 
 
+def _log_registered_task_error(task: asyncio.Task, name: str) -> None:
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.error("Startup task %s failed: %s", name, error, exc_info=error)
+
+
 def _register_task(name: str, coroutine: Any) -> None:
     task = asyncio.create_task(coroutine)
+    task.add_done_callback(lambda t, n=name: _log_registered_task_error(t, n))
     TaskRegistry.get_instance().register(name, task)
 
 

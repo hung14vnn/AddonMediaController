@@ -73,6 +73,17 @@ from repositories.musicbrainz_base import (
 
 logger = logging.getLogger(__name__)
 
+
+def _log_triggered_warm_error(task: asyncio.Task, user_id: str) -> None:
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.error(
+            "Triggered homepage warm failed user=%s: %s", user_id, error, exc_info=error
+        )
+
+
 _discover_source_context: ContextVar[MbSourceContext | None] = ContextVar(
     "discover_source_context", default=None
 )
@@ -252,6 +263,9 @@ class DiscoverHomepageService:
         store = getattr(self, "_snapshot_store", None)
         lease = store.user_lease(user_id) if store is not None else None
         task = asyncio.create_task(self._run_triggered_warm(user_id, context, lease))
+        task.add_done_callback(
+            lambda t, u=user_id: _log_triggered_warm_error(t, u)
+        )
         try:
             registry.register(task_name, task)
         except RuntimeError:

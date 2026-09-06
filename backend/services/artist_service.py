@@ -1395,7 +1395,7 @@ class ArtistService:
             except asyncio.CancelledError:
                 logger.info("Release-group warm cancelled for %s", artist_id[:8])
                 return
-            except Exception:
+            except Exception:  # noqa: BLE001 - best-effort warming degrades to empty
                 logger.error(
                     "Release-group warm failed for %s", artist_id[:8], exc_info=True
                 )

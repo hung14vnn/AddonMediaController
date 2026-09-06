@@ -43,7 +43,7 @@ async def cleanup_cache_periodically(
             await cache.cleanup_expired()
         except asyncio.CancelledError:
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Cache cleanup task failed: %s", e, exc_info=True)
 
 
@@ -88,7 +88,7 @@ async def memory_maintenance_periodically(
             _log_memory_usage(cache, rss_before, rss_after, trimmed)
         except asyncio.CancelledError:
             break
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Memory maintenance task failed: %s", e, exc_info=True)
 
 
@@ -173,7 +173,7 @@ async def export_navidrome_playlists_periodically(
                 logger.warning("Navidrome playlist export: %s", result.message)
         except asyncio.CancelledError:
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Navidrome playlist export task failed: %s", e, exc_info=True)
 
 
@@ -192,7 +192,7 @@ def start_download_resume_task(orchestrator: "DownloadOrchestrator") -> asyncio.
     async def _resume() -> None:
         try:
             await orchestrator.startup_resume()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - startup resume must not block the download loop
             logger.error("Download resume failed: %s", e, exc_info=True)
 
     task = asyncio.create_task(_resume())
@@ -323,7 +323,7 @@ async def warm_library_cache(
                     if i % 5 == 0:
                         await asyncio.sleep(1)
 
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - failing item must not kill the warming loop
                     logger.error(
                         "Library cache warm item failed album=%s mbid=%s error=%s",
                         album_data.get("title"),
@@ -333,7 +333,7 @@ async def warm_library_cache(
                     )
                     continue
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
         logger.error("Library cache warming failed: %s", e, exc_info=True)
 
 
@@ -341,7 +341,7 @@ async def warm_jellyfin_mbid_index(jellyfin_repo: "JellyfinRepository") -> None:
     await asyncio.sleep(8)
     try:
         await jellyfin_repo.build_mbid_index()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
         logger.error("Jellyfin MBID index warming failed: %s", e, exc_info=True)
 
 
@@ -358,7 +358,7 @@ async def warm_navidrome_mbid_cache(service_getter=None) -> None:
             await service.warm_mbid_cache()
         except asyncio.CancelledError:
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Navidrome MBID cache warming failed: %s", e, exc_info=True)
         try:
             await asyncio.sleep(14400)
@@ -380,7 +380,7 @@ async def warm_plex_mbid_cache(service_getter=None) -> None:
             await service.persist_if_dirty()
         except asyncio.CancelledError:
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Plex MBID cache warming failed: %s", e, exc_info=True)
         try:
             await asyncio.sleep(14400)
@@ -410,7 +410,7 @@ async def warm_discover_home_periodically(
             await get_discovery_demand_service().run_due_tick()
         except asyncio.CancelledError:
             break
-        except Exception:
+        except Exception:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.exception("Discovery demand scheduler failed")
         await asyncio.sleep(interval)
 
@@ -464,7 +464,7 @@ async def warm_audiodb_cache_periodically(
             )
         except asyncio.CancelledError:
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("AudioDB sweep cycle failed: %s", e, exc_info=True)
         try:
             await asyncio.sleep(_AUDIODB_SWEEP_INTERVAL)
@@ -583,7 +583,7 @@ async def _run_audiodb_sweep_cycle(
                         bytes_ok += 1
                     else:
                         bytes_fail += 1
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - failing item must not kill the sweep loop
             logger.error(
                 "audiodb.sweep action=item_error entity_type=%s mbid=%s error=%s",
                 entity_type,
@@ -645,7 +645,7 @@ async def sync_request_statuses_periodically(
             await requests_page_service.sync_request_statuses()
         except asyncio.CancelledError:
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Periodic request status sync failed: %s", e, exc_info=True)
 
         await asyncio.sleep(interval)
@@ -680,7 +680,7 @@ async def reap_stale_downloads_periodically(
             await get_orchestrator().reap_stale_tasks()
         except asyncio.CancelledError:
             break
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Download watchdog sweep failed: %s", e, exc_info=True)
         await asyncio.sleep(interval)
 
@@ -724,7 +724,7 @@ async def auto_retry_failed_downloads_periodically(
             )
         except asyncio.CancelledError:
             break
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Download auto-retry sweep failed: %s", e, exc_info=True)
         await asyncio.sleep(interval)
 
@@ -785,7 +785,7 @@ async def run_wanted_watcher_periodically(
             await get_wanted_watcher().run_sweep()
         except asyncio.CancelledError:
             break
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Wanted watcher sweep failed: %s", e, exc_info=True)
         await asyncio.sleep(interval)
 
@@ -817,7 +817,7 @@ async def poll_followed_artists_new_releases(
             await get_new_release_service().run_poll()
         except asyncio.CancelledError:
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Follow new-release poll failed: %s", e, exc_info=True)
 
         await asyncio.sleep(interval)
@@ -880,7 +880,7 @@ async def run_events_watcher_periodically(get_events_watcher, get_poll_time) -> 
                 last_sweep = now
         except asyncio.CancelledError:
             break
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Events watcher sweep failed: %s", e, exc_info=True)
             last_sweep = datetime.now()  # a failing sweep still waits for the next slot
         await asyncio.sleep(_EVENTS_SCHEDULER_TICK)
@@ -938,7 +938,7 @@ async def refresh_personal_mixes_periodically(
             await personal_mix_service.run_for_all_users()
         except asyncio.CancelledError:
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Personal mix refresh failed: %s", e, exc_info=True)
 
         await asyncio.sleep(interval)
@@ -979,7 +979,7 @@ async def demote_orphaned_covers_periodically(
             await asyncio.to_thread(cover_disk_cache.demote_orphaned, valid_hashes)
         except asyncio.CancelledError:
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Orphan cover demotion failed: %s", e, exc_info=True)
 
         await asyncio.sleep(interval)
@@ -1028,7 +1028,7 @@ async def prune_stores_periodically(
                 )
         except asyncio.CancelledError:
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Store prune task failed: %s", e, exc_info=True)
 
         await asyncio.sleep(interval)
@@ -1086,7 +1086,7 @@ async def prune_recycle_bin_periodically(
                         logger.info("Recycle bin prune removed %d entries", removed)
         except asyncio.CancelledError:
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Recycle bin prune failed: %s", e, exc_info=True)
 
         await asyncio.sleep(interval)
@@ -1124,14 +1124,23 @@ async def run_background_upgrade_sweep(
     for item in items:
         if enqueued >= policy.background_upgrade_max_per_run:
             break
-        task_id = await download_service.request_upgrade_album(
-            user_id=owner.id,
-            release_group_mbid=item["release_group_mbid"],
-            artist_name=item.get("artist_name") or "Unknown",
-            album_title=item.get("album_title") or "Unknown",
-            year=item.get("year"),
-            artist_mbid=item.get("artist_mbid"),
-        )
+        try:
+            task_id = await download_service.request_upgrade_album(
+                user_id=owner.id,
+                release_group_mbid=item["release_group_mbid"],
+                artist_name=item.get("artist_name") or "Unknown",
+                album_title=item.get("album_title") or "Unknown",
+                year=item.get("year"),
+                artist_mbid=item.get("artist_mbid"),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - F-13 poison item must not starve sweep siblings
+            logger.exception(
+                "Background upgrade sweep item failed rg=%s",
+                item.get("release_group_mbid"),
+            )
+            continue
         if task_id != "already_in_library":
             enqueued += 1
     if enqueued:
@@ -1159,7 +1168,7 @@ async def scan_for_upgrades_periodically(
                 )
         except asyncio.CancelledError:
             break
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Background upgrade sweep failed: %s", e, exc_info=True)
         await asyncio.sleep(interval_hours * 3600)
 

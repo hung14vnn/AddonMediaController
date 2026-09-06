@@ -6,6 +6,7 @@ import msgspec
 from api.v1.schemas.cache_status import CacheSyncStatus
 from core.dependencies import get_cache_status_service
 from infrastructure.msgspec_fastapi import MsgSpecRoute
+from middleware import CurrentCuratorDep
 from services.cache_status_service import CacheStatusService
 
 router = APIRouter(route_class=MsgSpecRoute, prefix="/cache/sync", tags=["cache"])
@@ -35,11 +36,12 @@ async def get_sync_status(
 
 @router.post("/cancel")
 async def cancel_sync(
+    _user: CurrentCuratorDep,
     status_service: CacheStatusService = Depends(get_cache_status_service),
 ):
     from core.task_registry import TaskRegistry
     await status_service.cancel_current_sync()
-    TaskRegistry.get_instance().cancel("precache-library")
+    await TaskRegistry.get_instance().cancel("precache-library")
     await status_service.wait_for_completion()
     return {"status": "cancelled"}
 

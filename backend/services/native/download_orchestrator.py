@@ -3433,7 +3433,7 @@ class DownloadOrchestrator:
                     process_result=result,
                     manifest_override=manifest,
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001 - reimport boundary finalizes FAILED instead of raising
             logger.exception("Unexpected error during reimport of task %s", task.id)
             await self._schedule_attempt_cleanup(task, manifest, disposition="preserve")
             await self._finalize(

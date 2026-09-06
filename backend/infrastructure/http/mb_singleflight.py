@@ -50,7 +50,7 @@ async def _run(key: str, owner: Owner) -> None:
         if owner.task is task and not owner.future.done():
             owner.future.cancel()
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the error is forwarded to waiting futures, not raised
         if not owner.future.done():
             owner.future.set_exception(exc)
     finally:
