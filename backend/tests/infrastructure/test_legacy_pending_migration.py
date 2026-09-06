@@ -1463,3 +1463,36 @@ async def test_pending_migration_resume_counts_prior_provenance(
         assert connection.execute("SELECT COUNT(*) FROM local_tracks").fetchone() == (
             4,
         )
+
+
+@pytest.mark.asyncio
+async def test_source_revision_ignores_auth_users_activity(tmp_path: Path) -> None:
+    """A login mid-run must not stale the pending migration revision.
+
+    Regression test: auth_users.last_login_at flips on every login while the
+    pending migration runs at startup. Hashing that table aborted every boot
+    with StaleRevisionError and retried the same run forever. Genuine input
+    changes must still flip the revision.
+    """
+    historical_root = tmp_path / "Historical" / "Music"
+    _write_catalog_files(historical_root)
+    database = tmp_path / "library.db"
+    _create_source(database, historical_root)
+    store = _store(database)
+
+    before = await store.get_bounded_legacy_source_revision()
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE auth_users SET display_name = ? WHERE id = ?",
+            ("Alice Logged In", "alice"),
+        )
+        connection.commit()
+    assert await store.get_bounded_legacy_source_revision() == before
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE library_files SET track_title = ? WHERE id = ?",
+            ("Changed", TRACK_1),
+        )
+        connection.commit()
+    assert await store.get_bounded_legacy_source_revision() != before
