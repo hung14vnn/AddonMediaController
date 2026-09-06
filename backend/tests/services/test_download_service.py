@@ -1194,6 +1194,91 @@ async def test_discard_held_deletes_the_file(tmp_path):
     )  # auto-retry can resume
 
 
+def _seed_verdict_auth_users(tmp_path):
+    import sqlite3
+
+    conn = sqlite3.connect(tmp_path / "library.db")
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS auth_users"
+            " (id TEXT PRIMARY KEY, username TEXT, role TEXT)"
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO auth_users (id, username, role)"
+            " VALUES ('user-a', 'alice', 'user')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.mark.asyncio
+async def test_discard_held_for_task_resolves_all_and_clears_verdict(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    _seed_verdict_auth_users(tmp_path)
+    held_dir = tmp_path / "held"
+    held_dir.mkdir()
+    task = await store.create_task(
+        user_id="user-a", album_title="Flux - Sessions", artist_name="Poppy"
+    )
+    paths = []
+    for n in (1, 2, 3):
+        p = held_dir / f"x{n}.flac"
+        p.write_bytes(b"audio")
+        paths.append(p)
+        await _record_held(
+            store, p, task_id=task.id, reason="tag_mismatch", track_number=n
+        )
+    await store.record_wrong_product_verdict(task.id, "2021. Flux")
+    svc = _held_service(store, MagicMock())
+
+    assert await svc.discard_held_for_task(task.id, "user-a", "user") == 3
+
+    assert await store.list_held_imports("user-a", "user") == []
+    assert all(not p.exists() for p in paths)
+    assert (await store.get_task(task.id)).wrong_product_verdict_at is None
+
+
+@pytest.mark.asyncio
+async def test_discard_held_for_task_empty_is_not_found(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    svc = _held_service(store, MagicMock())
+
+    with pytest.raises(ResourceNotFoundError):
+        await svc.discard_held_for_task("missing", "user-a", "user")
+
+
+@pytest.mark.asyncio
+async def test_discard_held_for_task_refuses_mixed_units(tmp_path):
+    import threading
+
+    from infrastructure.persistence.download_store import DownloadStore
+
+    store = DownloadStore(db_path=tmp_path / "library.db", write_lock=threading.Lock())
+    _seed_verdict_auth_users(tmp_path)
+    held_dir = tmp_path / "held"
+    held_dir.mkdir()
+    task = await store.create_task(user_id="user-a", album_title="A")
+    p = held_dir / "x.flac"
+    p.write_bytes(b"audio")
+    await _record_held(store, p, task_id=task.id, reason="management:policy")
+    svc = _held_service(store, MagicMock())
+
+    with pytest.raises(ValidationError):
+        await svc.discard_held_for_task(task.id, "user-a", "user")
+    # Refused -> nothing resolved, nothing deleted.
+    assert len(await store.list_held_imports("user-a", "user")) == 1
+    assert p.exists()
+
+
 @pytest.mark.asyncio
 async def test_import_held_places_and_resolves(tmp_path):
     import threading
@@ -2749,3 +2834,194 @@ async def test_standalone_pick_uses_search_snapshot_on_new_task():
     create_kwargs = store.create_task.await_args.kwargs
     assert create_kwargs["quality_snapshot_hash"] == snapshot.snapshot_hash
     assert create_kwargs["quality_snapshot_summary"] == "Try lossless."
+
+
+# audio-only acquisition targets (Slices 4+5)
+
+
+def _dvd_edition_tracks():
+    from models.album import Track
+
+    def track(position, disc, title, medium):
+        return Track(
+            position=position,
+            title=title,
+            disc_number=disc,
+            length=180000,
+            recording_id=f"rec-{disc}-{position}",
+            release_track_id=f"rt-{disc}-{position}",
+            media_format=medium,
+        )
+
+    return [
+        track(1, 1, "Audio One", "CD"),
+        track(2, 1, "Audio Two", "CD"),
+        track(1, 2, "Video One", "DVD"),
+        track(2, 2, "Video Two", "DVD"),
+    ]
+
+
+def _audio_album_service(tracks):
+    svc = MagicMock()
+    info = SimpleNamespace(tracks=list(tracks), selected_release_mbid="rel-1")
+    svc.get_exact_edition_tracks_info = AsyncMock(return_value=info)
+    svc.get_album_tracks_info = AsyncMock(return_value=info)
+    return svc
+
+
+@pytest.mark.asyncio
+async def test_resolve_acquisition_identity_album_counts_audio_only():
+    service = _held_service(
+        MagicMock(), MagicMock(), album_service=_audio_album_service(_dvd_edition_tracks())
+    )
+
+    release_mbid, tracks, selected = await service._resolve_acquisition_identity(
+        "rg-1", "rel-1"
+    )
+
+    assert release_mbid == "rel-1"
+    assert [track.title for track in tracks] == ["Audio One", "Audio Two"]
+    assert selected is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_acquisition_identity_explicit_video_track_still_resolves():
+    service = _held_service(
+        MagicMock(), MagicMock(), album_service=_audio_album_service(_dvd_edition_tracks())
+    )
+
+    release_mbid, tracks, selected = await service._resolve_acquisition_identity(
+        "rg-1", "rel-1", release_track_mbid="rt-2-1"
+    )
+
+    assert release_mbid == "rel-1"
+    assert len(tracks) == 4  # explicit per-track requests keep the full map
+    assert selected.title == "Video One"
+
+
+@pytest.mark.asyncio
+async def test_resolve_acquisition_identity_all_video_album_fails_closed():
+    from models.album import Track
+
+    video_only = [
+        Track(
+            position=1,
+            title="Video One",
+            disc_number=1,
+            length=180000,
+            recording_id="rec-1-1",
+            release_track_id="rt-1-1",
+            media_format="DVD",
+        )
+    ]
+    service = _held_service(
+        MagicMock(), MagicMock(), album_service=_audio_album_service(video_only)
+    )
+
+    with pytest.raises(ValidationError, match="no complete tracklist"):
+        await service._resolve_acquisition_identity("rg-1", "rel-1")
+
+
+@pytest.mark.asyncio
+async def test_ensure_track_count_counts_audio_only():
+    service = _held_service(
+        MagicMock(), MagicMock(), album_service=_audio_album_service(_dvd_edition_tracks())
+    )
+
+    assert await service._ensure_track_count("rg-1", None) == 2
+    # An explicit caller count is never overwritten.
+    assert await service._ensure_track_count("rg-1", 9) == 9
+
+
+@pytest.mark.asyncio
+async def test_single_track_identity_ignores_video_disc():
+    from models.album import Track
+
+    tracks = [
+        Track(
+            position=1,
+            title="Lone Audio",
+            disc_number=1,
+            length=200000,
+            recording_id="rec-solo",
+            release_track_id="rt-solo",
+            media_format="CD",
+        ),
+        Track(
+            position=1,
+            title="Video One",
+            disc_number=2,
+            length=300000,
+            recording_id="rec-v1",
+            release_track_id="rt-v1",
+            media_format="DVD",
+        ),
+    ]
+    service = _held_service(
+        MagicMock(), MagicMock(), album_service=_audio_album_service(tracks)
+    )
+
+    recording_mbid, title, duration = await service._single_track_identity("rg-1")
+
+    assert (recording_mbid, title, duration) == ("rec-solo", "Lone Audio", 200.0)
+
+
+@pytest.mark.asyncio
+async def test_acquire_edition_never_requests_video_positions():
+    album_service = MagicMock()
+    album_service.resolve_edition = AsyncMock(return_value="rel-1")
+    mb = MagicMock()
+    mb.get_release_by_id = AsyncMock(
+        return_value={
+            "media": [
+                {
+                    "position": 1,
+                    "format": "CD",
+                    "tracks": [
+                        {
+                            "position": 1,
+                            "title": "Audio One",
+                            "length": 180000,
+                            "id": "rt-1-1",
+                            "recording": {"id": "rec-1-1", "title": "Audio One"},
+                        },
+                        {
+                            "position": 2,
+                            "title": "Audio Two",
+                            "length": 180000,
+                            "id": "rt-1-2",
+                            "recording": {"id": "rec-1-2", "title": "Audio Two"},
+                        },
+                    ],
+                },
+                {
+                    "position": 2,
+                    "format": "DVD",
+                    "tracks": [
+                        {
+                            "position": 1,
+                            "title": "Video One",
+                            "length": 240000,
+                            "id": "rt-2-1",
+                            "recording": {"id": "rec-2-1", "title": "Video One"},
+                        }
+                    ],
+                },
+            ]
+        }
+    )
+    mb.get_release_group = AsyncMock(return_value=None)
+    service = _held_service(MagicMock(), MagicMock(), album_service=album_service)
+    service._mb = mb
+    service._library.get_file_rows_for_album = AsyncMock(return_value=[])
+    service.request_track = AsyncMock(return_value="task-x")
+
+    result = await service.acquire_edition("user-a", "rg-1")
+
+    assert result["total_tracks"] == 2
+    assert result["requested"] == 2
+    assert service.request_track.await_count == 2
+    requested_recordings = {
+        call.kwargs["recording_mbid"] for call in service.request_track.await_args_list
+    }
+    assert requested_recordings == {"rec-1-1", "rec-1-2"}

@@ -34,7 +34,12 @@ from infrastructure.persistence.download_store import DownloadStore
 from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.sse_publisher import SSEPublisher
 from models.acquisition_quality import AcquisitionQualitySnapshot
+from models.download_identity import SOURCE_SOULSEEK, soulseek_folder_identity
 from services.native.acquisition import quality as acq_quality
+from services.native.acquisition.scoring_core import (
+    artist_words,
+    normalize_folder_identity,
+)
 from models.download_manifest import (
     DownloadManifest,
     ExpectedFile,
@@ -45,6 +50,7 @@ from repositories.protocols.download_client import (
     DownloadClientProtocol,
 )
 from repositories.protocols.indexer import IndexerProtocol
+from services.album_utils import audio_tracks
 from services.native.acquisition.errors import OrchestrationError
 from services.native.acquisition.status import DownloadStatus
 from services.native.acquisition.strategy import (
@@ -171,6 +177,18 @@ _FILES_NOT_FOUND_MSG = (
     "the slskd downloads path points to where slskd saves completed files"
 )
 _TAG_MISMATCH_MSG = "Files downloaded and found, but their embedded tags did not match the requested music"
+# Per-file failure reasons that prove CONTENT is wrong (not transfers, mounts, or
+# local faults): the album-identity exclusion (Slice 3) only learns from these.
+# "corrupt" is deliberately absent - an unreadable file is ambiguous evidence.
+_CONTENT_PROOF_FAILURES = frozenset(
+    {
+        "tag_mismatch",
+        "fingerprint_mismatch",
+        "fingerprint_unverified",
+        "duration_mismatch",
+        "wrong_track",
+    }
+)
 # slskd delivered the files and we found them, but writing them into the library failed
 # (perms, disk full, a cross-mount copy the filesystem rejected). Local fault, not the
 # peer's - blaming Soulseek sends users chasing the wrong problem.
@@ -1832,8 +1850,79 @@ class DownloadOrchestrator:
             if manifest_override is not None
             else self._read_manifest(task.id)
         )
-        return await self._strategy(task.source).import_files(
+        result, enumerated = await self._strategy(task.source).import_files(
             task, manifest, only_filenames=only_filenames, completed=completed
+        )
+        await self._maybe_record_wrong_product_verdict(task, result)
+        await self._maybe_record_folder_exclusion(task, result)
+        return result, enumerated
+
+    async def _maybe_record_folder_exclusion(self, task, result) -> None:  # noqa: ANN001, ANN201
+        """Slice 3: when an album import proves a Soulseek folder's CONTENT
+        wrong (nothing imported, every failure content-proof), exclude the
+        folder's normalized album identity so failover and future searches
+        stop re-grabbing the same wrong product from other peers. RG-scoped
+        by construction (the RG is in the key), TTL-bounded, and cleared by
+        manual retry/re-request. Usenet needs none of this: per-file rows
+        already name the NZB release identity."""
+        if getattr(task, "source", None) != SOURCE_SOULSEEK:
+            return
+        if getattr(task, "download_type", "album") != "album":
+            return
+        if result.succeeded or len(result.failed) < 2:
+            return
+        if any(
+            failure.reason not in _CONTENT_PROOF_FAILURES for failure in result.failed
+        ):
+            return
+        if not task.release_group_mbid or not task.source_directory:
+            return
+        normalized = normalize_folder_identity(
+            task.source_directory,
+            artist_words=artist_words(task.artist_name),
+        )
+        if not normalized:
+            return
+        await self._store.record_quarantine(
+            source=SOURCE_SOULSEEK,
+            identity=soulseek_folder_identity(task.release_group_mbid, normalized),
+            reason="verify_failed",
+            release_group_mbid=task.release_group_mbid,
+        )
+        logger.info(
+            "download.folder_excluded",
+            extra={
+                "task_id": task.id,
+                "folder": normalized,
+                "files": len(result.failed),
+            },
+        )
+
+    async def _maybe_record_wrong_product_verdict(self, task, result) -> None:  # noqa: ANN001, ANN201
+        """Slice 2: collapse a uniformly tag-failed album import into one
+        wrong-product verdict (first one wins; the store guards the write).
+        Gated to album tasks with nothing imported and at least two processed
+        files, so single-file held tracks and partial grace-period imports
+        keep the normal per-track path. ``files_completed`` reads the passed
+        task object (possibly mid-loop stale); a stale zero only ever adds an
+        actionable card, and discard-verdict never touches library rows."""
+        if getattr(task, "download_type", "album") != "album":
+            return
+        if result.succeeded or len(result.failed) < 2:
+            return
+        if getattr(task, "files_completed", 0):
+            return
+        if any(failure.reason != "tag_mismatch" for failure in result.failed):
+            return
+        detail = task.source_directory or task.source_username
+        await self._store.record_wrong_product_verdict(task.id, detail)
+        logger.info(
+            "download.wrong_product_verdict",
+            extra={
+                "task_id": task.id,
+                "files": len(result.failed),
+                "grabbed": detail,
+            },
         )
 
     async def _schedule_attempt_cleanup(
@@ -2014,6 +2103,17 @@ class DownloadOrchestrator:
         if task.search_job_id is None:
             return None
         candidates = await self._store.get_search_job_candidates(task.search_job_id)
+        # Wrong-product exclusions (Slice 3): consulted fresh per call because a
+        # just-failed attempt records its folder between failover steps. Ranked
+        # candidates predate the exclusion, so the rank-time consult cannot help.
+        folder_blocked: set[tuple[str, str]] | None = None
+        folder_artist: frozenset[str] = frozenset()
+        if (
+            getattr(task, "source", None) == SOURCE_SOULSEEK
+            and getattr(task, "release_group_mbid", None)
+        ):
+            folder_blocked = await self._store.load_quarantine_set()
+            folder_artist = artist_words(getattr(task, "artist_name", ""))
         start = (task.candidate_index or 0) + 1
         for idx in range(start, len(candidates)):
             cand = candidates[idx]
@@ -2023,6 +2123,17 @@ class DownloadOrchestrator:
                 continue
             if self._candidate_source_identity(cand) in tried_usernames:
                 continue
+            if folder_blocked is not None:
+                normalized = normalize_folder_identity(
+                    cand.parent_directory, artist_words=folder_artist
+                )
+                if normalized and (
+                    SOURCE_SOULSEEK,
+                    soulseek_folder_identity(
+                        task.release_group_mbid, normalized
+                    ),
+                ) in folder_blocked:
+                    continue
             # re-gate: failover must not fall through to a now out-of-policy candidate (D2)
             if not await self._candidate_passes_quality(task, cand):
                 continue
@@ -2286,19 +2397,31 @@ class DownloadOrchestrator:
         self, task, *, context: str
     ) -> "tuple[int, int, list[str]] | None":  # noqa: ANN001
         """``(covered, expected_total, orphan_row_ids)`` for an album task, measured
-        against the requested release's MusicBrainz tracklist - or ``None`` when the
-        tracklist is unavailable (MB down, no album service wired, empty/free-text
-        release group), falling the caller back to the count check. Each expected
-        track is covered by at most one library row (recording MBID -> position +
-        duration -> containment title, via ``row_covers_track``); rows covering
-        nothing are the ORPHANS the ``download.coverage`` event surfaces (P4/P5).
-        Fail-open by design: coverage is an upgrade over counting, never a blocker."""
+        against the task's PINNED edition - or ``None`` when the tracklist is
+        unavailable (MB down, no album service wired, empty/free-text release
+        group), falling the caller back to the count check. The pinned edition
+        (never the local-preferring release-group resolver) is the denominator:
+        measuring against the library's own tracklist lets one imported row
+        satisfy the gate. Each expected track is covered by at most one library
+        row (recording MBID -> position + duration -> containment title, via
+        ``row_covers_track``); rows covering nothing are the ORPHANS the
+        ``download.coverage`` event surfaces (P4/P5). Fail-open by design:
+        coverage is an upgrade over counting, never a blocker."""
         if self._album_service is None or not task.release_group_mbid:
             return None
         try:
-            info = await self._album_service.get_album_tracks_info(
-                task.release_group_mbid, priority=RequestPriority.BACKGROUND_SYNC
-            )
+            if task.release_mbid:
+                info = await self._album_service.get_exact_edition_tracks_info(
+                    task.release_group_mbid,
+                    task.release_mbid,
+                    priority=RequestPriority.BACKGROUND_SYNC,
+                )
+            else:
+                # Legacy task with no pinned edition: the release-group resolver
+                # as before.
+                info = await self._album_service.get_album_tracks_info(
+                    task.release_group_mbid, priority=RequestPriority.BACKGROUND_SYNC
+                )
         except Exception:  # noqa: BLE001 - MB failure must never block completion
             logger.warning(
                 "coverage.tracklist_unavailable",
@@ -2308,7 +2431,7 @@ class DownloadOrchestrator:
                 },
             )
             return None
-        tracks = list(info.tracks or [])
+        tracks = audio_tracks(list(info.tracks or []))
         if not tracks:
             return None
         try:
@@ -2323,6 +2446,7 @@ class DownloadOrchestrator:
             extra={
                 "task_id": task.id,
                 "context": context,
+                "release_mbid": task.release_mbid,
                 "expected": len(tracks),
                 "covered": covered,
                 "orphan_row_ids": orphans,

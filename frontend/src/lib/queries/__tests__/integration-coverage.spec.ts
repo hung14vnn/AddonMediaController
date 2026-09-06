@@ -69,6 +69,11 @@ const COVERAGE: Array<[string, string, string]> = [
 		API.downloads.heldManagementDiscard('T1'),
 		'/api/v1/downloads/held/management/T1/discard'
 	],
+	[
+		'verdict hold discard',
+		API.downloads.heldVerdictDiscard('T1'),
+		'/api/v1/downloads/held/verdict/T1/discard'
+	],
 	['held single reverify', API.downloads.heldReverify(7), '/api/v1/downloads/held/7/reverify'],
 	['held bulk reverify', API.downloads.heldReverifyBulk(), '/api/v1/downloads/held/reverify'],
 	// search (user-scoped)

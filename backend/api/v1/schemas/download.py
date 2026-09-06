@@ -235,6 +235,10 @@ class DownloadTaskResponse(AppStruct):
     attempt_total: int = 0
     has_next_source: bool = False
     held_for_review: bool = False
+    # Wrong-product verdict (Slice 2): when the import proved the grabbed
+    # folder is a different product. The detail names the grabbed folder.
+    wrong_product_verdict_at: float | None = None
+    wrong_product_detail: str | None = None
 
 
 class PolicySummaryResponse(AppStruct):
@@ -318,6 +322,11 @@ class HeldActionResponse(AppStruct):
 
 
 class HeldManagementActionResponse(AppStruct):
+    status: str
+    files: int
+
+
+class HeldVerdictActionResponse(AppStruct):
     status: str
     files: int
 

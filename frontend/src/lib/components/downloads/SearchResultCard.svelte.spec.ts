@@ -100,6 +100,20 @@ describe('SearchResultCard.svelte', () => {
 		expect(tip?.getAttribute('data-tip')).toContain('Coherence');
 	});
 
+	it('shows the track-match overlap in the breakdown tooltip when computed', async () => {
+		renderCard({ candidate: makeCandidate({ track_overlap: 0.42 }) });
+		await expect.element(page.getByText('88%')).toBeInTheDocument();
+		const tip = document.querySelector('[data-tip]');
+		expect(tip?.getAttribute('data-tip')).toContain('Track match 42%');
+	});
+
+	it('omits track-match from the tooltip for pre-overlap candidates', async () => {
+		renderCard({ candidate: makeCandidate() });
+		await expect.element(page.getByText('88%')).toBeInTheDocument();
+		const tip = document.querySelector('[data-tip]');
+		expect(tip?.getAttribute('data-tip')).not.toContain('Track match');
+	});
+
 	it('renders the Usenet variant with indexer, format and size', async () => {
 		const usenet = makeCandidate({
 			source: 'usenet',

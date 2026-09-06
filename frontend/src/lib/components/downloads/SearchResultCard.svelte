@@ -149,8 +149,11 @@
 				? `${rel?.indexer_name ?? 'Usenet'} · ${usenetFormat} · ${sizeLabel}` +
 					`${rel?.grabs ? ` · ${rel.grabs} grabs` : ''}${ageLabel ? ` · ${ageLabel}` : ''}`
 				: `Coherence ${Math.round(candidate.coherence * 100)}% · ` +
-					`File confidence ${Math.round(candidate.file_confidence * 100)}% · ` +
-					`${freeSlot ? 'Free slot' : 'Queued'}${uploadSpeed ? ` · ${Math.round(uploadSpeed / 1000)} KB/s` : ''}`
+					`File confidence ${Math.round(candidate.file_confidence * 100)}%` +
+					(candidate.track_overlap != null
+						? ` · Track match ${Math.round(candidate.track_overlap * 100)}%`
+						: '') +
+					` · ${freeSlot ? 'Free slot' : 'Queued'}${uploadSpeed ? ` · ${Math.round(uploadSpeed / 1000)} KB/s` : ''}`
 	);
 	const heading = $derived(
 		isPlugin

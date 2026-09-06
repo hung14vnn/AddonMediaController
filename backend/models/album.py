@@ -8,6 +8,7 @@ class Track(AppStruct):
     length: int | None = None
     recording_id: str | None = None
     release_track_id: str | None = None
+    media_format: str | None = None
 
 
 class AlbumInfo(AppStruct):

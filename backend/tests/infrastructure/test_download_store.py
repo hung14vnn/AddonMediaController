@@ -72,6 +72,8 @@ def test_migration_is_idempotent(tmp_path: Path):
         "attempt_total",
         "has_next_source",
         "release_track_mbid",
+        "wrong_product_verdict_at",
+        "wrong_product_detail",
     } <= task_columns
     assert {
         "reason_detail",
@@ -1389,3 +1391,48 @@ async def test_held_import_pause_and_resolve(store):
     assert await store.has_unresolved_held_for_task("task-9") is False
     assert await store.task_ids_with_unresolved_held("user-a", "user") == set()
     assert await store.list_held_imports("user-a", "user") == []
+
+
+@pytest.mark.asyncio
+async def test_wrong_product_verdict_record_clear_first_wins(store):
+    task = await store.create_task(
+        user_id="user-a", album_title="Flux - Sessions", artist_name="Poppy"
+    )
+    assert task.wrong_product_verdict_at is None
+
+    await store.record_wrong_product_verdict(task.id, "2021. Flux")
+    reread = await store.get_task(task.id)
+    assert reread.wrong_product_verdict_at is not None
+    assert reread.wrong_product_detail == "2021. Flux"
+
+    # A later import run never overwrites the original verdict.
+    await store.record_wrong_product_verdict(task.id, "Flux (2021)")
+    assert (await store.get_task(task.id)).wrong_product_detail == "2021. Flux"
+
+    await store.clear_wrong_product_verdict(task.id)
+    cleared = await store.get_task(task.id)
+    assert cleared.wrong_product_verdict_at is None
+    assert cleared.wrong_product_detail is None
+
+
+@pytest.mark.asyncio
+async def test_folder_exclusion_round_trips_and_clears_by_album(store):
+    from models.download_identity import (
+        canonical_soulseek_identity,
+        soulseek_folder_identity,
+    )
+
+    identity = soulseek_folder_identity("RG-1", "flux")
+    assert identity == "folder:rg-1:flux"  # RG casefolded into the key
+    assert canonical_soulseek_identity(identity) == identity  # stable round-trip
+
+    await store.record_quarantine(
+        source="soulseek",
+        identity=identity,
+        reason="verify_failed",
+        release_group_mbid="RG-1",
+    )
+    assert ("soulseek", identity) in await store.load_quarantine_set()
+    # A manual re-request clears album rows (covering folder rows too).
+    assert await store.delete_quarantine_for_album("RG-1") == 1
+    assert ("soulseek", identity) not in await store.load_quarantine_set()

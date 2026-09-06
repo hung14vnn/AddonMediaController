@@ -852,6 +852,7 @@ export const API = {
 		heldManagementRetry: (taskId: string) => `/api/v1/downloads/held/management/${taskId}/retry`,
 		heldManagementDiscard: (taskId: string) =>
 			`/api/v1/downloads/held/management/${taskId}/discard`,
+		heldVerdictDiscard: (taskId: string) => `/api/v1/downloads/held/verdict/${taskId}/discard`,
 		heldAudio: (id: number) => `/api/v1/downloads/held/${id}/audio`,
 		reimport: (taskId: string) => `/api/v1/downloads/${taskId}/reimport`,
 		cutoffUnmet: () => '/api/v1/downloads/cutoff-unmet',

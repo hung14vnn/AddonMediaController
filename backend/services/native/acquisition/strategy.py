@@ -24,15 +24,15 @@ from repositories.protocols.download_client import (
     EnqueueRequest,
     TaskHandle,
 )
+from services.album_utils import audio_tracks
+from services.native.acquisition import scoring_core
 from services.native.acquisition.errors import OrchestrationError
 from services.native.file_processor import (
     DOWNLOADS_MOUNT_UNAVAILABLE,
     QUARANTINE_REASONS,
     FileFailure,
     ProcessResult,
-    _TAG_TITLE_WEAK,
 )
-from services.native.title_match import title_containment_score
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +105,9 @@ async def _expected_tracks_for_task(  # noqa: ANN001, ANN201
             info = await album_service.get_album_tracks_info(task.release_group_mbid)
     except Exception as error:  # noqa: BLE001 - no exact proof means no enqueue
         raise OrchestrationError("could not verify the exact album edition") from error
+    # Audio media only: DVD-video positions are not downloadable audio, and the
+    # manifest must measure the same target set as request time and coverage.
+    tracks = audio_tracks(list(info.tracks))
     expected = [
         ExpectedTrack(
             track_number=track.position,
@@ -114,7 +117,7 @@ async def _expected_tracks_for_task(  # noqa: ANN001, ANN201
             title=track.title,
             release_track_mbid=track.release_track_id,
         )
-        for track in info.tracks
+        for track in tracks
     ]
     if (
         not expected
@@ -153,26 +156,16 @@ def _file_serves_expected(value, tracks) -> bool:  # noqa: ANN001
     title only excludes when duration cannot rescue it (peer paths like ``02.flac``
     carry no title signal), a hard duration miss always excludes, and a track with
     no usable signal cannot be discriminated - its files pass rather than strand
-    the position on every candidate."""
-    stem = value.filename.replace("\\", "/").rsplit("/", 1)[-1]
-    base, dot, _ext = stem.rpartition(".")
-    if dot and base:
-        stem = base
-    for track in tracks:
-        title_ok = None
-        if track.title and stem:
-            title_ok = title_containment_score(track.title, stem) >= _TAG_TITLE_WEAK
-        duration_ok = None
-        if track.duration_seconds and value.duration:
-            duration_ok = abs(value.duration - track.duration_seconds) <= max(
-                15.0, 0.10 * track.duration_seconds
-            )
-        if duration_ok is False:
-            continue
-        if title_ok is False and duration_ok is not True:
-            continue
-        return True
-    return False
+    the position on every candidate. Thin wrapper over the shared
+    ``scoring_core`` pair rule so the failover filter and grab-time overlap can
+    never drift apart."""
+    stem = scoring_core.filename_stem(value.filename)
+    return any(
+        scoring_core.pair_serves_track(
+            stem, value.duration, track.title, track.duration_seconds
+        )
+        for track in tracks
+    )
 
 
 def pre_publication_quality_check(
@@ -437,6 +430,21 @@ class SoulseekStrategy:
             timeout=timeout,
         )
         results = [r.soulseek for r in indexer_results if r.soulseek is not None]
+        # Grab-time overlap input: the same pinned-edition tracklist the import
+        # will verify against, resolved WITHOUT pinning side-effects
+        # (task_store=None - pinning stays at enqueue). Advisory only: any
+        # resolution failure falls back to today's tracklist-blind rank.
+        expected_tracks: list = []
+        if self._album_service is not None and task.release_group_mbid:
+            try:
+                _, expected_tracks = await _expected_tracks_for_task(
+                    task, self._album_service, None
+                )
+            except OrchestrationError as exc:
+                logger.info(
+                    "download.overlap_unresolved",
+                    extra={"task_id": task.id, "reason": str(exc)},
+                )
         return await self._scorer.rank(
             target,
             results,
@@ -445,6 +453,8 @@ class SoulseekStrategy:
             auto_accept_threshold=auto,
             manual_threshold=manual,
             held_tier=held_tier,
+            expected_tracks=expected_tracks,
+            release_group_mbid=task.release_group_mbid,
         )
 
     async def enqueue(

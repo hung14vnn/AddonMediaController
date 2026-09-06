@@ -33,7 +33,12 @@ from models.acquisition_quality import (
     EvidenceProvenance,
 )
 from models.download import ScoredCandidate, TargetAlbum
-from models.download_identity import canonical_soulseek_identity, soulseek_identity
+from models.download_identity import (
+    canonical_soulseek_identity,
+    soulseek_folder_identity,
+    soulseek_identity,
+)
+from models.download_manifest import ExpectedTrack
 from models.acquisition_quality import (
     AudioQualityEvidence,
     CodecFamily,
@@ -54,9 +59,12 @@ from services.native.acquisition.decision import (
 )
 from services.native.acquisition.scoring_core import (
     artist_from_path as _artist_from_path,  # noqa: F401 - re-exported for tests/callers
+    artist_words as _artist_words,
     file_confidence as _core_file_confidence,
+    normalize_folder_identity as _normalize_folder_identity,
     normalize_for_match as _normalize_for_match,
     strip_edition_suffix as _strip_edition_suffix,
+    tracklist_overlap as _core_tracklist_overlap,
 )
 from services.native.acquisition.specs.quarantine import quarantine
 from services.native.title_match import (
@@ -303,6 +311,8 @@ class AlbumPreflightScorer:
         auto_accept_threshold: float = 0.70,
         manual_threshold: float = 0.50,
         held_tier: str | None = None,
+        expected_tracks: list["ExpectedTrack"] | None = None,
+        release_group_mbid: str | None = None,
     ) -> list[ScoredCandidate]:
         context = await build_context(self._store, held_tier=held_tier)
         # Canonical quality endpoints come from the SNAPSHOT; non-quality gates
@@ -373,9 +383,39 @@ class AlbumPreflightScorer:
         for key in exhausted:
             del groups[key]
 
+        # Wrong-product exclusions (Slice 3): folders whose normalized album
+        # identity proved content-wrong for THIS release group drop before
+        # scoring, however the peer named the folder ("2021. Flux",
+        # "Flux (2021)" and "Flux" are one key). RG-scoped by construction
+        # (the RG is in the key); without an RG the consult cannot run and
+        # every folder survives (manual searches pass none today).
+        drop_folder_excluded = 0
+        if release_group_mbid:
+            folder_artist_words = _artist_words(target.artist_name)
+            folder_excluded = {
+                key
+                for key in groups
+                if (
+                    "soulseek",
+                    soulseek_folder_identity(
+                        release_group_mbid,
+                        _normalize_folder_identity(
+                            key[1], artist_words=folder_artist_words
+                        ),
+                    ),
+                )
+                in context.quarantine_set
+            }
+            drop_folder_excluded = len(folder_excluded)
+            for key in folder_excluded:
+                del groups[key]
+
         scored: list[ScoredCandidate] = []
         drop_no_audio = drop_codec = 0
         pipeline_drops: Counter[RejectCode] = Counter()
+        # Overlap title judging ignores the artist's own words (same rule as
+        # the strict file-confidence path): "Poppy - Kitty" names Kitty.
+        overlap_ignore = _artist_words(target.artist_name)
         for (username, parent), files in groups.items():
             # A folder search returns the album's sidecars (cover art, cue, log, m3u)
             # alongside the tracks; gate, score and enqueue on the AUDIO files only -
@@ -466,7 +506,30 @@ class AlbumPreflightScorer:
             # availability, which is how the incident candidate crossed 0.70. The 5:3
             # coherence:confidence ratio is preserved and the scale stays 0..1, so the
             # persisted preflight_score_auto_accept keeps meaning what it always meant.
-            final = 0.625 * coherence + 0.375 * avg_confidence
+            base_final = 0.625 * coherence + 0.375 * avg_confidence
+
+            # Grab-time tracklist overlap: when the pinned edition's tracklist is
+            # known, a folder whose NAMED files don't cover it is the wrong
+            # product wearing the right folder name (Flux vs Flux - Sessions) -
+            # discount it multiplicatively (perfect overlap scores exactly as
+            # before, so unknown/absent tracklists change nothing).
+            overlap = (
+                _core_tracklist_overlap(
+                    [(f.filename, f.duration) for f in audio],
+                    [
+                        (t.track_number, t.title, t.duration_seconds)
+                        for t in expected_tracks
+                    ],
+                    ignore=overlap_ignore,
+                )
+                if expected_tracks
+                else None
+            )
+            final = (
+                base_final * (0.5 + 0.5 * overlap)
+                if overlap is not None
+                else base_final
+            )
 
             if final >= auto_accept_threshold and has_evidence:
                 tier = "auto"
@@ -483,6 +546,17 @@ class AlbumPreflightScorer:
                     )
             else:
                 tier = "rejected"
+            if (
+                overlap is not None
+                and tier == "rejected"
+                and base_final >= manual_threshold
+                and coherence >= manual_threshold
+            ):
+                # Overlap demotion floors at manual: the pick endpoint refuses
+                # rejected-tier candidates, so a floor keeps the "pick a
+                # release" escape hatch open (worst case parks for review,
+                # never a dead end). The sub-threshold score stays honest.
+                tier = "manual"
 
             if tier == "auto" and target.track_count and target.track_count > 1:
                 count_ratio = len(audio) / target.track_count
@@ -527,6 +601,7 @@ class AlbumPreflightScorer:
                     file_confidence=avg_confidence,
                     final_score=final,
                     tier=tier,
+                    track_overlap=overlap,
                     quality_evidence=folder_decision.evidence,
                     quality_decision=folder_decision,
                 )
@@ -584,6 +659,17 @@ class AlbumPreflightScorer:
 
         scored.sort(key=_rank_key, reverse=True)
         ranked = scored[:50]
+        # grab-time overlap diagnosis (keys present only when the rank knew
+        # the tracklist) - the next wrong-product incident reads here.
+        overlap_extras: dict = {}
+        overlaps = [c.track_overlap for c in ranked if c.track_overlap is not None]
+        if overlaps:
+            overlap_extras = {
+                "overlap_scored": len(overlaps),
+                "overlap_min": round(min(overlaps), 4),
+            }
+            if ranked[0].track_overlap is not None:
+                overlap_extras["overlap_top"] = round(ranked[0].track_overlap, 4)
         logger.info(
             "preflight.ranked",
             extra={
@@ -591,6 +677,7 @@ class AlbumPreflightScorer:
                 "top_score": ranked[0].final_score if ranked else 0.0,
                 "auto_count": sum(1 for c in ranked if c.tier == "auto"),
                 "manual_count": sum(1 for c in ranked if c.tier == "manual"),
+                **overlap_extras,
                 # why folders were dropped before scoring - a candidates_count of 0
                 # with a non-zero results_count is explained entirely by these. The
                 # inline gates (no_audio/codec) plus one key per shared-spec reject code.
@@ -598,6 +685,7 @@ class AlbumPreflightScorer:
                 "dropped_no_audio": drop_no_audio,
                 "dropped_codec": drop_codec,
                 "dropped_peer_exhausted": drop_peer_exhausted,
+                "dropped_folder_excluded": drop_folder_excluded,
                 **{f"dropped_{code.value}": n for code, n in pipeline_drops.items()},
             },
         )

@@ -3334,7 +3334,7 @@ def _album_service_with(tracks):
     return svc
 
 
-def _mb_track(position, *, title, recording_id=None, length=None, disc=1):
+def _mb_track(position, *, title, recording_id=None, length=None, disc=1, media_format=None):
     from types import SimpleNamespace
 
     return SimpleNamespace(
@@ -3344,6 +3344,7 @@ def _mb_track(position, *, title, recording_id=None, length=None, disc=1):
         recording_id=recording_id or f"recording-{position}",
         release_track_id=f"release-track-{position}",
         length=length,
+        media_format=media_format,
     )
 
 
@@ -4452,3 +4453,336 @@ async def test_empty_transfer_state_with_empty_disk_keeps_failover_131(
         assert call.kwargs["only_filenames"] == set()
     assert "No working source" in (final.error_message or "")
     assert "slskd downloads" not in (final.error_message or "")
+
+
+def _verdict_result(*reasons):
+    return ProcessResult(
+        succeeded=[],
+        failed=[FileFailure(filename=f"{n}.flac", reason=r) for n, r in enumerate(reasons)],
+    )
+
+
+@pytest.mark.asyncio
+async def test_wrong_product_verdict_recorded_on_uniform_tag_failure(tmp_path):
+    store, orch, _fp, _lib = _build(tmp_path)
+    task = await store.create_task(
+        user_id="user-a",
+        album_title="Flux - Sessions",
+        artist_name="Poppy",
+        source_directory="2021. Flux",
+    )
+
+    await orch._maybe_record_wrong_product_verdict(
+        task, _verdict_result("tag_mismatch", "tag_mismatch", "tag_mismatch")
+    )
+
+    reread = await store.get_task(task.id)
+    assert reread.wrong_product_verdict_at is not None
+    assert reread.wrong_product_detail == "2021. Flux"
+
+
+@pytest.mark.asyncio
+async def test_wrong_product_verdict_skipped_unless_uniform_album_failure(tmp_path):
+    store, orch, _fp, _lib = _build(tmp_path)
+
+    async def verdict_after(task_kwargs, result):
+        task = await store.create_task(user_id="user-a", **task_kwargs)
+        await orch._maybe_record_wrong_product_verdict(task, result)
+        return await store.get_task(task.id)
+
+    # A track download keeps the per-track held path (never a verdict).
+    track = await verdict_after(
+        {"download_type": "track", "track_title": "X"},
+        _verdict_result("tag_mismatch", "tag_mismatch"),
+    )
+    assert track.wrong_product_verdict_at is None
+
+    # Any success, a single file, or a non-tag reason: no verdict.
+    mixed_ok = await verdict_after(
+        {"album_title": "A"},
+        ProcessResult(
+            succeeded=["/music/a.flac"],
+            failed=[FileFailure(filename="b.flac", reason="tag_mismatch"),
+                    FileFailure(filename="c.flac", reason="tag_mismatch")],
+        ),
+    )
+    assert mixed_ok.wrong_product_verdict_at is None
+    single = await verdict_after({"album_title": "B"}, _verdict_result("tag_mismatch"))
+    assert single.wrong_product_verdict_at is None
+    mixed_reasons = await verdict_after(
+        {"album_title": "C"},
+        _verdict_result("tag_mismatch", "fingerprint_mismatch"),
+    )
+    assert mixed_reasons.wrong_product_verdict_at is None
+
+    # Prior imports on the task (multi-attempt): genuinely mixed evidence.
+    landed = await store.create_task(user_id="user-a", album_title="D")
+    conn = sqlite3.connect(tmp_path / "library.db")
+    try:
+        conn.execute(
+            "UPDATE download_tasks SET files_completed = 3 WHERE id = ?",
+            (landed.id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    landed = await store.get_task(landed.id)
+    await orch._maybe_record_wrong_product_verdict(
+        landed, _verdict_result("tag_mismatch", "tag_mismatch")
+    )
+    assert (await store.get_task(landed.id)).wrong_product_verdict_at is None
+
+
+def _folder_candidate(username, parent, score=0.9):
+    result = DownloadSearchResult(
+        username=username,
+        filename=f"{parent}/01.flac",
+        parent_directory=parent,
+        size=30_000_000,
+        extension="flac",
+        bitrate=900,
+        bit_depth=16,
+        sample_rate=44100,
+        duration=180.0,
+        has_free_slot=True,
+        upload_speed=2_000_000,
+    )
+    return ScoredCandidate(
+        username=username,
+        parent_directory=parent,
+        files=[result],
+        coherence=score,
+        file_confidence=score,
+        final_score=score,
+        tier="auto",
+    )
+
+
+@pytest.mark.asyncio
+async def test_folder_exclusion_recorded_on_content_proof_only(tmp_path):
+    from models.download_identity import soulseek_folder_identity
+    from services.native.file_processor import SOURCE_FILE_MISSING
+
+    store, orch, _fp, _lib = _build(tmp_path)
+    task = await _new_task(
+        store,
+        artist_name="Poppy",
+        album_title="Flux - Sessions",
+        source_directory="2021. Flux",
+    )
+
+    await orch._maybe_record_folder_exclusion(
+        task, _verdict_result("tag_mismatch", "fingerprint_mismatch")
+    )
+    want = ("soulseek", soulseek_folder_identity("rg-1", "flux"))
+    assert want in await store.load_quarantine_set()
+
+    # Successes, single files, and non-content faults teach nothing.
+    async def excluded_after(task_kwargs, result):
+        before = await store.load_quarantine_set()
+        other = await _new_task(store, **task_kwargs)
+        await orch._maybe_record_folder_exclusion(other, result)
+        return await store.load_quarantine_set() != before
+
+    assert not await excluded_after(
+        {"album_title": "B", "source_directory": "2021. Flux"},
+        ProcessResult(
+            succeeded=["/music/x.flac"],
+            failed=[FileFailure(filename="a.flac", reason="tag_mismatch"),
+                    FileFailure(filename="b.flac", reason="tag_mismatch")],
+        ),
+    )
+    assert not await excluded_after(
+        {"album_title": "C", "source_directory": "2021. Flux"},
+        _verdict_result("tag_mismatch"),
+    )
+    assert not await excluded_after(
+        {"album_title": "D", "source_directory": "2021. Flux"},
+        _verdict_result("tag_mismatch", "corrupt"),
+    )
+    assert not await excluded_after(
+        {"album_title": "E", "source_directory": "2021. Flux"},
+        _verdict_result("tag_mismatch", SOURCE_FILE_MISSING),
+    )
+    assert not await excluded_after(
+        {"album_title": "F", "source": "usenet", "source_directory": "2021. Flux"},
+        _verdict_result("tag_mismatch", "tag_mismatch"),
+    )
+    assert not await excluded_after(
+        {"download_type": "track", "track_title": "X", "source_directory": "2021. Flux"},
+        _verdict_result("tag_mismatch", "tag_mismatch"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_failover_skips_excluded_folder_across_peers(tmp_path):
+    store, orch, _fp, _lib = _build(tmp_path)
+    job = await store.create_search_job(
+        user_id="user-a",
+        artist_name="Poppy",
+        album_title="Flux - Sessions",
+        year=2021,
+        track_count=10,
+        release_group_mbid="rg-1",
+        search_query="Poppy - Flux - Sessions",
+    )
+    await store.set_search_job_candidates(
+        job.id,
+        [
+            _folder_candidate("peerA", "2021. Flux"),
+            _folder_candidate("peerB", "Flux (2021)"),
+            _folder_candidate("peerC", "Flux - Sessions"),
+        ],
+    )
+    task = await _new_task(
+        store,
+        artist_name="Poppy",
+        album_title="Flux - Sessions",
+        search_job_id=job.id,
+        candidate_index=0,
+        source_directory="2021. Flux",
+    )
+    # peerA's folder proved content-wrong; the exclusion lands durably.
+    await orch._maybe_record_folder_exclusion(
+        task, _verdict_result("tag_mismatch", "tag_mismatch")
+    )
+
+    entry = await orch._next_candidate_entry(task, {"peerA"})
+    assert entry is not None
+    assert entry[0] == 2  # peerB's same-product folder skipped, peerC picked
+    assert entry[1].username == "peerC"
+
+
+def _split_album_service(*, group_tracks, exact_tracks, exact_error=None):
+    """AlbumService stub with a local-flavored group tracklist and a pinned
+    exact-edition tracklist, so tests can prove which one coverage measures."""
+    from types import SimpleNamespace
+
+    svc = MagicMock()
+    svc.get_album_tracks_info = AsyncMock(
+        return_value=SimpleNamespace(
+            tracks=list(group_tracks),
+            total_tracks=len(group_tracks),
+            selected_release_mbid="release-1",
+        )
+    )
+    if exact_error is not None:
+        svc.get_exact_edition_tracks_info = AsyncMock(side_effect=exact_error)
+    else:
+        svc.get_exact_edition_tracks_info = AsyncMock(
+            return_value=SimpleNamespace(tracks=list(exact_tracks))
+        )
+    return svc
+
+
+def _pinned_edition(cd_count=16, dvd_count=14):
+    tracks = [
+        _mb_track(
+            position,
+            title=f"Song {position}",
+            recording_id=f"rec-cd-{position}",
+            length=180000,
+            media_format="CD",
+        )
+        for position in range(1, cd_count + 1)
+    ]
+    tracks += [
+        _mb_track(
+            position,
+            title=f"Clip {position}",
+            recording_id=f"rec-dvd-{position}",
+            length=240000,
+            disc=2,
+            media_format="DVD",
+        )
+        for position in range(1, dvd_count + 1)
+    ]
+    return tracks
+
+
+@pytest.mark.asyncio
+async def test_coverage_measures_pinned_edition_not_local_tracklist(tmp_path: Path):
+    """The 1/30 feedback loop: the release-group resolver prefers the local
+    library tracklist (1 row), but coverage must measure the pinned edition."""
+    local_flavored = [
+        _mb_track(1, title="Song 1", recording_id="rec-cd-1", length=180000)
+    ]
+    album_service = _split_album_service(
+        group_tracks=local_flavored, exact_tracks=_pinned_edition()
+    )
+    store, orch, _fp, _lib = _build(tmp_path, album_service=album_service)
+    task = await _new_task(store, track_count=16, release_mbid="release-1")
+
+    covered, expected_total, _orphans = await orch._coverage(task, context="t")
+
+    assert expected_total == 16  # pinned CD audio, not the 1 local row or 30 raw
+    assert covered == 0
+    album_service.get_exact_edition_tracks_info.assert_awaited_once()
+    album_service.get_album_tracks_info.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_coverage_null_release_mbid_keeps_group_resolver(tmp_path: Path):
+    album_service = _split_album_service(
+        group_tracks=_pinned_edition(cd_count=2, dvd_count=1), exact_tracks=[]
+    )
+    store, orch, _fp, _lib = _build(tmp_path, album_service=album_service)
+    task = await _new_task(store, track_count=2)
+
+    assert task.release_mbid is None
+    covered, expected_total, _orphans = await orch._coverage(task, context="t")
+
+    assert (covered, expected_total) == (0, 2)  # group path, DVD still filtered
+    album_service.get_album_tracks_info.assert_awaited_once()
+    album_service.get_exact_edition_tracks_info.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_coverage_exact_edition_failure_falls_back_to_count(tmp_path: Path):
+    album_service = _split_album_service(
+        group_tracks=[], exact_tracks=[], exact_error=RuntimeError("mb down")
+    )
+    store, orch, _fp, _lib = _build(tmp_path, album_service=album_service)
+    task = await _new_task(store, track_count=16, release_mbid="release-1")
+
+    assert await orch._coverage(task, context="t") is None
+
+
+@pytest.mark.asyncio
+async def test_coverage_single_row_never_completes_pinned_edition(tmp_path: Path):
+    """Slice 4 regression: 1 imported row vs a 16-audio pinned edition settles
+    partial, never completed - the observed 1/30 `completed` is impossible."""
+    album_service = _split_album_service(
+        group_tracks=[
+            _mb_track(1, title="Song 1", recording_id="rec-cd-1", length=180000)
+        ],
+        exact_tracks=_pinned_edition(),
+    )
+    lone_row = {
+        "id": "row-lone",
+        "file_path": "/lib/song1.flac",
+        "disc_number": 1,
+        "track_number": 1,
+        "track_title": "Song 1",
+        "recording_mbid": "rec-cd-1",
+        "duration_seconds": 180.0,
+    }
+    client = _StubClient(
+        _status("completed", files_completed=1, succeeded=["peer/01.flac"])
+    )
+    store, orch, fp, lib = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[_candidate(0.9)],
+        library=_FakeLibrary([lone_row]),
+        max_failover=1,
+        album_service=album_service,
+    )
+    fp.process_downloaded = AsyncMock(
+        return_value=ProcessResult(succeeded=["/lib/song1.flac"], failed=[])
+    )
+    task = await _new_task(store, track_count=16, release_mbid="release-1")
+
+    await orch.process_task(task.id)
+
+    assert (await store.get_task(task.id)).status == "partial"

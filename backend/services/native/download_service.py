@@ -321,8 +321,9 @@ class DownloadService:
         it (every request/auto-download path does today). Without it the preflight
         scorer can't down-rank a partial folder and the orchestrator's completeness
         gate accepts a 2-of-12 source as 'complete'. Best-effort: a MusicBrainz failure
-        must never block the download. Reuses the album page's resolver so the gate's
-        'expected' matches the track count the user sees on the album."""
+        must never block the download. Counts AUDIO media only (the album page may
+        show DVD-video positions too, but they are not acquisition targets and every
+        acquisition denominator must agree with the request-time count)."""
         if (
             track_count is not None
             or not release_group_mbid
@@ -340,7 +341,9 @@ class DownloadService:
                 release_group_mbid,
             )
             return None
-        return info.total_tracks or None
+        from services.album_utils import audio_tracks
+
+        return len(audio_tracks(list(info.tracks or []))) or None
 
     async def _single_track_identity(
         self,
@@ -368,9 +371,12 @@ class DownloadService:
                 release_group_mbid,
             )
             return None, None, None
-        if len(info.tracks) != 1:
+        from services.album_utils import audio_tracks
+
+        tracks = audio_tracks(list(info.tracks or []))
+        if len(tracks) != 1:
             return None, None, None
-        track = info.tracks[0]
+        track = tracks[0]
         # MusicBrainz track lengths are MILLISECONDS (see UsenetStrategy._expected_tracks).
         duration = (track.length / 1000.0) if track.length else None
         return track.recording_id, track.title, duration
@@ -415,6 +421,15 @@ class DownloadService:
 
         selected_release = release_mbid or getattr(info, "selected_release_mbid", None)
         tracks = list(getattr(info, "tracks", []) or [])
+        if recording_mbid is None and release_track_mbid is None:
+            # Album acquisition targets audio media only: a CD+DVD edition's DVD
+            # positions are not downloadable audio, and the request-time count
+            # must agree with the enqueue manifest and the coverage gate.
+            # Explicit per-track requests keep the full map so video-medium
+            # tracks stay requestable.
+            from services.album_utils import audio_tracks
+
+            tracks = audio_tracks(tracks)
         if not selected_release or not tracks:
             raise ValidationError(
                 "The exact MusicBrainz edition has no complete tracklist. No download was started."
@@ -1430,9 +1445,11 @@ class DownloadService:
             ) from exc
         if not release:
             raise ValidationError("Could not load that edition from MusicBrainz")
-        from services.album_utils import extract_tracks
+        from services.album_utils import audio_tracks, extract_tracks
 
         tracks, _total_length = extract_tracks(release)
+        # Audio media only: never per-track-request DVD-video positions.
+        tracks = audio_tracks(tracks)
         if not tracks:
             raise ValidationError("That edition has no tracklist")
 
@@ -1744,6 +1761,40 @@ class DownloadService:
             "download.held_discarded",
             extra={"held_id": held_id, "release_group_mbid": held.release_group_mbid},
         )
+
+    async def discard_held_for_task(
+        self, source_task_id: str, user_id: str, user_role: str
+    ) -> int:
+        """Discard every verification-held track for one download task (the
+        wrong-product verdict action) and clear the verdict. Task-scoped, not
+        verdict-scoped, so it also cleans tasks that held before verdicts
+        existed. Management and conversion holds are refused - they have
+        their own unit actions."""
+        async with self._management_hold_action(source_task_id):
+            held = await self.list_held(
+                user_id, user_role, source_task_id=source_task_id
+            )
+            if not held:
+                raise ResourceNotFoundError(
+                    "No held tracks found for this download"
+                )
+            if any(value.reason.startswith("management:") for value in held):
+                raise ValidationError(
+                    "Library Management holds must be discarded as one complete"
+                    " acquisition unit"
+                )
+            if any(value.origin == "edition_conversion" for value in held):
+                raise ValidationError(_EDITION_CONVERSION_HELD_ACTION_MESSAGE)
+            await self._store.resolve_held_imports(
+                [value.id for value in held], "discarded"
+            )
+            await self._delete_discarded_held_files(held)
+            await self._store.clear_wrong_product_verdict(source_task_id)
+            logger.info(
+                "download.verdict_discarded",
+                extra={"task_id": source_task_id, "files": len(held)},
+            )
+            return len(held)
 
     async def reverify_held(
         self, held_id: int, user_id: str, user_role: str

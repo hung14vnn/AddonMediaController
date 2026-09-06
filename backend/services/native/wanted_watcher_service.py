@@ -33,6 +33,7 @@ from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.resilience.retry import CircuitOpenError
 from models.download_identity import soulseek_identity, usenet_identity
 from models.wanted import WantedRetrying, WantedWatch
+from services.album_utils import audio_tracks
 from services.native.acquisition.status import is_terminal
 from services.native.coverage import match_rows_to_tracks, uncovered_tracks
 
@@ -1013,7 +1014,10 @@ class WantedWatcherService:
             )
         except Exception:  # noqa: BLE001 - coverage is fail-open (§5.2.3.a)
             return None
-        tracks = list(info.tracks or [])
+        # Audio media only (Slices 4+5): DVD-video positions are neither
+        # satisfiable nor dispatchable - counting them keeps CD+DVD wants
+        # searching forever for tracks that can never verify.
+        tracks = audio_tracks(list(info.tracks or []))
         return tracks or None
 
     async def _file_rows(self, mbid: str) -> list[dict]:

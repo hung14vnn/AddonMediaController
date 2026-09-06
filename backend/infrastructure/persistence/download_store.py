@@ -566,7 +566,9 @@ class DownloadStore(PersistenceBase):
                     started_at REAL,
                     completed_at REAL,
                     cancelled_at REAL,
-                    updated_at REAL NOT NULL
+                    updated_at REAL NOT NULL,
+                    wrong_product_verdict_at REAL,
+                    wrong_product_detail TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_download_tasks_status ON download_tasks(status);
                 CREATE INDEX IF NOT EXISTS idx_download_tasks_user ON download_tasks(user_id);
@@ -630,6 +632,8 @@ class DownloadStore(PersistenceBase):
                 ("quality_certainty", "TEXT"),
                 ("quality_provenance", "TEXT"),
                 ("manual_quality_override", "INTEGER NOT NULL DEFAULT 0"),
+                ("wrong_product_verdict_at", "REAL"),
+                ("wrong_product_detail", "TEXT"),
             ):
                 try:
                     conn.execute(
@@ -933,6 +937,35 @@ class DownloadStore(PersistenceBase):
             return release_mbid
 
         return await self._write(operation)
+
+    async def record_wrong_product_verdict(
+        self, task_id: str, detail: str | None
+    ) -> None:
+        """Mark an album task whose import proved the grabbed folder is a
+        different product (nothing imported, every failure tag-verification).
+        First verdict wins: a later import run never overwrites the original."""
+
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "UPDATE download_tasks SET wrong_product_verdict_at = ?,"
+                " wrong_product_detail = ?, updated_at = ?"
+                " WHERE id = ? AND wrong_product_verdict_at IS NULL",
+                (time.time(), detail, time.time(), task_id),
+            )
+
+        await self._write(operation)
+
+    async def clear_wrong_product_verdict(self, task_id: str) -> None:
+        """Drop a task's wrong-product verdict (verdict discard / manual retry)."""
+
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "UPDATE download_tasks SET wrong_product_verdict_at = NULL,"
+                " wrong_product_detail = NULL, updated_at = ? WHERE id = ?",
+                (time.time(), task_id),
+            )
+
+        await self._write(operation)
 
     async def get_parked_task_for_search_job(
         self, search_job_id: str

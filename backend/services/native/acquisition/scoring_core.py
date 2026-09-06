@@ -18,6 +18,7 @@ import unicodedata
 from rapidfuzz import fuzz
 from unidecode import unidecode
 
+from services.native.file_processor import _TAG_TITLE_WEAK
 from services.native.title_match import title_containment_score
 
 _EDITION_SUFFIXES = re.compile(
@@ -52,6 +53,14 @@ def normalize_for_match(text: str) -> str:
     if has_cjk(text):
         return text
     return unidecode(text)
+
+
+def artist_words(artist_name: str | None) -> frozenset[str]:
+    """The matchable words of an artist name (same rule as the strict
+    file-confidence path): normalized, split, single letters dropped."""
+    return frozenset(
+        t for t in normalize_for_match(artist_name or "").split() if len(t) >= 2
+    )
 
 
 def strip_edition_suffix(title: str) -> str:
@@ -164,6 +173,260 @@ def album_match(artist: str, album: str, candidate_title: str) -> float:
         None,
         strict_title=False,
     )
+
+
+# Codec/bitrate/container words: dating/quality annotations, never album identity.
+# Medium/source words (cd, dvd, vinyl, web, remaster, deluxe, live...) are
+# DELIBERATELY absent - they distinguish products ("Platinum Edition" vs the
+# CD+DVD edition must not merge).
+_FOLDER_NON_IDENTITY_TOKENS = frozenset(
+    {
+        "flac", "mp3", "m4a", "ogg", "oga", "opus", "wav", "aiff", "aif",
+        "aac", "alac", "wma", "ape", "mp4", "tak", "tta", "wv",
+        "320", "192", "256", "128", "96",
+        "v0", "v2", "cbr", "vbr", "abr", "q0", "q2",
+        "16bit", "24bit", "44100", "48000", "88200", "96000", "176400", "192000",
+        "lossless", "lossy", "stereo", "mono", "hires",
+    }
+)
+_FOLDER_BRACKET_RE = re.compile(r"\[[^\[\]]*\]|\([^()]*\)")
+_FOLDER_YEAR_PREFIX_RE = re.compile(r"^\s*(?:19|20)\d{2}\s*[-._]\s*")
+
+
+def normalize_folder_identity(
+    parent_directory: str, *, artist_words: frozenset[str] = frozenset()
+) -> str:
+    """Canonical album identity of a Soulseek folder name for wrong-product
+    learning: the same commercial product shared under different peers'
+    naming (``2021. Flux``, ``Flux (2021)``, ``Flux [FLAC]``) normalizes to
+    one key (``flux``), so proving one copy wrong teaches all of them.
+
+    Strips dating/quality annotations only - strict ``YYYY<sep>`` prefixes,
+    bracketed groups holding nothing but years/quality/digits, pure-digit
+    tokens (bare years included), codec words, and the requesting artist's
+    own words (flat ``Artist - Album`` shares merge with ``Album`` leaves) -
+    then sorts the survivors. Edition/medium descriptors (platinum, deluxe,
+    live, cd, dvd, remaster) SURVIVE: stripping those would merge distinct
+    products. Accepted caveat: same-name products distinguished ONLY by a
+    bare year (``NOW 2006`` vs ``NOW 2007``) share an identity - bounded by
+    RG-scoping, the 7-day quarantine TTL, and manual re-request clearing.
+    Empty when nothing identity-carrying remains (caller skips)."""
+    text = normalize_for_match(parent_directory).replace("\\", "/")
+    text = _FOLDER_YEAR_PREFIX_RE.sub("", text)
+    for group in _FOLDER_BRACKET_RE.findall(text):
+        inner = group[1:-1]
+        words = [
+            word
+            for word in re.split(r"[^a-z0-9]+", inner.casefold())
+            if word
+        ]
+        if words and all(
+            word.isdigit() or word in _FOLDER_NON_IDENTITY_TOKENS for word in words
+        ):
+            text = text.replace(group, " ", 1)
+    tokens = sorted(
+        {
+            word
+            for word in re.split(r"[^a-z0-9]+", text.casefold())
+            if word
+            and not word.isdigit()
+            and word not in _FOLDER_NON_IDENTITY_TOKENS
+            and word not in artist_words
+            and len(word) >= 2
+        }
+    )
+    return " ".join(tokens)
+
+
+def filename_stem(filename: str) -> str:
+    """The last path segment with its extension stripped (Soulseek remote paths
+    are backslash-delimited). Byte-identical to the stem rule the per-file
+    failover filter has always used, so both judges read names the same way."""
+    stem = (filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+    base, dot, _ext = stem.rpartition(".")
+    return base if dot and base else stem
+
+
+_TRACK_NUM_RE = re.compile(r"^\s*(\d{1,3})(?:\s*[\.\-_)]+\s*|\s+)")
+
+
+def leading_track_number(filename: str) -> int | None:
+    """A filename's leading track number (``04 Tom Jones - Delilah.mp3`` →
+    ``4``), or ``None``. Deliberately looser than the import-time
+    ``_filename_track_number``: bare-whitespace shapes (``01 Title.mp3``,
+    ubiquitous on Soulseek) also parse here, because pre-download the
+    filename is the ONLY position evidence (import falls back to tags).
+    Four-digit years and digit-glued words (``10cc``) still never match."""
+    base = re.split(r"[\\/]", filename or "")[-1]
+    match = _TRACK_NUM_RE.match(base)
+    return int(match.group(1)) if match else None
+
+
+# Tokens that carry no title identity: numbering residue and the generic
+# words obfuscated rips use (``Track 05``, ``audio.mp3``). A stem reduced to
+# these (or nothing) has NO title signal - duration alone judges it.
+_TITLE_FILLER_TOKENS = frozenset(
+    {"track", "tracks", "audio", "unknown", "untitled", "song", "songs"}
+)
+
+
+def stem_title_signal(stem: str) -> str:
+    """The title-carrying words of a filename stem: leading track number,
+    digit-only tokens, and filler words removed. Empty means the name says
+    nothing about which song this is (``01.flac``, ``Track 05.mp3``)."""
+    text = _TRACK_NUM_RE.sub("", stem or "")
+    words = []
+    for token in re.split(r"[^a-z0-9]+", text.casefold()):
+        if not token or token.isdigit():
+            continue
+        if token.rstrip("0123456789") in _TITLE_FILLER_TOKENS:
+            continue
+        words.append(token)
+    return " ".join(words)
+
+
+def durations_agree(
+    file_duration: float | None, track_duration: float | None
+) -> bool | None:
+    """Tri-state length verdict under the shared ``max(15s, 10%)`` gate: True /
+    False, or None when either side is unknown."""
+    if not file_duration or not track_duration:
+        return None
+    return abs(file_duration - track_duration) <= max(15.0, 0.10 * track_duration)
+
+
+def title_serves_track(
+    track_title: str | None, stem: str, *, ignore: frozenset[str] = frozenset()
+) -> bool | None:
+    """Tri-state title verdict: containment-strong (``>= _TAG_TITLE_WEAK``),
+    conflicting, or None when either side carries no title signal. ``ignore``
+    excludes the artist's own words from the foreign-token penalty
+    (``Poppy - Kitty.flac`` names Kitty, not a song called Poppy)."""
+    if not (track_title and stem):
+        return None
+    return title_containment_score(track_title, stem, ignore=ignore) >= _TAG_TITLE_WEAK
+
+
+def pair_serves_track(
+    stem: str,
+    file_duration: float | None,
+    track_title: str | None,
+    track_duration: float | None,
+    *,
+    rescue: bool = True,
+    ignore: frozenset[str] = frozenset(),
+) -> bool:
+    """Whether one file plausibly IS one expected track — the shared tri-state
+    core behind both the per-file failover filter and grab-time overlap.
+    A hard duration miss always excludes, and no usable signal passes
+    (fail-open). ``rescue`` (legacy filter behavior): a conflicting title is
+    forgiven when the duration matches. Grab-time overlap passes
+    ``rescue=False`` — a length coincidence must not rescue a conflicting
+    title there (``So Mean`` at 177s is not ``Rot In LA`` at 175s), mirroring
+    the import-time tag check, which holds on title conflict. ``ignore``
+    excludes the artist's own words from the title penalty."""
+    duration_ok = durations_agree(file_duration, track_duration)
+    if duration_ok is False:
+        return False
+    title_ok = title_serves_track(track_title, stem, ignore=ignore)
+    if title_ok is False:
+        return rescue and duration_ok is True
+    return True
+
+
+def tracklist_overlap(
+    files: list[tuple[str, float | None]],
+    expected: list[tuple[int, str | None, float | None]],
+    *,
+    ignore: frozenset[str] = frozenset(),
+) -> float | None:
+    """0..1: how well a folder's NAMED files cover an expected tracklist —
+    the grab-time simulation of the import-time positional check. ``files``
+    is ``(filename, advertised duration)`` per audio file; ``expected`` is
+    ``(track_number, title, duration)`` per pinned-edition track. None when
+    there is no tracklist to judge against (caller keeps today's behavior).
+
+    Position-aware: a numbered file claims its position and is judged ONLY
+    against it, so same-songs-in-shuffled-order scores low exactly as the
+    positional import would hold it. Numberless files judge loose (any
+    position, same tri-state rule). A file serving nothing is foreign; the
+    score is position precision discounted by foreign content, so a legit
+    deluxe (full overlap + bonus tracks) stays high while a wrong product
+    (low overlap + many foreign files) collapses. Disc is ignored: a file
+    serves when it matches ANY disc's same-numbered track.
+
+    Fail-open throughout: a numbered claim with no title AND no duration
+    signal counts as served (unknown, not wrong — mirrors the D18
+    import rule), so obfuscated rips are never stranded by this term."""
+    if not expected:
+        return None
+    if not files:
+        return 0.0
+    by_number: dict[int, list[tuple[str | None, float | None]]] = {}
+    for number, title, duration in expected:
+        by_number.setdefault(number, []).append((title, duration))
+    claims = 0
+    correct = 0
+    foreign = 0
+    for filename, file_duration in files:
+        stem = filename_stem(filename)
+        # Titles judge on signal words only: numbering residue and filler
+        # words ("01", "Track 05") are not a conflicting title - without this
+        # every obfuscated rip would read as foreign.
+        signal = stem_title_signal(stem)
+        number = leading_track_number(filename)
+        options = by_number.get(number, []) if number is not None else []
+        if options:
+            claims += 1
+            if _claim_serves(stem, signal, file_duration, options, ignore):
+                correct += 1
+        elif not any(
+            pair_serves_track(
+                signal,
+                file_duration,
+                title,
+                duration,
+                rescue=False,
+                ignore=ignore,
+            )
+            for _num, title, duration in expected
+        ):
+            foreign += 1
+    total = len(files)
+    foreign_ratio = foreign / total
+    if claims:
+        base = correct / claims
+        return base * (1.0 - 0.5 * foreign_ratio)
+    return 1.0 - foreign_ratio
+
+
+def _claim_serves(
+    stem: str,
+    signal: str,
+    file_duration: float | None,
+    options: list[tuple[str | None, float | None]],
+    ignore: frozenset[str],
+) -> bool:
+    """Whether a numbered claim serves its expected position (any disc). A
+    version-marker mismatch (live/remix/acoustic vs a clean expected title)
+    vetoes: those are different recordings, so the folder routes to manual
+    review instead of auto-import (deliberately stricter than the import-time
+    tag check, whose subset-tolerant ratio passes suffixed titles).
+    Zero-signal claims pass (fail-open)."""
+    for title, duration in options:
+        if not pair_serves_track(
+            signal,
+            file_duration,
+            title,
+            duration,
+            rescue=False,
+            ignore=ignore,
+        ):
+            continue
+        if version_markers(stem) != version_markers(title or ""):
+            continue
+        return True
+    return False
 
 
 def track_match(artist: str, track: str, filename: str) -> float:

@@ -410,6 +410,9 @@ backend-test-download-routes: $(BACKEND_VENV_STAMP) ## Phase 6b/7: download-clie
 backend-test-orchestrator: $(BACKEND_VENV_STAMP) ## Phase 7: DownloadOrchestrator + FileProcessor.process_downloaded
 	$(PYTEST) tests/services/test_download_orchestrator.py tests/services/test_file_processor.py -v
 
+test-tracklist-acquisition: $(BACKEND_VENV_STAMP) ## Tracklist-aware acquisition (overlap rank, verdict, failover, pinned coverage, audio targets)
+	$(PYTEST) tests/services/test_tracklist_overlap.py tests/services/test_acquisition_corpus.py tests/services/test_album_preflight_scorer.py tests/services/test_download_orchestrator.py tests/services/test_download_service.py tests/services/test_acquisition_strategy_expected_tracks.py tests/services/test_acquisition_strategy_singles.py tests/services/test_album_utils.py tests/services/test_wanted_watcher_service.py tests/routes/test_downloads_routes.py
+
 test-acquisition-cleanup: $(BACKEND_VENV_STAMP) ## Durable attempt cleanup: store, clients, filesystem safety, API and UI
 	$(PYTEST) tests/infrastructure/test_acquisition_cleanup_store.py \
 		tests/infrastructure/test_acquisition_cleanup_task.py \
