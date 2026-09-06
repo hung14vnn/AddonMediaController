@@ -139,8 +139,25 @@
 					.lyrics-word,
 					.lyrics-syllable,
 					.lyrics-syllable span.char {
+						animation: none !important;
 						transition: none !important;
 						transform: none !important;
+					}
+					/* Replace the animated wipe with an immediate state change. The
+					   component still applies .highlight at the word start, but mobile
+					   avoids per-character animation work. */
+					.lyrics-syllable.highlight,
+					.lyrics-syllable.finished {
+						background-image: none !important;
+						background-color: var(--lyplus-text-primary) !important;
+						color: var(--lyplus-text-primary) !important;
+					}
+					.lyrics-syllable.highlight span.char,
+					.lyrics-syllable.finished span.char {
+						background-image: none !important;
+						background-color: var(--lyplus-text-primary) !important;
+						color: var(--lyplus-text-primary) !important;
+						-webkit-text-fill-color: var(--lyplus-text-primary) !important;
 					}
 					/* Keep am-lyrics' scroll-animate transform so line scrolling remains smooth. */
 					.lyrics-line.active:not(.scroll-animate) { transform: none !important; }
