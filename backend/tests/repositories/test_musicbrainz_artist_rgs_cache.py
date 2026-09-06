@@ -159,8 +159,6 @@ class TestArtistDetailFailureSemantics:
         self, monkeypatch, fresh_deduplicator
     ) -> None:
         repo = _Repo()
-        repo._cache = AsyncMock()
-        repo._cache.get = AsyncMock(side_effect=[None, {}])
         calls: list[str] = []
 
         async def not_found_get(path, params=None, **kwargs):
@@ -175,12 +173,6 @@ class TestArtistDetailFailureSemantics:
         assert not await repo.get_artist_by_id(_ARTIST)
 
         assert calls == [f"/artist/{_ARTIST}", "/release-group"]
-        key = artist_module.mb_artist_detail_key(_ARTIST)
-        repo._cache.set.assert_awaited_once_with(
-            key,
-            {},
-            ttl_seconds=600,
-        )
 
     @pytest.mark.asyncio
     async def test_transient_http_failure_is_typed_and_not_cached(
@@ -217,8 +209,6 @@ class TestArtistDetailFailureSemantics:
         self, monkeypatch, fresh_deduplicator
     ) -> None:
         repo = _Repo()
-        repo._cache = AsyncMock()
-        repo._cache.get = AsyncMock(return_value=None)
         ctx = init_degradation_context()
 
         async def detail_missing_browse_fails(path, params=None, **kwargs):
@@ -231,7 +221,7 @@ class TestArtistDetailFailureSemantics:
         try:
             assert await repo.get_artist_by_id(_ARTIST) is None
             key = artist_module.mb_artist_detail_key(_ARTIST)
-            repo._cache.set.assert_awaited_once_with(key, {}, ttl_seconds=600)
+            assert await repo._cache.get(key) == {}
             assert ctx.summary() == {"musicbrainz": "error"}
         finally:
             clear_degradation_context()

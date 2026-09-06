@@ -426,25 +426,4 @@ describe('download queue queries', () => {
 		m.onSuccess({ status });
 		expect(mockToast).toHaveBeenCalledWith({ message, type: 'success' });
 	});
-
-	it('the key factory builds stable keys', () => {
-		expect(DownloadQueryKeyFactory.tasks('user-1')).toEqual(['downloads', 'tasks', 'user-1']);
-		expect(DownloadQueryKeyFactory.tasks('user-2')).not.toEqual(
-			DownloadQueryKeyFactory.tasks('user-1')
-		);
-		expect(DownloadQueryKeyFactory.activity('user-1')).toEqual([
-			'downloads',
-			'tasks',
-			'user-1',
-			'activity'
-		]);
-		expect(DownloadQueryKeyFactory.held('user-1')).toEqual([
-			'downloads',
-			'tasks',
-			'user-1',
-			'held',
-			'all'
-		]);
-		expect(DownloadQueryKeyFactory.quarantine()).toEqual(['downloads', 'quarantine']);
-	});
 });

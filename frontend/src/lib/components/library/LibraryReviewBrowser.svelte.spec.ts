@@ -14,7 +14,10 @@ vi.mock('$app/state', async () => {
 	return { page: state.libraryReviewPage };
 });
 vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => h.goto(...args) }));
-vi.mock('$lib/stores/authStore.svelte', () => ({ authStore: { user: { id: 'admin-1' } } }));
+vi.mock('$lib/stores/authStore.svelte', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/stores/authStore.svelte')>()),
+	authStore: { user: { id: 'admin-1' } }
+}));
 vi.mock('$lib/queries/library/LibraryReviewQueries.svelte', () => ({
 	getLibraryReviewsQuery: (filters: () => LibraryReviewFilters) => {
 		h.filters = filters;

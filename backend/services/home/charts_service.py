@@ -32,6 +32,7 @@ from infrastructure.persistence.user_listening_prefs_store import (
 )
 
 from infrastructure.http.deduplication import deduplicate
+from infrastructure.observability.optional_work import OptionalWorkDeferred
 
 from .integration_helpers import HomeIntegrationHelpers, resolve_source_value
 
@@ -95,6 +96,9 @@ class HomeChartsService:
         keys = list(tasks.keys())
         coros = list(tasks.values())
         raw_results = await asyncio.gather(*coros, return_exceptions=True)
+        for result in raw_results:
+            if isinstance(result, OptionalWorkDeferred):
+                raise result
         results = {}
         for key, result in zip(keys, raw_results):
             if isinstance(result, Exception):

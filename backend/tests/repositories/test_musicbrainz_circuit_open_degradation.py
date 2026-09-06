@@ -13,13 +13,12 @@ import repositories.musicbrainz_album as album_module
 from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.resilience.retry import CircuitOpenError
 from repositories.musicbrainz_album import MusicBrainzAlbumMixin
+from infrastructure.cache.memory_cache import InMemoryCache
 
 
 class _Repo(MusicBrainzAlbumMixin):
     def __init__(self) -> None:
-        self._cache = AsyncMock()
-        self._cache.get = AsyncMock(return_value=None)
-        self._cache.set = AsyncMock()
+        self._cache = InMemoryCache()
         self._preferences_service = SimpleNamespace(
             get_advanced_settings=lambda: SimpleNamespace(cache_ttl_search=3600)
         )

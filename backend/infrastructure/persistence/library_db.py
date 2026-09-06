@@ -865,6 +865,72 @@ class LibraryDB(PersistenceBase):
 
         return await self._read(operation)
 
+    async def existing_library_albums(self, identifiers: list[str]) -> set[str]:
+        """Candidate-scoped ``get_all_album_mbids`` (E3).
+
+        Same ghost-row filter (``library_albums`` row plus active files),
+        restricted to the supplied release-group MBIDs through the
+        ``mbid_lower`` primary key: one indexed lookup per batch instead of
+        a table scan. Returns raw stored case like the full-set version;
+        callers normalize.
+        """
+        normalized = list(
+            dict.fromkeys(
+                value.strip().casefold() for value in identifiers if value.strip()
+            )
+        )
+        if not normalized:
+            return set()
+
+        def operation(conn: sqlite3.Connection) -> set[str]:
+            found: set[str] = set()
+            for offset in range(0, len(normalized), 500):
+                batch = normalized[offset : offset + 500]
+                placeholders = ",".join("?" for _ in batch)
+                rows = conn.execute(
+                    "SELECT la.mbid FROM library_albums la "
+                    f"WHERE la.mbid_lower IN ({placeholders}) AND EXISTS ("
+                    "  SELECT 1 FROM library_files lf "
+                    "  WHERE lf.release_group_mbid = la.mbid_lower "
+                    "  AND lf.deleted_at IS NULL)",
+                    batch,
+                ).fetchall()
+                found.update(str(row["mbid"]) for row in rows if row["mbid"])
+            return found
+
+        return await self._read(operation)
+
+    async def existing_library_artists(self, identifiers: list[str]) -> set[str]:
+        """Candidate-scoped ``get_all_artist_mbids`` (E3).
+
+        Same ``library_artists`` membership (materialised owned artists, not
+        file-level contributor appearances), restricted to the supplied
+        artist MBIDs through the ``mbid_lower`` primary key. Returns raw
+        stored case like the full-set version; callers normalize.
+        """
+        normalized = list(
+            dict.fromkeys(
+                value.strip().casefold() for value in identifiers if value.strip()
+            )
+        )
+        if not normalized:
+            return set()
+
+        def operation(conn: sqlite3.Connection) -> set[str]:
+            found: set[str] = set()
+            for offset in range(0, len(normalized), 500):
+                batch = normalized[offset : offset + 500]
+                placeholders = ",".join("?" for _ in batch)
+                rows = conn.execute(
+                    "SELECT mbid FROM library_artists "
+                    f"WHERE mbid_lower IN ({placeholders})",
+                    batch,
+                ).fetchall()
+                found.update(str(row["mbid"]) for row in rows if row["mbid"])
+            return found
+
+        return await self._read(operation)
+
     async def get_all_albums_for_matching(self) -> list[tuple[str, str, str, str]]:
         """Return (title, artist_name, album_mbid, artist_mbid) for all library albums."""
 

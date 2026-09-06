@@ -11,10 +11,12 @@ There is NO batch-GUID / ``client_task_id`` column (C2): a task is correlated to
 its slskd transfers by ``source_username`` + the manifest filenames.
 """
 
+import asyncio
 import sqlite3
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -42,6 +44,68 @@ from models.download_identity import (
 )
 from models.held_import import HeldImport
 from repositories.protocols.download_client import TaskHandle
+
+_LANDED_PREDICATE = "status IN ('completed','partial') AND release_group_mbid != ''"
+
+
+def _ensure_landed_projection(conn: sqlite3.Connection) -> None:
+    if not conn.in_transaction:
+        conn.execute("BEGIN")
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='download_landed_groups'"
+    ).fetchone()
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS download_landed_groups ("
+        "scope TEXT NOT NULL, release_group_mbid TEXT NOT NULL, landed_at REAL NOT NULL, "
+        "PRIMARY KEY(scope, release_group_mbid))"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_download_landed_order "
+        "ON download_landed_groups(scope, landed_at DESC, release_group_mbid)"
+    )
+    if not exists:
+        conn.execute(
+            "INSERT INTO download_landed_groups SELECT 'global', release_group_mbid, "
+            f"MAX(COALESCE(completed_at, updated_at)) FROM download_tasks WHERE {_LANDED_PREDICATE} "
+            "GROUP BY release_group_mbid"
+        )
+        conn.execute(
+            "INSERT INTO download_landed_groups SELECT 'user:' || user_id, release_group_mbid, "
+            f"MAX(COALESCE(completed_at, updated_at)) FROM download_tasks WHERE {_LANDED_PREDICATE} "
+            "GROUP BY user_id, release_group_mbid"
+        )
+    for event, references, condition in (
+        ("INSERT", ("NEW",), "NEW.status IN ('completed','partial')"),
+        ("DELETE", ("OLD",), "OLD.status IN ('completed','partial')"),
+        ("UPDATE", ("OLD", "NEW"),
+         "(OLD.status IN ('completed','partial') OR NEW.status IN ('completed','partial')) "
+         "AND (OLD.status IS NOT NEW.status OR OLD.user_id IS NOT NEW.user_id "
+         "OR OLD.release_group_mbid IS NOT NEW.release_group_mbid "
+         "OR COALESCE(OLD.completed_at,OLD.updated_at) IS NOT "
+         "COALESCE(NEW.completed_at,NEW.updated_at))"),
+    ):
+        statements = []
+        for ref in references:
+            for scope, owner in (
+                ("'global'", ""),
+                (f"'user:' || {ref}.user_id", f"AND user_id = {ref}.user_id"),
+            ):
+                statements.append(
+                    f"DELETE FROM download_landed_groups WHERE scope = {scope} "
+                    f"AND release_group_mbid = {ref}.release_group_mbid;"
+                )
+                statements.append(
+                    "INSERT INTO download_landed_groups "
+                    f"SELECT {scope}, release_group_mbid, MAX(COALESCE(completed_at, updated_at)) "
+                    f"FROM download_tasks WHERE {_LANDED_PREDICATE} "
+                    f"AND release_group_mbid = {ref}.release_group_mbid {owner} "
+                    "GROUP BY release_group_mbid;"
+                )
+        conn.execute(
+            f"CREATE TRIGGER IF NOT EXISTS download_landed_{event.lower()} "
+            f"AFTER {event} ON download_tasks WHEN {condition} BEGIN "
+            + " ".join(statements) + " END"
+        )
 
 _ACTIVE_STATUSES = ("queued", "downloading", "processing")
 _RETRYABLE_STATUSES = ("failed", "partial")
@@ -192,6 +256,20 @@ CREATE TABLE IF NOT EXISTS download_activity_user_revisions (
 
 CREATE TRIGGER IF NOT EXISTS download_activity_task_insert
 AFTER INSERT ON download_tasks
+BEGIN
+    UPDATE download_activity_global_revision SET revision = revision + 1 WHERE singleton = 1;
+    INSERT INTO download_activity_user_revisions (user_id, revision) VALUES (NEW.user_id, 1)
+    ON CONFLICT(user_id) DO UPDATE SET revision = revision + 1;
+END;
+
+DROP TRIGGER IF EXISTS download_activity_task_landed;
+CREATE TRIGGER download_activity_task_landed
+AFTER UPDATE OF release_group_mbid, completed_at, updated_at ON download_tasks
+WHEN NEW.status IN ('completed', 'partial')
+    AND OLD.status IN ('completed', 'partial')
+    AND (OLD.release_group_mbid IS NOT NEW.release_group_mbid
+         OR COALESCE(OLD.completed_at, OLD.updated_at)
+            IS NOT COALESCE(NEW.completed_at, NEW.updated_at))
 BEGIN
     UPDATE download_activity_global_revision SET revision = revision + 1 WHERE singleton = 1;
     INSERT INTO download_activity_user_revisions (user_id, revision) VALUES (NEW.user_id, 1)
@@ -479,6 +557,10 @@ _ATTEMPT_CAS_UPDATABLE = frozenset(
 class DownloadStore(PersistenceBase):
     def __init__(self, db_path: Path, write_lock: threading.Lock) -> None:
         super().__init__(db_path, write_lock)
+        self._activity_lock = asyncio.Lock()
+        self._activity_cache: OrderedDict[
+            tuple[str, bool], DownloadActivitySummary
+        ] = OrderedDict()
 
     def _connect(self) -> sqlite3.Connection:
         # (AUD-6) Enforce download_tasks.user_id -> auth_users(id) ON DELETE CASCADE.
@@ -690,6 +772,17 @@ class DownloadStore(PersistenceBase):
                 "CREATE INDEX IF NOT EXISTS idx_held_management_retry "
                 "ON held_imports(management_next_retry_at, status)"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_download_activity_owner_status "
+                "ON download_tasks(user_id, status)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_download_activity_landed "
+                "ON download_tasks(release_group_mbid, "
+                "COALESCE(completed_at, updated_at) DESC, user_id) "
+                "WHERE status IN ('completed','partial') AND release_group_mbid != ''"
+            )
+            _ensure_landed_projection(conn)
             conn.commit()
         finally:
             conn.close()
@@ -1148,14 +1241,10 @@ class DownloadStore(PersistenceBase):
     async def get_activity_summary(
         self, user_id: str, user_role: str
     ) -> DownloadActivitySummary:
-        """Return one compact ownership-scoped activity projection.
-
-        The four SQL statements share one read connection. The response stays
-        bounded regardless of queue history: only counts, a structural revision,
-        and the 20 most recently landed release groups cross the HTTP boundary.
-        """
+        """Read a revision-scoped projection in one SQLite snapshot."""
 
         is_admin = user_role == "admin"
+        scope = (user_id, is_admin)
 
         def operation(conn: sqlite3.Connection) -> DownloadActivitySummary:
             if is_admin:
@@ -1163,7 +1252,6 @@ class DownloadStore(PersistenceBase):
                     "SELECT revision FROM download_activity_global_revision "
                     "WHERE singleton = 1"
                 ).fetchone()
-                task_where = ""
                 task_params: tuple[str, ...] = ()
                 held_where = "status = 'held'"
                 held_params: tuple[str, ...] = ()
@@ -1173,46 +1261,71 @@ class DownloadStore(PersistenceBase):
                     "WHERE user_id = ?",
                     (user_id,),
                 ).fetchone()
-                task_where = "WHERE user_id = ?"
                 task_params = (user_id,)
                 held_where = "status = 'held' AND user_id = ?"
                 held_params = (user_id,)
 
-            counts = conn.execute(
-                "SELECT "
-                "COALESCE(SUM(CASE WHEN status IN ('queued','downloading','processing') "
-                "THEN 1 ELSE 0 END), 0) AS active_count, "
-                "COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) "
-                f"AS failed_count FROM download_tasks {task_where}",
+            revision = int(revision_row["revision"] if revision_row else 0)
+            cached = self._activity_cache.get(scope)
+            if cached is not None and cached.revision == revision:
+                return cached
+
+            count_scope = "" if is_admin else "AND user_id = ?"
+            active = conn.execute(
+                "SELECT COUNT(*) FROM download_tasks "
+                "WHERE status IN ('queued','downloading','processing') "
+                f"{count_scope}", task_params,
+            ).fetchone()[0]
+            failed = conn.execute(
+                f"SELECT COUNT(*) FROM download_tasks WHERE status = 'failed' {count_scope}",
                 task_params,
-            ).fetchone()
+            ).fetchone()[0]
             held = conn.execute(
                 f"SELECT COUNT(*) AS count FROM held_imports WHERE {held_where}",
                 held_params,
             ).fetchone()
 
-            landed_scope = "" if is_admin else "AND user_id = ?"
             landed = conn.execute(
-                "SELECT release_group_mbid FROM download_tasks "
-                "WHERE status IN ('completed','partial') "
-                "AND release_group_mbid != '' "
-                f"{landed_scope} "
-                "GROUP BY release_group_mbid "
-                "ORDER BY MAX(COALESCE(completed_at, updated_at)) DESC LIMIT 20",
-                task_params,
+                "SELECT release_group_mbid FROM download_landed_groups "
+                "WHERE scope = ? ORDER BY landed_at DESC, release_group_mbid ASC LIMIT 20",
+                ("global" if is_admin else f"user:{user_id}",),
             ).fetchall()
 
             return DownloadActivitySummary(
-                revision=int(revision_row["revision"] if revision_row else 0),
-                active_count=int(counts["active_count"] if counts else 0),
+                revision=revision,
+                active_count=int(active),
                 held_count=int(held["count"] if held else 0),
-                failed_count=int(counts["failed_count"] if counts else 0),
+                failed_count=int(failed),
                 landed_release_group_mbids=[
                     str(row["release_group_mbid"]) for row in landed
                 ],
             )
 
-        return await self._read(operation)
+        def snapshot(conn: sqlite3.Connection) -> DownloadActivitySummary:
+            conn.execute("BEGIN")
+            try:
+                return operation(conn)
+            finally:
+                conn.rollback()
+
+        # Serialize probe/recompute/publication, including across cancellation: shield
+        # the worker until its read transaction closes before releasing the owner.
+        async with self._activity_lock:
+            read = asyncio.create_task(self._read(snapshot))
+            cancelled = False
+            while not read.done():
+                try:
+                    await asyncio.shield(read)
+                except asyncio.CancelledError:
+                    cancelled = True
+            summary = read.result()
+            if cancelled:
+                raise asyncio.CancelledError
+            self._activity_cache[scope] = summary
+            self._activity_cache.move_to_end(scope)
+            while len(self._activity_cache) > 256:
+                self._activity_cache.popitem(last=False)
+            return summary
 
     async def update_status(self, task_id: str, status: str, **fields: Any) -> None:
         sets = ["status = ?", "updated_at = ?"]

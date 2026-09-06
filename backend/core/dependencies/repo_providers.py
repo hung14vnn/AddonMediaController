@@ -54,6 +54,10 @@ def get_library_repository() -> "LibraryRepositoryProtocol":
 @singleton
 def get_musicbrainz_repository() -> "MusicBrainzRepository":
     from repositories.musicbrainz_repository import MusicBrainzRepository
+    from repositories.musicbrainz_base import set_mb_response_store
+    from .cache_providers import get_mb_response_store
+
+    set_mb_response_store(get_mb_response_store())
 
     cache = get_cache()
     preferences_service = get_preferences_service()
@@ -265,6 +269,7 @@ def get_youtube_repo() -> "YouTubeRepository":
         http_client=http_client,
         api_key=api_key,
         daily_quota_limit=yt_settings.daily_quota_limit,
+        settings_getter=preferences_service.get_youtube_connection,
     )
 
 

@@ -165,7 +165,8 @@ const h = vi.hoisted(() => ({
 	conversionRefetch: vi.fn()
 }));
 
-vi.mock('$lib/stores/authStore.svelte', () => ({
+vi.mock('$lib/stores/authStore.svelte', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/stores/authStore.svelte')>()),
 	authStore: { user: { id: 'admin-1' } }
 }));
 vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({

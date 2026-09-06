@@ -28,6 +28,7 @@ from .cache_providers import (  # noqa: F401
     get_cache_service,
     get_target_cache_service,
     get_cache_status_service,
+    get_mb_response_store,
 )
 
 from .repo_providers import (  # noqa: F401
@@ -226,6 +227,7 @@ from .service_providers import (  # noqa: F401
     get_target_discover_service,
     get_discover_queue_manager,
     get_target_discover_queue_manager,
+    get_discovery_demand_service,
     get_discovery_batch_service,
     get_target_discovery_batch_service,
     get_jellyfin_playback_service,
@@ -271,6 +273,7 @@ from .type_aliases import (  # noqa: F401
     LibraryManagementBlobStoreDep,
     CachedLocalArtworkServiceDep,
     PreferencesServiceDep,
+    ReleaseTypePolicyTransitionLockDep,
     LibraryPolicyServiceDep,
     LegacyPendingMigrationServiceDep,
     LibraryAdministrativeWorkServiceDep,
@@ -296,6 +299,7 @@ from .type_aliases import (  # noqa: F401
     TargetCatalogWriterServiceDep,
     LibraryReviewServiceDep,
     LibraryOperationServiceDep,
+    CacheStatusServiceDep,
     CatalogCorrectionServiceDep,
     ArtistIdentityReconciliationServiceDep,
     EditionConversionServiceDep,

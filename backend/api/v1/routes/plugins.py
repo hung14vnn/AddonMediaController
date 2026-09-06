@@ -392,10 +392,6 @@ async def plugin_panel_js(
     _: CurrentAdminDep,
     host=Depends(get_plugin_host),
 ):
-    from pathlib import Path
-
-    from fastapi.responses import Response
-
     if (
         not plugin_name
         or "/" in plugin_name
@@ -428,77 +424,75 @@ async def plugin_panel_js(
         or "\x00" in normalized
     ):
         raise ResourceNotFoundError("Plugin not found")
-    try:
-        directory = str(getattr(plugin, "directory", "") or "")
-        if not directory:
-            raise ResourceNotFoundError("Plugin not found")
-        base = Path(directory)
-        base_resolved = base.resolve()
-        target = (base_resolved / normalized).resolve()
-        if not target.is_relative_to(base_resolved):
-            raise ResourceNotFoundError("Plugin not found")
-    except ResourceNotFoundError:
-        raise
-    except Exception:  # noqa: BLE001
-        logger.exception("plugins.panel_resolve_failed")
-        return MsgSpecJSONResponse(
-            status_code=500,
-            content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": None}},
-        )
-    try:
-        stat = target.stat()
-        if not target.is_file():
-            raise ResourceNotFoundError("Plugin not found")
-    except ResourceNotFoundError:
-        raise
-    except (FileNotFoundError, NotADirectoryError):
+    directory = str(getattr(plugin, "directory", "") or "")
+    if not directory:
         raise ResourceNotFoundError("Plugin not found")
-    except Exception:  # noqa: BLE001
-        logger.exception("plugins.panel_stat_failed")
-        return MsgSpecJSONResponse(
-            status_code=500,
-            content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": None}},
-        )
-    try:
-        etag = '"' + hashlib.sha1(f"{stat.st_mtime_ns}:{stat.st_size}:{plugin_name}".encode()).hexdigest() + '"'
-        if_none_match = request.headers.get("if-none-match", "")
-        candidates = [token.strip() for token in if_none_match.split(",")] if if_none_match else []
-        if "*" in candidates or etag in candidates or f"W/{etag}" in candidates:
-            from email.utils import formatdate
+    response = await asyncio.to_thread(
+        _plugin_panel_response, directory, normalized, plugin_name, request.headers.get("if-none-match", "")
+    )
+    if not plugin.enabled or plugin.instance is None:
+        raise ResourceNotFoundError("Plugin not found")
+    return response
 
-            return Response(
-                status_code=304,
-                headers={
-                    "ETag": etag,
-                    "Last-Modified": formatdate(stat.st_mtime, usegmt=True),
-                    "X-Content-Type-Options": "nosniff",
-                    "Content-Security-Policy": "sandbox",
-                    "Cache-Control": "private, max-age=60, must-revalidate",
-                },
+
+def _plugin_panel_response(directory: str, normalized: str, plugin_name: str, if_none_match: str):
+    import errno
+    import os
+    import stat as stat_module
+    from email.utils import formatdate
+    from pathlib import Path
+
+    from fastapi.responses import Response
+
+    try:
+        base = Path(directory).resolve()
+        target = (base / normalized).resolve()
+        if not target.is_relative_to(base):
+            raise ResourceNotFoundError("Plugin not found")
+        # Resolve internal symlinks first, then pin each directory without following
+        # replacements. Metadata and bytes come from the same opened descriptor.
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+        parent_fd = os.open(target.anchor, flags)
+        try:
+            for component in target.parts[1:-1]:
+                child_fd = os.open(component, flags, dir_fd=parent_fd)
+                os.close(parent_fd)
+                parent_fd = child_fd
+            file_fd = os.open(
+                target.name, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd
             )
-        data = target.read_bytes()
+        finally:
+            os.close(parent_fd)
+        try:
+            stat = os.fstat(file_fd)
+            if not stat_module.S_ISREG(stat.st_mode):
+                raise ResourceNotFoundError("Plugin not found")
+            etag = '"' + hashlib.sha1(f"{stat.st_mtime_ns}:{stat.st_size}:{plugin_name}".encode()).hexdigest() + '"'
+            headers = {
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": "sandbox",
+                "Cache-Control": "private, max-age=60, must-revalidate",
+                "ETag": etag,
+                "Last-Modified": formatdate(stat.st_mtime, usegmt=True),
+            }
+            candidates = [token.strip() for token in if_none_match.split(",")] if if_none_match else []
+            if "*" in candidates or etag in candidates or f"W/{etag}" in candidates:
+                return Response(status_code=304, headers=headers)
+            with os.fdopen(file_fd, "rb", closefd=False) as bundle:
+                return Response(content=bundle.read(), media_type="text/javascript", headers=headers)
+        finally:
+            os.close(file_fd)
     except ResourceNotFoundError:
         raise
-    except (FileNotFoundError, NotADirectoryError):
-        raise ResourceNotFoundError("Plugin not found")
+    except OSError as exc:
+        if exc.errno in {errno.ENOENT, errno.ENOTDIR, errno.ELOOP}:
+            raise ResourceNotFoundError("Plugin not found") from exc
+        logger.exception("plugins.panel_read_failed")
     except Exception:  # noqa: BLE001
         logger.exception("plugins.panel_read_failed")
-        return MsgSpecJSONResponse(
-            status_code=500,
-            content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": None}},
-        )
-    from email.utils import formatdate
-
-    return Response(
-        content=data,
-        media_type="text/javascript",
-        headers={
-            "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "sandbox",
-            "Cache-Control": "private, max-age=60, must-revalidate",
-            "ETag": etag,
-            "Last-Modified": formatdate(stat.st_mtime, usegmt=True),
-        },
+    return MsgSpecJSONResponse(
+        status_code=500,
+        content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": None}},
     )
 
 

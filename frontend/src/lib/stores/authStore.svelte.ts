@@ -1,3 +1,4 @@
+import { setDownloadScope } from '$lib/queries/downloads/downloadScope.svelte';
 import {
 	resetMusicBrainzSourceScope,
 	setMusicBrainzSourceScope
@@ -54,6 +55,7 @@ function createAuthStore() {
 
 		setUser(newUser: AuthUser) {
 			const previousUserId = user?.id ?? null;
+			setDownloadScope(newUser.id, newUser.role);
 			user = newUser;
 			if (typeof localStorage !== 'undefined') {
 				try {
@@ -70,6 +72,7 @@ function createAuthStore() {
 		},
 
 		clear() {
+			setDownloadScope(null);
 			user = null;
 			if (typeof localStorage !== 'undefined') {
 				try {

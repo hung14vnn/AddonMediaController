@@ -178,13 +178,23 @@ def get_preferences_service() -> "PreferencesService":
 
 
 @singleton
+def get_mb_response_store():
+    from infrastructure.persistence.mb_response_store import MbResponseStore
+
+    return MbResponseStore(
+        db_path=get_settings().library_db_path,
+        write_lock=get_persistence_write_lock(),
+    )
+
+
+@singleton
 def get_cache_service() -> "CacheService":
     from services.cache_service import CacheService
 
     cache = get_cache()
     library_db = get_library_db()
     disk_cache = get_disk_cache()
-    return CacheService(cache, library_db, disk_cache)
+    return CacheService(cache, library_db, disk_cache, get_mb_response_store())
 
 
 @singleton

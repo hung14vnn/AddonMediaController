@@ -7,6 +7,7 @@ import time
 import uuid
 
 from collections.abc import Awaitable, Callable
+from infrastructure.observability.provider_counters import ProviderWorkload, provider_workload_scope
 
 import msgspec.json
 
@@ -246,6 +247,7 @@ class IdentityRepairService:
             raise ResourceNotFoundError("Identity operation not found.")
         return await self._operations.get(job_id)
 
+    @provider_workload_scope(ProviderWorkload.IDENTITY)
     async def run_claimed_audit(
         self,
         job: dict,
@@ -1193,6 +1195,7 @@ class IdentityRepairService:
         )
         return self._operations._response(row)
 
+    @provider_workload_scope(ProviderWorkload.IDENTITY)
     async def run_claimed_apply(
         self,
         job: dict,

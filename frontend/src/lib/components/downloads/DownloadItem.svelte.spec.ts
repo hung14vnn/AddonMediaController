@@ -28,7 +28,8 @@ vi.mock('$lib/queries/downloads/DownloadSSE.svelte', () => ({
 	})
 }));
 
-vi.mock('$lib/stores/authStore.svelte', () => ({
+vi.mock('$lib/stores/authStore.svelte', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/stores/authStore.svelte')>()),
 	authStore: {
 		get isAdmin() {
 			return h.isAdmin;

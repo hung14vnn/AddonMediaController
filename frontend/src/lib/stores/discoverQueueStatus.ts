@@ -4,6 +4,8 @@ import { API } from '$lib/constants';
 import { getCacheTTLs } from '$lib/stores/cacheTtl.svelte';
 import { api, ApiError } from '$lib/api/client';
 import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
+import { authStore } from '$lib/stores/authStore.svelte';
+import { musicBrainzSourceKey } from '$lib/queries/musicbrainz/sourceScope.svelte';
 
 export type QueueBuildStatus = 'idle' | 'building' | 'ready' | 'error' | 'unknown';
 
@@ -32,13 +34,12 @@ function createDiscoverQueueStatusStore() {
 
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 	let isPolling = false;
+	let epoch = 0;
+	const requestScope = () =>
+		`${epoch}:${authStore.user?.id}:${JSON.stringify(musicBrainzSourceKey())}`;
 
 	function getPollingInterval(): number {
 		return getCacheTTLs().discoverQueuePollingInterval;
-	}
-
-	function isAutoGenerateEnabled(): boolean {
-		return getCacheTTLs().discoverQueueAutoGenerate;
 	}
 
 	function applyStatusData(data: QueueStatusPayload): void {
@@ -53,8 +54,10 @@ function createDiscoverQueueStatusStore() {
 
 	async function fetchStatus(): Promise<QueueStatusPayload | null> {
 		if (!browser) return null;
+		const scope = requestScope();
 		try {
 			const data = await api.global.get<QueueStatusPayload>(API.discoverQueueStatus());
+			if (scope !== requestScope()) return null;
 			applyStatusData(data);
 			return data;
 		} catch {
@@ -64,16 +67,19 @@ function createDiscoverQueueStatusStore() {
 
 	async function triggerGenerate(force = false): Promise<void> {
 		if (!browser) return;
+		const scope = requestScope();
 		try {
 			update((s) => ({ ...s, status: 'building' }));
 			const data = await api.global.post<QueueStatusPayload>(API.discoverQueueGenerate(), {
 				force
 			});
+			if (scope !== requestScope()) return;
 			applyStatusData(data);
 			if (data.status === 'building') {
 				startPolling();
 			}
 		} catch (e) {
+			if (scope !== requestScope()) return;
 			if (e instanceof ApiError) {
 				update((s) => ({
 					...s,
@@ -113,12 +119,11 @@ function createDiscoverQueueStatusStore() {
 
 		if (result.status === 'building') {
 			startPolling();
-		} else if (result.status === 'idle' && isAutoGenerateEnabled()) {
-			await triggerGenerate(false);
 		}
 	}
 
 	function reset(): void {
+		epoch++;
 		stopPolling();
 		set({ ...INITIAL });
 	}

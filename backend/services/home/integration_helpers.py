@@ -7,6 +7,7 @@ import logging
 from typing import Any, TYPE_CHECKING
 
 from services.preferences_service import PreferencesService
+from infrastructure.observability.optional_work import OptionalWorkDeferred
 
 if TYPE_CHECKING:
     from services.plugin_sources import PluginSourceRegistry
@@ -126,6 +127,9 @@ class HomeIntegrationHelpers:
         keys = list(tasks.keys())
         coros = list(tasks.values())
         raw_results = await asyncio.gather(*coros, return_exceptions=True)
+        for result in raw_results:
+            if isinstance(result, OptionalWorkDeferred):
+                raise result
         results = {}
         for key, result in zip(keys, raw_results):
             if isinstance(result, Exception):

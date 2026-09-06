@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional, TYPE_CHECKING
 import msgspec
+from infrastructure.observability.optional_work import OptionalWorkDeferred, is_optional_work
 from api.v1.schemas.album import AlbumInfo, AlbumBasicInfo, AlbumTracksInfo, Track
 from repositories.protocols import (
     LibraryRepositoryProtocol,
@@ -164,7 +165,7 @@ class AlbumService:
                 )
             if images and not images.is_negative:
                 return images.album_thumb_url
-            if not allow_fetch and images is None and self._audiodb_browse_queue:
+            if not allow_fetch and images is None and self._audiodb_browse_queue and not is_optional_work():
                 settings = self._preferences_service.get_advanced_settings()
                 if settings.audiodb_enabled:
                     await self._audiodb_browse_queue.enqueue(
@@ -174,6 +175,8 @@ class AlbumService:
                         artist_name=artist_name,
                         is_monitored=is_monitored,
                     )
+        except OptionalWorkDeferred:
+            raise
         except Exception as e:  # noqa: BLE001 - normalize unexpected track composition failures
             logger.warning(
                 "Failed to get AudioDB album thumb for %s: %s", release_group_id[:8], e
@@ -206,7 +209,7 @@ class AlbumService:
                     release_group_mbid
                 )
             if images is None or images.is_negative:
-                if not allow_fetch and images is None and self._audiodb_browse_queue:
+                if not allow_fetch and images is None and self._audiodb_browse_queue and not is_optional_work():
                     settings = self._preferences_service.get_advanced_settings()
                     if settings.audiodb_enabled:
                         await self._audiodb_browse_queue.enqueue(
@@ -225,6 +228,8 @@ class AlbumService:
             album_info.album_3d_flat_url = images.album_3d_flat_url
             album_info.album_3d_face_url = images.album_3d_face_url
             album_info.album_3d_thumb_url = images.album_3d_thumb_url
+        except OptionalWorkDeferred:
+            raise
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "Failed to apply AudioDB images for album %s: %s",
@@ -371,7 +376,12 @@ class AlbumService:
                 )
 
             if inflight_key in self._album_in_flight:
-                return await asyncio.shield(self._album_in_flight[inflight_key])
+                try:
+                    return await asyncio.shield(self._album_in_flight[inflight_key])
+                except OptionalWorkDeferred:
+                    if is_optional_work():
+                        raise
+                    return await self.get_album_info(release_group_id, library_mbids, priority)
 
             loop = asyncio.get_running_loop()
             future: asyncio.Future[AlbumInfo] = loop.create_future()
@@ -396,6 +406,8 @@ class AlbumService:
                 if self._album_in_flight.get(inflight_key) is future:
                     self._album_in_flight.pop(inflight_key, None)
         except ValueError:
+            raise
+        except OptionalWorkDeferred:
             raise
         except Exception as e:  # noqa: BLE001
             logger.error(f"API call failed for album {release_group_id}: {e}")
@@ -644,6 +656,8 @@ class AlbumService:
 
         except ValueError:
             raise
+        except OptionalWorkDeferred:
+            raise
         except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to get basic album info for {release_group_id}: {e}")
             raise ResourceNotFoundError(f"Failed to get album info: {e}")
@@ -689,7 +703,12 @@ class AlbumService:
                 return cached_tracks
 
             if inflight_key in self._tracks_in_flight:
-                return await asyncio.shield(self._tracks_in_flight[inflight_key])
+                try:
+                    return await asyncio.shield(self._tracks_in_flight[inflight_key])
+                except OptionalWorkDeferred:
+                    if is_optional_work():
+                        raise
+                    return await self.get_album_tracks_info(release_group_id, priority)
 
             loop = asyncio.get_running_loop()
             future: asyncio.Future[AlbumTracksInfo] = loop.create_future()
@@ -745,6 +764,8 @@ class AlbumService:
             raise
         except ExternalServiceError:
             raise
+        except OptionalWorkDeferred:
+            raise
         except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to get album tracks for {release_group_id}: {e}")
             raise ResourceNotFoundError(f"Failed to get album tracks: {e}")
@@ -791,6 +812,8 @@ class AlbumService:
             release_group = await self._fetch_release_group(
                 release_group_id, priority=priority
             )
+        except OptionalWorkDeferred:
+            raise
         except Exception:
             logger.warning(
                 "Album tracks album=%s source=release-group outcome=error elapsed_ms=%.1f",
@@ -836,6 +859,8 @@ class AlbumService:
                     includes=["recordings", "labels"],
                     priority=priority,
                 )
+            except OptionalWorkDeferred:
+                raise
             except Exception:
                 logger.warning(
                     "Album tracks album=%s release=%s role=%s outcome=error elapsed_ms=%.1f",
@@ -1018,6 +1043,8 @@ class AlbumService:
             return status
         try:
             info = await self.get_album_tracks_info(release_group_id)
+        except OptionalWorkDeferred:
+            raise
         except Exception:  # noqa: BLE001 - coverage is an annotation, never a page-breaker
             logger.warning(
                 f"Album coverage annotation failed for {release_group_id[:8]}"
@@ -1381,6 +1408,8 @@ class AlbumService:
             album_info.barcode = release_data.get("barcode")
             album_info.country = release_data.get("country")
 
+        except OptionalWorkDeferred:
+            raise
         except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to enrich with release details: {e}")
 

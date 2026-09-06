@@ -15,7 +15,10 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
-vi.mock('$lib/stores/authStore.svelte', () => ({ authStore: h.authStore }));
+vi.mock('$lib/stores/authStore.svelte', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/stores/authStore.svelte')>()),
+	authStore: h.authStore
+}));
 vi.mock('$lib/api/client', () => ({ api: { global: { get: h.get } } }));
 vi.mock('$lib/queries/library/LibraryCatalogInvalidation', () => ({
 	invalidateLibraryCatalog: (...args: unknown[]) => h.invalidateCatalog(...args)
@@ -26,7 +29,9 @@ vi.mock('idb-keyval', () => ({
 	del: vi.fn().mockResolvedValue(undefined),
 	entries: vi.fn().mockResolvedValue([]),
 	get: vi.fn().mockResolvedValue(undefined),
-	set: vi.fn().mockResolvedValue(undefined)
+	set: vi.fn().mockResolvedValue(undefined),
+	// Inert UseStore: persistence drops writes, like the get/set stubs above.
+	createStore: vi.fn(() => vi.fn(async () => {}))
 }));
 
 import LinkedTransitionHarness from './LinkedTransitionHarness.svelte';

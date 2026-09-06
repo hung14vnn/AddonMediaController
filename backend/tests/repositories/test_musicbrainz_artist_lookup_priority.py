@@ -24,10 +24,7 @@ async def test_artist_lookup_threads_priority_to_both_musicbrainz_calls(
     monkeypatch.setattr(artist_module, "mb_api_get", mb_get)
 
     repository = MusicBrainzArtistMixin.__new__(MusicBrainzArtistMixin)
-    repository._cache = SimpleNamespace(
-        get=AsyncMock(return_value=None),
-        set=AsyncMock(),
-    )
+    repository._cache = InMemoryCache()
 
     result = await repository.get_artist_by_id(
         "artist-id",
@@ -59,12 +56,8 @@ async def test_artist_basic_profile_uses_one_wire_and_distinct_cache_key(
     mb_get = AsyncMock(return_value=artist_payload)
     monkeypatch.setattr(artist_module, "mb_api_get", mb_get)
 
-    cache_set = AsyncMock()
     repository = MusicBrainzArtistMixin.__new__(MusicBrainzArtistMixin)
-    repository._cache = SimpleNamespace(
-        get=AsyncMock(return_value=None),
-        set=cache_set,
-    )
+    repository._cache = InMemoryCache()
 
     result = await repository.get_artist_by_id(
         "artist-id",
@@ -76,10 +69,9 @@ async def test_artist_basic_profile_uses_one_wire_and_distinct_cache_key(
     assert mb_get.await_args.kwargs["params"]["inc"] == (
         "tags+aliases+url-rels+release-groups"
     )
-    cache_set.assert_awaited_once()
-    assert cache_set.await_args.args[0] == artist_module.mb_artist_detail_key(
-        "artist-id", include_releases=False
-    )
+    mb_get.reset_mock()
+    assert await repository.get_artist_by_id("artist-id", include_releases=False) == artist_payload
+    mb_get.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -139,12 +131,8 @@ async def test_artist_aggregate_drops_mixed_generation_browse_data(monkeypatch):
             release_group_count=1,
         )
 
-    cache_set = AsyncMock()
     repository = MusicBrainzArtistMixin.__new__(MusicBrainzArtistMixin)
-    repository._cache = SimpleNamespace(
-        get=AsyncMock(return_value=None),
-        set=cache_set,
-    )
+    repository._cache = InMemoryCache()
     monkeypatch.setattr(artist_module, "mb_api_get", provider)
 
     try:
@@ -158,7 +146,7 @@ async def test_artist_aggregate_drops_mixed_generation_browse_data(monkeypatch):
         "name": "New Artist",
         "release-group-count": 0,
     }
-    cache_set.assert_not_awaited()
+    assert repository._cache.size() == 0
 
 
 @pytest.mark.asyncio
@@ -187,12 +175,8 @@ async def test_artist_aggregate_drops_stale_detail_when_browse_is_current(monkey
             release_group_count=1,
         )
 
-    cache_set = AsyncMock()
     repository = MusicBrainzArtistMixin.__new__(MusicBrainzArtistMixin)
-    repository._cache = SimpleNamespace(
-        get=AsyncMock(return_value=None),
-        set=cache_set,
-    )
+    repository._cache = InMemoryCache()
     monkeypatch.setattr(artist_module, "mb_api_get", provider)
 
     try:
@@ -202,7 +186,7 @@ async def test_artist_aggregate_drops_stale_detail_when_browse_is_current(monkey
         monkeypatch.setattr(mb_base, "_mb_source_generation", previous_generation)
 
     assert result is None
-    cache_set.assert_not_awaited()
+    assert repository._cache.size() == 0
 
 
 @pytest.mark.asyncio
@@ -222,10 +206,7 @@ async def test_case_variants_share_artist_detail_and_browse_wires(monkeypatch):
         raise AssertionError(f"unexpected MusicBrainz path: {path}")
 
     repository = MusicBrainzArtistMixin.__new__(MusicBrainzArtistMixin)
-    repository._cache = SimpleNamespace(
-        get=AsyncMock(return_value=None),
-        set=AsyncMock(),
-    )
+    repository._cache = InMemoryCache()
     monkeypatch.setattr(artist_module, "mb_api_get", provider)
 
     first = asyncio.create_task(repository.get_artist_by_id("ARTIST-ID"))

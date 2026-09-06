@@ -61,7 +61,10 @@ const PROVIDER_STATS: ProviderStats = {
 		}
 	],
 	window_seconds: 3600,
-	counters_since: null
+	counters_since: null,
+	body_byte_scope: 'HTTP response bodies; excludes headers and TLS',
+	detailed_series_limit: 1024,
+	process_epoch: 'fixture-epoch'
 };
 
 function setQueryStates(queue: QueryFixture<QueueStats>, provider: QueryFixture<ProviderStats>) {

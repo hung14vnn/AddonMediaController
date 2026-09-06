@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from infrastructure.observability.provider_counters import ProviderWorkload, provider_workload_scope
 from collections.abc import Sequence
 
 import time
@@ -429,6 +430,7 @@ class AlbumIdentificationService:
         self._on_identified = on_identified
         self._provider_available = provider_available
 
+    @provider_workload_scope(ProviderWorkload.IDENTITY)
     async def run_claimed_job(
         self,
         job: dict,

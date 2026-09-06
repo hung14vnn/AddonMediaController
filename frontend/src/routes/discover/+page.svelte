@@ -45,6 +45,9 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 	import { API } from '$lib/constants';
+	import { useDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
+
+	useDiscoverActivity(() => ({ feature: 'discover' }));
 
 	let playlistDiscoverOpen = $state(false);
 

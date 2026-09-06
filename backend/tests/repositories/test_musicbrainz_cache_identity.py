@@ -13,10 +13,22 @@ class _Cache:
         self.values = {}
         self.writes = []
 
+    def capture_clear_token(self):
+        return self, 0
+
+    async def set_if_token(self, token, key, value, ttl_seconds=None, metadata=None):
+        if token != self.capture_clear_token():
+            return False
+        await self.set(key, value, ttl_seconds=ttl_seconds)
+        return True
+
     async def get(self, key):
         from repositories.musicbrainz_base import namespace_mb_cache_key
 
         return self.values.get(namespace_mb_cache_key(key))
+
+    async def get_with_metadata(self, key):
+        return await self.get(key), None
 
     async def set(self, key, value, ttl_seconds=None):
         from repositories.musicbrainz_base import namespace_mb_cache_key

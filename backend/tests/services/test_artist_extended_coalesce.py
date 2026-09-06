@@ -29,6 +29,17 @@ class InMemoryCacheStub:
     async def set(self, key, value, ttl_seconds=60):
         self._store[key] = value
 
+    def capture_clear_token(self):
+        return (self, 0)
+
+    async def get_with_metadata(self, key):
+        return self._store.get(key), None
+
+    async def set_if_token(self, token, key, value, ttl_seconds=60, metadata=None):
+        del token, ttl_seconds, metadata
+        self._store[key] = value
+        return True
+
 
 def _relations_payload() -> dict:
     return {

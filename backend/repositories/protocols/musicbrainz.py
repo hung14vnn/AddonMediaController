@@ -40,6 +40,12 @@ class MusicBrainzRepositoryProtocol(Protocol):
     # passes BACKGROUND_SYNC; every other caller keeps the USER_INITIATED
     # default. NOTE: protocol modules must not use `from __future__ import
     # annotations` (signature-conformance tests compare real objects).
+    async def get_artist_core(
+        self,
+        mbid: str,
+        priority: RequestPriority = RequestPriority.USER_INITIATED,
+    ) -> dict[str, Any] | None: ...
+
     async def get_artist_by_id(
         self,
         mbid: str,

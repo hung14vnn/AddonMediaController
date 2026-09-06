@@ -1984,6 +1984,7 @@ def _build_home_service(
         ownership_service=ownership_service,
         genre_artwork_service=genre_artwork_service,
         workload_gate=get_background_workload_gate(),
+        snapshot_store=get_discovery_snapshot_store(),
     )
 
 
@@ -2096,6 +2097,8 @@ def get_target_wrapped_service() -> "WrappedService":
 @singleton
 def get_settings_service() -> "SettingsService":
     from services.settings_service import SettingsService
+    from core.dependencies.cache_providers import get_mb_response_store
+    from core.dependencies.repo_providers import get_follow_store
 
     preferences_service = get_preferences_service()
     cache = get_cache()
@@ -2104,12 +2107,16 @@ def get_settings_service() -> "SettingsService":
         cache,
         discovery_snapshot_store=get_discovery_snapshot_store(),
         disk_cache=get_disk_cache(),
+        mb_response_store=get_mb_response_store(),
+        follow_store=get_follow_store(),
     )
 
 
 @singleton
 def get_target_settings_service() -> "SettingsService":
     from services.settings_service import SettingsService
+    from core.dependencies.cache_providers import get_mb_response_store
+    from core.dependencies.repo_providers import get_follow_store
 
     return SettingsService(
         get_preferences_service(),
@@ -2118,6 +2125,24 @@ def get_target_settings_service() -> "SettingsService":
         plex_library_getter=get_target_plex_library_service,
         discovery_snapshot_store=get_discovery_snapshot_store(),
         disk_cache=get_disk_cache(),
+        mb_response_store=get_mb_response_store(),
+        follow_store=get_follow_store(),
+    )
+
+
+@singleton
+def get_discovery_demand_service():
+    from services.discover.demand_service import DiscoveryDemandService
+    from core.dependencies.auth_providers import get_auth_store
+    from core.dependencies.cache_providers import get_discovery_snapshot_store
+
+    return DiscoveryDemandService(
+        get_discovery_snapshot_store(),
+        get_target_discover_service,
+        get_target_home_service,
+        get_target_discover_queue_manager,
+        get_target_artist_discovery_service,
+        get_auth_store,
     )
 
 
@@ -2125,7 +2150,6 @@ def _build_artist_discovery_service(
     library_repo, library_db
 ) -> "ArtistDiscoveryService":
     from services.artist_discovery_service import ArtistDiscoveryService
-    from core.dependencies.auth_providers import get_auth_store
 
     listenbrainz_repo = get_listenbrainz_repository()
     musicbrainz_repo = get_musicbrainz_repository()
@@ -2141,7 +2165,7 @@ def _build_artist_discovery_service(
         lastfm_repo=lastfm_repo,
         preferences_service=preferences_service,
         client_factory=get_per_user_client_factory(),
-        auth_store=get_auth_store(),
+        workload_gate=get_background_workload_gate(),
     )
 
 

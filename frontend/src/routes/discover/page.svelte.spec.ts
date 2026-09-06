@@ -75,6 +75,7 @@ vi.mock('$lib/components/PlaylistDiscoveryModal.svelte', () => {
 	return { default: Comp };
 });
 
+vi.mock('$lib/queries/discover/DiscoverDemand.svelte', () => ({ useDiscoverActivity: vi.fn() }));
 import DiscoverPage from './+page.svelte';
 
 function emptyResponse(overrides: Partial<DiscoverResponse> = {}): Partial<DiscoverResponse> {

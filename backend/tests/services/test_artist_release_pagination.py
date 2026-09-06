@@ -54,13 +54,43 @@ def _make_prefs(
     return p
 
 
+def _namespaced(key: str) -> str:
+    # Mirror InMemoryCache._source_key: the real cache namespaces every key
+    # with the ambient MusicBrainz operation context. A fake that skips this
+    # can never round-trip, because production reads pre-namespace while
+    # writes go through un-namespaced.
+    from repositories.musicbrainz_base import namespace_mb_cache_key
+
+    return namespace_mb_cache_key(key)
+
+
 def _make_dict_cache() -> tuple[AsyncMock, dict[str, Any]]:
-    """AsyncMock cache backed by a real dict, for multi-request tests."""
+    """AsyncMock cache backed by a real dict, for multi-request tests.
+
+    Speaks the freshness cache contract (``get_with_metadata`` /
+    ``set_if_token``) with real-cache key namespacing; clear-token fencing
+    is not modeled here because these pagination tests never clear
+    mid-flight (dedicated fence tests use real caches).
+    """
     store: dict[str, Any] = {}
     cache = AsyncMock()
-    cache.get = AsyncMock(side_effect=store.get)
+    # capture_clear_token is sync on real caches; AsyncMock children default
+    # to async, which yields un-awaited coroutines that never compare equal.
+    cache.capture_clear_token = MagicMock(return_value=("test-cache", 0))
+    cache.get = AsyncMock(side_effect=lambda key: store.get(_namespaced(key)))
+    cache.get_with_metadata = AsyncMock(
+        side_effect=lambda key: (store.get(_namespaced(key)), None)
+    )
+
+    async def _set_if_token(token, key, value, ttl_seconds=60, *, metadata=None):
+        store[_namespaced(key)] = value
+        return True
+
+    cache.set_if_token = AsyncMock(side_effect=_set_if_token)
     cache.set = AsyncMock(
-        side_effect=lambda key, value, ttl_seconds: store.__setitem__(key, value)
+        side_effect=lambda key, value, ttl_seconds: store.__setitem__(
+            _namespaced(key), value
+        )
     )
     return cache, store
 
@@ -88,6 +118,8 @@ def _make_service(
     library_repo = MagicMock()
     library_repo.is_configured.return_value = False
     library_repo.get_library_mbids = AsyncMock(return_value=set())
+    library_repo.existing_album_mbids = AsyncMock(return_value=set())
+    library_repo.existing_artist_mbids = AsyncMock(return_value=set())
     library_repo.get_requested_mbids = AsyncMock(return_value=set())
     library_repo.get_artist_mbids = AsyncMock(return_value=set())
 
@@ -95,10 +127,14 @@ def _make_service(
 
     if memory_cache is None:
         memory_cache = AsyncMock()
+        memory_cache.capture_clear_token = MagicMock(return_value=("test-cache", 0))
         memory_cache.get = AsyncMock(return_value=None)
+        memory_cache.get_with_metadata = AsyncMock(return_value=(None, None))
+        memory_cache.set_if_token = AsyncMock(return_value=True)
         memory_cache.set = AsyncMock()
 
     disk_cache = AsyncMock()
+    disk_cache.capture_clear_token = MagicMock(return_value=("test-disk", 0))
     disk_cache.get_artist = AsyncMock(return_value=None)
     disk_cache.set_artist = AsyncMock()
 
@@ -295,8 +331,11 @@ async def test_full_artist_profile_seeds_warm_from_fetched_width(monkeypatch):
     library_repo = MagicMock()
     library_repo.get_artist_mbids = AsyncMock(return_value=set())
     library_repo.get_library_mbids = AsyncMock(return_value=set())
+    library_repo.existing_album_mbids = AsyncMock(return_value=set())
+    library_repo.existing_artist_mbids = AsyncMock(return_value=set())
     library_repo.get_requested_mbids = AsyncMock(return_value=set())
     disk_cache = AsyncMock()
+    disk_cache.capture_clear_token = MagicMock(return_value=("test-disk", 0))
     disk_cache.get_artist = AsyncMock(return_value=None)
     disk_cache.set_artist = AsyncMock()
     service = ArtistService(
@@ -477,8 +516,12 @@ class TestFilterAwarePagination:
 
     @pytest.mark.asyncio
     async def test_exception_returns_empty_page(self):
-        svc = _make_service()
-        svc._library_repo.get_library_mbids = AsyncMock(
+        svc = _make_service(
+            mb_release_pages=[
+                ([_make_release_group("rg-1", "Album 1", "Album")], 1)
+            ]
+        )
+        svc._library_repo.existing_album_mbids = AsyncMock(
             side_effect=RuntimeError("boom")
         )
 
@@ -649,8 +692,8 @@ class TestFilterAwarePagination:
         assert second.warming is False
         assert second.returned_count == 50
         assert second.source_total_count == 109
-        assert store[mb_artist_release_groups_key(ARTIST_MBID)] == _collected_list(
-            collected
+        assert store[_namespaced(mb_artist_release_groups_key(ARTIST_MBID))] == (
+            _collected_list(collected)
         )
 
     @pytest.mark.asyncio
@@ -667,9 +710,11 @@ class TestFilterAwarePagination:
         assert result.warming is True
         assert result.source_total_count is None
         store_writes = [
-            call.args[0]
-            for call in svc._cache.set.await_args_list
-            if call.args and call.args[0].startswith("mb:artist_rgs:")
+            call.args[1]
+            for call in svc._cache.set_if_token.await_args_list
+            if len(call.args) > 1
+            and isinstance(call.args[1], str)
+            and call.args[1].startswith("mb:artist_rgs:")
         ]
         assert store_writes == []
 

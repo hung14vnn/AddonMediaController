@@ -161,6 +161,7 @@ vi.mock('$lib/queries/downloads/DownloadMutations.svelte', async (importOriginal
 vi.mock('$lib/stores/musicSource', () => ({
 	isMusicSource: (value: unknown) => value === 'listenbrainz' || value === 'lastfm'
 }));
+vi.mock('$lib/queries/discover/DiscoverDemand.svelte', () => ({ useDiscoverActivity: vi.fn() }));
 import ProviderArtistPage from './ProviderArtistPage.svelte';
 
 beforeEach(() => {

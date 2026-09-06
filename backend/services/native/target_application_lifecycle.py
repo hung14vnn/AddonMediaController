@@ -224,6 +224,7 @@ async def start_target_operational_runtime(
     from core.tasks import (
         start_acquisition_cleanup_task,
         start_artist_discovery_cache_warming_task,
+        start_acquisition_orphan_reconcile_task,
         start_audiodb_sweep_task,
         start_background_upgrade_scan_task,
         start_discover_home_warmer_task,
@@ -374,17 +375,6 @@ async def start_target_operational_runtime(
 
     advanced = preferences.get_advanced_settings()
     start_discover_home_warmer_task(
-        get_target_discover_service,
-        get_target_home_service,
-        get_auth_store,
-        get_target_discover_queue_manager,
-        workload_gate=get_background_workload_gate(),
-    )
-    start_artist_discovery_cache_warming_task(
-        get_target_artist_discovery_service,
-        library,
-        interval=advanced.artist_discovery_warm_interval,
-        delay=advanced.artist_discovery_warm_delay,
         workload_gate=get_background_workload_gate(),
     )
     start_audiodb_sweep_task(
@@ -413,7 +403,7 @@ async def start_target_operational_runtime(
         )
 
     start_request_status_sync_task(get_target_requests_page_service())
-    start_poll_new_releases_task(get_target_new_release_service())
+    start_poll_new_releases_task(get_target_new_release_service)
     start_personal_mix_refresh_task(get_target_personal_mix_service())
     start_orphan_cover_demotion_task(
         target.covers.disk_cache,

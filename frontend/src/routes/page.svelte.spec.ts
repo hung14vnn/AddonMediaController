@@ -46,6 +46,7 @@ vi.mock('$lib/queries/connections/ConnectionsQuery.svelte', () => ({
 	getConnectionsQuery: () => ({ data: undefined, isPending: false })
 }));
 
+vi.mock('$lib/queries/discover/DiscoverDemand.svelte', () => ({ useDiscoverActivity: vi.fn() }));
 import Page from './+page.svelte';
 
 function contentResponse(): Partial<HomeResponse> {

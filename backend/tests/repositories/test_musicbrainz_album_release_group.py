@@ -8,11 +8,12 @@ import pytest
 
 from models.album import AlbumInfo
 from repositories.musicbrainz_album import MusicBrainzAlbumMixin
+from infrastructure.cache.memory_cache import InMemoryCache
 
 
 class _Repo(MusicBrainzAlbumMixin):
     def __init__(self) -> None:
-        self._cache = AsyncMock()  # unused: get_release_group_by_id is stubbed per-test
+        self._cache = InMemoryCache()
 
 
 _RG = {
@@ -70,22 +71,24 @@ async def test_fetch_rg_negative_caches_404_but_not_transient(monkeypatch):
     import repositories.musicbrainz_album as mod
 
     repo = _Repo()
-    repo._cache = AsyncMock()
+    repo._cache = InMemoryCache()
 
-    monkeypatch.setattr(mod, "mb_api_get", AsyncMock(return_value={}))
+    api = AsyncMock(return_value={})
+    monkeypatch.setattr(mod, "mb_api_get", api)
     assert (
-        await repo._fetch_release_group_by_id("rg-404", ["artist-credits"], "ck-404")
+        await repo.get_release_group_by_id("rg-404", ["artist-credits"])
         is None
     )
-    repo._cache.set.assert_awaited_once_with("ck-404", {}, ttl_seconds=600)
+    assert await repo.get_release_group_by_id("rg-404", ["artist-credits"]) is None
+    assert api.await_count == 1
 
-    repo._cache.set.reset_mock()
     monkeypatch.setattr(mod, "mb_api_get", AsyncMock(side_effect=RuntimeError("503")))
     assert (
-        await repo._fetch_release_group_by_id("rg-503", ["artist-credits"], "ck-503")
+        await repo.get_release_group_by_id("rg-503", ["artist-credits"])
         is None
     )
-    repo._cache.set.assert_not_called()
+    monkeypatch.setattr(mod, "mb_api_get", AsyncMock(return_value={"id": "rg-503"}))
+    assert await repo.get_release_group_by_id("rg-503", ["artist-credits"]) == {"id": "rg-503"}
 
 
 @pytest.mark.asyncio
@@ -98,8 +101,7 @@ async def test_release_to_rg_resolution_threads_priority(monkeypatch):
     from infrastructure.queue.priority_queue import RequestPriority
 
     repo = _Repo()
-    repo._cache = AsyncMock()
-    repo._cache.get = AsyncMock(return_value=None)
+    repo._cache = InMemoryCache()
 
     api = AsyncMock(
         return_value=SimpleNamespace(release_group={"id": "rg-9"}, media=[])
@@ -120,7 +122,6 @@ async def test_release_to_rg_resolution_threads_priority(monkeypatch):
 @pytest.mark.asyncio
 async def test_release_group_ids_batch_fans_out_all_pending_ids():
     repo = _Repo()
-    repo._cache.get = AsyncMock(return_value=None)
     resolver = AsyncMock(side_effect=["rg-a", None])
     repo.get_release_group_id_from_release = resolver
 
@@ -139,7 +140,6 @@ async def test_release_group_ids_batch_rejects_source_switch_during_wire():
     from core.exceptions import ConfigurationError
 
     repo = _Repo()
-    repo._cache.get = AsyncMock(return_value=None)
     original_source = mb_base.capture_mb_source_context()
     original_source_id = mb_base.get_mb_source_id()
     original_runtime = mb_base.brainzmash_runtime_enabled()
@@ -181,10 +181,22 @@ class _RealDictCache:
         self.store: dict = {}
         self.writes: list[tuple] = []
 
+    def capture_clear_token(self):
+        return self, 0
+
+    async def set_if_token(self, token, key, value, ttl_seconds=None, metadata=None):
+        if token != self.capture_clear_token():
+            return False
+        await self.set(key, value, ttl_seconds=ttl_seconds)
+        return True
+
     async def get(self, key):
         from repositories.musicbrainz_base import namespace_mb_cache_key
 
         return self.store.get(namespace_mb_cache_key(key))
+
+    async def get_with_metadata(self, key):
+        return await self.get(key), None
 
     async def set(self, key, value, ttl_seconds=None):
         from repositories.musicbrainz_base import namespace_mb_cache_key
@@ -341,3 +353,64 @@ async def test_positive_release_to_rg_result_keeps_existing_ttl_and_value() -> N
     assert value == "rg-positive"
     # Served entirely from cache: no provider call, nothing rewritten.
     assert cache.writes == []
+
+
+@pytest.mark.asyncio
+async def test_mapping_fetch_does_not_request_recordings(monkeypatch):
+    import msgspec
+    import repositories.musicbrainz_album as mb_album
+    from infrastructure.cache.memory_cache import InMemoryCache
+
+    repo = _suffix_repo(InMemoryCache())
+
+    async def provider(path, *, params, decode_type, **kwargs):
+        assert path == "/release/exact-edition"
+        assert set(params["inc"].split("+")) == {"release-groups"}
+        return msgspec.convert(
+            {"release-group": {"id": "album-group"}}, type=decode_type
+        )
+
+    monkeypatch.setattr(mb_album, "mb_api_get", provider)
+    assert await repo.get_release_group_id_from_release("exact-edition") == "album-group"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mapping_first", [False, True])
+async def test_positions_load_exact_multidisc_tracklist_without_mapping_side_effect(
+    monkeypatch, mapping_first
+):
+    import msgspec
+    import repositories.musicbrainz_album as mb_album
+    from infrastructure.cache.memory_cache import InMemoryCache
+
+    repo = _suffix_repo(InMemoryCache())
+    fetched_tracklists = []
+
+    async def provider(path, *, params, decode_type=None, **kwargs):
+        if params["inc"] == "release-groups":
+            return msgspec.convert(
+                {"release-group": {"id": "shared-group"}}, type=decode_type
+            )
+        assert params["inc"] == "recordings"
+        fetched_tracklists.append(path)
+        disc, position = (2, 7) if path == "/release/edition-a" else (1, 3)
+        return {
+            "id": path.rsplit("/", 1)[1],
+            "media": [
+                {
+                    "position": disc,
+                    "tracks": [
+                        {"position": position, "recording": {"id": "recording-one"}}
+                    ],
+                }
+            ],
+        }
+
+    monkeypatch.setattr(mb_album, "mb_api_get", provider)
+    if mapping_first:
+        assert await repo.get_release_group_id_from_release("edition-a") == "shared-group"
+    assert await repo.get_recording_position_on_release("edition-a", "recording-one") == (2, 7)
+    assert await repo.get_recording_position_on_release("edition-b", "recording-one") == (1, 3)
+    assert await repo.get_recording_position_on_release("edition-a", "missing") is None
+    assert await repo.get_recording_position_on_release("edition-a", "recording-one") == (2, 7)
+    assert fetched_tracklists == ["/release/edition-a", "/release/edition-b"]

@@ -107,7 +107,8 @@ async def test_stale_release_mapping_does_not_write_after_source_switch(monkeypa
 
     try:
         result = await repo._fetch_release_group_id_from_release(
-            "rel-stale", "mb:release_to_rg:rel-stale"
+            "rel-stale", "mb:release_to_rg:rel-stale",
+            cache_token=mb_base.capture_mb_cache_token(repo._cache),
         )
     finally:
         mb_base._mb_response_context.reset(token)

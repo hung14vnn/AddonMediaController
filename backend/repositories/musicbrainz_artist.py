@@ -26,6 +26,9 @@ from repositories.musicbrainz_base import (
     mb_deduplicator,
     clear_mb_response_context,
     capture_mb_source_context,
+    capture_mb_cache_token,
+    MbCachePolicy,
+    get_mb_response_metadata,
     dedupe_by_id,
     get_mb_response_context,
     normalize_mb_id,
@@ -35,6 +38,7 @@ from repositories.musicbrainz_base import (
 )
 from infrastructure.degradation import try_get_degradation_context
 from infrastructure.integration_result import IntegrationResult
+from repositories.musicbrainz_response_cache import merge_mb_metadata, response_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +121,7 @@ class MusicBrainzArtistMixin:
     ) -> list[SearchResult]:
         clear_mb_response_context()
         source_context = capture_mb_source_context()
+        cache_token = capture_mb_cache_token(self._cache)
         cache_key = mb_artist_search_key(query, limit, offset)
 
         cached = await mb_cache_get_if_current(self._cache, cache_key, source_context)
@@ -150,13 +155,11 @@ class MusicBrainzArtistMixin:
                         break
 
                 advanced_settings = self._preferences_service.get_advanced_settings()
-                await mb_cache_set_if_current(
-                    self._cache,
-                    cache_key,
-                    results,
-                    ttl_seconds=advanced_settings.cache_ttl_search,
-                    context=response_context,
-                )
+                await mb_cache_set_if_current(self._cache,
+                cache_key,
+                results,
+                ttl_seconds=advanced_settings.cache_ttl_search,
+                context=response_context, cache_token=cache_token)
                 return results
             except Exception as e:  # noqa: BLE001
                 logger.error("MusicBrainz artist search failed")
@@ -170,6 +173,7 @@ class MusicBrainzArtistMixin:
     ) -> list[SearchResult]:
         clear_mb_response_context()
         source_context = capture_mb_source_context()
+        cache_token = capture_mb_cache_token(self._cache)
         cache_key = f"{MB_ARTISTS_BY_TAG_PREFIX}{tag.lower()}:{limit}:{offset}"
 
         cached = await mb_cache_get_if_current(self._cache, cache_key, source_context)
@@ -199,13 +203,11 @@ class MusicBrainzArtistMixin:
                 ]
 
                 advanced_settings = self._preferences_service.get_advanced_settings()
-                await mb_cache_set_if_current(
-                    self._cache,
-                    cache_key,
-                    results,
-                    ttl_seconds=advanced_settings.cache_ttl_search * 2,
-                    context=response_context,
-                )
+                await mb_cache_set_if_current(self._cache,
+                cache_key,
+                results,
+                ttl_seconds=advanced_settings.cache_ttl_search * 2,
+                context=response_context, cache_token=cache_token)
                 return results
             except Exception as e:  # noqa: BLE001
                 logger.error("MusicBrainz artist tag search failed")
@@ -213,6 +215,31 @@ class MusicBrainzArtistMixin:
                 return []
 
         return await mb_deduplicator.dedupe(cache_key, load)
+
+    async def get_artist_core(
+        self,
+        mbid: str,
+        priority: RequestPriority = RequestPriority.USER_INITIATED,
+    ) -> dict[str, Any] | None:
+        clear_mb_response_context()
+        source_context = capture_mb_source_context()
+        cache_token = capture_mb_cache_token(self._cache)
+        mbid = normalize_mb_id(mbid)
+        cache_key = mb_artist_detail_key(mbid, profile="core")
+        cached = await mb_cache_get_if_current(self._cache, cache_key, source_context)
+        if cached is not None:
+            return cached or None
+        result = await mb_api_get(
+            f"/artist/{mbid}",
+            params={"inc": "tags+aliases+url-rels"},
+            priority=priority,
+            source_context=source_context,
+            cache_policy=MbCachePolicy.DISPLAY_FRESH,
+        )
+        await mb_cache_set_if_current(self._cache, cache_key, result,
+        ttl_seconds=21600 if result else _ARTIST_NOT_FOUND_TTL_SECONDS,
+        context=get_mb_response_context() or source_context, cache_token=cache_token)
+        return result or None
 
     async def get_artist_by_id(
         self,
@@ -224,8 +251,12 @@ class MusicBrainzArtistMixin:
     ) -> dict[str, Any] | None:
         clear_mb_response_context()
         source_context = capture_mb_source_context()
+        cache_token = capture_mb_cache_token(self._cache)
         mbid = normalize_mb_id(mbid)
-        cache_key = mb_artist_detail_key(mbid, include_releases=include_releases)
+        cache_key = mb_artist_detail_key(
+            mbid, include_releases=include_releases,
+            release_group_limit=release_group_limit,
+        )
 
         cached = await mb_cache_get_if_current(self._cache, cache_key, source_context)
         if cached is not None:
@@ -233,24 +264,23 @@ class MusicBrainzArtistMixin:
 
         profile = "full" if include_releases else "basic"
         dedupe_key = (
-            f"mb:artist:{mbid}:profile={profile}:priority={int(priority)}"
+            f"mb:artist:{mbid}:profile={profile}:limit={max(int(release_group_limit), 1)}:priority={int(priority)}"
             f":g{source_context.generation}"
         )
         return await mb_deduplicator.dedupe(
             dedupe_key,
-            lambda: self._fetch_artist_by_id(
-                mbid,
-                cache_key,
-                priority,
-                include_releases=include_releases,
-                release_group_limit=release_group_limit,
-                source_context=source_context,
-            ),
+            lambda: self._fetch_artist_by_id(mbid,
+            cache_key,
+            priority,
+            include_releases=include_releases,
+            release_group_limit=release_group_limit,
+            source_context=source_context, cache_token=cache_token),
         )
 
     async def get_artist_relations(self, mbid: str) -> dict | None:
         clear_mb_response_context()
         source_context = capture_mb_source_context()
+        cache_token = capture_mb_cache_token(self._cache)
         mbid = normalize_mb_id(mbid)
         detail_key = mb_artist_detail_key(mbid)
         cached = await mb_cache_get_if_current(self._cache, detail_key, source_context)
@@ -267,9 +297,7 @@ class MusicBrainzArtistMixin:
         dedupe_key = f"{MB_ARTIST_RELS_PREFIX}{mbid}"
         return await mb_deduplicator.dedupe(
             dedupe_key,
-            lambda: self._fetch_artist_relations(
-                mbid, rels_key, source_context=source_context
-            ),
+            lambda: self._fetch_artist_relations(mbid, rels_key, source_context=source_context, cache_token=cache_token),
         )
 
     async def _fetch_artist_relations(
@@ -278,6 +306,7 @@ class MusicBrainzArtistMixin:
         cache_key: str,
         *,
         source_context: MbSourceContext,
+        cache_token: tuple[object, int],
     ) -> dict | None:
         try:
             result = await mb_api_get(
@@ -285,17 +314,16 @@ class MusicBrainzArtistMixin:
                 params={"inc": "url-rels"},
                 priority=RequestPriority.IMAGE_FETCH,
                 source_context=source_context,
+                cache_policy=MbCachePolicy.DISPLAY_FRESH,
             )
             response_context = get_mb_response_context() or source_context
             if not result:
                 return None
-            await mb_cache_set_if_current(
-                self._cache,
-                cache_key,
-                result,
-                ttl_seconds=86400,
-                context=response_context,
-            )
+            await mb_cache_set_if_current(self._cache,
+            cache_key,
+            result,
+            ttl_seconds=86400,
+            context=response_context, cache_token=cache_token)
             return result
         except (CircuitOpenError, httpx.HTTPError, ExternalServiceError):
             raise
@@ -313,6 +341,7 @@ class MusicBrainzArtistMixin:
         include_releases: bool = True,
         release_group_limit: int = 50,
         source_context: MbSourceContext,
+        cache_token: tuple[object, int],
     ) -> dict[str, Any] | None:
         clear_mb_response_context()
         limit = max(int(release_group_limit), 1)
@@ -328,8 +357,9 @@ class MusicBrainzArtistMixin:
                 params={"inc": artist_includes},
                 priority=priority,
                 source_context=source_context,
+                cache_policy=MbCachePolicy.DISPLAY_FRESH,
             )
-            return result, get_mb_response_context() or source_context
+            return result, get_mb_response_context() or source_context, get_mb_response_metadata()
 
         async def fetch_browse():
             (
@@ -342,12 +372,13 @@ class MusicBrainzArtistMixin:
                 limit=limit,
                 priority=priority,
                 source_context=source_context,
+                cache_policy=MbCachePolicy.DISPLAY_FRESH,
             )
             result = _ArtistReleaseGroupsPayload(
                 release_groups=release_groups,
                 release_group_count=total_count,
             )
-            return result, response_context
+            return result, response_context, get_mb_response_metadata()
 
         # Keep both calls concurrent for the full-detail profile; the basic
         # profile is deliberately detail-only while retaining count fields.
@@ -363,16 +394,18 @@ class MusicBrainzArtistMixin:
 
         artist_context = None
         browse_context = None
+        artist_metadata = browse_metadata = None
         if not isinstance(artist_out, BaseException):
-            artist_result, artist_context = artist_out
+            artist_result, artist_context, artist_metadata = artist_out
         else:
             artist_result = artist_out
         if browse_out is None:
             browse_result = None
         elif not isinstance(browse_out, BaseException):
-            browse_result, browse_context = browse_out
+            browse_result, browse_context, browse_metadata = browse_out
         else:
             browse_result = browse_out
+        response_metadata.set(merge_mb_metadata(artist_metadata, browse_metadata))
 
         if isinstance(artist_result, asyncio.CancelledError):
             raise artist_result
@@ -390,13 +423,11 @@ class MusicBrainzArtistMixin:
                     pass
             if artist_context is None or is_mb_source_current(artist_context):
                 try:
-                    await mb_cache_set_if_current(
-                        self._cache,
-                        cache_key,
-                        {},
-                        ttl_seconds=_ARTIST_NOT_FOUND_TTL_SECONDS,
-                        context=artist_context,
-                    )
+                    await mb_cache_set_if_current(self._cache,
+                    cache_key,
+                    {},
+                    ttl_seconds=_ARTIST_NOT_FOUND_TTL_SECONDS,
+                    context=artist_context, cache_token=cache_token)
                 except asyncio.CancelledError:
                     raise
                 except Exception:  # noqa: BLE001
@@ -405,14 +436,12 @@ class MusicBrainzArtistMixin:
         if not include_releases:
             if artist_context is not None and not is_mb_source_current(artist_context):
                 return None
-            published = await mb_cache_set_if_current(
-                self._cache,
-                cache_key,
-                artist_result,
-                ttl_seconds=21600,
-                context=artist_context,
-            )
-            return artist_result if published else None
+            published = await mb_cache_set_if_current(self._cache,
+            cache_key,
+            artist_result,
+            ttl_seconds=21600,
+            context=artist_context, cache_token=cache_token)
+            return artist_result if is_mb_source_current(artist_context) else None
 
         if isinstance(browse_result, BaseException):
             _raise_artist_fetch_error(mbid, browse_result)
@@ -444,46 +473,21 @@ class MusicBrainzArtistMixin:
             merged_result["release-group-list"] = all_release_groups
         merged_result["release-group-count"] = total_count
 
-        published = await mb_cache_set_if_current(
-            self._cache,
-            cache_key,
-            merged_result,
-            ttl_seconds=21600,
-            context=artist_context,
-        )
+        published = await mb_cache_set_if_current(self._cache,
+        cache_key,
+        merged_result,
+        ttl_seconds=21600,
+        context=artist_context, cache_token=cache_token)
         if not published:
+            if is_mb_source_current(artist_context):
+                return merged_result
             safe_result = dict(artist_result)
             safe_result.pop("release-group-list", None)
             safe_result["release-group-count"] = 0
             return safe_result
 
-        from core.task_registry import TaskRegistry
-
-        registry = TaskRegistry.get_instance()
-        if not registry.is_running("mb-release-group-warmup"):
-            _rg_task = asyncio.create_task(
-                self._warm_release_group_cache(all_release_groups[:6])
-            )
-            try:
-                registry.register("mb-release-group-warmup", _rg_task)
-            except RuntimeError:
-                pass
-
         return merged_result
 
-    async def _warm_release_group_cache(
-        self, release_groups: list[dict[str, Any]]
-    ) -> None:
-        for rg in release_groups:
-            rg_id = rg.get("id")
-            if not rg_id:
-                continue
-            try:
-                await self.get_release_group_by_id(
-                    rg_id, priority=RequestPriority.BACKGROUND_SYNC
-                )
-            except (CircuitOpenError, ExternalServiceError, httpx.HTTPError):
-                pass
 
     async def _fetch_artist_release_groups_page(
         self,
@@ -493,6 +497,7 @@ class MusicBrainzArtistMixin:
         priority: RequestPriority,
         *,
         source_context: MbSourceContext | None = None,
+        cache_policy: MbCachePolicy = MbCachePolicy.BYPASS,
     ) -> tuple[list[dict[str, Any]], int, MbSourceContext | None]:
         source_context = source_context or capture_mb_source_context()
         result = await mb_api_get(
@@ -501,6 +506,7 @@ class MusicBrainzArtistMixin:
             priority=priority,
             decode_type=_ArtistReleaseGroupsPayload,
             source_context=source_context,
+            cache_policy=cache_policy,
         )
         return (
             result.release_groups,
@@ -517,31 +523,15 @@ class MusicBrainzArtistMixin:
         *,
         preserve_fetch_width: bool = False,
         source_context: MbSourceContext | None = None,
+        cache_policy: MbCachePolicy = MbCachePolicy.BYPASS,
     ) -> tuple[list[dict[str, Any]], int, MbSourceContext | None]:
-        """Share offset-0 artist browses across detail and release-page callers.
-
-        The basic artist response keeps its embedded release-group count and
-        first-page fields, while a concurrent release page can reuse the same
-        provider response. Offset zero is fetched at the walker width so a
-        50-row detail caller never wins the shared request over the 100-row
-        release-page caller; callers still receive their requested slice.
-        """
+        """Fetch only the requested page; complete inventory callers bypass L2."""
         artist_mbid = normalize_mb_id(artist_mbid)
         source_context = source_context or capture_mb_source_context()
-        fetch_limit = max(limit, 100) if offset == 0 else limit
-        dedupe_key = (
-            f"mb:artist_release_groups:{artist_mbid}:{offset}:{fetch_limit}:"
-            f"priority={int(priority)}:g{source_context.generation}"
-        )
-        release_groups, total_count, response_context = await mb_deduplicator.dedupe(
-            dedupe_key,
-            lambda: self._fetch_artist_release_groups_page(
-                artist_mbid,
-                offset,
-                fetch_limit,
-                priority,
-                source_context=source_context,
-            ),
+        fetch_limit = min(100, max(1, limit))
+        release_groups, total_count, response_context = await self._fetch_artist_release_groups_page(
+            artist_mbid, offset, fetch_limit, priority,
+            source_context=source_context, cache_policy=cache_policy,
         )
         if preserve_fetch_width:
             return release_groups, total_count, response_context
@@ -651,6 +641,7 @@ class MusicBrainzArtistMixin:
         """
         artist_mbid = normalize_mb_id(artist_mbid)
         source_context = capture_mb_source_context()
+        cache_token = capture_mb_cache_token(self._cache)
         cache_key = mb_artist_rgs_browse_key(artist_mbid, limit)
 
         cached = await mb_cache_get_if_current(self._cache, cache_key, source_context)
@@ -662,9 +653,7 @@ class MusicBrainzArtistMixin:
         )
         return await mb_deduplicator.dedupe(
             dedupe_key,
-            lambda: self._fetch_browse_release_groups(
-                artist_mbid, limit, priority, cache_key, source_context
-            ),
+            lambda: self._fetch_browse_release_groups(artist_mbid, limit, priority, cache_key, source_context, cache_token=cache_token),
         )
 
     async def _fetch_browse_release_groups(
@@ -674,18 +663,20 @@ class MusicBrainzArtistMixin:
         priority: RequestPriority,
         cache_key: str,
         source_context: MbSourceContext,
+        cache_token: tuple[object, int],
     ) -> list[dict[str, Any]]:
         try:
             (
                 release_groups,
                 _total,
                 response_context,
-            ) = await self.get_artist_release_groups_with_context(
+            ) = await self._get_artist_release_groups_or_raise_with_context(
                 artist_mbid,
                 offset=0,
                 limit=limit,
                 priority=priority,
                 source_context=source_context,
+                cache_policy=MbCachePolicy.DISPLAY_FRESH,
             )
             if (
                 not is_mb_source_current(source_context)
@@ -702,13 +693,11 @@ class MusicBrainzArtistMixin:
             _record_mb_degradation("release groups failed")
             raise
         publication_context = response_context or source_context
-        published = await mb_cache_set_if_current(
-            self._cache,
-            cache_key,
-            release_groups,
-            ttl_seconds=3600 if release_groups else 600,
-            context=publication_context,
-        )
+        published = await mb_cache_set_if_current(self._cache,
+        cache_key,
+        release_groups,
+        ttl_seconds=3600 if release_groups else 600,
+        context=publication_context, cache_token=cache_token)
         if not published:
             logger.debug(
                 "Release-group browse cache publication fenced for %s; "

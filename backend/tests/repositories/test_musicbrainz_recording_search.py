@@ -15,12 +15,11 @@ from repositories.musicbrainz_album import (
     _pick_best_release_group,
 )
 from repositories.musicbrainz_base import MbSourceContext
+from infrastructure.cache.memory_cache import InMemoryCache
 
 class _Repo(MusicBrainzAlbumMixin):
     def __init__(self) -> None:
-        self._cache = AsyncMock()
-        self._cache.get = AsyncMock(return_value=None)
-        self._cache.set = AsyncMock()
+        self._cache = InMemoryCache()
         self._preferences_service = SimpleNamespace(
             get_advanced_settings=lambda: SimpleNamespace(cache_ttl_search=3600)
         )
@@ -212,7 +211,6 @@ async def test_search_recordings_failure_is_not_cached_and_retries():
     assert first == second == []
     assert [match.recording_mbid for match in retry] == ["rec-sad", "rec-sad-2"]
     assert mock_get.await_count == 2
-    repo._cache.set.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -348,7 +346,6 @@ async def test_recording_detail_failure_is_not_cached_and_retries():
 
     assert first is None and second is None and retry is None
     assert mock_get.await_count == 2
-    repo._cache.set.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -368,7 +365,7 @@ async def test_search_recordings_uses_cache_when_present():
             recording_mbid="r", title="t", artist="a", score=1, release_groups=[]
         )
     ]
-    repo._cache.get = AsyncMock(return_value=cached)
+    repo._cache.get_with_metadata = AsyncMock(return_value=(cached, None))
     with patch("repositories.musicbrainz_album.mb_api_get", AsyncMock()) as mock_get:
         assert await repo.search_recordings("Artist", "Title") is cached
     mock_get.assert_not_awaited()

@@ -111,8 +111,7 @@ async def cleanup_disk_cache_periodically(
     while True:
         try:
             await asyncio.sleep(interval)
-            await disk_cache.cleanup_expired_recent()
-            await disk_cache.enforce_recent_size_limits()
+            await disk_cache.cleanup_recent()
             await disk_cache.cleanup_expired_covers()
             await disk_cache.enforce_cover_size_limits()
             if cover_disk_cache:
@@ -120,7 +119,7 @@ async def cleanup_disk_cache_periodically(
                 await asyncio.to_thread(cover_disk_cache.cleanup_expired)
         except asyncio.CancelledError:
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - periodic cleanup survives individual filesystem failures
             logger.error("Disk cache cleanup task failed: %s", e, exc_info=True)
 
 
@@ -389,289 +388,38 @@ async def warm_plex_mbid_cache(service_getter=None) -> None:
             break
 
 
-async def warm_artist_discovery_cache_periodically(
-    artist_discovery_service_getter,
-    library_db: "LibraryDB",
-    interval: int = 14400,
-    delay: float = 0.5,
-    workload_gate: "BackgroundWorkloadGate | None" = None,
-) -> None:
-    await asyncio.sleep(
-        300
-    )  # Allow initial library sync to complete before warming caches
-
-    while True:
-        try:
-            artist_cursor = ""
-            while True:
-                if workload_gate is not None:
-                    await workload_gate.wait_until_available()
-                page = await library_db.get_artist_mbid_page(
-                    after_mbid=artist_cursor, limit=500
-                )
-                if not page:
-                    break
-
-                artist_cursor = page[-1]
-                mbids = [mbid for mbid in page if is_valid_mbid(mbid)]
-                for mbid in mbids:
-                    if workload_gate is not None:
-                        await workload_gate.run_warmer_unit(
-                            lambda mbid=mbid: artist_discovery_service_getter().precache_artist_discovery(
-                                [mbid], delay=delay
-                            )
-                        )
-                    else:
-                        await (
-                            artist_discovery_service_getter().precache_artist_discovery(
-                                [mbid], delay=delay
-                            )
-                        )
-
-                if len(page) < 500:
-                    break
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error("Artist discovery cache warming failed: %s", e, exc_info=True)
-
-        try:
-            await asyncio.sleep(interval)
-        except asyncio.CancelledError:
-            break
 
 
-def start_artist_discovery_cache_warming_task(
-    artist_discovery_service_getter,
-    library_db: "LibraryDB",
-    interval: int = 14400,
-    delay: float = 0.5,
-    workload_gate: "BackgroundWorkloadGate | None" = None,
-) -> asyncio.Task:
-    task = asyncio.create_task(
-        warm_artist_discovery_cache_periodically(
-            artist_discovery_service_getter,
-            library_db,
-            interval=interval,
-            delay=delay,
-            workload_gate=workload_gate,
-        )
-    )
-    TaskRegistry.get_instance().register("artist-discovery-warming", task)
-    return task
+DISCOVER_WARMER_STARTUP_DELAY = 5
+DISCOVER_WARMER_INTERVAL = 90
 
 
-# Proactive per-user Discover/Home warmer.
-# Keeps each user's Discover/Home caches warm and CONVERGED through the
-# day, not just while they're looking at the page. During the ListenBrainz-popularity outage
-# personalisation is reconstructed from Last.fm via MusicBrainz at a hard 1 req/s, which an
-# on-visit build can't finish; a background prewarm (uncancellable) drains those resolutions
-# and banks them to mbid_store so the following normal-budget build finds them cached. One
-# loop, ONE user at a time (the single global MB 1/s queue makes concurrency pointless), and
-# it yields whenever a user is actively browsing.
-DISCOVER_WARMER_STARTUP_DELAY = 5  # after core startup, before a normal first visit
-DISCOVER_WARMER_INTERVAL = 90  # floor between per-user warm ticks
-DISCOVER_WARMER_ENUM_TTL = 600  # re-enumerate eligible users at most this often
-DISCOVER_WARMER_REFRESH_INTERVAL = 6 * 3600  # re-warm a converged user this often
-DISCOVER_WARMER_PERSONALIZING_RETRY = 600  # re-warm a still-converging user this often
-DISCOVER_WARMER_MAX_ATTEMPTS = 4  # stop fast-retrying a user that won't converge
-DISCOVER_WARMER_HARD_CAP = 300  # per-user wall-clock ceiling vs a wedged build
-
-
-async def _enumerate_warmer_users(auth_store) -> list[str]:
-    eligible: list[str] = []
-    offset = 0
-    while True:
-        users = await auth_store.list_users(limit=100, offset=offset)
-        if not users:
-            break
-        eligible.extend(u.id for u in users)
-        if len(users) < 100:
-            break
-        offset += 100
-    return eligible
-
-
-async def _pick_due_warmer_user(
-    eligible: list[str], last_warmed: dict, attempts: dict, now: float, discover
-) -> Optional[str]:
-    """The neediest not-currently-building user: never-warmed > still-personalising > stale.
-    Skips any user whose live on-visit build is already registered (they own it)."""
-    registry = TaskRegistry.get_instance()
-    stale_fallback: Optional[str] = None
-    for uid in eligible:
-        if registry.is_running(f"discover-homepage-warm-{uid}"):
-            continue
-        last = last_warmed.get(uid)
-        if last is None:
-            return uid  # never warmed - highest priority
-        age = now - last
-        if age < DISCOVER_WARMER_PERSONALIZING_RETRY:
-            continue  # warmed very recently - not due yet, skip the freshness probe
-        has_cache, still_converging = await discover.peek_freshness(uid)
-        # A warmed user with NO cached response means the last build was cut at the hard cap
-        # (a heavy user mid-outage) - keep them in the fast-retry tier, not the 6h one.
-        if (not has_cache or still_converging) and attempts.get(
-            uid, 0
-        ) < DISCOVER_WARMER_MAX_ATTEMPTS:
-            return uid  # still converging - retry soon
-        if stale_fallback is None and age > DISCOVER_WARMER_REFRESH_INTERVAL:
-            stale_fallback = uid
-    return stale_fallback
-
-
-async def _run_registered_warmer_build(name: str, coro) -> None:
-    """Run a warm build under the SAME registry name the on-visit SWR path uses, so the
-    process-global registry is the cross-instance mutex (no double build after a settings-
-    save singleton rebuild). Bail if a live GET registered first; hard-cap a wedged build."""
-    registry = TaskRegistry.get_instance()
-    task = asyncio.create_task(coro)
-    try:
-        registry.register(name, task)
-    except RuntimeError:
-        task.cancel()  # a live on-visit build won the race - let it own it
-        return
-    try:
-        await asyncio.wait_for(task, timeout=DISCOVER_WARMER_HARD_CAP)
-    except asyncio.TimeoutError:
-        logger.warning("Discover warmer build '%s' exceeded hard cap", name)
-    except Exception as e:  # noqa: BLE001 - a build failure must not kill the loop
-        logger.debug("Discover warmer build '%s' failed: %s", name, e)
-
-
-async def _warm_one_user(
-    uid: str,
-    discover,
-    home,
-    last_warmed: dict,
-    attempts: dict,
-    queue_manager=None,
-    workload_gate: "BackgroundWorkloadGate | None" = None,
-) -> None:
-    registry = TaskRegistry.get_instance()
-    if registry.is_running(f"discover-homepage-warm-{uid}"):
-        return  # a live user's build owns it
-    logger.info("Discover warmer: warming %s", uid[:8])
-    # Thorough discover build (relaxed section budgets during the LB outage so the rate-limited
-    # MusicBrainz resolution actually completes and banks), registered under the SAME name the
-    # on-visit SWR path uses so the two never double-run; then home (reads the discover cache).
-    # _run_registered_warmer_build hard-caps it at DISCOVER_WARMER_HARD_CAP.
-    if workload_gate is not None:
-        await workload_gate.wait_until_available()
-        if listenbrainz_rate_limit_cooldown_active():
-            return
-    await _run_registered_warmer_build(
-        f"discover-homepage-warm-{uid}", discover.warm_cache_thorough(uid)
-    )
-    if workload_gate is not None:
-        await workload_gate.wait_until_available()
-        if listenbrainz_rate_limit_cooldown_active():
-            return
-    await _run_registered_warmer_build(f"home-warm-{uid}", home.warm_cache(uid))
-    if queue_manager is not None:
-        if workload_gate is not None:
-            await workload_gate.wait_until_available()
-            if listenbrainz_rate_limit_cooldown_active():
-                return
-        await queue_manager.start_build(uid)
-        try:
-            await asyncio.wait_for(
-                queue_manager.wait_for_build(uid), timeout=DISCOVER_WARMER_HARD_CAP
-            )
-        except asyncio.TimeoutError:
-            logger.warning("Discover queue warmer for %s exceeded hard cap", uid[:8])
-    last_warmed[uid] = monotonic()
-    has_cache, still_converging = await discover.peek_freshness(uid)
-    # converged only when a real response is cached AND it isn't trending-only; a cut-at-cap
-    # build (no cache) counts as an attempt so MAX_ATTEMPTS still bounds a hopeless user.
-    converged = has_cache and not still_converging
-    attempts[uid] = 0 if converged else attempts.get(uid, 0) + 1
-    logger.info("Discover warmer: %s warmed (converged=%s)", uid[:8], converged)
 
 
 async def warm_discover_home_periodically(
-    get_discover_service,
-    get_home_service,
-    get_auth_store,
-    get_queue_manager=None,
     interval: int = DISCOVER_WARMER_INTERVAL,
     workload_gate: "BackgroundWorkloadGate | None" = None,
 ) -> None:
-    from core.config import get_settings
+    from core.dependencies.service_providers import get_discovery_demand_service
 
-    logger.info(
-        "Discover/Home warmer starting (delay %ss)", DISCOVER_WARMER_STARTUP_DELAY
-    )
     await asyncio.sleep(DISCOVER_WARMER_STARTUP_DELAY)
-
-    eligible: list[str] = []
-    enumerated_at = 0.0
-    last_warmed: dict[str, float] = {}
-    attempts: dict[str, int] = {}
-
     while True:
         try:
             if workload_gate is not None:
                 await workload_gate.wait_until_available()
-            if not get_settings().discover_warmer_enabled:
-                await asyncio.sleep(interval)
-                continue
-            now = monotonic()
-            if not eligible or (now - enumerated_at) > DISCOVER_WARMER_ENUM_TTL:
-                eligible = await _enumerate_warmer_users(get_auth_store())
-                enumerated_at = now
-                logger.info(
-                    "Discover warmer: %d user(s) eligible",
-                    len(eligible),
-                )
-            # We do NOT hard-skip when a user is "active" - the MusicBrainz priority queue
-            # already yields background resolution to live USER_INITIATED requests, and the
-            # per-user is_running check below avoids fighting a live build. A loop-level skip
-            # here just stalled convergence for the very user watching the page.
-            if eligible:
-                uid = await _pick_due_warmer_user(
-                    eligible, last_warmed, attempts, now, get_discover_service()
-                )
-                if uid is not None and not listenbrainz_rate_limit_cooldown_active():
-
-                    async def warm_if_not_cooling_down() -> None:
-                        if listenbrainz_rate_limit_cooldown_active():
-                            return
-                        await _warm_one_user(
-                            uid,
-                            get_discover_service(),
-                            get_home_service(),
-                            last_warmed,
-                            attempts,
-                            get_queue_manager() if get_queue_manager else None,
-                            workload_gate,
-                        )
-
-                    if workload_gate is not None:
-                        await workload_gate.run_warmer_unit(warm_if_not_cooling_down)
-                    else:
-                        await warm_if_not_cooling_down()
+            await get_discovery_demand_service().run_due_tick()
         except asyncio.CancelledError:
             break
-        except Exception as e:
-            logger.error("Discover/Home warmer failed: %s", e, exc_info=True)
-
+        except Exception:
+            logger.exception("Discovery demand scheduler failed")
         await asyncio.sleep(interval)
 
 
 def start_discover_home_warmer_task(
-    get_discover_service,
-    get_home_service,
-    get_auth_store,
-    get_queue_manager=None,
     workload_gate: "BackgroundWorkloadGate | None" = None,
 ) -> asyncio.Task:
     task = asyncio.create_task(
         warm_discover_home_periodically(
-            get_discover_service,
-            get_home_service,
-            get_auth_store,
-            get_queue_manager,
             workload_gate=workload_gate,
         )
     )
@@ -1048,12 +796,15 @@ def start_wanted_watcher_task(get_wanted_watcher) -> asyncio.Task:
     return task
 
 
-_FOLLOW_POLL_INTERVAL = 86400  # 24h, hardcoded for v1 (L2)
+# D1 due-driven tick: provider work happens only for due artists (max 10/tick),
+# so the short interval sets service latency, not request rate; idle ticks are
+# one cheap due-list query.
+_FOLLOW_POLL_INTERVAL = 60
 _FOLLOW_POLL_INITIAL_DELAY = 300
 
 
 async def poll_followed_artists_new_releases(
-    new_release_service: "NewReleaseService",
+    get_new_release_service,
     interval: int = _FOLLOW_POLL_INTERVAL,
 ) -> None:
     """Detect new releases for followed artists and auto-enqueue for approved
@@ -1063,7 +814,7 @@ async def poll_followed_artists_new_releases(
 
     while True:
         try:
-            await new_release_service.run_poll()
+            await get_new_release_service().run_poll()
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -1073,9 +824,9 @@ async def poll_followed_artists_new_releases(
 
 
 def start_poll_new_releases_task(
-    new_release_service: "NewReleaseService",
+    get_new_release_service,
 ) -> asyncio.Task:
-    task = asyncio.create_task(poll_followed_artists_new_releases(new_release_service))
+    task = asyncio.create_task(poll_followed_artists_new_releases(get_new_release_service))
     TaskRegistry.get_instance().register("follow-new-release-poll", task)
     return task
 

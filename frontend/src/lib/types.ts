@@ -592,6 +592,19 @@ export type DiscoverQueueEnrichment = {
 	listen_count: number | null;
 };
 
+export type DiscoverActivity = {
+	feature: 'home' | 'discover' | 'queue' | 'artist';
+	artist_mbid?: string;
+	section?: 'similar' | 'top_songs' | 'top_albums';
+	provider?: 'lastfm' | 'listenbrainz';
+};
+
+export type DiscoverQueuePreview = {
+	status: 'available' | 'not_found' | 'unavailable';
+	youtube_url: string | null;
+	youtube_search_url: string | null;
+};
+
 export type YouTubeSearchResponse = {
 	video_id: string | null;
 	embed_url: string | null;

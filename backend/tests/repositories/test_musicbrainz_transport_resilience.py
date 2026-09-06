@@ -179,7 +179,7 @@ async def test_settings_probe_uses_isolated_client_path_and_telemetry(monkeypatc
     monkeypatch.setattr(
         mb_base,
         "record_provider_call",
-        lambda *args: calls.append(args),
+        lambda *args, **kwargs: calls.append(args),
     )
     monkeypatch.setattr(
         mb_base,

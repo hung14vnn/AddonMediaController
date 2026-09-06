@@ -28,6 +28,7 @@ from infrastructure.filesystem_mounts import check_move_boundary
 from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.sse_publisher import SSEPublisher
 from models.download import (
+    DownloadActivitySummary,
     DownloadsMountStatus,
     ScoredCandidate,
     SearchJob,
@@ -1563,7 +1564,9 @@ class DownloadService:
             page_size=page_size,
         )
 
-    async def get_activity_summary(self, user_id: str, user_role: str):
+    async def get_activity_summary(
+        self, user_id: str, user_role: str
+    ) -> DownloadActivitySummary:
         return await self._store.get_activity_summary(user_id, user_role)
 
     async def cleanup_states(self, task_ids: list[str]) -> dict[str, str]:

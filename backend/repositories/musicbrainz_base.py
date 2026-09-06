@@ -3,6 +3,7 @@ import math
 import random
 import threading
 import time
+import logging
 import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -13,6 +14,44 @@ from urllib.parse import urlsplit
 
 import httpx
 import msgspec
+from infrastructure.http import mb_singleflight
+from infrastructure.observability.optional_work import is_optional_work
+from infrastructure.persistence.mb_response_store import (
+    MbResponseStore, MAX_PAYLOAD_BYTES, FRESH_SECONDS, RETENTION_SECONDS,
+)
+from repositories.musicbrainz_response_cache import (
+    MbCachePolicy, MbResponseMetadata, get_mb_response_metadata,
+    response_metadata, profile_for, request_key,
+    capture_mb_projection, restore_mb_projection, bound_mb_metadata,
+)
+
+_mb_response_store: MbResponseStore | None = None
+_mb_wire_body: ContextVar[bytes | None] = ContextVar("mb_wire_body", default=None)
+_mb_refresh_tasks: dict[str, asyncio.Task] = {}
+_mb_corruption_diagnostics = 0
+
+
+def _schedule_mb_refresh(key: str, operation: Callable[[], Awaitable[Any]]) -> None:
+    if key in _mb_refresh_tasks or len(_mb_refresh_tasks) >= 32:
+        return
+    task = asyncio.create_task(operation())
+    _mb_refresh_tasks[key] = task
+
+    def settled(done: asyncio.Task) -> None:
+        if _mb_refresh_tasks.get(key) is done:
+            del _mb_refresh_tasks[key]
+        if not done.cancelled() and done.exception() is not None:
+            logging.getLogger(__name__).warning("MusicBrainz display refresh failed")
+
+    task.add_done_callback(settled)
+
+
+
+def set_mb_response_store(store: MbResponseStore) -> None:
+    global _mb_response_store
+    _mb_response_store = store
+
+from infrastructure.observability.provider_counters import current_provider_workload, ProviderWorkload
 from core.exceptions import (
     ConfigurationError,
     ExternalServiceError,
@@ -29,6 +68,7 @@ from infrastructure.service_health import report_breaker_health
 from infrastructure.observability.provider_counters import (
     record_provider_call,
     record_rate_limit_headers,
+    musicbrainz_request_labels,
 )
 from infrastructure.http.brainzmash_transport import (
     BRAINZMASH_ENDPOINT,
@@ -94,6 +134,7 @@ mb_source_commit_lock = _ProcessWideAsyncLock()
 def clear_mb_response_context() -> None:
     """Drop any prior wire context before a cache/durable-only path."""
     _mb_response_context.set(None)
+    response_metadata.set(None)
 
 
 def _stale_source_error() -> ConfigurationError:
@@ -435,7 +476,10 @@ class _SourceScopedRequestDeduplicator(RequestDeduplicator):
         namespace = mb_cache_namespace()
         if namespace and not key.startswith(namespace):
             key = f"{namespace}{key}"
-        return await super().dedupe(key, coro_factory)
+        projection = await super().dedupe(
+            key, lambda: capture_mb_projection(coro_factory())
+        )
+        return restore_mb_projection(projection)
 
 
 mb_deduplicator = _SourceScopedRequestDeduplicator()
@@ -605,6 +649,7 @@ async def mb_api_probe(
                     priority,
                     None,
                     brainzmash_context,
+                    category="probe",
                 )
             raise
 
@@ -616,6 +661,8 @@ async def mb_api_probe(
             priority,
             response.status_code,
             brainzmash_context,
+            response=response,
+            category="probe",
         )
         record_rate_limit_headers("musicbrainz", response.headers)
         if response.status_code == 429:
@@ -732,12 +779,30 @@ async def mb_cache_get_if_current(
         return None
     token = _mb_operation_context.set(context)
     try:
-        cached = await cache.get(namespaced_key)
+        cached, metadata = await cache.get_with_metadata(namespaced_key)
     finally:
         _mb_operation_context.reset(token)
-    if not is_mb_source_current(context):
+    if not is_mb_source_current(context) or not await is_mb_metadata_current(metadata):
         return None
+    response_metadata.set(metadata)
+    if cached is not None:
+        _mb_response_context.set(context)
     return cached
+
+
+def capture_mb_cache_token(cache: Any) -> tuple[object, int]:
+    return cache.capture_clear_token()
+
+
+async def is_mb_metadata_current(metadata: MbResponseMetadata | None) -> bool:
+    if metadata is None:
+        return True
+    context = capture_mb_source_context()
+    if (metadata.source_mode, metadata.source_id, metadata.generation) != (
+        context.source_mode, context.source_id, context.generation
+    ):
+        return False
+    return _mb_response_store is None or metadata.clear_epoch == await _mb_response_store.epoch()
 
 
 async def mb_cache_set_if_current(
@@ -747,12 +812,28 @@ async def mb_cache_set_if_current(
     *,
     ttl_seconds: int | float,
     context: MbSourceContext | None = None,
+    cache_token: tuple[object, int],
 ) -> bool:
     """Publish provider-derived cache data under the source commit fence."""
-    return await mb_publish_if_current(
-        context,
-        lambda: cache.set(key, value, ttl_seconds=ttl_seconds),
-    )
+    metadata = get_mb_response_metadata()
+    if metadata is not None:
+        ttl_seconds = min(ttl_seconds, metadata.fresh_until - time.time())
+        if ttl_seconds <= 0:
+            return False
+        metadata = bound_mb_metadata(metadata, time.time() + ttl_seconds)
+        response_metadata.set(metadata)
+    published = False
+
+    async def publish() -> None:
+        nonlocal published
+        if not await is_mb_metadata_current(metadata):
+            return
+        published = await cache.set_if_token(
+            cache_token, key, value, ttl_seconds, metadata=metadata
+        )
+
+    current = await mb_publish_if_current(context, publish)
+    return current and published
 
 
 def _musicbrainz_breaker_for_request(*args: Any, **kwargs: Any) -> CircuitBreaker:
@@ -801,6 +882,7 @@ async def _mb_api_get_attempt(
         safe_path = path
 
     priority_mgr = get_priority_queue()
+    category, profile = musicbrainz_request_labels(path, params)
     semaphore = await priority_mgr.acquire_slot(priority)
     async with semaphore:
         url = f"{source_context.source_url.rstrip('/')}{safe_path}"
@@ -810,6 +892,9 @@ async def _mb_api_get_attempt(
         async def request() -> httpx.Response:
             if not is_mb_source_current(source_context):
                 raise _stale_source_error()
+            owner = mb_singleflight.current_owner.get()
+            if owner is not None:
+                owner.before_dispatch()
             client = (
                 get_mb_brainzmash_http_client() if brainzmash else get_mb_http_client()
             )
@@ -829,10 +914,14 @@ async def _mb_api_get_attempt(
                 response = await request()
         except httpx.HTTPError:
             # Transport-level failure: record only the opaque source context.
-            record_provider_call("musicbrainz", priority, None, source_context)
+            record_provider_call(
+                "musicbrainz", priority, None, source_context,
+                category=category, profile=profile,
+            )
             raise
         record_provider_call(
-            "musicbrainz", priority, response.status_code, source_context
+            "musicbrainz", priority, response.status_code, source_context,
+            response=response, category=category, profile=profile,
         )
         # A source commit can land while the socket was in flight. Do not
         # decode or publish a response captured under the old generation.
@@ -890,6 +979,8 @@ async def _mb_api_get_attempt(
                 if brainzmash
                 else f"MusicBrainz API error ({response.status_code}): {safe_path}"
             )
+        body = response.content
+        _mb_wire_body.set(body if isinstance(body, bytes) and len(body) <= MAX_PAYLOAD_BYTES else None)
         try:
             if decode_type is not None:
                 decoded: dict[str, Any] | T = _decode_typed_response(
@@ -921,15 +1012,103 @@ async def mb_api_get(
     decode_type: type[T] | None = None,
     *,
     source_context: MbSourceContext | None = None,
+    cache_policy: MbCachePolicy = MbCachePolicy.BYPASS,
+    refresh: bool = False,
 ) -> dict[str, Any] | T:
     """Make one logical request against an explicitly captured source context."""
     source_context = source_context or capture_mb_source_context()
     if source_context.source_mode == "brainzmash" and not _brainzmash_runtime_enabled:
         raise ConfigurationError("BrainzMash active binding is not valid")
     clear_mb_response_context()
-    return await _mb_api_get_attempt(
-        path, params, priority, decode_type, source_context
-    )
+    if not is_mb_source_current(source_context):
+        raise _stale_source_error()
+    profile = profile_for(path, params, decode_type)
+    store = _mb_response_store
+    eligible = cache_policy is not MbCachePolicy.BYPASS and profile is not None and bool(source_context.source_id) and store is not None
+    epoch = await store.epoch() if store is not None else 0
+    key = request_key(path, params, decode_type, source_context)
+    if eligible and not refresh:
+        row = await store.get(key, epoch)
+        if row is None and profile == "artist-rg-page-v1":
+            for width in (25, 50, 100):
+                if width <= int(params["limit"]):
+                    continue
+                wider_params = {**params, "limit": width}
+                wider_key = request_key(path, wider_params, decode_type, source_context)
+                row = await store.get(wider_key, epoch)
+                if row is not None:
+                    break
+        if epoch != await store.epoch():
+            row = None
+        if not is_mb_source_current(source_context):
+            raise _stale_source_error()
+        if row is not None and (row["fresh"] > time.time() or cache_policy is MbCachePolicy.DISPLAY_STALE):
+            try:
+                result = msgspec.json.decode(row["payload"], type=decode_type or dict[str, Any])
+            except (msgspec.DecodeError, msgspec.ValidationError):
+                global _mb_corruption_diagnostics
+                if _mb_corruption_diagnostics < 10:
+                    _mb_corruption_diagnostics += 1
+                    logging.getLogger(__name__).warning("Discarding corrupt MusicBrainz display response")
+                await mb_publish_if_current(source_context, lambda: store.discard(row["key"]))
+            else:
+                if profile == "artist-rg-page-v1":
+                    result = msgspec.structs.replace(result, release_groups=result.release_groups[:int(params["limit"])])
+                current = await mb_publish_if_current(
+                    source_context,
+                    lambda: store.note_hit(row, foreground=priority == RequestPriority.USER_INITIATED),
+                )
+                if not current or epoch != await store.epoch() or not is_mb_source_current(source_context):
+                    raise _stale_source_error()
+                _mb_response_context.set(source_context)
+                response_metadata.set(MbResponseMetadata(
+                    "l2", row["fetched"], row["fresh"], row["retention"],
+                    source_context.source_mode, source_context.source_id,
+                    source_context.generation, epoch, profile, "1",
+                ))
+                if row["fresh"] <= time.time():
+                    _schedule_mb_refresh(
+                        key,
+                        lambda: mb_api_get(
+                            path, params, RequestPriority.BACKGROUND_SYNC, decode_type,
+                            source_context=source_context,
+                            cache_policy=MbCachePolicy.DISPLAY_FRESH, refresh=True,
+                        ),
+                    )
+                return result
+
+    async def physical(effective_priority: RequestPriority):
+        _mb_wire_body.set(None)
+        result = await _mb_api_get_attempt(
+            path, params, effective_priority, decode_type, source_context
+        )
+        if eligible and decode_type is None and not isinstance(result, dict):
+            raise InvalidExternalPayloadError("MusicBrainz display response must be an object")
+        now = time.time()
+        metadata = MbResponseMetadata(
+            "provider", now, now + FRESH_SECONDS, now + RETENTION_SECONDS,
+            source_context.source_mode, source_context.source_id,
+            source_context.generation, epoch, profile or "strict", "1",
+        )
+        body = _mb_wire_body.get()
+        if eligible and body is not None and result:
+            await mb_publish_if_current(
+                source_context,
+                lambda: store.admit(
+                    key, body, source_context, epoch, now,
+                    speculative=is_optional_work() and current_provider_workload() in {
+                        ProviderWorkload.HOME, ProviderWorkload.QUEUE, ProviderWorkload.ARTIST,
+                    },
+                ),
+            )
+        return result, metadata
+
+    result, metadata = await mb_singleflight.run(key, priority, physical)
+    if not is_mb_source_current(source_context):
+        raise _stale_source_error()
+    _mb_response_context.set(source_context)
+    response_metadata.set(metadata)
+    return result
 
 
 def extract_artist_name(release_group: dict[str, Any]) -> str | None:

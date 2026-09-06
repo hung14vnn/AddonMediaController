@@ -15,6 +15,7 @@ manifest.json``; the audio itself is written by slskd into its own download dir
 
 import asyncio
 import logging
+from infrastructure.observability.provider_counters import ProviderWorkload, provider_workload_scope
 import shutil
 import time
 from contextlib import suppress
@@ -625,6 +626,7 @@ class DownloadOrchestrator:
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to mark task %s failed after error", task_id)
 
+    @provider_workload_scope(ProviderWorkload.ACQUISITION)
     async def process_task(self, task_id: str) -> None:
         """Main lifecycle. Two entry shapes converge here: a direct request (no
         candidate linked -> search/score/auto-pick first) and a manual pick (a

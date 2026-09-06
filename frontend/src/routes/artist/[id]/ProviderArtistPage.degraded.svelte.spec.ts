@@ -95,6 +95,7 @@ vi.mock('runed', () => ({
 	}
 }));
 
+vi.mock('$lib/queries/discover/DiscoverDemand.svelte', () => ({ useDiscoverActivity: vi.fn() }));
 import ProviderArtistPage from './ProviderArtistPage.svelte';
 
 beforeEach(() => {

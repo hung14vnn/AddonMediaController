@@ -1,4 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setDownloadScope } from './downloadScope.svelte';
+
+const { invalidate } = vi.hoisted(() => ({ invalidate: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('$lib/queries/QueryClient', () => ({
+	invalidateQueriesWithPersister: invalidate
+}));
 
 class FakeEventSource {
 	static instances: FakeEventSource[] = [];
@@ -26,11 +32,16 @@ class FakeEventSource {
 }
 
 beforeEach(() => {
+	vi.useFakeTimers();
+	setDownloadScope('user', 'user');
+	invalidate.mockClear();
 	FakeEventSource.instances = [];
 	vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource);
 });
 
 afterEach(() => {
+	vi.runAllTimers();
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
 });
 
@@ -125,5 +136,30 @@ describe('createDownloadStream', () => {
 		const es = FakeEventSource.instances[0];
 		s.stop();
 		expect(es.closed).toBe(true);
+	});
+
+	it('coalesces structural bursts without a progress request storm', () => {
+		const stream = createDownloadStream();
+		stream.start('task');
+		const events = FakeEventSource.instances[0];
+		for (let i = 0; i < 100; i++) events.emit('progress', { bytes_downloaded: i });
+		vi.advanceTimersByTime(100);
+		expect(invalidate).not.toHaveBeenCalled();
+		events.emit('status', { status: 'processing' });
+		events.emit('complete', { status: 'completed' });
+		vi.advanceTimersByTime(100);
+		expect(invalidate).toHaveBeenCalledTimes(1);
+	});
+
+	it('fences events and scheduled invalidation across same-user role changes', () => {
+		const stream = createDownloadStream();
+		stream.start('task');
+		const events = FakeEventSource.instances[0];
+		events.emit('status', { status: 'processing' });
+		setDownloadScope('user', 'admin');
+		events.emit('complete', { status: 'completed' });
+		vi.advanceTimersByTime(100);
+		expect(stream.state.done).toBe(false);
+		expect(invalidate).not.toHaveBeenCalled();
 	});
 });

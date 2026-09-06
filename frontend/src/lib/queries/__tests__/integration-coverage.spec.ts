@@ -14,6 +14,8 @@ import { localAlbumEditionPinUrl } from '$lib/queries/albums/EditionQueries.svel
 
 // [description, actual path produced by the API builder, expected backend route]
 const COVERAGE: Array<[string, string, string]> = [
+	['discovery activity', API.discoverActivity(), '/api/v1/discover/activity'],
+	['queue preview', API.discoverQueuePreview('RG1'), '/api/v1/discover/queue/preview/RG1'],
 	['device session', API.auth.deviceSessions(), '/api/v1/auth/device-sessions'],
 	// local password recovery
 	[
@@ -164,9 +166,21 @@ const COVERAGE: Array<[string, string, string]> = [
 		'/api/v1/covers/release/R1?size=250'
 	],
 	['local album copies', API.library.albumCopies('A1'), '/api/v1/library/albums/A1/copies'],
-	['get local album edition pin', localAlbumEditionPinUrl('A1'), '/api/v1/library/albums/A1/edition'],
-	['set local album edition pin', localAlbumEditionPinUrl('A1'), '/api/v1/library/albums/A1/edition'],
-	['clear local album edition pin', localAlbumEditionPinUrl('A1'), '/api/v1/library/albums/A1/edition'],
+	[
+		'get local album edition pin',
+		localAlbumEditionPinUrl('A1'),
+		'/api/v1/library/albums/A1/edition'
+	],
+	[
+		'set local album edition pin',
+		localAlbumEditionPinUrl('A1'),
+		'/api/v1/library/albums/A1/edition'
+	],
+	[
+		'clear local album edition pin',
+		localAlbumEditionPinUrl('A1'),
+		'/api/v1/library/albums/A1/edition'
+	],
 	['local artist detail', API.library.artistDetail('R1'), '/api/v1/library/artists/R1'],
 	['local artist albums', API.library.artistAlbums('R1'), '/api/v1/library/artists/R1/albums'],
 	[

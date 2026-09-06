@@ -42,6 +42,7 @@ from api.v1.routes import library_scan_target as target_library_scan_routes
 from api.v1.routes import library_target as target_library_routes
 from api.v1.routes import lidarr_import as lidarr_import_routes
 from api.v1.routes import discovery_batches as discovery_batches_routes
+from api.v1.routes import discover as discover_routes
 from api.v1.routes import me_connections as me_routes
 from api.v1.routes import navidrome_preferences as navidrome_preferences_routes
 from api.v1.routes import playlists as playlists_routes
@@ -59,6 +60,8 @@ from core.dependencies import (
     get_auth_store,
     get_cache,
     get_discovery_batch_service,
+    get_discover_service,
+    get_youtube_repo,
     get_download_client_repository,
     get_download_service,
     get_download_store,
@@ -115,7 +118,7 @@ from core.dependencies import (
     get_target_reidentification_service,
     get_library_policy_resolver,
 )
-from core.dependencies.service_providers import get_target_library_policy_service
+from core.dependencies.service_providers import get_discovery_demand_service, get_target_library_policy_service
 from middleware import _get_current_admin, _get_current_curator, _get_current_user
 from tests.helpers import build_test_client, mock_admin_user, mock_user
 
@@ -125,6 +128,9 @@ _SERVICE_PROVIDERS = (
     get_auth_store,
     get_cache,
     get_discovery_batch_service,
+    get_discover_service,
+    get_youtube_repo,
+    get_discovery_demand_service,
     get_download_client_repository,
     get_download_service,
     get_download_store,
@@ -796,6 +802,8 @@ _ADMIN_ENDPOINTS = [
     ("POST", "/api/v1/downloads/held/management/task-1/discard", None),
 ]
 _USER_ENDPOINTS = [
+    ("POST", "/api/v1/discover/activity", {"feature": "queue"}),
+    ("POST", "/api/v1/discover/queue/preview/074aa5b0-712e-4d6c-8d14-8aedc43e84fd", None),
     # Request submission surfaces: both album and exact-track asks are user
     # scoped and must remain behind the CurrentUser dependency.
     (
@@ -1088,6 +1096,7 @@ def _client(scenario: str):
         navidrome_preferences_routes.router,
         connect_apps_routes.router,
         discovery_batches_routes.router,
+        discover_routes.router,
         system_routes.router,
         playlists_routes.router,
         requests_routes.router,
@@ -1106,6 +1115,7 @@ def _client(scenario: str):
 
     for provider in _SERVICE_PROVIDERS:
         app.dependency_overrides[provider] = lambda: AsyncMock()
+    app.dependency_overrides[get_discovery_demand_service] = lambda: MagicMock()
     target_native = AsyncMock()
     target_native.artists.return_value = ([], 0)
     target_native.albums.return_value = ([], 0)
