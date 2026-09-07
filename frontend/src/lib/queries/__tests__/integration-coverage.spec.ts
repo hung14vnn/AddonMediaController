@@ -853,7 +853,6 @@ const COVERAGE: Array<[string, string, string]> = [
 	['prowlarr test', API.prowlarr.test(), '/api/v1/prowlarr/test'],
 	// Usenet search backend selector (either/or)
 	['indexers search-backend', API.indexers.searchBackend(), '/api/v1/indexers/search-backend'],
-	['lidarr-import status', API.lidarrImport.status(), '/api/v1/lidarr-import/status'],
 	['lidarr-import artists', API.lidarrImport.artists(), '/api/v1/lidarr-import/artists'],
 	['lidarr-import import', API.lidarrImport.import(), '/api/v1/lidarr-import/import'],
 	// Get it (phase 01): the lazy Where-to-buy endpoint + the admin settings card

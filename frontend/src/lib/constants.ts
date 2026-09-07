@@ -799,7 +799,6 @@ export const API = {
 	lidarrImport: {
 		config: () => '/api/v1/lidarr-import/config',
 		test: () => '/api/v1/lidarr-import/test',
-		status: () => '/api/v1/lidarr-import/status',
 		artists: () => '/api/v1/lidarr-import/artists',
 		import: () => '/api/v1/lidarr-import/import'
 	},

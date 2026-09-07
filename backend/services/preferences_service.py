@@ -725,7 +725,7 @@ class PreferencesService:
             raise ConfigurationError(f"Failed to save Lidarr import settings: {e}")
 
     def is_lidarr_import_configured(self) -> bool:
-        """True iff a Lidarr import URL + API key are both stored (the non-admin gate)."""
+        """True iff a Lidarr import URL + API key are both stored."""
         raw = self.get_lidarr_import_connection_raw()
         return bool(raw.url and raw.api_key)
 

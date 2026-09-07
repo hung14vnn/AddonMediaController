@@ -449,10 +449,13 @@ _ADMIN_ENDPOINTS = [
     ("PUT", "/api/v1/settings/events", {}),
     ("POST", "/api/v1/settings/events/test-ticketmaster", {}),
     ("POST", "/api/v1/settings/events/test-skiddle", {}),
-    # Lidarr import: connection config + Test are admin-only (LidarrImport).
+    # Lidarr import: admin-only (owner decision 2026-09-07) - connection
+    # config + Test + candidates + import.
     ("GET", "/api/v1/lidarr-import/config", None),
     ("PUT", "/api/v1/lidarr-import/config", {}),
     ("POST", "/api/v1/lidarr-import/test", {}),
+    ("GET", "/api/v1/lidarr-import/artists", None),
+    ("POST", "/api/v1/lidarr-import/import", {"selected_mbids": []}),
     # Prowlarr: connection config + Test are admin-only (same shape).
     ("GET", "/api/v1/prowlarr/config", None),
     ("PUT", "/api/v1/prowlarr/config", {}),
@@ -999,16 +1002,11 @@ _USER_ENDPOINTS = [
         None,
     ),
     ("POST", "/api/v1/requests/wanted/22222222-2222-2222-2222-222222222222/seen", None),
-    # Lidarr import: any authenticated user reads candidates + imports into their OWN
-    # follows (no target-user param - the caller can only ever import to themselves).
     # Free Music: reading your own downloads is a user surface.
     ("GET", "/api/v1/free-music/tasks", None),
     ("GET", "/api/v1/free-music/tasks/t-1", None),
     ("DELETE", "/api/v1/free-music/tasks", None),
     ("DELETE", "/api/v1/free-music/tasks/t-1", None),
-    ("GET", "/api/v1/lidarr-import/status", None),
-    ("GET", "/api/v1/lidarr-import/artists", None),
-    ("POST", "/api/v1/lidarr-import/import", {"selected_mbids": []}),
     # Media-server playback attribution (issue #138): the POST reporting routes
     # carry CurrentUserDep so scrobbles/sessions land on the caller's own
     # upstream account. GET/HEAD stream proxies stay dependency-free (guarded by
