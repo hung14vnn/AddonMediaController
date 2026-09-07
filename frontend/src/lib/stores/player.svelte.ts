@@ -81,6 +81,7 @@ import {
 
 const MAX_CONSECUTIVE_ERRORS = 3;
 const PREVIEW_FADE_S = 2;
+const PREVIOUS_TRACK_RESTART_THRESHOLD_S = 3;
 const ERROR_SKIP_DELAY_MS = 2000;
 const MAX_HISTORY_LENGTH = 3;
 const SESSION_PERSIST_INTERVAL_MS = 30_000;
@@ -126,6 +127,9 @@ function createPlayerStore() {
 		return currentIndex < queue.length - 1;
 	});
 	const hasPrevious = $derived.by(() => {
+		// Previous also acts as restart once the current track has passed the
+		// three-second threshold, including when there is no earlier queue item.
+		if (progress > PREVIOUS_TRACK_RESTART_THRESHOLD_S) return isSeekable;
 		if (queue.length <= 1) return false;
 		if (shuffleEnabled) {
 			const si = shuffleOrder.indexOf(currentIndex);
@@ -519,6 +523,10 @@ function createPlayerStore() {
 	}
 
 	function previousTrack(): void {
+		if (progress > PREVIOUS_TRACK_RESTART_THRESHOLD_S) {
+			seekCurrent(0);
+			return;
+		}
 		const idx = getPreviousIndex();
 		if (idx !== null) void loadQueueItem(idx);
 	}

@@ -793,7 +793,19 @@ textarea {
 	}
 
 	.droppedneedle-pane-mode .droppedneedle-main-content {
+		display: flex;
+		flex-direction: column;
 		min-height: 0;
+		overflow: hidden;
+	}
+
+	/* The keyed route wrapper sits between the shell and Settings. Keep it in
+	   the constrained flex chain so Settings' own panes get a real scroll box. */
+	.droppedneedle-pane-mode .droppedneedle-main-content > div {
+		display: flex;
+		min-height: 0;
+		flex: 1 1 auto;
+		flex-direction: column;
 	}
 }
 

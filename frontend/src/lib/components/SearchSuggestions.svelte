@@ -145,7 +145,12 @@
 	}
 
 	function requestTrack(track: SpotifyTrackResult, event: MouseEvent) {
+		// Keep the search suggestions open while the request is submitted. The
+		// button can otherwise move focus away from the search input and trigger
+		// the combobox's focusout handler before the click is processed.
+		event.preventDefault();
 		event.stopPropagation();
+		showDropdown = true;
 		download.mutate(track.spotify_id, {
 			onSuccess: () => (requestedTracks = new Set([...requestedTracks, track.spotify_id]))
 		});
@@ -340,6 +345,7 @@
 								<button
 									class="btn btn-ghost btn-xs absolute left-1/2 top-1/2 size-5 min-h-0 -translate-x-1/2 -translate-y-1/2 p-0 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/track-badge:opacity-100 focus-visible:opacity-100 transition-opacity duration-150"
 									onclick={(event) => requestTrack(result, event)}
+									onmousedown={(event) => event.preventDefault()}
 									disabled={download.isPending || requestedTracks.has(result.spotify_id)}
 									aria-label="Request {result.title}"
 									title="Request this track"
