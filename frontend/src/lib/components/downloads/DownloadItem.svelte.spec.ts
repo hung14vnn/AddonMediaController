@@ -142,9 +142,9 @@ describe('DownloadItem.svelte', () => {
 	});
 
 	it.each([
-		['pending', 'Cleaning source files'],
-		['preserved', 'Source files kept'],
-		['needs_attention', 'Source cleanup needs attention']
+		['pending', 'Removing temporary files'],
+		['preserved', 'Temporary files kept'],
+		['needs_attention', "Couldn't remove temporary files"]
 	] as const)('shows the %s cleanup treatment', async (cleanupState, label) => {
 		renderItem(task({ status: 'completed', acquisition_cleanup_state: cleanupState }));
 		await expect.element(page.getByText(label, { exact: true })).toBeVisible();
@@ -152,7 +152,9 @@ describe('DownloadItem.svelte', () => {
 
 	it('keeps ordinary completed cleanup visually quiet', async () => {
 		renderItem(task({ status: 'completed', acquisition_cleanup_state: 'complete' }));
-		await expect.element(page.getByText(/source files|source cleanup/i)).not.toBeInTheDocument();
+		await expect
+			.element(page.getByText(/temporary files|removing temporary|couldn't remove/i))
+			.not.toBeInTheDocument();
 	});
 
 	it('offers a "Stop retrying" off-switch for a scheduled auto-retry', async () => {

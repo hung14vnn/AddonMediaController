@@ -171,7 +171,8 @@ describe('ServiceHealthIndicator', () => {
 					service: 'acquisition_cleanup',
 					capability: 'source-files-only',
 					severity: 'degraded',
-					message: 'Source cleanup needs attention for 2 downloads.',
+					message:
+						"Temporary files couldn't be removed for 2 downloads. Your library is safe. Retrying automatically.",
 					fallback: null,
 					degraded_seconds: 0
 				}
@@ -180,12 +181,16 @@ describe('ServiceHealthIndicator', () => {
 
 		render(ServiceHealthIndicator);
 		await page.getByRole('button', { name: /service status/i }).click();
-		await expect.element(page.getByText('Source cleanup', { exact: true })).toBeVisible();
+		await expect.element(page.getByText('Download cleanup', { exact: true })).toBeVisible();
 		await expect
-			.element(page.getByText('Source cleanup needs attention for 2 downloads.'))
+			.element(
+				page.getByText(
+					"Temporary files couldn't be removed for 2 downloads. Your library is safe. Retrying automatically."
+				)
+			)
 			.toBeVisible();
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
-		expect(toast.show.mock.calls[0][0].message).toContain('Checking again automatically.');
+		expect(toast.show.mock.calls[0][0].message).toContain('Your library is safe.');
 	});
 
 	it('does not hide another degraded service behind cleanup debt', async () => {
@@ -196,7 +201,8 @@ describe('ServiceHealthIndicator', () => {
 					service: 'acquisition_cleanup',
 					capability: 'source-files-with-cleanup',
 					severity: 'degraded',
-					message: 'Source cleanup needs attention for 1 download.',
+					message:
+						"Temporary files couldn't be removed for 1 download. Your library is safe. Retrying automatically.",
 					fallback: null,
 					degraded_seconds: 0
 				},
@@ -215,7 +221,7 @@ describe('ServiceHealthIndicator', () => {
 
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
 		const message = toast.show.mock.calls[0][0].message as string;
-		expect(message).toContain('Source cleanup');
+		expect(message).toContain('Download cleanup');
 		expect(message).toContain('MusicBrainz');
 		expect(message).toContain('are having problems.');
 	});
@@ -227,13 +233,13 @@ describe('ServiceHealthIndicator', () => {
 					'acquisition_cleanup',
 					'singular-cleanup-first',
 					null,
-					'Source cleanup has one kind of debt.'
+					'Download cleanup has one kind of debt.'
 				),
 				degradedItem(
 					'acquisition_cleanup',
 					'singular-cleanup-second',
 					null,
-					'Source cleanup has another kind of debt.'
+					'Download cleanup has another kind of debt.'
 				)
 			]
 		};
@@ -242,8 +248,8 @@ describe('ServiceHealthIndicator', () => {
 
 		await vi.waitFor(() => expect(toast.show).toHaveBeenCalledTimes(1));
 		const message = toast.show.mock.calls[0][0].message as string;
-		expect(message).toContain('Source cleanup is having problems.');
-		expect(message).not.toContain('Source cleanup are');
+		expect(message).toContain('Download cleanup is having problems.');
+		expect(message).not.toContain('Download cleanup are');
 	});
 	it('toasts immediately for a first degraded capability', async () => {
 		vi.spyOn(Date, 'now').mockReturnValue(START_TIME);

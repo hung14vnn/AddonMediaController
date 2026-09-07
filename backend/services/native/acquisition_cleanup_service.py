@@ -579,8 +579,9 @@ class AcquisitionCleanupService:
                 _HEALTH_CAPABILITY,
                 severity="degraded",
                 message=(
-                    f"Source cleanup needs attention for {count} "
-                    f"download{'s' if count != 1 else ''}."
+                    f"Temporary files couldn't be removed for {count} "
+                    f"download{'s' if count != 1 else ''}. "
+                    "Your library is safe. Retrying automatically."
                 ),
                 ttl_seconds=90.0,
             )
