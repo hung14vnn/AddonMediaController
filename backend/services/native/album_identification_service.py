@@ -548,10 +548,11 @@ class AlbumIdentificationService:
                         cached_outcomes[track.local_track_id] = cached
                         if (
                             not track.recording_mbid
+                            and not track.fingerprint_recording_mbid
                             and cached.state == "matched"
                             and cached.recording_mbid
                         ):
-                            track.recording_mbid = cached.recording_mbid
+                            track.fingerprint_recording_mbid = cached.recording_mbid
                 recalled = await self._candidates.recall(
                     tracks,
                     cached_fingerprint_release_groups=list(
@@ -579,7 +580,8 @@ class AlbumIdentificationService:
                             and item.recording_mbid
                         }
                         needed = (
-                            not track.recording_mbid and len(supported_recordings) != 1
+                            not (track.recording_mbid or track.fingerprint_recording_mbid)
+                            and len(supported_recordings) != 1
                         )
                         if not needed:
                             continue
@@ -628,7 +630,13 @@ class AlbumIdentificationService:
                             )
                             return "provider_deferred"
                         if outcome is not None and outcome.recording_mbid:
-                            track.recording_mbid = outcome.recording_mbid
+                            if (
+                                not track.recording_mbid
+                                and not track.fingerprint_recording_mbid
+                            ):
+                                track.fingerprint_recording_mbid = (
+                                    outcome.recording_mbid
+                                )
                             new_release_groups.extend(outcome.release_group_ids)
                     if new_release_groups:
                         recalled = await self._candidates.recall(

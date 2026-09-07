@@ -202,10 +202,11 @@ class ExplicitReidentificationWorker:
                     cached_release_groups.extend(cached.release_group_ids)
                     if (
                         not track.recording_mbid
+                        and not track.fingerprint_recording_mbid
                         and cached.state == "matched"
                         and cached.recording_mbid
                     ):
-                        track.recording_mbid = cached.recording_mbid
+                        track.fingerprint_recording_mbid = cached.recording_mbid
             provider_recall_used = False
             release_decision = _embedded_release_decision(tracks)
             if requested_release_mbid is not None:
@@ -312,7 +313,9 @@ class ExplicitReidentificationWorker:
                         and item.classification == "supported"
                         and item.recording_mbid
                     }
-                    needed = not track.recording_mbid and len(supported_recordings) != 1
+                    needed = not (
+                        track.recording_mbid or track.fingerprint_recording_mbid
+                    ) and len(supported_recordings) != 1
                     if not needed:
                         continue
                     # F-042: a disabled row regenerates once the key returns,
@@ -349,7 +352,11 @@ class ExplicitReidentificationWorker:
                             "Fingerprint evidence is temporarily unavailable."
                         )
                     if outcome is not None and outcome.recording_mbid:
-                        track.recording_mbid = outcome.recording_mbid
+                        if (
+                            not track.recording_mbid
+                            and not track.fingerprint_recording_mbid
+                        ):
+                            track.fingerprint_recording_mbid = outcome.recording_mbid
                         new_release_groups.extend(outcome.release_group_ids)
                 if new_release_groups:
                     candidates = await self._candidates.recall(

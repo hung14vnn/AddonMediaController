@@ -128,6 +128,8 @@ class GroupingTrack(AppStruct):
     disc_number: int = 1
     duration_seconds: float | None = None
     recording_mbid: str | None = None
+    # Support-only AcoustID evidence, never authoritative proof.
+    fingerprint_recording_mbid: str | None = None
     release_mbid: str | None = None
     release_group_mbid: str | None = None
     release_track_mbid: str | None = None

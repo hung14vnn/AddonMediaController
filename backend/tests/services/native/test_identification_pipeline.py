@@ -4433,3 +4433,53 @@ class _RecallSpyProvider(FakeProvider):
     async def search_album_candidate_ids(self, artist, title, limit, priority):
         self.album_search_calls += 1
         return await inner_search(self, artist, title, limit, priority)
+@pytest.mark.asyncio
+async def test_cached_off_release_fingerprint_no_longer_vetoes_identification(
+    store: NativeLibraryStore,
+) -> None:
+    """#392: a cached matched fingerprint outcome carrying an off-release
+    recording ID lands in the support-only slot - the album still identifies
+    and the track is never reconsidered for fingerprinting."""
+    from models.identification import FingerprintOutcome
+
+    await _seed_album(store)
+    await store.record_fingerprint_outcome(
+        FingerprintOutcome(
+            id="seed-off-release",
+            local_track_id="track-1",
+            stat_revision="stat-1",
+            fingerprinter_version=FINGERPRINTER_VERSION,
+            state="matched",
+            recording_mbid="off-release-recording",
+            release_group_ids=["rg-1"],
+            first_attempt_at=1,
+            last_attempt_at=1,
+        )
+    )
+    seen: list[GroupingTrack] = []
+
+    class _SpyEngine(AlbumEvidenceEngine):
+        def decide(self, local_tracks, candidates, full_recall=False):  # type: ignore[no-untyped-def]
+            seen.extend(local_tracks)
+            return super().decide(local_tracks, candidates, full_recall=full_recall)
+
+    fake = FakeFingerprinter(FingerprintResult(status="skip"))
+    queue = IdentificationQueueService(store)
+    service = AlbumIdentificationService(
+        store,
+        queue,
+        AlbumCandidateService(FakeProvider([_candidate()])),
+        _SpyEngine(),
+        ConditionalFingerprintService(store, fake),
+    )
+    job = await _claimed_job(store)
+
+    outcome = await service.run_claimed_job(job, "worker")
+
+    assert outcome == "identified"
+    assert len(seen) == 1
+    assert seen[0].recording_mbid is None
+    assert seen[0].fingerprint_recording_mbid == "off-release-recording"
+    assert fake.generate_calls == 0
+
+

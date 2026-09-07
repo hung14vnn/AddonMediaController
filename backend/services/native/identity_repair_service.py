@@ -1503,11 +1503,12 @@ class IdentityRepairService:
                     )
                     if (
                         not track.recording_mbid
+                        and not track.fingerprint_recording_mbid
                         and cached is not None
                         and cached.state == "matched"
                         and cached.recording_mbid
                     ):
-                        track.recording_mbid = cached.recording_mbid
+                        track.fingerprint_recording_mbid = cached.recording_mbid
                         fingerprint_filled = True
                 evaluated = self._evidence.evaluate_candidate(
                     grouping_tracks, candidate

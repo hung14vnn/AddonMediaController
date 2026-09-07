@@ -112,9 +112,19 @@ def _pair(
         if local.recording_mbid != candidate.recording_mbid:
             return _Pair(2.0, True, ["recording_mbid_conflict"])
         identity_kinds.append("recording_mbid")
+    elif (
+        not local.recording_mbid
+        and local.fingerprint_recording_mbid
+        and candidate.recording_mbid
+        and local.fingerprint_recording_mbid == candidate.recording_mbid
+    ):
+        identity_kinds.append("fingerprint_recording_mbid")
     if identity_kinds:
         if (
-            "recording_mbid" in identity_kinds
+            (
+                "recording_mbid" in identity_kinds
+                or "fingerprint_recording_mbid" in identity_kinds
+            )
             and "release_track_mbid" not in identity_kinds
             and recording_occurrences > 1
         ):

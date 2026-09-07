@@ -35,6 +35,7 @@ def _track(
     disc: int = 1,
     duration: float | None = 180,
     recording: str | None = None,
+    fingerprint_recording: str | None = None,
     release_track: str | None = None,
     album: str = "Album",
     artist: str = "Artist",
@@ -53,6 +54,7 @@ def _track(
         disc_number=disc,
         duration_seconds=duration,
         recording_mbid=recording,
+        fingerprint_recording_mbid=fingerprint_recording,
         release_track_mbid=release_track,
         is_compilation=compilation,
         tags_readable=readable,
@@ -911,6 +913,114 @@ def test_single_provider_conflict_still_vetoes_high_support_album() -> None:
     decision = AlbumEvidenceEngine().decide(local, [candidate])
     assert decision.outcome == "contradictory"
     assert decision.reason_code == "CONFLICTING_TRACK_EVIDENCE"
+
+
+def test_fingerprint_recording_agreement_pairs_at_zero_cost_without_veto() -> None:
+    """#392: an AcoustID recording ID that agrees with the candidate is
+    support-only evidence - it pairs at cost 0.0 under its own kind."""
+    from services.native.album_evidence_engine import _pair
+
+    local = _track("one", "One", fingerprint_recording="recording-a")
+    candidate_track = _candidate_track("One", 1, recording="recording-a")
+    pair = _pair(local, candidate_track)
+    assert pair.cost == 0.0
+    assert not pair.hard_conflict
+    assert pair.kinds == ["fingerprint_recording_mbid"]
+
+    evidence = AlbumEvidenceEngine().evaluate_candidate(
+        [local], _candidate("group", [candidate_track])
+    )
+    assert evidence.reason_code == "SUPPORTED"
+    assert evidence.track_evidence[0].classification == "supported"
+    assert evidence.track_evidence[0].evidence_kinds == [
+        "fingerprint_recording_mbid"
+    ]
+
+
+def test_fingerprint_recording_disagreement_falls_back_to_descriptive_evidence() -> (
+    None
+):
+    """#392: an off-release AcoustID recording ID never vetoes - exact title,
+    position, and in-grace duration still support the track."""
+    evidence = AlbumEvidenceEngine().evaluate_candidate(
+        [_track("one", "One", fingerprint_recording="acoustid-other-entity")],
+        _candidate(
+            "group", [_candidate_track("One", 1, recording="release-recording")]
+        ),
+    )
+    assert evidence.reason_code == "SUPPORTED"
+    [item] = evidence.track_evidence
+    assert item.classification == "supported"
+    assert "recording_mbid_conflict" not in item.evidence_kinds
+    assert "normalized_title" in item.evidence_kinds
+
+
+def test_authoritative_recording_mismatch_still_vetoes_despite_fingerprint_agreement() -> (
+    None
+):
+    """#392: provider proof keeps veto semantics - an authoritative recording
+    mismatch vetoes even when the fingerprint ID agrees with the candidate."""
+    decision = AlbumEvidenceEngine().decide(
+        [
+            _track(
+                "one",
+                "Same",
+                recording="local-recording",
+                fingerprint_recording="other-recording",
+            )
+        ],
+        [_candidate("rg", [_candidate_track("Same", 1, recording="other-recording")])],
+    )
+    assert decision.outcome == "contradictory"
+    assert decision.reason_code == "CONFLICTING_TRACK_EVIDENCE"
+
+
+def test_disagreeing_fingerprints_never_degrade_support_across_runs() -> None:
+    """#392 accumulation guard: persisting more off-release AcoustID outcomes
+    across re-runs must not reduce the supported count."""
+    engine = AlbumEvidenceEngine()
+    candidate = _candidate(
+        "group",
+        [
+            _candidate_track(
+                f"Song {index}",
+                index,
+                duration=180.0 + index,
+                recording=f"release-recording-{index}",
+            )
+            for index in range(1, 7)
+        ],
+        title="Compilation",
+        artist="Various",
+    )
+
+    def local_with(off_release: set[int]) -> list[GroupingTrack]:
+        tracks = [
+            _track(
+                f"local-{index}",
+                f"Song {index}",
+                number=index,
+                duration=180.0 + index,
+                album="Compilation",
+                artist="Various",
+                compilation=True,
+            )
+            for index in range(1, 7)
+        ]
+        for index in off_release:
+            tracks[index - 1].fingerprint_recording_mbid = f"acoustid-other-{index}"
+        return tracks
+
+    for off_release in (set(), {5, 6}, {3, 4, 5, 6}):
+        evidence = engine.evaluate_candidate(local_with(off_release), candidate)
+        assert evidence.reason_code == "SUPPORTED"
+        assert (
+            sum(
+                item.classification == "supported"
+                for item in evidence.track_evidence
+            )
+            == 6
+        )
 
 
 def test_tribute_artist_mismatch_still_vetoes_despite_supported_titles() -> None:

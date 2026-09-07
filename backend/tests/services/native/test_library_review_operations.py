@@ -4130,7 +4130,51 @@ async def test_explicit_reidentification_fingerprints_contradictory_text_evidenc
     assert operation.reidentification_candidates[0].automatic_safe is True
     assert operation.reidentification_candidates[0].evidence.track_evidence[
         0
-    ].evidence_kinds == ["recording_mbid"]
+    ].evidence_kinds == ["fingerprint_recording_mbid"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_reidentification_cached_off_release_fingerprint_is_support_only(
+    store: NativeLibraryStore,
+) -> None:
+    """#392: a cached matched fingerprint outcome carrying an off-release
+    recording ID lands in the support-only slot - exact text evidence still
+    supports the track instead of vetoing with recording_mbid_conflict."""
+    await _seed_album(store, "1")
+    await store.record_fingerprint_outcome(
+        FingerprintOutcome(
+            id="cached-off-release",
+            local_track_id="track-1-1",
+            stat_revision="stat-1-1",
+            fingerprinter_version="fpcalc-acoustid-v1",
+            state="matched",
+            recording_mbid="off-release-recording",
+            release_group_ids=["rg-explicit"],
+            first_attempt_at=1,
+            last_attempt_at=1,
+        )
+    )
+    worker = ExplicitReidentificationWorker(
+        store,
+        AlbumCandidateService(_IdentificationProvider()),
+        AlbumEvidenceEngine(),
+    )
+    created = await ReidentificationService(store).create_or_coalesce(
+        "album-1", "admin", idempotency_key="off-release-fingerprint", now=1
+    )
+    claimed = await store.claim_operation_job(
+        "worker", now=2, lease_seconds=60, kind="explicit_reidentification"
+    )
+    assert claimed is not None
+
+    ready = await worker.run_claimed(claimed, "worker", now=3)
+    operation = await LibraryOperationService(store).get(created["id"])
+
+    assert ready["state"] == "ready"
+    kinds = operation.reidentification_candidates[0].evidence.track_evidence[
+        0
+    ].evidence_kinds
+    assert "recording_mbid_conflict" not in kinds
 
 
 @pytest.mark.asyncio
@@ -5246,10 +5290,12 @@ async def test_repair_reuses_revision_keyed_fingerprint_as_shared_evidence(
     evidence = await store.get_latest_album_candidate_evidence(
         "album-1", "rg-explicit:release-explicit"
     )
-    assert finding.finding_code == "needs_review"
+    # #392: the reused off-release fingerprint is support-only, so exact text
+    # evidence passes the audit; the fingerprint fill still blocks auto-apply.
+    assert finding.finding_code == "valid"
     assert finding.apply_eligible is False
     assert evidence is not None
-    assert evidence.evidence.track_evidence[0].classification == "contradictory"
+    assert evidence.evidence.track_evidence[0].classification == "supported"
 
 
 @pytest.mark.asyncio
