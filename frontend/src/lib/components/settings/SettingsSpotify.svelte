@@ -59,19 +59,19 @@
 			</div>
 			<div>
 				<h2 class="card-title text-2xl">Spotify</h2>
-				<p class="text-sm text-base-content/60">App credentials for the whole instance.</p>
+				<p class="text-sm text-base-content/60">Public catalog metadata needs no Spotify account.</p>
 			</div>
 		</div>
 
 		<div class="rounded-xl border border-info/20 bg-info/5 p-3 text-sm text-base-content/70">
-			These are the shared app credentials for one registered Spotify application. Each user links
+			Catalog search and metadata use SpotAPI's public endpoints, so they do not require an API key,
+			Premium account, or user login. The credentials below are only needed when users link
 			<span class="font-medium">their own</span> Spotify account from their
-			<a href={withBasePath('/profile')} class="link link-primary">profile</a> to import their personal
-			playlists.
+			<a href={withBasePath('/profile')} class="link link-primary">profile</a> to import personal playlists.
 		</div>
 
 		<div class="rounded-xl border border-warning/20 bg-warning/5 p-3 text-sm text-base-content/70">
-			<p class="font-medium text-warning/80">Development mode restriction</p>
+			<p class="font-medium text-warning/80">Only applies to personal playlist imports</p>
 			<p class="mt-1">
 				Spotify apps in development mode only allow up to 5 explicitly allowlisted users. Each user
 				who wants to import playlists must be added by email in your

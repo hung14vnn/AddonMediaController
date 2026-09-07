@@ -343,9 +343,6 @@ async def get_artist_spotify_tracks(
     client = await client_factory.resolve_spotify_catalog()
     if not client:
         logger.warning("Spotify artist endpoint: catalog client unavailable")
-        client = await client_factory.resolve_spotify(current_user.id)
-    if not client:
-        logger.warning("Spotify artist endpoint: user Spotify client unavailable")
         return SpotifyTracksResponse()
     try:
         provider_artist_id = spotify_artist_id(artist_id)

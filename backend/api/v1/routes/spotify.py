@@ -178,7 +178,7 @@ async def request_spotify_track(
     await quota.check_request_quota(current_user.id, current_user.role)
     try:
         resolved = await svc.resolve_track_for_download(
-            current_user.id, body.spotify_id
+            body.spotify_id
         )
         task_id = await acquisition.request_track(
             user_id=current_user.id,

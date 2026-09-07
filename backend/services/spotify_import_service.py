@@ -145,15 +145,12 @@ class SpotifyImportService:
 
     async def resolve_track_for_download(
         self,
-        user_id: str,
         spotify_track_id: str,
         *,
         priority: RequestPriority = RequestPriority.USER_INITIATED,
     ) -> dict[str, Any]:
         """Resolve a Spotify track to the canonical MusicBrainz IDs used by acquisition."""
         client = await self._client_factory.resolve_spotify_catalog()
-        if client is None:
-            client = await self._get_client(user_id)
         track = await client.get_track(spotify_track_id)
         isrc = ((track.get("external_ids") or {}).get("isrc") or "").strip()
         album = track.get("album") or {}
@@ -283,7 +280,7 @@ class SpotifyImportService:
             spotify_track_id = str(spotify_track.get("id") or "")
             if spotify_track_id:
                 resolved[playlist_track.id] = await self.resolve_track_for_download(
-                    user_id, spotify_track_id, priority=priority
+                    spotify_track_id, priority=priority
                 )
         return resolved
 

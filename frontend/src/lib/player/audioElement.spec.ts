@@ -128,7 +128,7 @@ describe('audioElement registry', () => {
 		expect(mockEngine.resume).toHaveBeenCalledTimes(1);
 	});
 
-	it('keeps installed iOS PWA playback on the native audio element', () => {
+	it('allows the audio engine on iOS while keeping native background detection', () => {
 		vi.stubGlobal('navigator', {
 			userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
 			platform: 'iPhone',
@@ -143,6 +143,8 @@ describe('audioElement registry', () => {
 		expect(getAudioElement()).toBe(audio);
 		expect(tryGetAudioEngine()).toBeNull();
 		expect(mockEngine.connect).not.toHaveBeenCalled();
+		getAudioEngine();
+		expect(mockEngine.connect).toHaveBeenCalledWith(audio);
 	});
 
 	it('keeps iPhone playback native even when standalone detection is unavailable', () => {
@@ -168,7 +170,7 @@ describe('audioElement registry', () => {
 		expect(usesNativeBackgroundPlayback()).toBe(true);
 	});
 
-	it('keeps Android playback on the native audio element', () => {
+	it('allows the audio engine on Android', () => {
 		vi.stubGlobal('navigator', {
 			userAgent: 'Mozilla/5.0 (Linux; Android 15)',
 			platform: 'Linux armv8l',
@@ -181,5 +183,7 @@ describe('audioElement registry', () => {
 		expect(usesNativeBackgroundPlayback()).toBe(false);
 		expect(tryGetAudioEngine()).toBeNull();
 		expect(mockEngine.connect).not.toHaveBeenCalled();
+		getAudioEngine();
+		expect(mockEngine.connect).toHaveBeenCalledWith(audio);
 	});
 });

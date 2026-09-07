@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
@@ -12,8 +11,6 @@ import httpx
 
 if TYPE_CHECKING:
     from infrastructure.persistence.user_connections_store import UserConnectionsStore
-
-logger = logging.getLogger(__name__)
 
 _API_BASE = "https://api.spotify.com/v1"
 _TOKEN_URL = "https://accounts.spotify.com/api/token"
@@ -52,22 +49,6 @@ class SpotifyClient:
     def _basic_auth_header(self) -> str:
         credentials = f"{self._client_id}:{self._client_secret}"
         return "Basic " + base64.b64encode(credentials.encode()).decode()
-
-    async def authenticate_client_credentials(self) -> None:
-        """Authenticate this client for public catalog endpoints only."""
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                _TOKEN_URL,
-                data={"grant_type": "client_credentials"},
-                headers={"Authorization": self._basic_auth_header()},
-                timeout=15,
-            )
-        resp.raise_for_status()
-        data = resp.json()
-        self._access_token = data["access_token"]
-        self._expires_at = (
-            _now_utc() + timedelta(seconds=data.get("expires_in", 3600))
-        ).isoformat()
 
     def _is_expired(self) -> bool:
         if not self._expires_at:
@@ -167,10 +148,6 @@ class SpotifyClient:
             params={"fields": "id,name,images,tracks.total"},
         )
 
-    async def get_track(self, track_id: str) -> dict:
-        """Return the full Spotify track, including external IDs such as ISRC."""
-        return await self._get(f"/tracks/{track_id}")
-
     async def get_playlist_tracks(self, playlist_id: str) -> list[dict]:
         # /items is the current endpoint (Spotify Web API, verified 2026-07). The older
         # /playlists/{id}/tracks is deprecated and 403s for development-mode apps after the
@@ -194,125 +171,3 @@ class SpotifyClient:
                 break
             params["offset"] += 100
         return tracks
-
-    async def search_tracks(self, query: str, limit: int = 10, offset: int = 0, market: str = "VN") -> tuple[list[dict], bool]:
-        data = await self._get(
-            "/search",
-            params={
-                "q": query,
-                "type": "track",
-                # Spotify Development Mode currently rejects search requests
-                # above 10 items. Pagination can be added with offset later.
-                "limit": min(limit, 10),
-                "offset": offset,
-                "market": market,
-            },
-        )
-        tracks = data.get("tracks", {})
-        return tracks.get("items", []) or [], bool(tracks.get("next"))
-
-    async def search_artists(
-        self, query: str, limit: int = 10, offset: int = 0
-    ) -> tuple[list[dict], bool]:
-        items: list[dict] = []
-        has_more = False
-        while len(items) < limit:
-            page_size = min(limit - len(items), 10)
-            data = await self._get(
-                "/search",
-                params={
-                    "q": query,
-                    "type": "artist",
-                    "limit": page_size,
-                    "offset": offset + len(items),
-                },
-            )
-            artists = data.get("artists", {})
-            page = artists.get("items", []) or []
-            items.extend(page)
-            has_more = bool(artists.get("next"))
-            if not page or not has_more:
-                break
-        return items, has_more
-
-    async def search_albums(
-        self,
-        query: str,
-        limit: int = 10,
-        offset: int = 0,
-        market: str = "VN",
-    ) -> tuple[list[dict], bool]:
-        items: list[dict] = []
-        has_more = False
-        while len(items) < limit:
-            page_size = min(limit - len(items), 10)
-            data = await self._get(
-                "/search",
-                params={
-                    "q": query,
-                    "type": "album",
-                    "limit": page_size,
-                    "offset": offset + len(items),
-                    "market": market,
-                },
-            )
-            albums = data.get("albums", {})
-            page = albums.get("items", []) or []
-            items.extend(page)
-            has_more = bool(albums.get("next"))
-            if not page or not has_more:
-                break
-        return items, has_more
-
-    async def get_artist(self, artist_id: str) -> dict:
-        return await self._get(f"/artists/{artist_id}")
-
-    async def get_artist_albums(
-        self,
-        artist_id: str,
-        limit: int = 10,
-        offset: int = 0,
-        market: str = "VN",
-    ) -> tuple[list[dict], bool, int | None]:
-        items: list[dict] = []
-        has_more = False
-        total: int | None = None
-        while len(items) < limit:
-            page_size = min(limit - len(items), 10)
-            data = await self._get(
-                f"/artists/{artist_id}/albums",
-                params={
-                    "include_groups": "album,single,compilation,appears_on",
-                    "limit": page_size,
-                    "offset": offset + len(items),
-                    "market": market,
-                },
-            )
-            page = data.get("items", []) or []
-            items.extend(page)
-            has_more = bool(data.get("next"))
-            total = data.get("total")
-            if not page or not has_more:
-                break
-        return items, has_more, total
-
-    async def get_album(self, album_id: str, market: str = "VN") -> dict:
-        album = await self._get(f"/albums/{album_id}", params={"market": market})
-        tracks = album.get("tracks") or {}
-        items = list(tracks.get("items") or [])
-        total = int(tracks.get("total") or len(items))
-        while tracks.get("next") and len(items) < total:
-            tracks = await self._get(
-                f"/albums/{album_id}/tracks",
-                params={"market": market, "limit": 10, "offset": len(items)},
-            )
-            page = tracks.get("items") or []
-            if not page:
-                break
-            items.extend(page)
-        album["tracks"] = {**tracks, "items": items, "total": total}
-        return album
-
-    async def get_artist_top_tracks(self, artist_id: str, market: str = "VN") -> list[dict]:
-        data = await self._get(f"/artists/{artist_id}/top-tracks", params={"market": market})
-        return data.get("tracks", []) or []

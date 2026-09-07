@@ -66,8 +66,6 @@ async def search(
     final_limit_albums = limit_per_bucket if limit_per_bucket else limit_albums
 
     spotify = await client_factory.resolve_spotify_catalog()
-    if spotify is None:
-        spotify = await client_factory.resolve_spotify(current_user.id)
     if spotify is not None:
         try:
             wants_artists = (not buckets_list or "artists" in buckets_list) and final_limit_artists > 0
@@ -114,7 +112,7 @@ async def search(
                     if wanted
                 },
             )
-        except Exception:  # noqa: BLE001 - preserve the old catalog as an outage fallback
+        except Exception:  # noqa: BLE001 - preserve MusicBrainz as an outage fallback
             logger.exception("Spotify catalog search failed; falling back to MusicBrainz")
 
     result = await search_service.search(
@@ -134,8 +132,6 @@ async def search(
 
     if current_user:
         spotify = await client_factory.resolve_spotify_catalog()
-        if not spotify:
-            spotify = await client_factory.resolve_spotify(current_user.id)
         if spotify:
             try:
                 from api.v1.schemas.search import SpotifyTrackResult
@@ -185,8 +181,6 @@ async def suggest(
     if len(stripped) < 2:
         return SuggestResponse()
     spotify = await client_factory.resolve_spotify_catalog()
-    if spotify is None and current_user is not None:
-        spotify = await client_factory.resolve_spotify(current_user.id)
     if spotify is None:
         return await search_service.suggest(query=stripped, limit=limit)
     try:
@@ -227,8 +221,6 @@ async def search_bucket(
     client_factory: PerUserClientFactory = Depends(get_per_user_client_factory),
 ):
     spotify = await client_factory.resolve_spotify_catalog()
-    if spotify is None and current_user is not None:
-        spotify = await client_factory.resolve_spotify(current_user.id)
     if spotify is not None:
         try:
             if bucket == "artists":
