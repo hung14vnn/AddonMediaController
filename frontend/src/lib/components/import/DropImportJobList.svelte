@@ -52,6 +52,16 @@
 		failed: { label: 'Failed', cls: 'badge-error' },
 		discarded: { label: 'Discarded', cls: 'badge-ghost' }
 	};
+
+	// F-02 retention: staged review items are hard-deleted 90 days after upload
+	// (backend DropImportService sweep), so surface the countdown from the job
+	// created_at. Mirrors the backend _REVIEW_RETENTION_DAYS - no new API.
+	const REVIEW_RETENTION_DAYS = 90;
+	const SECONDS_PER_DAY = 86400;
+	function reviewDaysLeft(createdAtSeconds: number): number {
+		const elapsedDays = (Date.now() / 1000 - createdAtSeconds) / SECONDS_PER_DAY;
+		return Math.max(0, Math.ceil(REVIEW_RETENTION_DAYS - elapsedDays));
+	}
 </script>
 
 {#if jobsQuery.isLoading}
@@ -110,6 +120,13 @@
 						<span class="badge badge-error" title={job.error ?? undefined}>Failed</span>
 					{/if}
 				</div>
+				{#if job.items.some((item) => item.status === 'needs_review')}
+					{@const daysLeft = reviewDaysLeft(job.created_at)}
+					<p class="mt-1 text-xs text-base-content/50">
+						Unmatched items are auto-removed 90 days after upload ({daysLeft}
+						{daysLeft === 1 ? 'day' : 'days'} left).
+					</p>
+				{/if}
 
 				{#if job.error}
 					<!-- a completed job carries notes here (a skipped corrupt archive),

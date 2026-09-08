@@ -12,6 +12,9 @@ const h = vi.hoisted(() => ({
 		string,
 		unknown
 	>,
+	schedule: {
+		data: { scan_frequency: 'daily', daily_scan_time: '09:00', server_timezone: 'Europe/London' }
+	} as Record<string, unknown>,
 	detail: { data: undefined } as Record<string, unknown>,
 	operation: { data: undefined } as Record<string, unknown>,
 	settings: {
@@ -60,6 +63,9 @@ const h = vi.hoisted(() => ({
 	requestRun: vi.fn(),
 	bulkPreview: vi.fn(),
 	bulkApply: vi.fn(),
+	bulkPreviewReset: vi.fn(),
+	bulkApplyReset: vi.fn(),
+	controlOperationMutate: vi.fn(),
 	toast: vi.fn()
 }));
 
@@ -93,7 +99,7 @@ vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
 		mutateAsync: action === 'pause' ? h.pauseIdentification : h.resumeRun,
 		isPending: false
 	}),
-	controlLibraryOperation: () => ({ mutateAsync: vi.fn(), isPending: false })
+	controlLibraryOperation: () => ({ mutateAsync: h.controlOperationMutate, isPending: false })
 }));
 vi.mock('$lib/queries/library/LibraryPolicyQueries.svelte', () => ({
 	getTargetLibrarySettingsQuery: () => h.settings,
@@ -138,23 +144,21 @@ vi.mock('$lib/queries/artist-reconciliation/ArtistReconciliationQueries.svelte',
 vi.mock('$lib/queries/library/LibraryReviewMutations.svelte', () => ({
 	previewBulkLibraryReview: () => ({
 		mutateAsync: h.bulkPreview,
-		reset: vi.fn(),
+		reset: h.bulkPreviewReset,
 		data: undefined,
 		isPending: false,
 		isError: false
 	}),
 	applyBulkLibraryReview: () => ({
 		mutateAsync: h.bulkApply,
-		reset: vi.fn(),
+		reset: h.bulkApplyReset,
 		data: undefined,
 		isPending: false,
 		isError: false
 	})
 }));
 vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
-	getLibraryScanScheduleQuery: () => ({
-		data: { scan_frequency: 'daily', daily_scan_time: '09:00', server_timezone: 'Europe/London' }
-	}),
+	getLibraryScanScheduleQuery: () => h.schedule,
 	getLibraryStatsQuery: () => ({ data: { local_only_count: 9 } })
 }));
 import LibraryScanningPanel from './LibraryScanningPanel.svelte';
@@ -235,6 +239,9 @@ beforeEach(() => {
 		isLoading: false
 	};
 	h.runs = { data: { active: null, queued: null }, isLoading: false, isError: false };
+	h.schedule = {
+		data: { scan_frequency: 'daily', daily_scan_time: '09:00', server_timezone: 'Europe/London' }
+	};
 	h.detail = { data: undefined };
 	h.operation = { data: undefined };
 	h.reviews = { data: { pages: [{ filtered_total: 12 }] } };
@@ -613,5 +620,15 @@ describe('LibraryScanningPanel', () => {
 		expect(sessionStorage.getItem('droppedneedle:identification-retry:admin-1')).toBeNull();
 		await page.getByRole('button', { name: 'Start another retry' }).click();
 		await expect.element(page.getByRole('button', { name: 'Preview retry' })).toBeVisible();
+	});
+
+	it('names the file watcher when the rolling schedule is manual', async () => {
+		h.schedule = {
+			data: { scan_frequency: 'manual', daily_scan_time: '03:00', server_timezone: '' }
+		};
+		render(LibraryScanningPanel);
+		await expect
+			.element(page.getByText('Scheduled scans off (file watcher still active)'))
+			.toBeVisible();
 	});
 });

@@ -893,6 +893,32 @@ async def test_review_supports_every_signed_filter_sort_and_typed_invalid_values
 
 
 @pytest.mark.asyncio
+async def test_review_state_depths_are_scoped_while_global_totals_persist(
+    store: NativeLibraryStore,
+) -> None:
+    # N-02 (T30): per-state depths must render from the scoped
+    # `counts_by_state_filtered` field, mirroring the existing
+    # `counts_by_reason_filtered` semantics - `counts_by_state` stays a
+    # global GROUP BY with no WHERE.
+    await _seed_album(store, "1")
+    await _seed_album(store, "2")
+    await _seed_album(store, "3", review_state="keep_tagged")
+    service = LibraryReviewService(store)
+
+    scoped = await service.list_reviews(limit=10, state="needs_review")
+    unscoped = await service.list_reviews(limit=10)
+
+    assert scoped.counts_by_state == {"needs_review": 2, "keep_tagged": 1}
+    assert scoped.counts_by_state_filtered == {"needs_review": 2}
+    assert scoped.counts_by_reason_filtered == {"NO_SAFE_MATCH": 2}
+    assert unscoped.counts_by_state_filtered == {
+        "needs_review": 2,
+        "keep_tagged": 1,
+    }
+    assert [item.id for item in scoped.items] == ["review-2", "review-1"]
+
+
+@pytest.mark.asyncio
 async def test_plain_keep_refuses_identity_and_detach_keep_is_atomic_and_read_only(
     store: NativeLibraryStore, tmp_path: Path
 ) -> None:

@@ -75,6 +75,7 @@
 		UserRound,
 		Inbox,
 		ListMusic,
+		ListChecks,
 		ArrowUpCircle,
 		LogOut,
 		ShieldCheck,
@@ -421,7 +422,11 @@
 	}
 
 	function isLibraryNavActive(): boolean {
-		return isNavActive('/library') && !isNavActive('/library/management');
+		return (
+			isNavActive('/library') &&
+			!isNavActive('/library/management') &&
+			!isNavActive('/library/review')
+		);
 	}
 
 	function openMoreNav(): void {
@@ -438,7 +443,8 @@
 			isNavActive('/following') ||
 			isNavActive('/playlists') ||
 			isNavActive('/requests') ||
-			isNavActive('/library/management')
+			isNavActive('/library/management') ||
+			isNavActive('/library/review')
 		);
 	}
 
@@ -714,6 +720,19 @@
 							<span class="is-drawer-close:hidden">Approvals</span>
 						</a>
 					</li>
+					<li>
+						<a
+							href={withBasePath('/library/review')}
+							class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
+							class:menu-active={isNavActive('/library/review')}
+							aria-current={isNavActive('/library/review') ? 'page' : undefined}
+							aria-label="Review Queue"
+							data-tip="Review Queue"
+						>
+							<ListChecks class="h-6 w-6" />
+							<span class="is-drawer-close:hidden">Review Queue</span>
+						</a>
+					</li>
 				{/if}
 			</ul>
 			<div class="w-full p-2 flex flex-col gap-1" class:pb-24={playerStore.isPlayerVisible}>
@@ -919,6 +938,18 @@
 					>
 						<ShieldCheck class="h-6 w-6" />
 						Approvals
+					</a>
+				</li>
+				<li>
+					<a
+						href={withBasePath('/library/review')}
+						class:menu-active={isNavActive('/library/review')}
+						aria-current={isNavActive('/library/review') ? 'page' : undefined}
+						aria-label="Review Queue"
+						onclick={closeMoreNav}
+					>
+						<ListChecks class="h-6 w-6" />
+						Review Queue
 					</a>
 				</li>
 			{/if}

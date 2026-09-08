@@ -6,7 +6,43 @@ import type { LibraryReviewFilters } from '$lib/queries/library/LibraryReviewQue
 
 const h = vi.hoisted(() => ({
 	goto: vi.fn(),
-	filters: (() => ({})) as () => LibraryReviewFilters
+	filters: (() => ({})) as () => LibraryReviewFilters,
+	reviewPage: {
+		items: [
+			{
+				id: 'review-1',
+				state: 'needs_review',
+				reason_code: 'CONTRADICTORY',
+				local_album_id: 'album-1',
+				local_track_id: null,
+				album_title: 'URL State Album',
+				album_artist_name: 'State Artist',
+				year: 2026,
+				track_count: 2,
+				metadata_incomplete_count: 0,
+				root_id: 'root-1',
+				relative_path: 'state/album',
+				effective_policy: 'automatic',
+				exclusion_source: null,
+				release_group_mbid: null,
+				identity_source: null,
+				candidate_count: 1,
+				evidence_summary: {},
+				active_job_state: null,
+				created_at: 1,
+				updated_at: 2,
+				row_revision: 3
+			}
+		],
+		next_cursor: 'cursor-2',
+		has_more: true,
+		filtered_total: 20,
+		counts_by_state: { needs_review: 40, keep_tagged: 5 },
+		counts_by_reason: {},
+		counts_by_reason_filtered: {},
+		counts_by_state_filtered: { needs_review: 12, keep_tagged: 3 },
+		catalog_revision: 9
+	}
 }));
 
 vi.mock('$app/state', async () => {
@@ -25,42 +61,7 @@ vi.mock('$lib/queries/library/LibraryReviewQueries.svelte', () => ({
 			isLoading: false,
 			isError: false,
 			data: {
-				pages: [
-					{
-						items: [
-							{
-								id: 'review-1',
-								state: 'needs_review',
-								reason_code: 'CONTRADICTORY',
-								local_album_id: 'album-1',
-								local_track_id: null,
-								album_title: 'URL State Album',
-								album_artist_name: 'State Artist',
-								year: 2026,
-								track_count: 2,
-								metadata_incomplete_count: 0,
-								root_id: 'root-1',
-								relative_path: 'state/album',
-								effective_policy: 'automatic',
-								exclusion_source: null,
-								release_group_mbid: null,
-								identity_source: null,
-								candidate_count: 1,
-								evidence_summary: {},
-								active_job_state: null,
-								created_at: 1,
-								updated_at: 2,
-								row_revision: 3
-							}
-						],
-						next_cursor: 'cursor-2',
-						has_more: true,
-						filtered_total: 20,
-						counts_by_state: {},
-						counts_by_reason: {},
-						catalog_revision: 9
-					}
-				]
+				pages: [h.reviewPage]
 			}
 		};
 	},
@@ -104,6 +105,7 @@ import LibraryReviewBrowser from './LibraryReviewBrowser.svelte';
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	h.reviewPage.counts_by_state_filtered = { needs_review: 12, keep_tagged: 3 };
 	setLibraryReviewUrl(
 		'/library/review?state=all&cursor=cursor-1&reason=CONTRADICTORY&root=root-1&sort=album'
 	);
@@ -174,5 +176,28 @@ describe('LibraryReviewBrowser URL state', () => {
 			'/library/review?state=keep_tagged&reason=CONTRADICTORY&root=root-1&sort=album',
 			expect.objectContaining({ noScroll: true, keepFocus: true })
 		);
+	});
+});
+
+describe('LibraryReviewBrowser state depths (N-02/T30)', () => {
+	it('renders scoped per-state depths and filters by state on click', async () => {
+		render(LibraryReviewBrowser);
+
+		await expect.element(page.getByRole('button', { name: 'Needs review · 12' })).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Keep as tagged · 3' })).toBeVisible();
+
+		await page.getByRole('button', { name: 'Needs review · 12' }).click();
+		expect(h.goto).toHaveBeenLastCalledWith(
+			'/library/review?state=needs_review&reason=CONTRADICTORY&root=root-1&sort=album',
+			expect.objectContaining({ noScroll: true, keepFocus: true })
+		);
+	});
+
+	it('falls back to all-time state totals when the scoped field is absent', async () => {
+		delete (h.reviewPage as Record<string, unknown>).counts_by_state_filtered;
+		render(LibraryReviewBrowser);
+
+		await expect.element(page.getByRole('button', { name: 'Needs review · 40' })).toBeVisible();
+		await expect.element(page.getByText('All-time totals')).toBeVisible();
 	});
 });

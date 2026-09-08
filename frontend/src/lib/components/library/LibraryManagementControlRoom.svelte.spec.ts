@@ -4,8 +4,13 @@ import { render } from 'vitest-browser-svelte';
 
 const h = vi.hoisted(() => ({
 	discard: vi.fn(),
+	reissue: vi.fn(),
 	goto: vi.fn(),
 	replaceState: vi.fn(),
+	apiGet: vi.fn(),
+	apiPost: vi.fn(),
+	toast: vi.fn(),
+	invalidate: vi.fn(),
 	appPage: {
 		url: new URL('https://music.example.test/library/management#management-controls'),
 		state: {}
@@ -43,14 +48,23 @@ const h = vi.hoisted(() => ({
 		},
 		isLoading: false,
 		isError: false
-	}
+	},
+	admin: true
 }));
 
 vi.mock('$app/navigation', () => ({ goto: h.goto, replaceState: h.replaceState }));
 vi.mock('$app/state', () => ({ page: h.appPage }));
+vi.mock('$lib/api/client', () => ({
+	api: { global: { get: h.apiGet, post: h.apiPost } },
+	ApiError: class ApiError extends Error {}
+}));
+vi.mock('$lib/stores/toast', () => ({ toastStore: { show: h.toast } }));
+vi.mock('$lib/queries/library-management/LibraryManagementInvalidation', () => ({
+	invalidateLibraryManagementSurfaces: h.invalidate
+}));
 vi.mock('$lib/stores/authStore.svelte', () => ({
 	LAST_USER_ID_KEY: 'test:last-user',
-	authStore: { isAdmin: true, user: { id: 'admin-1' } }
+	authStore: { get isAdmin() { return h.admin; }, user: { id: 'admin-1' } }
 }));
 vi.mock('$lib/queries/library/LibraryPolicyQueries.svelte', () => ({
 	getTargetLibrarySettingsQuery: () => ({
@@ -91,6 +105,7 @@ vi.mock('$lib/queries/library-management/LibraryManagementQueries.svelte', () =>
 vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () => ({
 	controlLibraryManagementOperationMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	discardLibraryManagementPreviewMutation: () => ({ mutateAsync: h.discard, isPending: false }),
+	reissueLibraryManagementPreviewMutation: () => ({ mutateAsync: h.reissue, isPending: false }),
 	createLibraryManagementPreviewMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createLibraryManagementBaselineRestorePreviewMutation: () => ({
 		mutateAsync: vi.fn(),
@@ -132,11 +147,48 @@ vi.mock('$lib/queries/library/LibraryRepairMutations.svelte', () => ({
 
 import LibraryManagementControlRoom from './LibraryManagementControlRoom.svelte';
 
+function failedOperation(
+	id: string,
+	overrides: Record<string, unknown> = {},
+	operationOverrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+	return {
+		operation: {
+			id,
+			state: 'failed',
+			terminal_code: 'STALE_INPUT',
+			row_revision: 3,
+			updated_at: 1_800_000_001,
+			succeeded_count: 0,
+			failed_count: 0,
+			skipped_count: 0,
+			...operationOverrides
+		},
+		profile_name: 'Picard-style Organizer',
+		mode: 'preview',
+		phase: 'planning',
+		selection: { kind: 'albums', ids: ['album-1'] },
+		...overrides
+	};
+}
+
+function historyWith(items: Array<Record<string, unknown>>): {
+	data: { pages: Array<{ items: Array<Record<string, unknown>> }> };
+	isLoading: boolean;
+	isError: boolean;
+} {
+	return { data: { pages: [{ items }] }, isLoading: false, isError: false };
+}
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	h.appPage.url = new URL('https://music.example.test/library/management#management-controls');
 	h.operations = { data: { pages: [{ items: [] }] }, isLoading: false, isError: false };
 	h.recovery.isError = false;
+	h.admin = true;
+	h.apiPost.mockResolvedValue({});
+	h.reissue.mockResolvedValue({ job_id: 'reissued-1', preview_token: 'token-1' });
+	h.invalidate.mockResolvedValue(undefined);
 	h.identityPreparations = {
 		data: { pages: [{ items: [] }] },
 		isLoading: false,
@@ -367,5 +419,117 @@ describe('LibraryManagementControlRoom', () => {
 		await expect.element(page.getByText('5 succeeded')).toBeVisible();
 		await expect.element(page.getByText('1 failed')).toBeVisible();
 		await expect.element(page.getByText('2 skipped')).toBeVisible();
+	});
+
+	it('renders a STALE_INPUT terminal as superseded, not as needs-attention', async () => {
+		h.operations = historyWith([failedOperation('stale-1', {}, { failed_count: 1 })]);
+		render(LibraryManagementControlRoom);
+
+		await expect.element(page.getByText('Superseded · inputs moved')).toBeVisible();
+		await expect.element(page.getByText(/Inputs moved since planning/)).toBeVisible();
+		await expect.element(page.getByText('1 failed')).toHaveClass(/badge-ghost/);
+		await expect.element(page.getByText('1 failed')).not.toHaveClass(/badge-error/);
+		await expect.element(page.getByText('Failed', { exact: true })).not.toBeInTheDocument();
+		expect(page.getByText('0', { exact: true }).elements()).toHaveLength(2);
+	});
+
+	it('collapses duplicate failed cards for the same album into one group with a count', async () => {
+		h.operations = historyWith([failedOperation('stale-1'), failedOperation('stale-2')]);
+		render(LibraryManagementControlRoom);
+
+		await expect.element(page.getByText('2 failed attempts · same album')).toBeVisible();
+		await expect.element(page.getByText('Superseded', { exact: true })).toBeVisible();
+		expect(page.getByText('Picard-style Organizer').elements()).toHaveLength(1);
+		expect(page.getByRole('link', { name: 'Open details' }).elements()).toHaveLength(2);
+	});
+
+	it('bulk-retries only the stale members with one toast summary', async () => {
+		h.operations = historyWith([failedOperation('stale-1'), failedOperation('stale-2')]);
+		render(LibraryManagementControlRoom);
+
+		await page.getByRole('button', { name: 'Retry 2 stale' }).click();
+
+		await expect.element(page.getByText('Retried 2 of 2 stale previews.')).toBeVisible();
+		expect(h.reissue).toHaveBeenCalledTimes(2);
+		expect(h.reissue).toHaveBeenNthCalledWith(1, { jobId: 'stale-1', silent: true });
+		expect(h.reissue).toHaveBeenNthCalledWith(2, { jobId: 'stale-2', silent: true });
+		expect(h.toast).toHaveBeenCalledTimes(1);
+		expect(h.toast).toHaveBeenCalledWith({
+			message: 'Retried 2 of 2 stale previews.',
+			type: 'success'
+		});
+	});
+
+	it('tolerates per-item bulk errors with a count in the summary', async () => {
+		h.operations = historyWith([failedOperation('stale-1'), failedOperation('stale-2')]);
+		h.reissue.mockRejectedValueOnce(new Error('gone'));
+		render(LibraryManagementControlRoom);
+
+		await page.getByRole('button', { name: 'Retry 2 stale' }).click();
+
+		await expect
+			.element(page.getByText('Retried 1 of 2 stale previews (1 failed).'))
+			.toBeVisible();
+		expect(h.toast).toHaveBeenCalledTimes(1);
+		expect(h.toast).toHaveBeenCalledWith({
+			message: 'Retried 1 of 2 stale previews (1 failed).',
+			type: 'error'
+		});
+	});
+
+	it('never bulk-retries real failures mixed in with stale attempts', async () => {
+		h.operations = historyWith([
+			failedOperation('stale-1'),
+			failedOperation('real-1', {}, { terminal_code: 'PLANNING_FAILED', failed_count: 1 })
+		]);
+		render(LibraryManagementControlRoom);
+
+		// The sentence spans a source line break Svelte does not join for text
+		// matching, so assert both halves instead of one spanning expression.
+		await expect.element(page.getByText(/attempts only found moved/)).toBeVisible();
+		await expect.element(page.getByText(/inputs and can be retried/)).toBeVisible();
+		await expect.element(page.getByText('PLANNING FAILED')).toBeVisible();
+		await expect.element(page.getByText('1', { exact: true })).toBeVisible();
+		await page.getByRole('button', { name: 'Retry 1 stale' }).click();
+
+		await expect.element(page.getByText('Retried 1 of 1 stale preview.')).toBeVisible();
+		expect(h.reissue).toHaveBeenCalledTimes(1);
+		expect(h.reissue).toHaveBeenCalledWith({ jobId: 'stale-1', silent: true });
+		expect(h.toast).toHaveBeenCalledTimes(1);
+	});
+
+	it('bulk-dismisses stale previews with their expected revisions', async () => {
+		h.operations = historyWith([failedOperation('stale-1'), failedOperation('stale-2')]);
+		render(LibraryManagementControlRoom);
+
+		await page.getByRole('button', { name: 'Dismiss 2 stale' }).click();
+
+		await expect.element(page.getByText('Dismissed 2 of 2 stale previews.')).toBeVisible();
+		expect(h.discard).toHaveBeenCalledTimes(2);
+		expect(h.discard).toHaveBeenCalledWith({
+			jobId: 'stale-1',
+			request: { expected_operation_row_revision: 3 },
+			silent: true
+		});
+		expect(h.discard).toHaveBeenCalledWith({
+			jobId: 'stale-2',
+			request: { expected_operation_row_revision: 3 },
+			silent: true
+		});
+		expect(h.toast).toHaveBeenCalledTimes(1);
+	});
+
+	it('hides bulk stale actions from non-admins', async () => {
+		h.admin = false;
+		h.operations = historyWith([failedOperation('stale-1'), failedOperation('stale-2')]);
+		render(LibraryManagementControlRoom);
+
+		await expect.element(page.getByText('2 failed attempts · same album')).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: /Retry .* stale/ }))
+			.not.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('button', { name: /Dismiss .* stale/ }))
+			.not.toBeInTheDocument();
 	});
 });

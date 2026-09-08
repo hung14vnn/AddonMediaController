@@ -11,9 +11,11 @@
 		getSearchBackendQuery
 	} from '$lib/queries/downloads/IndexerQueries.svelte';
 	import { getProwlarrConfigQuery } from '$lib/queries/downloads/ProwlarrQueries.svelte';
+	import { getLibraryRunHistoryQuery } from '$lib/queries/library/LibraryOperationQueries.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 
 	const libQuery = getTargetLibrarySettingsQuery();
+	const runHistoryQuery = getLibraryRunHistoryQuery();
 	const dcQuery = getDownloadClientConfigQuery();
 	const statusQuery = getDownloadClientStatusQuery();
 	const sabQuery = getSabnzbdConfigQuery();
@@ -35,6 +37,21 @@
 	);
 	const mountOk = $derived(statusQuery.data?.mount?.ok === true);
 	const hasAcoustid = $derived(Boolean(libQuery.data?.acoustid_api_key));
+	// F-08: done once ANY scan run has terminalized (completed, cancelled,
+	// superseded, or failed all count - the scan ran). Derived from run
+	// history, never from last_scan (no server scan-path writer exists).
+	const hasTerminalScanRun = $derived(
+		(runHistoryQuery.data?.pages ?? []).some((page) =>
+			(page.items ?? []).some(
+				(run) =>
+					run.terminal_at != null ||
+					run.state === 'completed' ||
+					run.state === 'cancelled' ||
+					run.state === 'superseded_policy_changed' ||
+					run.state === 'failed'
+			)
+		)
+	);
 
 	// Source-agnostic: "configured" if EITHER acquisition path can act, so a Usenet-only
 	// (or Soulseek-only) install isn't nagged about the other. The slskd mount item only
@@ -69,7 +86,7 @@
 		...(sabnzbdEnabled
 			? [{ label: "Mount SABnzbd's downloads folder", done: true, required: false, optional: true }]
 			: []),
-		{ label: 'Run a library scan', done: false, required: false, optional: true },
+		{ label: 'Run a library scan', done: hasTerminalScanRun, required: false, optional: true },
 		{ label: 'Set an AcoustID key', done: hasAcoustid, required: false, optional: true }
 	]);
 

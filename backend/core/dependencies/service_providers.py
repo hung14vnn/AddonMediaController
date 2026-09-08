@@ -386,6 +386,18 @@ def get_library_policy_resolver() -> "LibraryPolicyResolver":
 
 
 @singleton
+def get_library_scan_wakeup() -> Callable[[], None]:
+    """S-01 Hook B early wakeup: notify the scan supervisor after dirty-marking."""
+
+    def _wake() -> None:
+        from .cache_providers import get_native_library_store
+
+        get_native_library_store().work_wakeups.notify("scan")
+
+    return _wake
+
+
+@singleton
 def get_library_policy_service() -> "LibraryPolicyService":
     from services.native.library_policy_service import LibraryPolicyService
 
@@ -394,6 +406,7 @@ def get_library_policy_service() -> "LibraryPolicyService":
         library_db=get_library_db(),
         resolver_getter=get_library_policy_resolver,
         resolver_clearer=get_library_policy_resolver.cache_clear,
+        scan_wakeup=get_library_scan_wakeup(),
     )
 
 
@@ -440,6 +453,7 @@ def get_target_library_policy_service() -> "TargetLibraryPolicyService":
             library_db=None,
             resolver_getter=get_library_policy_resolver,
             resolver_clearer=get_library_policy_resolver.cache_clear,
+            scan_wakeup=get_library_scan_wakeup(),
         ),
         get_target_library_policy_reconciliation_service(),
         get_native_library_store(),
@@ -589,6 +603,14 @@ def get_target_album_identification_service() -> "AlbumIdentificationService":
         AlbumEvidenceEngine(),
         ConditionalFingerprintService(store, get_audio_fingerprinter()),
         invalidate,
+        _schedule_identified_album_work,
+        provider_available=get_mb_provider_availability(),
+        # Step 2.5 (E-02): same canonical handle + opt-in resolver as the
+        # repair lane (get_target_identity_repair_service below).
+        canonical_provider=get_musicbrainz_repository(),
+        edition_opt_in=(
+            get_library_management_profile_service().automatic_edition_acceptance_enabled
+        ),
     )
 
 

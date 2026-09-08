@@ -50,6 +50,8 @@ from models.library_management_canonical import (
 from models.library_management_planning import (
     LibraryManagementPreviewHandle,
     LibraryManagementRootScope,
+    LibraryManagementSelectionPage,
+    LibraryManagementSelectionSubject,
     NormalizedLibraryManagementSelection,
     naming_policy_revision,
 )
@@ -195,6 +197,9 @@ def _service_fixture(
     }
     store.get_catalog_revision.return_value = 0
     store.list_library_management_plan_items.return_value = []
+    store.list_library_management_selection_page.return_value = (
+        LibraryManagementSelectionPage(subjects=(), next_cursor=None, complete=True)
+    )
     store.list_library_management_external_refreshes.return_value = []
     planner = AsyncMock(spec=LibraryManagementPlanner)
     planner.pin_profile.side_effect = LibraryManagementPlanner.pin_profile
@@ -1061,3 +1066,185 @@ async def test_reissue_denies_stale_activation_and_unsealable_previews(
     }
     with pytest.raises(ValidationError, match="cannot be re-issued"):
         await service.reissue_preview_token("job-1", "admin-1")
+
+
+def _scoped_plan_item(
+    *,
+    ordinal: int = 0,
+    track_id: str = "track-1",
+    album_id: str = "album-1",
+    album_revision: int = 5,
+    track_revision: int = 3,
+    stat_revision: str = "100:200",
+    tag_revision: str = "tag-1",
+) -> LibraryManagementPlanItem:
+    return LibraryManagementPlanItem(
+        job_id="job-1",
+        ordinal=ordinal,
+        bundle_ordinal=0,
+        expected_catalog_revision=0,
+        expected_policy_revision="policy",
+        expected_profile_revision="profile",
+        expected_root_id="root-1",
+        expected_relative_path="Album/track.flac",
+        expected_stat_revision=stat_revision,
+        expected_tag_revision=tag_revision,
+        expected_file_fingerprint="fingerprint",
+        source_path_identity="source-identity",
+        desired_document_json='{"fields":[]}',
+        desired_document_hash=hashlib.sha256(b"{}").hexdigest(),
+        eligibility="eligible",
+        created_at=1.0,
+        local_album_id=album_id,
+        local_track_id=track_id,
+        expected_album_revision=album_revision,
+        expected_track_revision=track_revision,
+    )
+
+
+def _scoped_subject(
+    *,
+    track_id: str = "track-1",
+    album_id: str = "album-1",
+    album_revision: int = 5,
+    track_revision: int = 3,
+    stat_revision: str = "100:200",
+    tag_revision: str = "tag-1",
+) -> LibraryManagementSelectionSubject:
+    return LibraryManagementSelectionSubject(
+        ordinal=0,
+        bundle_ordinal=0,
+        bundle_first=True,
+        local_album_id=album_id,
+        local_track_id=track_id,
+        album_revision=album_revision,
+        track_revision=track_revision,
+        root_id="root-1",
+        relative_path="Album/track.flac",
+        file_path="/music/Album/track.flac",
+        file_size_bytes=100,
+        file_mtime_ns=200,
+        stat_revision=stat_revision,
+        tag_revision=tag_revision,
+        availability="indexed",
+        applied_policy="automatic",
+        file_format="flac",
+        disc_number=1,
+        track_number=1,
+        track_title="Track",
+        artist_name="Artist",
+        album_title="Album",
+        album_artist_name="Artist",
+        year=None,
+        album_artwork_version=None,
+    )
+
+
+def _scoped_page(
+    *subjects: LibraryManagementSelectionSubject,
+) -> LibraryManagementSelectionPage:
+    return LibraryManagementSelectionPage(
+        subjects=subjects, next_cursor=None, complete=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_detail_ignores_unrelated_catalog_churn_when_inputs_unchanged(
+    tmp_path: Path,
+) -> None:
+    # Pre-fix behavior: stale_reasons == ["FILE_CHANGED"] (the global catalog
+    # comparison fired on any rescan write, even for untouched albums).
+    service, store, _preferences, _snapshot = _service_fixture(tmp_path)
+    store.list_library_management_plan_items.return_value = [_scoped_plan_item()]
+    store.list_library_management_selection_page.return_value = _scoped_page(
+        _scoped_subject()
+    )
+    store.get_catalog_revision.return_value = 7
+
+    detail = await service.detail("job-1")
+
+    assert detail.stale is False
+    assert detail.stale_reasons == []
+    assert detail.ready_for_confirmation is True
+
+
+@pytest.mark.asyncio
+async def test_detail_refuses_preview_whose_own_input_was_retagged(
+    tmp_path: Path,
+) -> None:
+    # Pre-fix behavior: also ["FILE_CHANGED"] (the global revision had moved
+    # too), so this negative test passes before and after the fix.
+    service, store, _preferences, _snapshot = _service_fixture(tmp_path)
+    store.list_library_management_plan_items.return_value = [_scoped_plan_item()]
+    store.list_library_management_selection_page.return_value = _scoped_page(
+        _scoped_subject(tag_revision="tag-2", track_revision=4)
+    )
+    store.get_catalog_revision.return_value = 7
+
+    detail = await service.detail("job-1")
+
+    assert detail.stale is True
+    assert detail.stale_reasons == ["FILE_CHANGED"]
+    assert detail.ready_for_confirmation is False
+
+
+@pytest.mark.asyncio
+async def test_detail_refuses_retagged_input_even_when_catalog_is_quiet(
+    tmp_path: Path,
+) -> None:
+    # Pre-fix behavior: incorrectly fresh (global revision unchanged, so the
+    # retag went unnoticed); post-fix the per-input comparison refuses.
+    service, store, _preferences, _snapshot = _service_fixture(tmp_path)
+    store.list_library_management_plan_items.return_value = [_scoped_plan_item()]
+    store.list_library_management_selection_page.return_value = _scoped_page(
+        _scoped_subject(tag_revision="tag-2", track_revision=4)
+    )
+    store.get_catalog_revision.return_value = 0
+
+    detail = await service.detail("job-1")
+
+    assert detail.stale is True
+    assert detail.stale_reasons == ["FILE_CHANGED"]
+    assert detail.ready_for_confirmation is False
+
+
+@pytest.mark.asyncio
+async def test_detail_refuses_preview_when_selection_grew_mid_preview(
+    tmp_path: Path,
+) -> None:
+    # A brand-new album with no prior rows appears under the preview's own
+    # roots selection: the plan cannot cover it, so the preview must refuse.
+    # Pre-fix behavior: also ["FILE_CHANGED"] via the moved global revision.
+    service, store, _preferences, _snapshot = _service_fixture(tmp_path)
+    store.list_library_management_plan_items.return_value = [_scoped_plan_item()]
+    store.list_library_management_selection_page.return_value = _scoped_page(
+        _scoped_subject(),
+        _scoped_subject(track_id="track-2", album_id="album-2"),
+    )
+    store.get_catalog_revision.return_value = 7
+
+    detail = await service.detail("job-1")
+
+    assert detail.stale is True
+    assert detail.stale_reasons == ["FILE_CHANGED"]
+    assert detail.ready_for_confirmation is False
+
+
+@pytest.mark.asyncio
+async def test_detail_falls_back_to_global_revision_without_captured_inputs(
+    tmp_path: Path,
+) -> None:
+    # Previews with no plan items yet (still planning, or snapshots predating
+    # per-input capture) behave exactly as today. Pre-fix behavior: identical.
+    service, store, _preferences, _snapshot = _service_fixture(tmp_path)
+    store.list_library_management_plan_items.return_value = []
+
+    store.get_catalog_revision.return_value = 7
+    moved = await service.detail("job-1")
+    assert moved.stale_reasons == ["FILE_CHANGED"]
+    assert moved.ready_for_confirmation is False
+
+    store.get_catalog_revision.return_value = 0
+    quiet = await service.detail("job-1")
+    assert quiet.stale_reasons == []
+    assert quiet.ready_for_confirmation is True

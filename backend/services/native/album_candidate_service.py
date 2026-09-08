@@ -24,6 +24,13 @@ def _consensus(values: list[str]) -> str:
     return Counter(usable).most_common(1)[0][0] if usable else ""
 
 
+# M-06: `placeholder`/`absent` claims abstain from recall - only present
+# (`tag`/`parsed`) claims drive album/artist consensus and recording-search
+# sampling, so newly-`insufficient_evidence` groups never burn
+# sibling-trial fetches on stems and `"Unknown Artist"` garbage.
+_PRESENT_PROVENANCE = ("tag", "parsed")
+
+
 class AlbumCandidateService:
     def __init__(self, provider: IdentificationProviderProtocol) -> None:
         self._provider = provider
@@ -83,8 +90,20 @@ class AlbumCandidateService:
         if len(embedded_groups) == 1:
             ids.append((next(iter(embedded_groups)), "embedded"))
 
-        album = _consensus([track.album_title for track in tracks])
-        artist = _consensus([track.album_artist_name for track in tracks])
+        album = _consensus(
+            [
+                track.album_title
+                for track in tracks
+                if track.album_title_provenance in _PRESENT_PROVENANCE
+            ]
+        )
+        artist = _consensus(
+            [
+                track.album_artist_name
+                for track in tracks
+                if track.album_artist_provenance in _PRESENT_PROVENANCE
+            ]
+        )
         if album and artist:
             if checkpoint is not None and not await checkpoint():
                 return []
@@ -110,7 +129,12 @@ class AlbumCandidateService:
             _distinct_non_fp = len({identifier for identifier, source in ids if source != "cached_fingerprint"})
             _sample_limit = 2 if (album and artist and _distinct_non_fp >= 2) else TRACK_SAMPLE_LIMIT
             samples = sorted(
-                (track for track in tracks if track.title),
+                (
+                    track
+                    for track in tracks
+                    if track.title
+                    and track.title_provenance in _PRESENT_PROVENANCE
+                ),
                 key=lambda track: (
                     track.disc_number,
                     track.track_number,

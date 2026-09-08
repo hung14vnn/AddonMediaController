@@ -60,6 +60,7 @@ class ReviewListResponse(AppStruct):
     counts_by_state: dict[str, int] = msgspec.field(default_factory=dict)
     counts_by_reason: dict[str, int] = msgspec.field(default_factory=dict)
     counts_by_reason_filtered: dict[str, int] = msgspec.field(default_factory=dict)
+    counts_by_state_filtered: dict[str, int] = msgspec.field(default_factory=dict)
     catalog_revision: int = 0
 
 

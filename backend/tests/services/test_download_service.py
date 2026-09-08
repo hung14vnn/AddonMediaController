@@ -512,6 +512,24 @@ async def test_request_album_explicit_edition_never_uses_fallback_resolver():
 
 
 @pytest.mark.asyncio
+async def test_request_album_pin_lookup_failure_never_blocks_request():
+    """E-03: the edition-pin read is a best-effort soft target - when the pin
+    store itself fails, the request still proceeds unpinned (release_mbid None)
+    instead of failing."""
+    service, store, *_ = _make_service()
+    service._pins = AsyncMock(
+        get=AsyncMock(side_effect=RuntimeError("pin store down"))
+    )
+    store.get_active_task_for_album.return_value = None
+
+    result = await service.request_album("u1", "rg", "Artist", "Album", year=1997)
+
+    assert result == "task1"
+    service._pins.get.assert_awaited_once_with("rg")
+    assert store.create_task.await_args.kwargs["release_mbid"] is None
+
+
+@pytest.mark.asyncio
 async def test_request_album_mb_failure_starts_no_download_without_exact_identity():
     service, store, *_ = _make_service(album_service=_single_album_service(fail=True))
     store.get_active_task_for_album.return_value = None

@@ -198,22 +198,38 @@ export const applyLibraryManagementPreviewMutation = () =>
 
 export const reissueLibraryManagementPreviewMutation = () =>
 	createMutation(() => ({
-		mutationFn: (jobId: string) =>
+		mutationFn: (input: { jobId: string; silent?: boolean }) =>
 			api.global.post<LibraryManagementPreviewReissueResponse>(
-				API.libraryManagement.reissuePreview(jobId)
+				API.libraryManagement.reissuePreview(input.jobId)
 			),
-		onError: showActionError('Could not resume this management preview')
+		onError: (error: Error, input: { jobId: string; silent?: boolean }) => {
+			if (!input.silent) showActionError('Could not resume this management preview')(error);
+		}
 	}));
 
 export const discardLibraryManagementPreviewMutation = () =>
 	createMutation(() => ({
-		mutationFn: (input: { jobId: string; request: LibraryManagementDiscardRequest }) =>
+		mutationFn: (input: {
+			jobId: string;
+			request: LibraryManagementDiscardRequest;
+			silent?: boolean;
+		}) =>
 			api.global.post<LibraryManagementPreviewDetailResponse>(
 				API.libraryManagement.discardPreview(input.jobId),
 				input.request
 			),
-		onSuccess: showQueued('Organization preview discarded'),
-		onError: showActionError('Could not discard this management preview')
+		onSuccess: async (
+			_response: LibraryManagementPreviewDetailResponse,
+			input: { jobId: string; request: LibraryManagementDiscardRequest; silent?: boolean }
+		) => {
+			if (!input.silent) await showQueued('Organization preview discarded')();
+		},
+		onError: (
+			error: Error,
+			input: { jobId: string; request: LibraryManagementDiscardRequest; silent?: boolean }
+		) => {
+			if (!input.silent) showActionError('Could not discard this management preview')(error);
+		}
 	}));
 
 export const createLibraryManagementUndoPreviewMutation = () =>

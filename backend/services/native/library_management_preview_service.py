@@ -54,7 +54,10 @@ from core.exceptions import (
     ValidationError,
 )
 from infrastructure.library_management_blob_store import LibraryManagementBlobStore
-from infrastructure.persistence.native_library_store import NativeLibraryStore
+from infrastructure.persistence.native_library_store import (
+    MANAGEMENT_PERSISTENCE_BATCH_SIZE,
+    NativeLibraryStore,
+)
 from infrastructure.audio.metadata_engine import AudioMetadataEngine
 from models.library_management import FILE_CHANGED, POLICY_CHANGED, PROFILE_CHANGED
 from models.library_management import (
@@ -66,6 +69,7 @@ from models.library_management import (
 from models.library_management_planning import (
     LibraryManagementCatalogFilter,
     LibraryManagementSelection,
+    LibraryManagementSelectionSubject,
     NormalizedLibraryManagementSelection,
     PinnedLibraryManagementProfile,
     naming_policy_revision,
@@ -943,9 +947,91 @@ class LibraryManagementPreviewService:
         )
         if policy.policy_revision != snapshot.policy_revision:
             reasons.append(POLICY_CHANGED)
-        if await self._store.get_catalog_revision() != snapshot.catalog_revision:
+        if await self._preview_inputs_moved(snapshot):
             reasons.append(FILE_CHANGED)
         return reasons
+
+    async def _preview_inputs_moved(
+        self, snapshot: LibraryManagementJobSnapshot
+    ) -> bool:
+        # Scoped freshness: compare the live per-input revisions of exactly
+        # the preview's own selection against the tag/file revisions captured
+        # in its plan items, so unrelated albums' scans stop invalidating a
+        # preview. No new snapshot field: the plan items already pin one
+        # expected revision set per selected track. Previews with nothing
+        # captured yet (still planning) and snapshots whose selection cannot
+        # be decoded keep the historical global catalog comparison.
+        try:
+            selection = msgspec.json.decode(
+                snapshot.selection_json.encode("utf-8"),
+                type=NormalizedLibraryManagementSelection,
+            )
+        except (msgspec.DecodeError, msgspec.ValidationError):
+            return await self._catalog_moved(snapshot)
+        expected_by_track: dict[str, LibraryManagementPlanItem] = {}
+        after_ordinal = -1
+        while True:
+            items = await self._store.list_library_management_plan_items(
+                snapshot.job_id,
+                after_ordinal=after_ordinal,
+                limit=MANAGEMENT_PERSISTENCE_BATCH_SIZE,
+            )
+            for item in items:
+                if item.local_track_id is not None:
+                    expected_by_track.setdefault(item.local_track_id, item)
+            if len(items) < MANAGEMENT_PERSISTENCE_BATCH_SIZE:
+                break
+            after_ordinal = items[-1].ordinal
+        if not expected_by_track:
+            return await self._catalog_moved(snapshot)
+        live_track_ids: set[str] = set()
+        cursor = None
+        while True:
+            page = await self._store.list_library_management_selection_page(
+                selection,
+                cursor=cursor,
+                limit=MANAGEMENT_PERSISTENCE_BATCH_SIZE,
+            )
+            for subject in page.subjects:
+                live_track_ids.add(subject.local_track_id)
+                expected = expected_by_track.get(subject.local_track_id)
+                if expected is None or self._subject_moved(expected, subject):
+                    return True
+            if page.complete or not page.subjects:
+                break
+            cursor = page.next_cursor
+            if cursor is None:
+                break
+        return len(live_track_ids) != len(expected_by_track)
+
+    @staticmethod
+    def _subject_moved(
+        expected: LibraryManagementPlanItem,
+        subject: LibraryManagementSelectionSubject,
+    ) -> bool:
+        # A None album/track revision is not pinned, so it is not compared.
+        if (
+            expected.expected_album_revision is not None
+            and expected.expected_album_revision != subject.album_revision
+        ):
+            return True
+        if (
+            expected.expected_track_revision is not None
+            and expected.expected_track_revision != subject.track_revision
+        ):
+            return True
+        if expected.expected_stat_revision != subject.stat_revision:
+            return True
+        if expected.expected_tag_revision != subject.tag_revision:
+            return True
+        if expected.expected_root_id != subject.root_id:
+            return True
+        if expected.expected_relative_path != subject.relative_path:
+            return True
+        return False
+
+    async def _catalog_moved(self, snapshot: LibraryManagementJobSnapshot) -> bool:
+        return await self._store.get_catalog_revision() != snapshot.catalog_revision
 
     @staticmethod
     def _selection(value) -> LibraryManagementSelection:

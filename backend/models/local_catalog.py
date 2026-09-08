@@ -7,6 +7,7 @@ from typing import Literal
 import msgspec
 
 from infrastructure.msgspec_fastapi import AppStruct
+from models.identification import TrackProvenance
 
 ArtistKind = Literal["person", "group", "various_artists", "unknown"]
 Availability = Literal["indexed", "excluded", "missing"]
@@ -86,6 +87,9 @@ class LocalTrack(AppStruct):
     album_artist_name: str | None = None
     tag_album_title: str | None = None
     tag_album_artist_name: str | None = None
+    title_provenance: TrackProvenance = "absent"
+    album_title_provenance: TrackProvenance = "absent"
+    album_artist_provenance: TrackProvenance = "absent"
     year: int | None = None
     genre: str | None = None
     title_sort: str | None = None

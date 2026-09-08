@@ -12,6 +12,8 @@ import msgspec
 from api.v1.schemas.settings import (
     UserPreferences,
     LibrarySyncSettings,
+    LibraryScanDirtyScopes,
+    LibraryScanFilesystemWatcherSettings,
     LibraryScanScheduleSettings,
     DownloadClientConnectionSettings,
     SpotiflacConnectionSettings,
@@ -278,6 +280,58 @@ class PreferencesService:
         except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to save library scan schedule: {e}")
             raise ConfigurationError(f"Failed to save library scan schedule: {e}")
+
+    def get_library_scan_dirty_scopes(self) -> LibraryScanDirtyScopes:
+        return self._get_section("library_scan_dirty_scopes", LibraryScanDirtyScopes)
+
+    def mark_library_scan_dirty_scopes(self, scope_ids: list[str]) -> None:
+        """Union scope ids into the Hook B dirty-mark hints (S-01)."""
+        if not scope_ids:
+            return
+        try:
+            current = set(self.get_library_scan_dirty_scopes().scope_ids)
+            merged = sorted(current | set(scope_ids))
+            if merged != sorted(current):
+                self._save_section(
+                    "library_scan_dirty_scopes", LibraryScanDirtyScopes(scope_ids=merged)
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to mark library scan dirty scopes: {e}")
+            raise ConfigurationError(f"Failed to mark library scan dirty scopes: {e}")
+
+    def clear_library_scan_dirty_scopes(self, scope_ids: list[str]) -> None:
+        """Drop exactly the consumed ids; marks added concurrently survive."""
+        if not scope_ids:
+            return
+        try:
+            current = set(self.get_library_scan_dirty_scopes().scope_ids)
+            remaining = sorted(current - set(scope_ids))
+            if remaining != sorted(current):
+                self._save_section(
+                    "library_scan_dirty_scopes",
+                    LibraryScanDirtyScopes(scope_ids=remaining),
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to clear library scan dirty scopes: {e}")
+            raise ConfigurationError(f"Failed to clear library scan dirty scopes: {e}")
+
+    def get_library_scan_filesystem_watcher(
+        self,
+    ) -> LibraryScanFilesystemWatcherSettings:
+        return self._get_section(
+            "library_scan_filesystem_watcher", LibraryScanFilesystemWatcherSettings
+        )
+
+    def save_library_scan_filesystem_watcher(
+        self, watcher: LibraryScanFilesystemWatcherSettings
+    ) -> None:
+        try:
+            self._save_section("library_scan_filesystem_watcher", watcher)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to save library scan filesystem watcher: {e}")
+            raise ConfigurationError(
+                f"Failed to save library scan filesystem watcher: {e}"
+            )
 
     def get_advanced_settings(self) -> AdvancedSettings:
         return self._get_section("advanced_settings", AdvancedSettings)

@@ -825,7 +825,7 @@ describe('LibraryManagementPreviewPage', () => {
 		await expect
 			.element(page.getByText('Applying is the first write action · no files changed'))
 			.toBeVisible();
-		await vi.waitFor(() => expect(h.reissue).toHaveBeenCalledWith('preview-1'));
+		await vi.waitFor(() => expect(h.reissue).toHaveBeenCalledWith({ jobId: 'preview-1' }));
 		await expect
 			.element(page.getByRole('button', { name: /Write tags and organize 1 file/ }))
 			.toBeEnabled();
@@ -860,7 +860,7 @@ describe('LibraryManagementPreviewPage', () => {
 		await expect
 			.element(page.getByText(/Apply is disabled: the private apply token is missing/))
 			.toBeVisible();
-		expect(h.reissue).toHaveBeenCalledWith('preview-1');
+		expect(h.reissue).toHaveBeenCalledWith({ jobId: 'preview-1' });
 		await expect
 			.element(page.getByRole('button', { name: /Write tags and organize/ }))
 			.toBeDisabled();
@@ -1273,5 +1273,154 @@ describe('LibraryManagementPreviewPage', () => {
 		await expect
 			.element(page.getByRole('link', { name: 'Library settings' }))
 			.toHaveAttribute('href', '/settings?tab=library');
+	});
+
+	it('shows neutral provider copy on dead previews instead of claiming pinned metadata', async () => {
+		// Pre-fix: the badge derived only from summary.reasons, so a stale preview with no
+		// deferral reasons fell through to "Required metadata pinned".
+		h.preview = {
+			data: detail({
+				stale: true,
+				stale_reasons: ['PROFILE_CHANGED'],
+				ready_for_confirmation: false
+			}),
+			isLoading: false,
+			isError: false
+		};
+		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect.element(page.getByText('Provider status unavailable')).toBeVisible();
+		await expect.element(page.getByText('Required metadata pinned')).not.toBeInTheDocument();
+	});
+
+	it('names the single deferred source in the header badge instead of the blanket sentence', async () => {
+		// Pre-fix: any OPTIONAL_ENRICHMENT_DEFERRED reason rendered the blanket
+		// "Optional enrichment deferred" with no source key.
+		h.preview = {
+			data: detail({
+				summary: {
+					...(detail().summary as Record<string, unknown>),
+					eligible_count: 1,
+					warning_count: 1,
+					blocked_count: 0,
+					reasons: { OPTIONAL_ENRICHMENT_DEFERRED: 1 },
+					deferred_sources: { 'genre:listenbrainz': 11 }
+				}
+			}),
+			isLoading: false,
+			isError: false
+		};
+		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect.element(page.getByText('Deferred: genre:listenbrainz ×11')).toBeVisible();
+		await expect
+			.element(page.getByText('Optional enrichment deferred', { exact: true }))
+			.not.toBeInTheDocument();
+	});
+
+	it('shows the deferred-warnings breakdown for appliable previews, not only zero-appliable ones', async () => {
+		// Pre-fix: the Deferred warnings line lived inside the zero-appliable block, so
+		// appliable-with-warnings previews never showed the per-source breakdown.
+		h.preview = {
+			data: detail({
+				summary: {
+					...(detail().summary as Record<string, unknown>),
+					eligible_count: 1,
+					warning_count: 1,
+					blocked_count: 0,
+					reasons: { OPTIONAL_ENRICHMENT_DEFERRED: 1 },
+					deferred_sources: { lrclib: 2 }
+				}
+			}),
+			isLoading: false,
+			isError: false
+		};
+		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect
+			.element(page.getByText('Nothing in this preview can be applied.'))
+			.not.toBeInTheDocument();
+		await expect.element(page.getByText(/Deferred warnings:/)).toBeVisible();
+		await expect.element(page.getByText(/lrclib \(2\)/)).toBeVisible();
+	});
+
+	it('names the most frequent deferred source in the header badge', async () => {
+		// Pre-fix: the blanket sentence hid every source key, so multi-source deferrals
+		// never surfaced which source dominated.
+		h.preview = {
+			data: detail({
+				summary: {
+					...(detail().summary as Record<string, unknown>),
+					eligible_count: 1,
+					warning_count: 2,
+					blocked_count: 0,
+					reasons: { OPTIONAL_ENRICHMENT_DEFERRED: 2 },
+					deferred_sources: { 'lyrics:lrclib': 3, 'genre:listenbrainz': 11 }
+				}
+			}),
+			isLoading: false,
+			isError: false
+		};
+		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect.element(page.getByText('Deferred: genre:listenbrainz ×11')).toBeVisible();
+	});
+
+	it('qualifies deferral reasons as still-appliable warnings with the deferred source', async () => {
+		// Pre-fix: the dossier Top reason and inspector banner rendered bare
+		// "Optional enrichment deferred" with blocker tone for warnings-only rows.
+		h.preview = {
+			data: detail({
+				summary: {
+					...(detail().summary as Record<string, unknown>),
+					eligible_count: 0,
+					warning_count: 1,
+					blocked_count: 0,
+					reasons: { OPTIONAL_ENRICHMENT_DEFERRED: 1 },
+					deferred_sources: { 'genre:listenbrainz': 1 }
+				}
+			}),
+			isLoading: false,
+			isError: false
+		};
+		h.items = {
+			...h.items,
+			data: {
+				pages: [
+					{
+						items: [
+							{
+								...collisionItem,
+								eligibility: 'warning',
+								reason_code: 'OPTIONAL_ENRICHMENT_DEFERRED',
+								collisions: [],
+								diff: { ...collisionItem.diff, deferred_sources: ['genre:listenbrainz'] }
+							}
+						],
+						has_more: false,
+						next_after_ordinal: null
+					}
+				]
+			}
+		};
+		render(LibraryManagementPreviewPage, { jobId: 'preview-1' });
+
+		await expect
+			.element(
+				page.getByText(
+					'Top reason: Optional enrichment deferred · still applicable with warnings (1)'
+				)
+			)
+			.toBeVisible();
+		await page.getByRole('button', { name: 'Inspect exact diff for Track' }).click();
+		await expect
+			.element(
+				page
+					.getByTestId('management-audit-inspector')
+					.getByText(
+						'Optional enrichment deferred · still applicable with warnings (genre:listenbrainz)'
+					)
+			)
+			.toBeVisible();
 	});
 });

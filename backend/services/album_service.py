@@ -1240,6 +1240,8 @@ class AlbumService:
             return await self._release_pins.get(release_group_id)
         except ConflictError:
             # Reads degrade so shared-RG pages still list editions; writes stay strict.
+            # (E-03: on target wiring the adapter raises this when several indexed
+            # copies share the RG - see the wiring table in repositories/edition_policy.py.)
             return None
 
     async def resolve_edition(self, release_group_id: str) -> str | None:

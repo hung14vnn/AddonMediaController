@@ -255,7 +255,9 @@
 										Held by a blocked file in this release (Release {dossier.bundleOrdinal + 1}) · {top.label}
 										({top.count.toLocaleString()})
 									{:else}
-										Top reason: {top.label} ({top.count.toLocaleString()})
+										Top reason: {top.code === 'OPTIONAL_ENRICHMENT_DEFERRED'
+											? 'Optional enrichment deferred · still applicable with warnings'
+											: top.label} ({top.count.toLocaleString()})
 									{/if}
 								</p>
 							{/if}

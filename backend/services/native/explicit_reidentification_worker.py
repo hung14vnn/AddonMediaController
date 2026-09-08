@@ -199,12 +199,21 @@ class ExplicitReidentificationWorker:
                     FINGERPRINTER_VERSION,
                 )
                 if cached is not None:
-                    cached_release_groups.extend(cached.release_group_ids)
+                    # 4.10b re-id lane (identify family, mirrors lane A): a partial decode never seeds support
+                    # or recall alone - it needs descriptive corroboration
+                    # (tags + quorum still identify; full prints flow
+                    # through unchanged below).
+                    cached_partial = bool(
+                        getattr(cached, "partial_decode", False)
+                    )
+                    if not cached_partial:
+                        cached_release_groups.extend(cached.release_group_ids)
                     if (
                         not track.recording_mbid
                         and not track.fingerprint_recording_mbid
                         and cached.state == "matched"
                         and cached.recording_mbid
+                        and not cached_partial
                     ):
                         track.fingerprint_recording_mbid = cached.recording_mbid
             provider_recall_used = False
@@ -317,6 +326,18 @@ class ExplicitReidentificationWorker:
                         track.recording_mbid or track.fingerprint_recording_mbid
                     ) and len(supported_recordings) != 1
                     if not needed:
+                        # 4.9: route unneeded tracks through the service so
+                        # it writes/reuses the write-once-per-stat_revision
+                        # skipped row. did_work stays False, so the budget
+                        # stays free.
+                        await self._fingerprints.fingerprint_if_needed(
+                            local_track_id=track.local_track_id,
+                            path=Path(str(row["file_path"])),
+                            stat_revision=str(row["stat_revision"]),
+                            needed=False,
+                            now=timestamp,
+                            checkpoint=checkpoint,
+                        )
                         continue
                     # F-042: a disabled row regenerates once the key returns,
                     # so it stays budget-consuming; matched/no_match/skipped
@@ -326,21 +347,33 @@ class ExplicitReidentificationWorker:
                         requested >= MAX_NEW_FINGERPRINTS_PER_ATTEMPT
                     ):
                         break
-                    outcome = await self._fingerprints.fingerprint_if_needed(
-                        local_track_id=track.local_track_id,
-                        path=Path(str(row["file_path"])),
-                        stat_revision=str(row["stat_revision"]),
-                        needed=needed,
-                        now=timestamp,
-                        checkpoint=checkpoint,
+                    outcome, did_work = (
+                        await self._fingerprints.fingerprint_if_needed(
+                            local_track_id=track.local_track_id,
+                            path=Path(str(row["file_path"])),
+                            stat_revision=str(row["stat_revision"]),
+                            needed=needed,
+                            now=timestamp,
+                            checkpoint=checkpoint,
+                        )
                     )
                     # F-042: terminal cache hits did no fpcalc/lookup work and
                     # must not starve later tracks of the budget slots.
-                    if not cache_hit:
+                    # F-07: `did_work` is the only honest no-work signal - a
+                    # reused cached `failed` row reads cache_hit=False but did
+                    # no work either.
+                    if did_work:
                         requested += 1
                     if not await checkpoint():
                         return await halt()
-                    if outcome is not None and outcome.state == "failed":
+                    # F-07: a reused cached failure bypasses the failure raise
+                    # - the defer already happened (if ever) on the attempt
+                    # that did the work. Fresh failures keep raising.
+                    if (
+                        outcome is not None
+                        and outcome.state == "failed"
+                        and did_work
+                    ):
                         if outcome.failure_code == "FINGERPRINT_LOCAL_FAILURE":
                             # F-MATCH-04: fpcalc/file failures are LOCAL
                             # transients - carry the honest reason instead of
@@ -352,12 +385,24 @@ class ExplicitReidentificationWorker:
                             "Fingerprint evidence is temporarily unavailable."
                         )
                     if outcome is not None and outcome.recording_mbid:
-                        if (
-                            not track.recording_mbid
-                            and not track.fingerprint_recording_mbid
-                        ):
-                            track.fingerprint_recording_mbid = outcome.recording_mbid
-                        new_release_groups.extend(outcome.release_group_ids)
+                        # 4.10b re-id lane (identify family, mirrors lane A): partial-derived MBIDs cannot seed
+                        # supported_recordings or recall alone. Full
+                        # prints (False) keep today's behavior; short
+                        # tracks that only ever yield partials still
+                        # identify via tags + quorum.
+                        if bool(getattr(outcome, "partial_decode", False)):
+                            pass
+                        else:
+                            if (
+                                not track.recording_mbid
+                                and not track.fingerprint_recording_mbid
+                            ):
+                                track.fingerprint_recording_mbid = (
+                                    outcome.recording_mbid
+                                )
+                            new_release_groups.extend(
+                                outcome.release_group_ids
+                            )
                 if new_release_groups:
                     candidates = await self._candidates.recall(
                         tracks,

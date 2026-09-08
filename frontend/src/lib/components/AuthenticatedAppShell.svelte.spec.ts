@@ -433,6 +433,7 @@ describe('AuthenticatedAppShell mobile overflow menu (#182)', () => {
 		expect(hrefs).toContain('/dn/requests');
 		expect(hrefs).toContain('/dn/library/management');
 		expect(hrefs).toContain('/dn/requests?tab=approvals');
+		expect(hrefs).toContain('/dn/library/review');
 	});
 
 	it('hides Settings and admin entries from non-admins', async () => {
@@ -450,6 +451,7 @@ describe('AuthenticatedAppShell mobile overflow menu (#182)', () => {
 		expect(text).not.toContain('Settings');
 		expect(text).not.toContain('Approvals');
 		expect(text).not.toContain('Library Management');
+		expect(text).not.toContain('Review Queue');
 		expect(text).toContain('Downloads');
 		expect(text).toContain('Playlists');
 	});

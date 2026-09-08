@@ -25,8 +25,7 @@
 		policy: page.url.searchParams.get('policy') ?? undefined,
 		search: page.url.searchParams.get('q') ?? undefined,
 		sort: page.url.searchParams.get('sort') ?? 'newest',
-		candidateAvailable:
-			page.url.searchParams.get('candidates') === 'only' ? true : undefined,
+		candidateAvailable: page.url.searchParams.get('candidates') === 'only' ? true : undefined,
 		hideMatching: page.url.searchParams.get('matching') === 'hide' ? true : undefined
 	});
 	const query = getLibraryReviewsQuery(() => filters);
@@ -50,13 +49,41 @@
 		Object.fromEntries((policyTree.data?.roots ?? []).map((root) => [root.id, root.label]))
 	);
 	const waitingCount = $derived(
-		activityQuery?.data?.items.find((item) => item.kind === 'identification')
-			?.waiting_count ?? 0
+		activityQuery?.data?.items.find((item) => item.kind === 'identification')?.waiting_count ?? 0
 	);
 	const reasonCounts = $derived(
 		response?.counts_by_reason_filtered ?? response?.counts_by_reason ?? {}
 	);
 	const reasonCountsScoped = $derived(response?.counts_by_reason_filtered !== undefined);
+	// N-02: per-state depths render from the scoped field, mirroring the reason
+	// buckets. `counts_by_state` is a global GROUP BY with no WHERE, so it is
+	// only the unscoped fallback (labelled "All-time totals" like reasons).
+	const stateOrder = ['needs_review', 'edition_to_confirm', 'keep_tagged', 'excluded', 'resolved'];
+	const stateLabels: Record<string, string> = {
+		needs_review: 'Needs review',
+		edition_to_confirm: 'Edition to confirm',
+		keep_tagged: 'Keep as tagged',
+		excluded: 'Excluded',
+		resolved: 'Resolved'
+	};
+	const stateCounts = $derived(
+		response?.counts_by_state_filtered ?? response?.counts_by_state ?? {}
+	);
+	const stateCountsScoped = $derived(response?.counts_by_state_filtered !== undefined);
+	const stateEntries = $derived(
+		Object.entries(stateCounts).sort(
+			([first], [second]) => orderOfState(first) - orderOfState(second)
+		)
+	);
+
+	function orderOfState(state: string): number {
+		const index = stateOrder.indexOf(state);
+		return index === -1 ? stateOrder.length : index;
+	}
+
+	function stateLabel(code: string): string {
+		return stateLabels[code] ?? code.replaceAll('_', ' ');
+	}
 	const isConfirmLane = $derived(filters.state === 'edition_to_confirm');
 	const reasonEntries = $derived(
 		Object.entries(reasonCounts)
@@ -112,6 +139,14 @@
 		});
 	}
 
+	function selectState(code: string): void {
+		updateUrl({
+			...filters,
+			state: filters.state === code ? undefined : code,
+			cursor: undefined
+		});
+	}
+
 	function openBucketBulk(code: string, action: BulkReviewAction): void {
 		updateUrl({ ...filters, reasonCode: code, cursor: undefined });
 		selectedIds = [];
@@ -162,8 +197,8 @@
 			<div>
 				<strong>First scan in progress — large numbers are normal.</strong>
 				<p class="text-sm">
-					Files stay playable while matching runs. 1) Wait for Matching to drain 2) Bulk-keep
-					rows with no result 3) Work conflicting or ambiguous rows.
+					Files stay playable while matching runs. 1) Wait for Matching to drain 2) Bulk-keep rows
+					with no result 3) Work conflicting or ambiguous rows.
 				</p>
 			</div>
 		</div>
@@ -173,11 +208,35 @@
 			<div>
 				<strong>Edition to confirm — release group pinned, pressing unproven.</strong>
 				<p class="text-sm">
-					Title and artist matched; year, country and cover are not proven. Open a row to
-					accept the exact edition or pick manually. These rows never count toward Needs
-					review.
+					Title and artist matched; year, country and cover are not proven. Open a row to accept the
+					exact edition or pick manually. These rows never count toward Needs review.
 				</p>
 			</div>
+		</div>
+	{/if}
+	{#if stateEntries.length}
+		<div
+			class="mt-4 rounded-box border border-base-content/10 bg-base-100 p-3"
+			aria-label="Review state depths"
+		>
+			<div class="flex flex-wrap items-center gap-2">
+				<span class="text-sm font-medium">States</span>
+				{#if !stateCountsScoped}<span class="text-xs text-base-content/55">All-time totals</span
+					>{/if}
+			</div>
+			<ul class="mt-2 space-y-1.5">
+				{#each stateEntries as [code, count] (code)}
+					{@const active = filters.state === code}
+					<li class="flex flex-wrap items-center gap-2">
+						<button
+							class="badge badge-lg {active ? 'badge-primary' : 'badge-outline'}"
+							aria-pressed={active}
+							onclick={() => selectState(code)}
+							>{stateLabel(code)} · {count.toLocaleString()}</button
+						>
+					</li>
+				{/each}
+			</ul>
 		</div>
 	{/if}
 	{#if reasonEntries.length}
@@ -203,12 +262,10 @@
 						{#if count > 0 && code !== 'EDITION_UNCERTAIN'}
 							<button
 								class="btn btn-ghost btn-xs"
-								onclick={() => openBucketBulk(code, 'keep_tagged')}
-								>Bulk keep...</button
+								onclick={() => openBucketBulk(code, 'keep_tagged')}>Bulk keep...</button
 							>
-							<button
-								class="btn btn-ghost btn-xs"
-								onclick={() => openBucketBulk(code, 'retry')}>Bulk retry...</button
+							<button class="btn btn-ghost btn-xs" onclick={() => openBucketBulk(code, 'retry')}
+								>Bulk retry...</button
 							>
 						{/if}
 					</li>

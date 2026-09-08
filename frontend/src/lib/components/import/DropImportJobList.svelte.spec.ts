@@ -21,7 +21,8 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 		get user() {
 			return { id: 'user-1' };
 		}
-	}
+	},
+	LAST_USER_ID_KEY: 'test:last-user'
 }));
 
 vi.mock('$lib/queries/import/DropImportQueries.svelte', () => ({
@@ -116,6 +117,35 @@ describe('DropImportJobList', () => {
 		await expect.element(page.getByText('Needs a match')).toBeVisible();
 		await page.getByRole('button', { name: 'Discard Mystery Folder' }).click();
 		expect(h.discard).toHaveBeenCalledWith(2);
+	});
+
+	it('shows the 90-day retention countdown on jobs with unmatched items', async () => {
+		const reviewItem = {
+			id: 4,
+			folder_name: 'Mystery Folder',
+			status: 'needs_review' as const,
+			updated_at: Date.now() / 1000,
+			release_group_mbid: null,
+			album_title: null,
+			artist_name: null,
+			files_total: 3,
+			files_imported: 0,
+			detail: null
+		};
+		h.jobs = [
+			job({ created_at: Date.now() / 1000 - 80 * 86400, items: [reviewItem] }),
+			job({ id: 'job-fresh', created_at: Date.now() / 1000, items: [{ ...reviewItem, id: 5 }] })
+		];
+		render(DropImportJobList);
+		await expect.element(page.getByText('10 days left', { exact: false })).toBeVisible();
+		await expect.element(page.getByText('90 days left', { exact: false })).toBeVisible();
+	});
+
+	it('shows no retention note when nothing awaits review', async () => {
+		h.jobs = [job()];
+		render(DropImportJobList);
+		await expect.element(page.getByText('Imported', { exact: true })).toBeVisible();
+		await expect.element(page.getByText('days left', { exact: false })).not.toBeInTheDocument();
 	});
 
 	it('opens the match modal from the Match button', async () => {

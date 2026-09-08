@@ -86,7 +86,7 @@ class LegacyPendingMigrationService:
         if not await self._store.has_completed_legacy_migration_marker():
             return None
         counts = await self._store.get_pending_legacy_counts()
-        if not any(value > 0 for value in counts.values()):
+        if not any(value > 0 for value in counts["retryable"].values()):
             return None
         # NEW-MIG-01: include the bounded pending-input revision in the identity.
         # The migrator's own source/root revision checks remain the final

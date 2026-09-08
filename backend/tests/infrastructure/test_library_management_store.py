@@ -235,6 +235,38 @@ async def test_active_administrative_work_includes_management_context(
 
 
 @pytest.mark.asyncio
+async def test_active_administrative_work_hides_superseded_previews(
+    store: NativeLibraryStore,
+) -> None:
+    async def failed_job(job_id: str, terminal_code: str) -> None:
+        await store.create_library_management_job(
+            OperationJob(
+                id=job_id,
+                kind="library_management",
+                input_catalog_revision=0,
+                created_at=10,
+            ),
+            _job_snapshot(job_id),
+        )
+        claimed = await store.claim_operation_job(
+            "worker", now=10, lease_seconds=60, kind="library_management"
+        )
+        assert claimed is not None and claimed["id"] == job_id
+        await store.finish_operation_job(
+            job_id, "worker", state="failed", terminal_code=terminal_code, now=11
+        )
+
+    await failed_job("management-stale", "STALE_INPUT")
+    await failed_job("management-real", "PLANNING_FAILED")
+
+    rows = await store.list_active_administrative_library_work(failed_after=0)
+
+    ids = {value["id"] for value in rows}
+    assert "management-stale" not in ids
+    assert "management-real" in ids
+
+
+@pytest.mark.asyncio
 async def test_planning_progress_does_not_invalidate_operation_controls(
     store: NativeLibraryStore,
 ) -> None:
@@ -638,9 +670,15 @@ async def test_ready_management_preview_can_be_discarded_once_without_deleting_a
 
 
 @pytest.mark.asyncio
-async def test_management_apply_rejects_token_expiry_and_catalog_staleness(
+async def test_management_apply_rejects_token_expiry_and_input_movement(
     store: NativeLibraryStore, db_path: Path
 ) -> None:
+    # Slice E: the apply path now compares the pinned per-input revisions
+    # instead of the global catalog counter, so the stale leg simulates a
+    # genuine concurrent retag of the preview's own track (tag_revision
+    # moves plus the catalog bump a real retag would cause). Pre-fix this
+    # rejected via the global comparison; post-fix it rejects via the
+    # scoped per-input comparison.
     token_hash = hashlib.sha256(b"preview-token").hexdigest()
     for job_id, expires_at in (("expired-apply", 19), ("stale-apply", 100)):
         await store.create_library_management_job(
@@ -681,6 +719,9 @@ async def test_management_apply_rejects_token_expiry_and_catalog_staleness(
         connection.execute(
             "UPDATE library_catalog_revision SET value=value+1 WHERE singleton=1"
         )
+        connection.execute(
+            "UPDATE local_tracks SET tag_revision='tag-2' WHERE id='track-1'"
+        )
     with pytest.raises(StaleRevisionError, match="catalog changed"):
         await store.begin_library_management_apply(
             "stale-apply",
@@ -689,6 +730,135 @@ async def test_management_apply_rejects_token_expiry_and_catalog_staleness(
             idempotency_key="stale-key",
             now=20,
         )
+
+
+@pytest.mark.asyncio
+async def test_management_apply_proceeds_despite_unrelated_catalog_churn(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    # Slice E load-bearing positive: the preview's own inputs are untouched
+    # and only the global catalog counter moved (unrelated churn landing
+    # between gate and apply). Pre-fix this raised StaleRevisionError
+    # ("catalog changed"); post-fix the apply proceeds.
+    job_id = "churn-apply"
+    token_hash = hashlib.sha256(b"preview-token").hexdigest()
+    await store.create_library_management_job(
+        OperationJob(
+            id=job_id,
+            kind="library_management",
+            input_catalog_revision=0,
+            created_at=10,
+        ),
+        msgspec.structs.replace(
+            _job_snapshot(job_id),
+            preview_token_hash=token_hash,
+            preview_expires_at=100,
+        ),
+    )
+    await store.append_library_management_plan_items(
+        job_id, [_plan_item(job_id, 0)], expected_snapshot_revision=1
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_management_job_snapshots SET phase='ready' WHERE job_id=?",
+            (job_id,),
+        )
+        connection.execute(
+            "UPDATE library_operation_jobs SET state='ready' WHERE id=?",
+            (job_id,),
+        )
+        connection.execute(
+            "UPDATE library_catalog_revision SET value=value+1 WHERE singleton=1"
+        )
+
+    started = await store.begin_library_management_apply(
+        job_id,
+        preview_token_hash=token_hash,
+        expected_job_revision=1,
+        idempotency_key="churn-key",
+        now=20,
+    )
+
+    assert started["state"] == "queued"
+    assert started["expected_work_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_management_apply_without_plan_items_keeps_global_catalog_guard(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    # Slice E fallback: jobs with no pinned track inputs behave exactly as
+    # before (historical global catalog comparison). Pre-fix behavior is
+    # unchanged for both legs: churn rejects, a matching counter proceeds.
+    token_hash = hashlib.sha256(b"preview-token").hexdigest()
+    await store.create_library_management_job(
+        OperationJob(
+            id="no-plan-stale",
+            kind="library_management",
+            input_catalog_revision=0,
+            created_at=10,
+        ),
+        msgspec.structs.replace(
+            _job_snapshot("no-plan-stale"),
+            preview_token_hash=token_hash,
+            preview_expires_at=100,
+        ),
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_management_job_snapshots SET phase='ready' "
+            "WHERE job_id='no-plan-stale'"
+        )
+        connection.execute(
+            "UPDATE library_operation_jobs SET state='ready' "
+            "WHERE id='no-plan-stale'"
+        )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_catalog_revision SET value=value+1 WHERE singleton=1"
+        )
+    with pytest.raises(StaleRevisionError, match="catalog changed"):
+        await store.begin_library_management_apply(
+            "no-plan-stale",
+            preview_token_hash=token_hash,
+            expected_job_revision=1,
+            idempotency_key="no-plan-stale-key",
+            now=20,
+        )
+    await store.create_library_management_job(
+        OperationJob(
+            id="no-plan-fresh",
+            kind="library_management",
+            input_catalog_revision=1,
+            created_at=10,
+        ),
+        msgspec.structs.replace(
+            _job_snapshot("no-plan-fresh"),
+            catalog_revision=1,
+            preview_token_hash=token_hash,
+            preview_expires_at=100,
+        ),
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_management_job_snapshots SET phase='ready' "
+            "WHERE job_id='no-plan-fresh'"
+        )
+        connection.execute(
+            "UPDATE library_operation_jobs SET state='ready' "
+            "WHERE id='no-plan-fresh'"
+        )
+
+    started = await store.begin_library_management_apply(
+        "no-plan-fresh",
+        preview_token_hash=token_hash,
+        expected_job_revision=1,
+        idempotency_key="no-plan-fresh-key",
+        now=20,
+    )
+
+    assert started["state"] == "queued"
+    assert started["expected_work_count"] == 0
 
 
 def test_schema_ratchet_is_idempotent_and_has_no_management_side_effects(

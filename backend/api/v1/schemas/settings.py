@@ -897,6 +897,41 @@ class LibraryScanScheduleResponse(LibraryScanScheduleSettings):
     server_timezone: str = ""
 
 
+class LibraryScanDirtyScopes(AppStruct):
+    """S-01 Hook B dirty-mark hints: scope ids touched by the last settings
+    save that the scan supervisor has not consumed yet. Hints only - a crash
+    may lose them and the next rolling scan converges anyway."""
+
+    scope_ids: list[str] = msgspec.field(default_factory=list)
+
+
+class LibraryScanFilesystemWatcherSettings(AppStruct):
+    """S-01 Hook C knobs for the zero-dependency filesystem poller (D6).
+
+    The poller takes a recursive stat-only snapshot of every library root
+    every poll_interval_seconds and, when the snapshot moves, enqueues one
+    incremental automatic scan after batch_window_seconds so rapid bursts
+    (saves, renames, multi-file copies) collapse into a single request."""
+
+    enabled: bool = True
+    poll_interval_seconds: float = 300.0
+    batch_window_seconds: float = 60.0
+
+    def __post_init__(self) -> None:
+        # Floors mirror the poller clamps in
+        # services.native.library_filesystem_watcher (1s minimum poll, batch
+        # must not go negative); reject at the boundary so bad values cannot
+        # persist instead of being silently clamped on every tick.
+        if self.poll_interval_seconds < 1.0:
+            raise msgspec.ValidationError(
+                "poll_interval_seconds must be at least 1.0"
+            )
+        if self.batch_window_seconds < 0.0:
+            raise msgspec.ValidationError(
+                "batch_window_seconds must be at least 0.0"
+            )
+
+
 class ScrobbleSettings(AppStruct):
     scrobble_to_lastfm: bool = False
     scrobble_to_listenbrainz: bool = False

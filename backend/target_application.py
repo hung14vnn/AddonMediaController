@@ -217,6 +217,10 @@ from middleware import (
     PerformanceMiddleware,
     RateLimitMiddleware,
 )
+from services.native.library_filesystem_watcher import (
+    WATCHER_TASK_NAME,
+    start_library_filesystem_watcher,
+)
 from services.native.library_scan_supervisor import (
     SUPERVISOR_TASK_NAME,
     start_target_scan_supervisor,
@@ -704,6 +708,12 @@ async def production_target_lifespan(app: FastAPI):
                 scheduler_getter=get_target_library_scan_scheduler,
                 resolver_getter=get_library_policy_resolver,
                 schedule_settings_getter=schedule_settings,
+                dirty_scopes_getter=lambda: get_preferences_service()
+                .get_library_scan_dirty_scopes()
+                .scope_ids,
+                dirty_scopes_clearer=(
+                    get_preferences_service().clear_library_scan_dirty_scopes
+                ),
             )
 
         def mb_provider_state() -> CircuitState:
@@ -748,11 +758,24 @@ async def production_target_lifespan(app: FastAPI):
                 work_wakeups,
             )
 
+        def start_filesystem_watcher() -> asyncio.Task[None]:
+            return start_library_filesystem_watcher(
+                get_target_library_scan_coordinator,
+                root_paths,
+                work_wakeups,
+                scheduler_getter=get_target_library_scan_scheduler,
+                resolver_getter=get_library_policy_resolver,
+                watcher_settings_getter=(
+                    get_preferences_service().get_library_scan_filesystem_watcher
+                ),
+            )
+
         worker_starters = {
             SUPERVISOR_TASK_NAME: start_scan_supervisor,
             IDENTIFICATION_WORKER_TASK_NAME: start_identification_worker,
             OPERATION_WORKER_TASK_NAME: start_operation_worker,
             CONTRIBUTION_VERIFICATION_WORKER_TASK_NAME: start_contribution_worker,
+            WATCHER_TASK_NAME: start_filesystem_watcher,
         }
         for start_worker in worker_starters.values():
             start_worker()

@@ -812,6 +812,7 @@ def test_target_library_route_inventory_is_complete() -> None:
     }
     assert inventory == {
         ("DELETE", "/library/album/{album_id}"),
+        ("DELETE", "/library/albums/{local_album_id}/edition"),
         ("DELETE", "/library/tracks/{track_id}"),
         ("GET", "/library/albums"),
         ("GET", "/library/albums/{album_id}"),
@@ -820,6 +821,7 @@ def test_target_library_route_inventory_is_complete() -> None:
         ("GET", "/library/albums/{album_id}/reidentification/releases"),
         ("GET", "/library/albums/{album_id}/status"),
         ("GET", "/library/albums/{album_id}/tracks"),
+        ("GET", "/library/albums/{local_album_id}/edition"),
         ("GET", "/library/artists"),
         ("GET", "/library/artists/{artist_id}"),
         ("GET", "/library/artists/{artist_id}/albums"),
@@ -840,4 +842,5 @@ def test_target_library_route_inventory_is_complete() -> None:
         ("POST", "/library/edition-conversions/{job_id}/start"),
         ("POST", "/library/membership"),
         ("POST", "/library/resolve-tracks"),
+        ("PUT", "/library/albums/{local_album_id}/edition"),
     }

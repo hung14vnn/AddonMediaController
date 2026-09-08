@@ -51,7 +51,7 @@ from models.library_work import OperationJob, RepairFinding
 from repositories.edition_policy import (
     AUTO_ACCEPT_EVIDENCE_REASONS,
     auto_accept_decision,
-    edition_date_key,
+    evidence_key,
 )
 from repositories.protocols.identification import IdentificationProviderProtocol
 from repositories.protocols.musicbrainz_management import (
@@ -849,17 +849,15 @@ class IdentityRepairService:
                     ),
                     "competing_count": competing_count,
                 }
-                # F-EDITION-01: evidence score ranks first; Official, parsed
-                # mixed-precision date (F-EDITION-02 key), XW, and release
-                # MBID follow as deterministic tie-breakers.
+                # F-EDITION-01: signed evidence-time order via evidence_key
+                # (score -> Official -> parsed mixed-precision date
+                # (F-EDITION-02 key) -> XW -> release MBID).
                 date_value = summary["date"]
-                key = (
-                    -float(candidate_evidence.score),
-                    0 if release is not None and release.status == "Official" else 1,
-                    edition_date_key(
-                        date_value if isinstance(date_value, str) else None
-                    ),
-                    0 if release is not None and release.country == "XW" else 1,
+                key = evidence_key(
+                    float(candidate_evidence.score),
+                    release.status if release is not None else None,
+                    date_value if isinstance(date_value, str) else None,
+                    release.country if release is not None else None,
                     str(candidate_evidence.release_mbid),
                 )
                 ranked.append((key, row, candidate_evidence, summary))

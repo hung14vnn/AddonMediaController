@@ -220,6 +220,27 @@ describe('LibraryRunHistory', () => {
 		expect(h.failures.fetchNextPage).toHaveBeenCalledOnce();
 	});
 
+	it('folds the startup_resume trigger with spaces like the state cells', async () => {
+		h.history = {
+			data: {
+				pages: [
+					{
+						items: [run({ trigger: 'startup_resume' })]
+					}
+				]
+			},
+			isLoading: false,
+			isError: false,
+			hasNextPage: false,
+			isFetchingNextPage: false,
+			fetchNextPage: vi.fn()
+		};
+		render(LibraryRunHistory);
+
+		await expect.element(page.getByText('startup resume').first()).toBeVisible();
+		expect(document.body.textContent).not.toContain('startup_resume');
+	});
+
 	it('omits the failed-paths section for clean completed runs', async () => {
 		h.history = {
 			data: {

@@ -157,6 +157,9 @@ beforeEach(() => {
 		isError: false
 	};
 	h.operations = { data: { pages: [{ items: [] }] }, isLoading: false, isError: false };
+	h.schedule = {
+		data: { scan_frequency: 'daily', daily_scan_time: '09:00', server_timezone: 'Europe/London' }
+	};
 	h.requestRun.mockResolvedValue({});
 });
 
@@ -232,5 +235,74 @@ describe('LibraryOverviewPanel', () => {
 		render(LibraryOverviewPanel);
 		await expect.element(page.getByText('The local library is disabled')).toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Scan for changes' })).toBeDisabled();
+	});
+
+	it('names the file watcher when the rolling schedule is manual', async () => {
+		h.schedule = {
+			data: { scan_frequency: 'manual', daily_scan_time: '03:00', server_timezone: '' }
+		};
+		render(LibraryOverviewPanel);
+		await expect
+			.element(page.getByText('Scheduled scans off (file watcher still active)'))
+			.toBeVisible();
+	});
+
+	it('shows a waiting-for-scan hint on queued previews while a scan is active', async () => {
+		h.activity = {
+			data: {
+				work_items: [
+					workItem(),
+					workItem({
+						id: 'preview-1',
+						kind: 'library_management',
+						state: 'queued',
+						phase: 'planning',
+						mode: 'preview',
+						effect: 'catalog_only',
+						processed: 0,
+						total: null,
+						unit: 'items',
+						indeterminate: true,
+						remaining_count: null,
+						subject_count: null,
+						started_at: null
+					})
+				]
+			},
+			isLoading: false,
+			isError: false
+		};
+		render(LibraryOverviewPanel);
+		await expect.element(page.getByText('Preparing a Picard-style preview')).toBeVisible();
+		await expect.element(page.getByText(/Waiting for scan/)).toBeVisible();
+	});
+
+	it('shows no waiting-for-scan hint on queued previews when no scan is active', async () => {
+		h.activity = {
+			data: {
+				work_items: [
+					workItem({
+						id: 'preview-1',
+						kind: 'library_management',
+						state: 'queued',
+						phase: 'planning',
+						mode: 'preview',
+						effect: 'catalog_only',
+						processed: 0,
+						total: null,
+						unit: 'items',
+						indeterminate: true,
+						remaining_count: null,
+						subject_count: null,
+						started_at: null
+					})
+				]
+			},
+			isLoading: false,
+			isError: false
+		};
+		render(LibraryOverviewPanel);
+		await expect.element(page.getByText('Preparing a Picard-style preview')).toBeVisible();
+		expect(page.getByText(/Waiting for scan/).elements()).toHaveLength(0);
 	});
 });

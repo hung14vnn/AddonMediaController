@@ -73,6 +73,8 @@ NPM    ?= pnpm
 	backend-test-multidisc \
 	test-library-management-multidisc-naming \
 	test-library-management-profile-sharing \
+	test-library-findings-core \
+	test-library-findings-hardening \
 	test-performance-snapshot-storage \
 	backend-test-performance \
 	backend-test-preferences \
@@ -517,6 +519,46 @@ test-library-roots-restore: $(BACKEND_VENV_STAMP) ## Run library roots wipe guar
 	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project server \
 		src/lib/queries/__tests__/integration-coverage.spec.ts
 	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project client src/lib/components/settings/SettingsLibrary.svelte.spec.ts
+
+test-library-findings-core: $(BACKEND_VENV_STAMP) ## Run LibraryFindings-All Phase 0-2 (fixtures, P0/P1 correctness) scoped suites
+	$(PYTEST) \
+		tests/services/native/test_lane_equivalence_oracle.py \
+		tests/services/native/test_album_evidence_engine.py \
+		tests/services/native/test_identification_pipeline.py \
+		tests/infrastructure/test_native_library_store.py \
+		tests/repositories/test_edition_policy.py \
+		tests/services/test_edition_selection.py \
+		tests/services/test_drop_import_service.py \
+		tests/services/test_audio_fingerprinter.py \
+		tests/services/native/test_target_scan_runtime.py \
+		tests/infrastructure/test_target_scan_lifecycle.py \
+		tests/services/native/test_library_policy_service.py \
+		tests/services/native/test_target_library_policy_service.py \
+		tests/services/test_preferences_library_settings.py \
+		tests/benchmarks/test_feedback_fixes_benchmark.py -v
+	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project client \
+		src/lib/components/settings/SettingsOnboardingChecklist.svelte.spec.ts \
+		src/lib/components/library/LibraryScanScheduleControl.svelte.spec.ts \
+		src/lib/components/library/LibraryScanningPanel.svelte.spec.ts
+
+test-library-findings-hardening: $(BACKEND_VENV_STAMP) ## Run LibraryFindings-All Phase 3-4 (resilience, review, docs) scoped suites
+	$(PYTEST) \
+		tests/services/native/test_target_scan_runtime.py \
+		tests/infrastructure/test_target_scan_lifecycle.py \
+		tests/services/native/test_identification_pipeline.py \
+		tests/services/native/test_album_evidence_engine.py \
+		tests/infrastructure/test_native_library_store.py \
+		tests/infrastructure/test_hostile_filesystem_qualification.py \
+		tests/infrastructure/test_legacy_pending_migration.py \
+		tests/services/test_drop_import_service.py \
+		tests/services/test_edition_selection.py \
+		tests/services/test_download_service.py \
+		tests/compat/test_subsonic_scan.py \
+		tests/routes/test_target_application.py -v
+	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project client \
+		src/lib/components/library/LibraryReviewBrowser.svelte.spec.ts \
+		src/lib/components/import/DropImportJobList.svelte.spec.ts \
+		src/lib/components/AuthenticatedAppShell.svelte.spec.ts
 
 test-performance-snapshot-storage: $(BACKEND_VENV_STAMP) ## Run snapshot storage and recovery contract tests
 	$(PYTEST) \

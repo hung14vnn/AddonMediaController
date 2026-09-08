@@ -508,6 +508,11 @@ def test_production_target_lifespan_selects_validation_phase_and_runs_runtime(
         get_library_scan_schedule=lambda: SimpleNamespace(
             scan_frequency="manual", daily_scan_time="03:00"
         ),
+        get_library_scan_dirty_scopes=lambda: SimpleNamespace(scope_ids=[]),
+        clear_library_scan_dirty_scopes=lambda _ids: None,
+        get_library_scan_filesystem_watcher=lambda: SimpleNamespace(
+            enabled=True, poll_interval_seconds=300.0, batch_window_seconds=60.0
+        ),
     )
     auth = SimpleNamespace(cleanup_expired_tokens=AsyncMock())
     auth_store = object()
@@ -584,6 +589,18 @@ def test_production_target_lifespan_selects_validation_phase_and_runs_runtime(
         target_module,
         "start_target_scan_supervisor",
         _capture_supervisor,
+    )
+    filesystem_watcher_arguments: dict[str, object] = {}
+
+    def _capture_filesystem_watcher(*args: object, **kwargs: object) -> object:
+        filesystem_watcher_arguments["__args"] = args  # type: ignore[assignment]
+        filesystem_watcher_arguments.update(kwargs)  # type: ignore[arg-type]
+        return None
+
+    monkeypatch.setattr(
+        target_module,
+        "start_library_filesystem_watcher",
+        _capture_filesystem_watcher,
     )
     identification_worker_arguments: dict[str, object] = {}
     monkeypatch.setattr(
@@ -682,11 +699,24 @@ def test_production_target_lifespan_selects_validation_phase_and_runs_runtime(
     assert callable(scan_supervisor_arguments.get("scheduler_getter"))
     assert callable(scan_supervisor_arguments.get("resolver_getter"))
     assert callable(scan_supervisor_arguments.get("schedule_settings_getter"))
+    watcher_args = filesystem_watcher_arguments.get("__args")  # type: ignore[assignment]
+    assert isinstance(watcher_args, tuple) and len(watcher_args) == 3
+    assert callable(watcher_args[0])
+    assert callable(watcher_args[1])
+    assert watcher_args[2] is work_wakeups
+    assert callable(filesystem_watcher_arguments.get("scheduler_getter"))
+    assert callable(filesystem_watcher_arguments.get("resolver_getter"))
+    watcher_settings_getter = filesystem_watcher_arguments.get(
+        "watcher_settings_getter"
+    )
+    assert callable(watcher_settings_getter)
+    assert watcher_settings_getter().poll_interval_seconds == 300.0  # type: ignore[operator]
     assert set(watchdog_starters) == {
         "target-library-scan-supervisor",
         "target-library-identification-worker",
         "target-library-operation-worker",
         "library-contribution-verification-worker",
+        "target-library-filesystem-watcher",
     }
     assert all(callable(starter) for starter in watchdog_starters.values())
     registry.cancel.assert_awaited_once_with("target-worker-watchdog")
@@ -763,6 +793,11 @@ def test_production_target_lifespan_closes_scan_coordinator_on_shutdown(
         get_advanced_settings=lambda: SimpleNamespace(memory_cache_cleanup_interval=60, disk_cache_cleanup_interval=60),
         get_typed_library_settings=lambda: SimpleNamespace(library_roots=[], enabled=True),
         get_library_scan_schedule=lambda: SimpleNamespace(scan_frequency="manual", daily_scan_time="03:00"),
+        get_library_scan_dirty_scopes=lambda: SimpleNamespace(scope_ids=[]),
+        clear_library_scan_dirty_scopes=lambda _ids: None,
+        get_library_scan_filesystem_watcher=lambda: SimpleNamespace(
+            enabled=True, poll_interval_seconds=300.0, batch_window_seconds=60.0
+        ),
     )
     auth = SimpleNamespace(cleanup_expired_tokens=AsyncMock())
     auth_store = object()
@@ -788,6 +823,7 @@ def test_production_target_lifespan_closes_scan_coordinator_on_shutdown(
     monkeypatch.setattr(target_module, "start_memory_maintenance_task", lambda *a, **k: None)
     monkeypatch.setattr(target_module, "start_disk_cache_cleanup_task", lambda *a, **k: None)
     monkeypatch.setattr(target_module, "start_target_scan_supervisor", lambda *a, **k: None)
+    monkeypatch.setattr(target_module, "start_library_filesystem_watcher", lambda *a, **k: None)
     monkeypatch.setattr(target_module, "start_target_identification_worker", lambda *a, **k: None)
     monkeypatch.setattr(target_module, "start_target_operation_worker", lambda *a, **k: None)
     monkeypatch.setattr(target_module, "start_library_contribution_verification_worker", lambda *a, **k: None)

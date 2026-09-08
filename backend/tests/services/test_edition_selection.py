@@ -4,6 +4,7 @@ Pin storage + pin-aware owned edition + the editions enumerator + cache-busting,
 and the 'acquire this edition' fill/upgrade fan-out with edition scoping.
 """
 
+import sqlite3
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -584,3 +585,128 @@ async def test_acquire_edition_requires_a_resolvable_edition(tmp_path: Path):
     service._album_service.resolve_edition = AsyncMock(return_value=None)
     with pytest.raises(ValidationError):
         await service.acquire_edition("admin-1", RG)
+
+
+# ---------------------------------------------------------------------------
+# Phase-0 shared RG fixture (LibraryFindings-All X-04 step 0.3, E-01/E-04
+# pre-work): 10-track-US vs 12-track-XW, mirrored in
+# tests/repositories/test_edition_policy.py (recall order) and
+# tests/services/native/test_album_evidence_engine.py (decide order).
+# ---------------------------------------------------------------------------
+
+_SHARED_RG_DIVERGENCE = "rg-shared-edition-divergence"
+_SHARED_REL_US_10 = {
+    "id": "rel-ffff-us-10",
+    "status": "Official",
+    "date": "2024-01-31",
+    "country": "US",
+    "media": [{"track-count": 10}],
+}
+_SHARED_REL_XW_12 = {
+    "id": "rel-0000-xw-12",
+    "status": "Official",
+    "date": "2024",
+    "country": "XW",
+    "media": [{"track-count": 12}],
+}
+_SHARED_TARGET_TRACKS = 10
+
+
+@pytest.mark.skip(reason="pending D2")
+def test_shared_rg_display_order_documents_divergence_from_recall():
+    """0.3 display lane, as-documented-divergent (owner ruled D2 = document
+    divergence): the display ranking has no count/date/Official signals and
+    sorts XW-first, while recall ranks the 10-track US edition first by
+    proximity. This skip is PERMANENT by owner ruling - do not flip it in
+    2.4 (recall-vs-decide agreement is asserted in the engine suite)."""
+    from repositories.edition_policy import recall_key
+    from services.album_utils import get_ranked_releases
+
+    payload = {
+        "id": _SHARED_RG_DIVERGENCE,
+        "title": "Album",
+        "releases": [_SHARED_REL_US_10, _SHARED_REL_XW_12],
+    }
+    assert [release["id"] for release in get_ranked_releases(payload)] == [
+        _SHARED_REL_XW_12["id"],
+        _SHARED_REL_US_10["id"],
+    ]
+    assert sorted(
+        [_SHARED_REL_US_10, _SHARED_REL_XW_12],
+        key=lambda release: recall_key(release, _SHARED_TARGET_TRACKS),
+    ) == [_SHARED_REL_US_10, _SHARED_REL_XW_12]
+
+
+# ---------------------------------------------------------------------------
+# Target pin wiring (LibraryFindings-All E-03 step 4.8, test a)
+# ---------------------------------------------------------------------------
+
+
+def _seed_target_copy(db_path: Path, album_id: str, track_id: str, rg: str) -> None:
+    """One indexed local album carrying ``rg`` via raw sqlite (house pattern:
+    seed prerequisite tables directly, never through another store)."""
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS auth_users (id TEXT PRIMARY KEY)"
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO local_artists "
+            "(id, display_name, folded_name, kind, created_at, updated_at) "
+            "VALUES ('artist-1', 'Artist', 'artist', 'person', 1.0, 1.0)"
+        )
+        connection.execute(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, "
+            "title_folded, album_artist_id, grouping_source, created_at, "
+            "updated_at) VALUES (?, 'root-a', 'k', 'Album', 'album', "
+            "'artist-1', 'manual', 1.0, 1.0)",
+            (album_id,),
+        )
+        connection.execute(
+            "INSERT INTO local_album_external_identities (local_album_id, "
+            "provider, release_group_mbid, decision_source, selected_at) "
+            "VALUES (?, 'musicbrainz', ?, 'manual', 3)",
+            (album_id, rg),
+        )
+        connection.execute(
+            "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, "
+            "relative_path, path_hash, file_size_bytes, file_mtime_ns, "
+            "stat_revision, title, title_folded, album_title, "
+            "album_title_folded, file_format, ingest_source, imported_at, "
+            "membership_source) "
+            "VALUES (?, ?, 'root-a', ?, ?, 'h', 1, 0, 's', 'T', 't', 'Album', "
+            "'album', 'flac', 'scan', 1.0, 'manual')",
+            (track_id, album_id, f"/m/{track_id}.flac", f"{track_id}.flac"),
+        )
+        connection.commit()
+
+
+@pytest.mark.asyncio
+async def test_target_wiring_pinned_release_id_resolves_single_and_degrades_on_shared(
+    tmp_path: Path,
+):
+    """E-03: on target wiring ``_pinned_release_id`` reads the RG through the
+    ``TargetAlbumReleasePinStore`` adapter. A pin on the single copy carrying
+    the RG resolves; once a second indexed copy shares the RG the adapter
+    raises ``ConflictError`` and the read degrades to None (the degrade
+    comment's behavior), while the per-copy reads stay isolated."""
+    from infrastructure.persistence.native_library_store import NativeLibraryStore
+    from services.native.target_reference_adapters import TargetAlbumReleasePinStore
+
+    db_path = tmp_path / "target.db"
+    store = NativeLibraryStore(db_path=db_path, write_lock=threading.Lock())
+    service = object.__new__(AlbumService)
+    service._release_pins = TargetAlbumReleasePinStore(store)
+    service._native_library_store = store
+
+    _seed_target_copy(db_path, "album-a", "track-a", RG)
+    await service._release_pins.set("album-a", REL_DELUXE, "admin-1")
+    assert await service._pinned_release_id(RG) == REL_DELUXE
+
+    _seed_target_copy(db_path, "album-b", "track-b", RG)
+    with pytest.raises(ConflictError):
+        await service._release_pins.get(RG)
+    assert await service._pinned_release_id(RG) is None
+    # No-cross-read rule: the pin on copy A never leaks into copy B's read.
+    assert await service.get_edition_pin_for_local_album("album-a") == REL_DELUXE
+    assert await service.get_edition_pin_for_local_album("album-b") is None
