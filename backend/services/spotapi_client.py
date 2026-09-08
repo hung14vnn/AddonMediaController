@@ -108,6 +108,32 @@ def _release_date(item: Mapping[str, Any]) -> str | None:
     return str(value) if value else None
 
 
+def _duration_ms(item: Mapping[str, Any]) -> int | None:
+    """Read duration across Pathfinder's track response variants."""
+    candidates = (
+        item.get("duration"),
+        item.get("trackDuration"),
+        item.get("duration_ms"),
+        item.get("durationMs"),
+        item.get("length"),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, Mapping):
+            candidate = (
+                candidate.get("totalMilliseconds")
+                or candidate.get("milliseconds")
+                or candidate.get("ms")
+                or candidate.get("durationMs")
+            )
+        if candidate is None or candidate == "":
+            continue
+        try:
+            return int(float(candidate))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _external_ids(item: Mapping[str, Any]) -> dict[str, str]:
     result: dict[str, str] = {}
     for entry in _items(item.get("externalIds") or item.get("external_ids")):
@@ -127,8 +153,7 @@ def _track_item(value: Any) -> dict[str, Any]:
     if not artists:
         artists = _artist_items(album.get("artists"))
 
-    duration = _mapping(item.get("duration") or item.get("trackDuration"))
-    duration_ms = duration.get("totalMilliseconds") or item.get("duration_ms")
+    duration_ms = _duration_ms(item)
     album_id = _spotify_id(album, "album")
     album_date = _release_date(album)
     album_item = {

@@ -9,8 +9,10 @@ This is the mock seam for the scanner: tests mock ``AudioTagger`` (or
 ``mutagen.File``), never mutagen's per-format classes directly.
 """
 
+import json
 import logging
 from pathlib import Path
+import subprocess
 from typing import Any
 
 import mutagen
@@ -98,6 +100,43 @@ _SUFFIX_FORMATS = {
 # is 16 even for lossy AAC, so bit_depth must be suppressed for lossy formats.
 _LOSSLESS_FORMATS = {"flac", "wav"}
 _MP4_ALAC_CODECS = {"alac"}
+
+
+def _ffprobe_info(path: Path) -> tuple[float, int]:
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=duration,bit_rate",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if result.returncode != 0:
+            return 0.0, 0
+        streams = json.loads(result.stdout).get("streams", [])
+        stream = streams[0] if streams else {}
+        duration = float(stream.get("duration") or 0.0)
+        bitrate = int(float(stream.get("bit_rate") or 0) / 1000)
+        return duration, bitrate
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        json.JSONDecodeError,
+        subprocess.SubprocessError,
+    ):
+        return 0.0, 0
 
 
 def _bit_depth_for(fmt: str, info: Any) -> int | None:
@@ -595,9 +634,17 @@ class AudioTagger:
     def _read_info(self, audio: Any, path: Path, fmt: str) -> AudioInfo:
         info = audio.info
         bit_depth = _bit_depth_for(fmt, info)
+        duration_seconds = float(getattr(info, "length", 0.0) or 0.0)
+        bitrate = int(getattr(info, "bitrate", 0) or 0) // 1000
+        if duration_seconds <= 0 or bitrate <= 0:
+            probed_duration, probed_bitrate = _ffprobe_info(path)
+            if duration_seconds <= 0:
+                duration_seconds = probed_duration
+            if bitrate <= 0:
+                bitrate = probed_bitrate
         return AudioInfo(
-            duration_seconds=float(getattr(info, "length", 0.0) or 0.0),
-            bitrate=int(getattr(info, "bitrate", 0) or 0) // 1000,
+            duration_seconds=duration_seconds,
+            bitrate=bitrate,
             sample_rate=int(getattr(info, "sample_rate", 0) or 0),
             channels=int(getattr(info, "channels", 0) or 0),
             file_format=fmt or (path.suffix.lower().lstrip(".") or "unknown"),

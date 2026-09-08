@@ -70,6 +70,8 @@
 	let loading = $state(true);
 	let failed = $state(false);
 	let lyricsObserver: MutationObserver | undefined;
+	let initialSyncPending = true;
+	let initialSyncFrame: number | undefined;
 	const disableWordInterpolation = usesMobileLowPowerVisuals();
 
 	function applyAttributes(target: AmLyricsElement) {
@@ -86,7 +88,11 @@
 		else target.removeAttribute('isrc');
 		target.setAttribute('highlight-color', '#ffffff');
 		target.setAttribute('hover-background-color', 'rgba(255, 255, 255, 0.08)');
-		target.setAttribute('autoscroll', '');
+		// The first seek can jump from the beginning of a song to a line far down
+		// the lyrics. Keep that seek instant; normal line-to-line scrolling remains
+		// handled by am-lyrics.
+		if (initialSyncPending) target.removeAttribute('autoscroll');
+		else target.setAttribute('autoscroll', '');
 		// am-lyrics defaults interpolate=true and keeps a requestAnimationFrame
 		// loop alive for smooth syllable highlighting. That loop is the dominant
 		// CPU cost observed on mobile while lyrics are open, so use discrete word
@@ -98,6 +104,32 @@
 			target.setAttribute('interpolate', '');
 			target.interpolate = true;
 		}
+	}
+
+	function scheduleInitialSync(target: AmLyricsElement): void {
+		if (!initialSyncPending || initialSyncFrame !== undefined) return;
+
+		initialSyncFrame = requestAnimationFrame(() => {
+			initialSyncFrame = undefined;
+			if (!initialSyncPending) return;
+
+			const root = target.shadowRoot;
+			const container = root?.querySelector<HTMLElement>('.lyrics-container');
+			const activeLine = root?.querySelector<HTMLElement>(
+				'.lyrics-line.active, .lyrics-line.pre-active'
+			);
+			if (!container || !activeLine) return;
+
+			const scrollPaddingTop = container.clientHeight * 0.12;
+			const targetScrollTop = Math.max(0, activeLine.offsetTop - scrollPaddingTop);
+			const previousScrollBehavior = container.style.scrollBehavior;
+			container.style.scrollBehavior = 'auto';
+			container.scrollTop = targetScrollTop;
+			container.style.scrollBehavior = previousScrollBehavior;
+
+			initialSyncPending = false;
+			target.setAttribute('autoscroll', '');
+		});
 	}
 
 	function reportAvailability(target: AmLyricsElement): void {
@@ -130,10 +162,14 @@
 				target.addEventListener('line-click', handleLineClick);
 				const root = target.shadowRoot;
 				if (root) {
-					lyricsObserver = new MutationObserver(() => reportAvailability(target));
+					lyricsObserver = new MutationObserver(() => {
+						reportAvailability(target);
+						scheduleInitialSync(target);
+					});
 					lyricsObserver.observe(root, { childList: true, subtree: true });
 				}
 				reportAvailability(target);
+				scheduleInitialSync(target);
 				loading = false;
 			})
 			.catch((error) => {
@@ -149,6 +185,8 @@
 			disposed = true;
 			lyricsObserver?.disconnect();
 			lyricsObserver = undefined;
+			if (initialSyncFrame !== undefined) cancelAnimationFrame(initialSyncFrame);
+			initialSyncFrame = undefined;
 			element?.removeEventListener('line-click', handleLineClick);
 		};
 	});

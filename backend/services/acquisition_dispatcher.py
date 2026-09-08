@@ -262,6 +262,7 @@ class AcquisitionDispatcher:
                 "artist_name": artist_name,
                 "track_title": track_title,
                 "album_title": album_title,
+                "duration_seconds": duration_seconds,
                 "release_group_mbid": release_group_mbid,
                 "artist_mbid": artist_mbid,
                 "cover_url": cover_url,

@@ -117,6 +117,39 @@ def test_read_m4a_info_has_no_bit_depth(tagger):
     assert info.bit_depth is None
 
 
+def test_read_info_uses_ffprobe_when_mutagen_has_no_technical_metadata(
+    tagger, monkeypatch, tmp_path
+):
+    class Info:
+        length = 0
+        bitrate = 0
+        sample_rate = 44100
+        channels = 2
+
+    class Audio:
+        info = Info()
+
+    monkeypatch.setattr("infrastructure.audio.tagger.mutagen.File", lambda path: Audio())
+    monkeypatch.setattr(
+        "infrastructure.audio.tagger.subprocess.run",
+        lambda *args, **kwargs: type(
+            "Result",
+            (),
+            {
+                "returncode": 0,
+                "stdout": '{"streams":[{"duration":"274.589","bit_rate":"734000"}]}',
+            },
+        )(),
+    )
+    path = tmp_path / "track.m4a"
+    path.write_bytes(b"audio")
+
+    _, info = tagger.read_tags(path)
+
+    assert info.duration_seconds == pytest.approx(274.589)
+    assert info.bitrate == 734
+
+
 # read: compilation flag per format
 
 

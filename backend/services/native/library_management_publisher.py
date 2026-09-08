@@ -1485,6 +1485,13 @@ class LibraryManagementPublisher:
     ) -> LibraryManagementPublishedImportFile:
         document = await asyncio.to_thread(self._audio.read, value.destination)
         tag, info = legacy_audio_projection(document)
+        # Some codecs expose a zero duration through the metadata-engine probe even
+        # though the source probe already had the canonical duration. Preserve the
+        # value supplied by the acquisition/import manifest before writing catalog.
+        if info.duration_seconds <= 0 and value.request.info.duration_seconds > 0:
+            info = msgspec.structs.replace(
+                info, duration_seconds=value.request.info.duration_seconds
+            )
         return LibraryManagementPublishedImportFile(
             request=value.request,
             destination_path=str(value.destination),

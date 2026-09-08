@@ -81,3 +81,33 @@ async def test_background_import_does_not_signal_when_populate_fails(monkeypatch
     )
 
     publisher.publish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_request_spotify_track_returns_duration_and_passes_it_to_acquisition():
+    current_user = SimpleNamespace(id="user-1", role="user")
+    svc = AsyncMock()
+    svc.resolve_track_for_download.return_value = {
+        "recording_mbid": "recording-1",
+        "release_group_mbid": "release-group-1",
+        "artist_name": "Artist",
+        "track_title": "Track",
+        "album_title": "Album",
+        "duration_seconds": 213,
+    }
+    acquisition = AsyncMock()
+    acquisition.request_track.return_value = "task-1"
+    quota = AsyncMock()
+
+    response = await spotify_routes.request_spotify_track(
+        body=spotify_routes.SpotifyTrackRequest(spotify_id="spotify-1"),
+        current_user=current_user,
+        svc=svc,
+        acquisition=acquisition,
+        quota=quota,
+    )
+
+    assert response.status == "queued"
+    assert response.task_id == "task-1"
+    assert response.duration_seconds == 213
+    assert acquisition.request_track.await_args.kwargs["duration_seconds"] == 213

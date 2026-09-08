@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
 
+import msgspec
 from rapidfuzz import fuzz
 
 from core.exceptions import AutomaticManagementHoldError, ConfigurationError
@@ -822,6 +823,15 @@ class FileProcessor:
             )
             raise RuntimeError("Import target does not resolve to one library root.")
         return matches[0]
+
+    @staticmethod
+    def _backfill_duration(info: AudioInfo, expected_duration: float | None) -> AudioInfo:
+        """Keep catalog duration when the downloaded file probe reports zero."""
+        if info.duration_seconds > 0 or not expected_duration or expected_duration <= 0:
+            return info
+        return msgspec.structs.replace(
+            info, duration_seconds=float(expected_duration)
+        )
 
     async def _publish_planned_imports(
         self,
@@ -1647,6 +1657,7 @@ class FileProcessor:
         publish_source, publish_info, cleanup_source = await self._prepare_storage_source(
             source, info
         )
+        publish_info = self._backfill_duration(publish_info, track.duration_seconds)
         return _PlannedImport(
             source=publish_source,
             target=target_path,
@@ -2492,6 +2503,9 @@ class FileProcessor:
                 return target_path
         publish_source, publish_info, cleanup_source = await self._prepare_storage_source(
             source, info
+        )
+        publish_info = self._backfill_duration(
+            publish_info, expected.duration if manifest.is_track else None
         )
         return _PlannedImport(
             source=publish_source,

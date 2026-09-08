@@ -39,6 +39,21 @@ def processor() -> FileProcessor:
     return FileProcessor(AudioTagger())
 
 
+def test_backfill_duration_uses_expected_metadata_when_probe_returns_zero(processor):
+    info = AudioInfo(
+        duration_seconds=0,
+        bitrate=256,
+        sample_rate=44_100,
+        channels=2,
+        file_format="mp3",
+        file_size_bytes=10,
+    )
+
+    result = processor._backfill_duration(info, 274.589)
+
+    assert result.duration_seconds == 274.589
+
+
 def test_valid_file_matching_expectations_passes(processor):
     result = processor.verify_downloaded_file(_FLAC, title="Airbag", artist="Radiohead")
     assert result.status == VerifyStatus.PASS

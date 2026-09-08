@@ -85,3 +85,9 @@ def test_spotapi_album_normalizes_track_wrappers_and_release_date():
     assert album["release_date"] == "2024-02-03"
     assert album["total_tracks"] == 1
     assert album["tracks"]["items"][0]["id"] == "track-1"
+
+
+def test_spotapi_track_accepts_duration_variants():
+    assert _track_item({"duration": 274589})["duration_ms"] == 274589
+    assert _track_item({"trackDuration": {"milliseconds": 225830}})["duration_ms"] == 225830
+    assert _track_item({"durationMs": "123000"})["duration_ms"] == 123000

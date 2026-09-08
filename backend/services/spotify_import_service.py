@@ -100,6 +100,24 @@ def _best_image_url(images: list[dict], min_size: int = 250) -> str | None:
     return sorted_imgs[-1].get("url")
 
 
+def _track_duration_ms(track: dict[str, Any]) -> int | None:
+    """Read the normalized SpotAPI duration used by the import pipeline."""
+    value: Any = track.get("duration_ms")
+    if value is None:
+        value = track.get("durationMs") or track.get("trackDuration") or track.get("duration")
+    if isinstance(value, dict):
+        value = (
+            value.get("totalMilliseconds")
+            or value.get("milliseconds")
+            or value.get("ms")
+            or value.get("durationMs")
+        )
+    try:
+        return int(float(value)) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _recording_artist_mbid(recording: dict[str, Any]) -> str | None:
     """Return the primary MusicBrainz artist from a resolved recording.
 
@@ -190,7 +208,7 @@ class SpotifyImportService:
                     artist_name,
                     track_title,
                     album_title,
-                    track.get("duration_ms"),
+                    _track_duration_ms(track),
                     artist_mbid=artist_mbid,
                     cover_url=spotify_cover_url,
                 )
@@ -222,7 +240,7 @@ class SpotifyImportService:
                 artist_name,
                 track_title,
                 album_title,
-                track.get("duration_ms"),
+                _track_duration_ms(track),
                 cover_url=spotify_cover_url,
             )
 
@@ -235,10 +253,15 @@ class SpotifyImportService:
             "artist_name": artist_name,
             "track_title": track_title,
             "album_title": album_title or track_title,
-            "duration_seconds": round((track.get("duration_ms") or 0) / 1000) or None,
+            "duration_seconds": round((_track_duration_ms(track) or 0) / 1000) or None,
             "is_spotify_local": True,
             "cover_url": _best_image_url(album.get("images") or []),
         }
+
+    async def get_catalog_track(self, spotify_track_id: str) -> dict[str, Any]:
+        """Return the public catalog track for request-time metadata fallback."""
+        client = await self._client_factory.resolve_spotify_catalog()
+        return await client.get_track(spotify_track_id)
 
     async def resolve_playlist_tracks_for_download(
         self,
@@ -387,7 +410,7 @@ class SpotifyImportService:
                 cover_url = f"/api/v1/covers/release-group/{mbid}?size=250"
             else:
                 cover_url = _best_image_url(album.get("images") or [])
-            duration_ms = track.get("duration_ms")
+            duration_ms = _track_duration_ms(track)
             track_dicts.append(
                 {
                     "track_name": track.get("name") or "",

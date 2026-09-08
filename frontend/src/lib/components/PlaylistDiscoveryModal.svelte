@@ -88,9 +88,12 @@
 	$effect(() => {
 		if (!dialogEl) return;
 		if (open) {
-			dialogEl.showModal();
-		} else {
-			if (dialogEl.open) dialogEl.close();
+			// Keep the native dialog state and daisyUI's CSS state in sync. The
+			// latter is important on mobile browsers where showModal() can be
+			// delayed while the component is being promoted to the top layer.
+			if (!dialogEl.open) dialogEl.showModal();
+		} else if (dialogEl.open) {
+			dialogEl.close();
 			resetState();
 		}
 	});
@@ -176,7 +179,13 @@
 	const allIgnored = $derived(showResults && !isLoading && !isError && visibleAlbums.length === 0);
 </script>
 
-<dialog bind:this={dialogEl} class="modal" onclose={handleClose} aria-label="Playlist Discovery">
+<dialog
+	bind:this={dialogEl}
+	class="modal"
+	class:modal-open={open}
+	onclose={handleClose}
+	aria-label="Playlist Discovery"
+>
 	<div
 		class="modal-box w-[92vw] max-w-4xl max-h-[85vh] sm:max-w-4xl max-sm:w-screen max-sm:max-w-full max-sm:max-h-screen max-sm:rounded-none flex flex-col p-0! overflow-hidden rounded-2xl bg-base-100/80 backdrop-blur-xl shadow-[0_8px_64px_oklch(from_var(--color-primary)_l_c_h_/_0.12)] border border-white/10 relative"
 	>

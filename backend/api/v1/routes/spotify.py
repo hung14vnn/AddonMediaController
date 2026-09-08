@@ -62,6 +62,7 @@ class SpotifyTrackRequest(AppStruct):
 class SpotifyTrackRequestResponse(AppStruct):
     status: str
     task_id: str | None = None
+    duration_seconds: int | None = None
 
 
 async def _background_import(
@@ -180,6 +181,14 @@ async def request_spotify_track(
         resolved = await svc.resolve_track_for_download(
             body.spotify_id
         )
+        duration_seconds = resolved.get("duration_seconds")
+        if not duration_seconds:
+            # Keep the task metadata populated even if an older resolver path
+            # returned the track identity without carrying its duration through.
+            catalog_track = await svc.get_catalog_track(body.spotify_id)
+            duration_ms = catalog_track.get("duration_ms")
+            if duration_ms:
+                duration_seconds = round(float(duration_ms) / 1000)
         task_id = await acquisition.request_track(
             user_id=current_user.id,
             recording_mbid=resolved["recording_mbid"],
@@ -187,7 +196,7 @@ async def request_spotify_track(
             artist_name=resolved["artist_name"],
             track_title=resolved["track_title"],
             album_title=resolved["album_title"],
-            duration_seconds=resolved["duration_seconds"],
+            duration_seconds=duration_seconds,
             artist_mbid=resolved.get("artist_mbid"),
             cover_url=resolved.get("cover_url"),
         )
@@ -196,8 +205,12 @@ async def request_spotify_track(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     if task_id == ALREADY_IN_LIBRARY:
-        return SpotifyTrackRequestResponse(status="already_in_library")
-    return SpotifyTrackRequestResponse(status="queued", task_id=task_id)
+        return SpotifyTrackRequestResponse(
+            status="already_in_library", duration_seconds=duration_seconds
+        )
+    return SpotifyTrackRequestResponse(
+        status="queued", task_id=task_id, duration_seconds=duration_seconds
+    )
 
 
 @router.post(
