@@ -885,7 +885,7 @@ def create_production_target_application() -> FastAPI:
     app.add_middleware(CompatCORSMiddleware)
 
     @app.get("/health")
-    def health_check():
+    async def health_check():
         return {"status": "ok", "message": "DroppedNeedle backend running"}
 
     _include_complete_target_routes(app)

@@ -161,7 +161,9 @@ describe('NativeAudioSource', () => {
 		const onError = vi.fn();
 		source.onError(onError);
 
-		hoisted.audio.play.mockImplementationOnce(() => Promise.reject(new Error('blocked')));
+		hoisted.audio.play.mockImplementationOnce(() =>
+			Promise.reject(new DOMException('blocked', 'NotAllowedError'))
+		);
 		source.play();
 		await Promise.resolve();
 		await Promise.resolve();
@@ -169,7 +171,27 @@ describe('NativeAudioSource', () => {
 		expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'AUTOPLAY_BLOCKED' }));
 	});
 
-	it('starts native playback before resuming the optional Web Audio engine', async () => {
+	it('reports play failed when play promise rejects without NotAllowedError', async () => {
+		const source = new NativeAudioSource('local', { url: '/failed.mp3', seekable: true });
+		const onError = vi.fn();
+		source.onError(onError);
+
+		hoisted.audio.play.mockImplementationOnce(() =>
+			Promise.reject(new DOMException('aborted', 'AbortError'))
+		);
+		source.play();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(onError).toHaveBeenCalledWith(
+			expect.objectContaining({
+				code: 'PLAY_FAILED',
+				message: expect.stringContaining('server may not have responded')
+			})
+		);
+	});
+
+	it('resumes the Web Audio engine before native playback', async () => {
 		const source = new NativeAudioSource('local', { url: '/resume.mp3', seekable: true });
 
 		source.play();
