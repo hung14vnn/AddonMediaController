@@ -302,7 +302,7 @@
 				</label>
 			{/if}
 
-			<div class="crate-scroll scrollbar-hide -mx-1 max-h-[min(56vh,27rem)] overflow-y-auto px-1">
+			<div class="crate-scroll -mx-1 max-h-[min(56vh,27rem)] overflow-y-auto px-1">
 				{#if loading}
 					<div class="crate-grid">
 						{#each Array(8) as _, i (i)}

@@ -88,33 +88,12 @@
 	--animate-equalizer-3: equalizer-3 0.7s ease-in-out infinite;
 }
 
-/* Keep every scrollable surface compact, including nested panels such as lyrics. */
-* {
-	scrollbar-width: none;
-}
-
-*::-webkit-scrollbar {
-	width: 0;
-	height: 0;
-}
-
-*::-webkit-scrollbar-track {
-	background: transparent;
-}
-
-*::-webkit-scrollbar-thumb {
-	border: 2px solid transparent;
-	border-radius: 9999px;
-	background-clip: padding-box;
-	background-color: color-mix(in oklab, var(--color-base-content) 35%, transparent);
-}
-
-*::-webkit-scrollbar-thumb:hover {
-	background-color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
-}
-
 .edition-finder-search {
 	flex-wrap: wrap;
+}
+
+* {
+	scrollbar-width: thin;
 }
 
 .library-activity-shell {

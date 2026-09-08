@@ -30,7 +30,7 @@
 		<div
 			class="dl-fill"
 			class:indeterminate
-			style={indeterminate ? undefined : `width:${clamped}%`}
+			style={indeterminate ? undefined : `--progress-scale:${clamped / 100}`}
 		></div>
 	</div>
 	<div class="flex items-center justify-between text-[11px] text-base-content/50 tabular-nums">
@@ -44,13 +44,16 @@
 
 <style>
 	.dl-track {
+		position: relative;
 		height: 6px;
 		border-radius: 3px;
 		background: oklch(from var(--color-base-300) l c h);
 		overflow: hidden;
 	}
 	.dl-fill {
-		position: relative;
+		position: absolute;
+		inset: 0 auto 0 0;
+		width: 100%;
 		height: 100%;
 		border-radius: 3px;
 		background: linear-gradient(
@@ -58,11 +61,13 @@
 			oklch(from var(--color-primary) l c h / 0.7),
 			oklch(from var(--color-primary) l c h)
 		);
-		transition: width 0.6s var(--ease-spring, ease-out);
+		transform: scaleX(var(--progress-scale, 1));
+		transform-origin: left center;
+		transition: transform 0.6s var(--ease-spring, ease-out);
 	}
 	.dl-fill.indeterminate {
-		width: 35% !important;
-		animation: dl-indeterminate 1.4s ease-in-out infinite;
+		width: 35%;
+		animation: dl-indeterminate 1s ease-in-out 1;
 	}
 	.dl-fill::after {
 		content: '';
@@ -74,7 +79,7 @@
 			oklch(from var(--color-primary) l c h / 0.28),
 			transparent
 		);
-		animation: dl-sweep 2s ease-in-out infinite;
+		animation: dl-sweep 1s ease-in-out 1;
 	}
 	@keyframes dl-sweep {
 		0% {

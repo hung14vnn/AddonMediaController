@@ -2,7 +2,6 @@
 	import { page } from '$app/state';
 	import { AUTH_FREE_PATHS } from '$lib/constants';
 	import { loadAuthenticatedAppShell } from '$lib/components/lazyComponentLoaders';
-	import CustomScrollbar from '$lib/components/CustomScrollbar.svelte';
 	import QueryProvider from '$lib/queries/QueryProvider.svelte';
 	import { withoutBasePath } from '$lib/utils/basePath';
 	import type { Component, Snippet } from 'svelte';
@@ -63,5 +62,4 @@
 			{@render children()}
 		{/if}
 	</div>
-	<CustomScrollbar />
 </QueryProvider>

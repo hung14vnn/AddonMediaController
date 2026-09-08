@@ -20,6 +20,9 @@ const config = {
 		paths: {
 			base: process.env.DROPPEDNEEDLE_BASE_PATH_PLACEHOLDER === '1' ? BASE_PATH_PLACEHOLDER : ''
 		},
+		serviceWorker: {
+			register: false
+		},
 		appDir: '_app'
 	}
 };

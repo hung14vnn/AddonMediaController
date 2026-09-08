@@ -72,6 +72,8 @@
 	let lyricsObserver: MutationObserver | undefined;
 	let initialSyncPending = true;
 	let initialSyncFrame: number | undefined;
+	let lastPublishedCurrentTime = Number.NaN;
+	const CURRENT_TIME_UPDATE_INTERVAL_SECONDS = 0.5;
 	const disableWordInterpolation = usesMobileLowPowerVisuals();
 
 	function applyAttributes(target: AmLyricsElement) {
@@ -210,7 +212,17 @@
 
 	$effect(() => {
 		if (!element) return;
-		element.currentTime = Math.max(0, currentTimeSeconds * 1000);
+
+		const nextCurrentTime = Math.max(0, currentTimeSeconds);
+		if (
+			Number.isFinite(lastPublishedCurrentTime) &&
+			Math.abs(nextCurrentTime - lastPublishedCurrentTime) < CURRENT_TIME_UPDATE_INTERVAL_SECONDS
+		) {
+			return;
+		}
+
+		lastPublishedCurrentTime = nextCurrentTime;
+		element.currentTime = nextCurrentTime * 1000;
 	});
 </script>
 

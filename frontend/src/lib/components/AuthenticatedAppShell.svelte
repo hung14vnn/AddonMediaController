@@ -3,7 +3,7 @@
 	import { browser } from '$app/environment';
 	import { page } from '$app/state';
 	import { goto, beforeNavigate, afterNavigate } from '$app/navigation';
-	import { base, resolve } from '$app/paths';
+	import { resolve } from '$app/paths';
 	import { withBasePath, withoutBasePath } from '$lib/utils/basePath';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -175,12 +175,9 @@
 		desktopMedia.addEventListener('change', updateDesktopViewport);
 
 		if ('serviceWorker' in navigator) {
-			void navigator.serviceWorker
-				.register(`${base || ''}/service-worker.js`, { scope: `${base || ''}/` })
-				.catch(() => {
-					// Offline playback remains available for an already open session even
-					// when service-worker registration is unavailable.
-				});
+			void navigator.serviceWorker.getRegistrations().then((registrations) => {
+				void Promise.all(registrations.map((registration) => registration.unregister()));
+			});
 		}
 		cleanupMobileLowPowerVisuals = installMobileLowPowerVisuals();
 		if (audioElement) {

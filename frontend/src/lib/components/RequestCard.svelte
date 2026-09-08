@@ -325,7 +325,8 @@
 							<div
 								class="progress-fill"
 								class:progress-fill-paused={activeItem.status === 'paused'}
-								style="width: {activeItem.progress ?? 0}%"
+								style="--progress-scale: {Math.max(0, Math.min(100, activeItem.progress ?? 0)) /
+									100}"
 							></div>
 						</div>
 						<span
@@ -485,12 +486,16 @@
 	}
 
 	.progress-track {
+		position: relative;
 		height: 6px;
 		border-radius: 3px;
 		background: oklch(from var(--color-base-300) l c h / 1);
 		overflow: hidden;
 	}
 	.progress-fill {
+		position: absolute;
+		inset: 0 auto 0 0;
+		width: 100%;
 		height: 100%;
 		border-radius: 3px;
 		background: linear-gradient(
@@ -498,8 +503,9 @@
 			oklch(from var(--color-info) l c h / 0.8),
 			oklch(from var(--color-info) l c h / 1)
 		);
-		transition: width 0.6s ease-out;
-		position: relative;
+		transform: scaleX(var(--progress-scale, 0));
+		transform-origin: left center;
+		transition: transform 0.6s ease-out;
 	}
 	.progress-fill::after {
 		content: '';

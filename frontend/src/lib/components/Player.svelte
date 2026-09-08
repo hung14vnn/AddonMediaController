@@ -346,9 +346,7 @@
 	});
 
 	const playbackOriginTip = $derived(
-		playerStore.playbackOrigin === 'download'
-			? 'Playing from downloaded audio'
-			: ''
+		playerStore.playbackOrigin === 'download' ? 'Playing from downloaded audio' : ''
 	);
 </script>
 
@@ -606,9 +604,7 @@
 				</div>
 
 				<div class="hidden sm:flex items-center gap-2 w-full max-w-lg">
-					<span class="text-xs opacity-60 w-10 text-right tabular-nums"
-						>{formatTime(playerStore.progress)}</span
-					>
+					<span class="time-text text-xs opacity-60">{formatTime(playerStore.progress)}</span>
 					<input
 						type="range"
 						class="range range-xs range-accent flex-1"
@@ -620,9 +616,7 @@
 						disabled={!playerStore.isSeekable}
 						oninput={handleSeek}
 					/>
-					<span class="text-xs opacity-60 w-10 tabular-nums"
-						>{formatTime(playerStore.duration)}</span
-					>
+					<span class="time-text text-xs opacity-60">{formatTime(playerStore.duration)}</span>
 				</div>
 				{#if !playerStore.isSeekable}
 					<p class="hidden sm:block text-[10px] text-base-content/60">
@@ -823,6 +817,13 @@
 {/if}
 
 <style>
+	.time-text {
+		display: inline-block;
+		width: 3rem;
+		text-align: center;
+		font-variant-numeric: tabular-nums;
+	}
+
 	.track-change {
 		animation: track-change 760ms cubic-bezier(0.22, 1, 0.36, 1);
 	}
