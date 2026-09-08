@@ -61,6 +61,7 @@ from services.native.acquisition import quality as acq_quality
 from services.native.acquisition.status import DownloadStatus
 from services.native.file_processor import (
     IMPORT_FAILED,
+    SIZE_MISMATCH,
     WRONG_TRACK,
     FileFailure,
     ProcessResult,
@@ -4258,6 +4259,101 @@ async def test_soulseek_short_manifest_still_fails_over(tmp_path: Path):
     _write_completion_manifest(orch, task.id, target_count=1, expected_count=2)
     orch._coverage = AsyncMock(return_value=(0, 2, []))
     result = ProcessResult(succeeded=["/lib/01.flac"], failed=[])
+
+    assert await orch._download_is_complete(task, True, result) is False
+
+
+@pytest.mark.asyncio
+async def test_size_mismatch_only_shortfall_never_blames_the_peer(tmp_path: Path):
+    """#397: a SIZE_MISMATCH-only shortfall is a local fault (stale bytes on our
+    mount), never proof the peer is bad. Both attempts fail over to the next
+    candidate without recording any peer quarantine/blocklist, and the loop
+    still terminates instead of re-pulling forever."""
+    client = _StubClient()
+    store, orch, fp, _lib = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[
+            _candidate(0.9, files=2, username="p1"),
+            _candidate(0.85, files=2, username="p2"),
+        ],
+        max_failover=3,
+    )
+    fp.process_downloaded = AsyncMock(
+        return_value=ProcessResult(
+            succeeded=[],
+            failed=[
+                FileFailure(filename="p1/01.flac", reason=SIZE_MISMATCH),
+                FileFailure(filename="p1/02.flac", reason=SIZE_MISMATCH),
+            ],
+        )
+    )
+    blocklist_spy = AsyncMock()
+    orch._strategy("soulseek").maybe_blocklist_on_failure = blocklist_spy
+    task = await _new_task(store, track_count=2)
+
+    await orch.process_task(task.id)
+
+    assert blocklist_spy.await_count == 0
+    assert not [
+        row for row in await store.load_quarantine_set() if row[0] == "soulseek"
+    ]
+    assert client.enqueue.await_count == 2  # failed over once, then settled
+    final = await store.get_task(task.id)
+    assert final.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_full_track_delivery_with_bonus_extras_counts_complete(tmp_path: Path):
+    """#397: a candidate that verified every track of the requested release
+    counts as complete even when its folder holds extra non-requested files
+    whose tag checks fail - extras are bonus, not under-delivery."""
+    store, orch, _fp, _lib = _build(tmp_path, imported_rows=[])
+    task = await _new_task(store, track_count=12)
+    _write_completion_manifest(orch, task.id, target_count=14, expected_count=12)
+    orch._coverage = AsyncMock(return_value=(0, 12, []))
+    result = ProcessResult(
+        succeeded=[f"/lib/{i:02d}.flac" for i in range(1, 13)],
+        failed=[
+            FileFailure(filename="peer/13.flac", reason="tag_mismatch"),
+            FileFailure(filename="peer/14.flac", reason="tag_mismatch"),
+        ],
+    )
+
+    assert await orch._download_is_complete(task, True, result) is True
+
+
+@pytest.mark.asyncio
+async def test_short_delivery_with_bonus_failures_still_fails_over(tmp_path: Path):
+    """#397 control: bonus tolerance never masks a genuinely short request -
+    eleven verified of twelve requested still fails over, failures or not."""
+    store, orch, _fp, _lib = _build(tmp_path, imported_rows=[])
+    task = await _new_task(store, track_count=12)
+    _write_completion_manifest(orch, task.id, target_count=14, expected_count=12)
+    orch._coverage = AsyncMock(return_value=(0, 12, []))
+    result = ProcessResult(
+        succeeded=[f"/lib/{i:02d}.flac" for i in range(1, 12)],
+        failed=[
+            FileFailure(filename="peer/12.flac", reason="tag_mismatch"),
+            FileFailure(filename="peer/13.flac", reason="tag_mismatch"),
+        ],
+    )
+
+    assert await orch._download_is_complete(task, True, result) is False
+
+
+@pytest.mark.asyncio
+async def test_failures_without_exact_map_still_veto_delivery_trust(tmp_path: Path):
+    """#397 control: without the exact-edition map there is no requested-count
+    proof, so any failure keeps the old strict veto."""
+    store, orch, _fp, _lib = _build(tmp_path, imported_rows=[])
+    task = await _new_task(store, track_count=2)
+    _write_completion_manifest(orch, task.id, target_count=2, expected_count=0)
+    orch._coverage = AsyncMock(return_value=(0, 2, []))
+    result = ProcessResult(
+        succeeded=["/lib/01.flac", "/lib/02.flac"],
+        failed=[FileFailure(filename="peer/02.flac", reason="tag_mismatch")],
+    )
 
     assert await orch._download_is_complete(task, True, result) is False
 

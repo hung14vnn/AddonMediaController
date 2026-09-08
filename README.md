@@ -191,6 +191,8 @@ The downloads path is where most installs go wrong. Three rules:
 2. Point `SLSKD_DOWNLOADS_PATH` at that exact directory, not its parent.
 3. Skip nested binds under `/data`. Each one is a new mount boundary, which drops imports to the slower copy fallback.
 
+Keep slskd's incomplete directory on the same mount as its downloads directory: slskd can report a transfer Completed before a cross-mount move between the two finishes, so a split mount risks verifying half-copied files.
+
 <details>
 <summary>Minimal slskd.yml essentials</summary>
 

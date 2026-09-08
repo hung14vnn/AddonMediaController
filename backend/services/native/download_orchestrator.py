@@ -75,6 +75,7 @@ from services.native.quality_tiers import (
 from services.native.file_processor import (
     DOWNLOADS_MOUNT_UNAVAILABLE,
     IMPORT_FAILED,
+    SIZE_MISMATCH,
     SOURCE_FILE_MISSING,
     FileProcessor,
     ProcessResult,
@@ -1386,6 +1387,7 @@ class DownloadOrchestrator:
         from services.native.file_processor import (
             DOWNLOADS_MOUNT_UNAVAILABLE,
             IMPORT_FAILED,
+            SIZE_MISMATCH,
             SOURCE_FILE_MISSING,
             WRONG_TRACK,
         )
@@ -1530,8 +1532,16 @@ class DownloadOrchestrator:
                 attempt_mount = not result.succeeded and any(
                     f.reason == DOWNLOADS_MOUNT_UNAVAILABLE for f in result.failed
                 )
+                # SIZE_MISMATCH joins the local-fault family (#397): the bytes
+                # on disk don't match what slskd advertised - a stale copy or
+                # partial write on our mount, never proof the peer is bad
+                # (file_processor already treats it as non-quarantine local
+                # fault). Skipping the release-blame block never stops
+                # failover: the loop below still advances to the next
+                # candidate, so a genuinely wrong-size delivery from the
+                # delivering peer fails over instead of looping here.
                 attempt_import_fault = any(
-                    f.reason in (IMPORT_FAILED, SOURCE_FILE_MISSING)
+                    f.reason in (IMPORT_FAILED, SOURCE_FILE_MISSING, SIZE_MISMATCH)
                     for f in result.failed
                 )
                 if any(f.reason == WRONG_TRACK for f in result.failed):
@@ -2469,7 +2479,11 @@ class DownloadOrchestrator:
         family, 2026-08): a CLEAN full delivery of the attempt's whole manifest while
         the requested release-group has ZERO library rows means the rows were stamped
         under a different RG (import-time identity drift) - holding that against the
-        download loops failover + whole-album re-downloads forever. Rows PRESENT but
+        download loops failover + whole-album re-downloads forever. Bonus extras
+        don't veto it (#397): with the exact-edition map present every success
+        consumes a distinct expected position at import, so succeeded >= the
+        requested count means every requested track verified and the leftover
+        failures are non-requested extras, not under-delivery. Rows PRESENT but
         short or mismatched keep the full P4 veto: a wrong file at a covered position
         must never satisfy a request (the 2026-07-05 wrong-single incident), and an
         edition tracklist with bonus tracks keeps failing over for a fuller source.
@@ -2487,7 +2501,6 @@ class DownloadOrchestrator:
                 covered == 0
                 and result is not None
                 and result.succeeded
-                and not result.failed
                 and result.management_hold_reason_code is None
             ):
                 try:
@@ -2495,8 +2508,10 @@ class DownloadOrchestrator:
                     # NZBs are opaque: Usenet manifests carry no target_files, so
                     # fall back to the exact-edition tracklist for the asked count.
                     asked = len(manifest.target_files) or len(manifest.expected_tracks)
+                    requested = len(manifest.expected_tracks)
                 except OrchestrationError:
                     asked = None
+                    requested = 0
                 rows = []
                 if asked is not None:
                     try:
@@ -2508,10 +2523,27 @@ class DownloadOrchestrator:
                 # A candidate folder smaller than the requested tracklist UNDER-
                 # DELIVERED even when it published cleanly: 'everything asked of THIS
                 # source' is not 'everything requested' (whole-album-repull guard).
+                # Bonus extras (#397) are the mirror case: a folder holding MORE
+                # than the requested edition verifies every requested track and
+                # fails only its non-requested extras. Each success consumes a
+                # distinct expected position at import, so succeeded >= the
+                # requested count proves the request whole - the extra failures
+                # alone must not force failover.
+                full_request_verified = bool(requested) and len(
+                    result.succeeded
+                ) >= requested
                 if (
                     asked is not None
                     and not rows
-                    and len(result.succeeded) >= asked
+                    and (
+                        (not result.failed and len(result.succeeded) >= asked)
+                        or (
+                            full_request_verified
+                            and not (
+                                task.track_count and requested < task.track_count
+                            )
+                        )
+                    )
                     and not (task.track_count and asked < task.track_count)
                 ):
                     logger.info(
