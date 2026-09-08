@@ -103,6 +103,20 @@ describe('QueueDrawer.svelte', () => {
 		await expect.element(page.getByText('Queue')).not.toBeInTheDocument();
 	});
 
+	it('allows the pinned queue to resize up to 2.5 times its default width', async () => {
+		const onclose = vi.fn();
+		const view = render(QueueDrawer, {
+			props: { open: true, pinned: true, onclose }
+		} as Parameters<typeof render<typeof QueueDrawer>>[1]);
+
+		const resizeHandle = view.container.querySelector('[aria-label="Resize pinned queue"]');
+		expect(resizeHandle).toHaveAttribute('aria-valuemin', '240');
+		expect(resizeHandle).toHaveAttribute('aria-valuemax', '600');
+		expect(resizeHandle).toHaveAttribute('aria-valuenow', '240');
+		expect(view.container.querySelector('[style="max-width: 240px;"]')).not.toBeNull();
+		expect(document.body.style.getPropertyValue('--droppedneedle-queue-width')).toBe('240px');
+	});
+
 	it('clears upcoming tracks on clear click but keeps current track', async () => {
 		playerStore.playQueue([
 			{

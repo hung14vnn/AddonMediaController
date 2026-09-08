@@ -909,7 +909,6 @@ textarea {
 	-webkit-backdrop-filter: none !important;
 }
 
-
 /* Large rotating/blurred artwork and perpetual status animations keep the GPU
    awake for the entire track. Mobile gets a static equivalent instead. */
 /* .mobile-low-power-playback .vinyl-spin,
@@ -937,7 +936,7 @@ textarea {
 /* .mobile-low-power-playback .now-playing-bars--playing span {
 	animation: now-playing-bar 1.2s ease-in-out infinite !important;
 } */
- .now-playing-bars--playing span {
+.now-playing-bars--playing span {
 	animation: now-playing-bar 1.2s ease-in-out infinite !important;
 }
 
@@ -945,19 +944,27 @@ textarea {
 	display: none !important;
 }
 
-
 /* A pinned queue becomes a desktop rail instead of covering the app. */
 @media (min-width: 80rem) {
 	body.droppedneedle-queue-pinned .drawer-content {
-		margin-right: 15rem;
-		transition: margin-right 200ms ease;
+		width: calc(100% - var(--droppedneedle-queue-width, 15rem));
+		margin-right: 0;
+		transition: width 200ms ease;
+	}
+
+	body.droppedneedle-queue-resizing .drawer-content {
+		transition: none;
 	}
 
 	body.droppedneedle-queue-pinned .droppedneedle-player-bar {
-		right: 15rem;
+		right: var(--droppedneedle-queue-width, 15rem);
 		transition:
 			right 200ms ease,
 			transform 300ms ease;
+	}
+
+	body.droppedneedle-queue-resizing .droppedneedle-player-bar {
+		transition: none;
 	}
 }
 

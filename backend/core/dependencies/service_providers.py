@@ -1162,6 +1162,7 @@ def get_youtube_download_service():
     return YouTubeDownloadService(
         drop_import=get_drop_import_service(), download_store=get_download_store(),
         event_bus=get_sse_publisher(), staging_root=get_settings().cache_dir / "youtube-downloads",
+        ownership_service=get_target_library_ownership_service(),
     )
 
 
@@ -1176,6 +1177,7 @@ def get_target_youtube_download_service():
         download_store=get_download_store(),
         event_bus=get_sse_publisher(),
         staging_root=get_settings().cache_dir / "youtube-downloads",
+        ownership_service=get_target_library_ownership_service(),
     )
 
 

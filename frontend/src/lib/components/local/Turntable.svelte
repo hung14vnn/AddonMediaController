@@ -240,21 +240,7 @@
 					class="absolute inset-[48.5%] rounded-full bg-base-100 ring-1 ring-base-content/30"
 				></div>
 			</div>
-			<div
-				class="tonearm pointer-events-none absolute -right-1 -top-1 h-1/2 w-1/2"
-				class:is-playing={isPlaying}
-			>
-				<div
-					class="absolute right-[4.5%] top-[4.5%] h-4 w-4 rounded-full bg-base-300 ring-2 ring-base-content/20"
-				></div>
-				<div
-					class="absolute right-[6.8%] top-[6.8%] h-1.5 w-[84%] origin-right rotate-[28deg] rounded-full bg-gradient-to-l from-base-content/40 to-base-content/15"
-				>
-					<div
-						class="absolute -left-1 top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-sm bg-base-content/55 ring-1 ring-base-content/25"
-					></div>
-				</div>
-			</div>
+
 		{/if}
 	</div>
 

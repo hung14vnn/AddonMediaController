@@ -269,6 +269,18 @@ describe('playerStore queue methods', () => {
 		});
 	});
 
+	describe('previousTrack', () => {
+		it('keeps Previous enabled and restarts the first queued track', () => {
+			playerStore.playQueue(makeItems(2));
+
+			expect(playerStore.hasPrevious).toBe(true);
+			playerStore.previousTrack();
+
+			const source = vi.mocked(createPlaybackSource).mock.results.at(-1)?.value;
+			expect(source?.seekTo).toHaveBeenCalledWith(0);
+		});
+	});
+
 	describe('playNext', () => {
 		it('starts playback when queue is empty', () => {
 			const item = makeItem();

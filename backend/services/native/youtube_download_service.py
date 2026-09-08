@@ -38,12 +38,19 @@ def _validate_url(value: str) -> str:
 
 class YouTubeDownloadService:
     def __init__(
-        self, *, drop_import, download_store, event_bus, staging_root: Path
+        self,
+        *,
+        drop_import,
+        download_store,
+        event_bus,
+        staging_root: Path,
+        ownership_service=None,
     ) -> None:  # noqa: ANN001
         self._drop_import = drop_import
         self._store = download_store
         self._bus = event_bus
         self._staging_root = staging_root
+        self._ownership = ownership_service
 
     async def preview(self, url: str) -> dict[str, object]:
         """Fetch public metadata for the selected video without downloading it."""
@@ -90,6 +97,8 @@ class YouTubeDownloadService:
             search_query=url,
             status="downloading",
         )
+        if self._ownership is not None:
+            await self._ownership.select_track(user_id, recording_mbid)
         await self._bus.publish(
             f"download:{task.id}", "status", {"status": "downloading"}
         )

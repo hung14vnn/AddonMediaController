@@ -25,6 +25,8 @@
 	let term = $state('');
 	let debounced = $state('');
 	let draggingId = $state<string | null>(null);
+	type SearchMode = 'all' | 'album' | 'song';
+	let searchMode = $state<SearchMode>('all');
 
 	// Debounce keystrokes so we don't fire a request per character.
 	$effect(() => {
@@ -42,14 +44,23 @@
 		| { kind: 'album'; key: string; album: LocalAlbumSummary }
 		| { kind: 'track'; key: string; track: CrateTrack };
 	const rows = $derived<Row[]>([
-		...albums.map((a) => ({ kind: 'album' as const, key: `album:${a.musicbrainz_id}`, album: a })),
-		...tracks.map((t) => ({ kind: 'track' as const, key: `track:${t.track_file_id}`, track: t }))
+		...(searchMode !== 'song'
+			? albums.map((a) => ({ kind: 'album' as const, key: `album:${a.musicbrainz_id}`, album: a }))
+			: []),
+		...(searchMode !== 'album'
+			? tracks.map((t) => ({ kind: 'track' as const, key: `track:${t.track_file_id}`, track: t }))
+			: [])
 	]);
 
 	const trimmed = $derived(term.trim());
 	const isActive = $derived(trimmed.length >= 2);
 	const isFetching = $derived(searchQuery.isFetching);
 	const showEmpty = $derived(isActive && !isFetching && rows.length === 0);
+	const searchHint = $derived.by(() => {
+		if (searchMode === 'album') return 'Search albums - drag a whole album onto the deck.';
+		if (searchMode === 'song') return 'Search songs - drag a song onto the deck.';
+		return 'Search your whole library - drag a song or a whole album onto the deck.';
+	});
 
 	function onTrackDragStart(e: DragEvent, t: CrateTrack) {
 		if (!e.dataTransfer) return;
@@ -73,12 +84,12 @@
 	</header>
 
 	<label
-		class="input input-sm flex items-center gap-2 rounded-xl bg-base-200/70 focus-within:outline-accent"
+		class="input input-sm flex w-full items-center gap-2 rounded-xl bg-base-200/70 focus-within:outline-accent"
 	>
 		<Search class="h-4 w-4 shrink-0 text-base-content/40" />
 		<input
 			type="search"
-			class="grow bg-transparent"
+			class="search-input grow appearance-none bg-transparent"
 			placeholder="Albums &amp; songs to spin…"
 			bind:value={term}
 			aria-label="Search your library for albums and songs"
@@ -97,6 +108,26 @@
 		{/if}
 	</label>
 
+	<div
+		class="join w-full rounded-xl bg-base-200/45 p-1 ring-1 ring-base-content/8"
+		role="group"
+		aria-label="Search by type"
+	>
+		{#each [{ value: 'all' as const, label: 'All' }, { value: 'album' as const, label: 'Albums' }, { value: 'song' as const, label: 'Songs' }] as option (option.value)}
+			<button
+				type="button"
+				class="join-item min-h-8 flex-1 rounded-lg border px-2 text-xs font-semibold transition-colors {searchMode ===
+				option.value
+					? 'border-accent bg-accent text-accent-content'
+					: 'border-transparent bg-base-200/30 text-base-content/65 hover:bg-base-300/70'}"
+				onclick={() => (searchMode = option.value)}
+				aria-pressed={searchMode === option.value}
+			>
+				{option.label}
+			</button>
+		{/each}
+	</div>
+
 	<div class="flex-1 space-y-2 overflow-y-auto pr-0.5">
 		{#if !isActive}
 			<div
@@ -104,7 +135,7 @@
 			>
 				<Search class="h-8 w-8 opacity-40" />
 				<p class="text-xs">
-					Search your whole library - drag a song or a whole album onto the deck.
+					{searchHint}
 				</p>
 			</div>
 		{:else if rows.length === 0 && isFetching}
@@ -147,11 +178,22 @@
 						<div
 							class="relative h-11 w-11 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10"
 						>
-							<AlbumImage mbid={a.musicbrainz_id} source="local" available={Boolean(a.cover_url)} customUrl={a.cover_url ?? null} alt={a.name} size="full" rounded="none" className="h-full w-full object-cover" />
+							<AlbumImage
+								mbid={a.musicbrainz_id}
+								source="local"
+								available={Boolean(a.cover_url)}
+								customUrl={a.cover_url ?? null}
+								alt={a.name}
+								size="full"
+								rounded="none"
+								className="h-full w-full object-cover"
+							/>
 						</div>
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-semibold text-base-content">{a.name}</p>
-							<p class="truncate text-xs text-base-content/55">{formatArtistCredit(a.artist_name)}</p>
+							<p class="truncate text-xs text-base-content/55">
+								{formatArtistCredit(a.artist_name)}
+							</p>
 							<span class="badge badge-xs badge-primary mt-1 gap-1 border-none">
 								<Disc3 class="h-2.5 w-2.5" /> Album
 							</span>
@@ -216,7 +258,9 @@
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-semibold text-base-content">{t.title}</p>
 							<p class="truncate text-xs text-base-content/55">
-								{formatArtistCredit(t.artist_name)}<span class="text-base-content/35"> · {t.album_name}</span>
+								{formatArtistCredit(t.artist_name)}<span class="text-base-content/35">
+									· {t.album_name}</span
+								>
 							</p>
 							<span class="badge badge-xs badge-accent mt-1 gap-1 border-none">
 								<Music2 class="h-2.5 w-2.5" /> Song
@@ -248,3 +292,15 @@
 		{/if}
 	</div>
 </section>
+
+<style>
+	.search-input::-webkit-search-cancel-button,
+	.search-input::-webkit-search-decoration {
+		appearance: none;
+		display: none;
+	}
+
+	.search-input::-ms-clear {
+		display: none;
+	}
+</style>

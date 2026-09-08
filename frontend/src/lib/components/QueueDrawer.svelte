@@ -31,7 +31,37 @@
 
 	let dragOverIndex = $state<number | null>(null);
 	let dragSourceIndex = $state<number | null>(null);
+	const pinnedQueueWidth = 240;
+	const maxPinnedQueueWidth = pinnedQueueWidth * 2.5;
+	let queueWidth = $state(pinnedQueueWidth);
+	let currentQueueWidth = pinnedQueueWidth;
+	let resizing = $state(false);
 	let currentTrackEl: HTMLElement | null = null;
+
+	function handleResizeStart(e: PointerEvent) {
+		if (!pinned || e.button !== 0) return;
+		resizing = true;
+		document.body.classList.add('droppedneedle-queue-resizing');
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+	}
+
+	function handleResizeMove(e: PointerEvent) {
+		if (!resizing) return;
+		const maxWidth = Math.min(maxPinnedQueueWidth, window.innerWidth - 16);
+		currentQueueWidth = Math.max(
+			pinnedQueueWidth,
+			Math.min(maxWidth, window.innerWidth - e.clientX)
+		);
+		queueWidth = currentQueueWidth;
+		document.body.style.setProperty('--droppedneedle-queue-width', `${currentQueueWidth}px`);
+	}
+
+	function handleResizeEnd(e: PointerEvent) {
+		if (!resizing) return;
+		resizing = false;
+		document.body.classList.remove('droppedneedle-queue-resizing');
+		(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+	}
 
 	function trackCurrentEl(node: HTMLElement, isCurrent: boolean) {
 		if (isCurrent) currentTrackEl = node;
@@ -190,10 +220,16 @@
 			document.body.classList.remove('overflow-hidden');
 		}
 		document.body.classList.toggle('droppedneedle-queue-pinned', open && pinned);
+		document.body.style.setProperty(
+			'--droppedneedle-queue-width',
+			open && pinned ? `${currentQueueWidth}px` : '0px'
+		);
 		if (open) queueMicrotask(scrollToCurrentTrack);
 		return () => {
 			document.body.classList.remove('overflow-hidden');
 			document.body.classList.remove('droppedneedle-queue-pinned');
+			document.body.classList.remove('droppedneedle-queue-resizing');
+			document.body.style.removeProperty('--droppedneedle-queue-width');
 		};
 	});
 
@@ -226,13 +262,33 @@
 
 	<div
 		class="fixed right-0 top-0 bottom-0 z-[61] w-full {pinned
-			? 'max-w-[15rem]'
+			? ''
 			: 'max-w-[28rem]'} bg-base-200 shadow-2xl flex flex-col {pinned
 			? 'border-l border-base-content/10'
 			: ''}"
+		style={pinned ? `max-width: ${queueWidth}px;` : undefined}
 		transition:fly={{ x: 400, duration: 200 }}
 	>
-		<div class="queue-drawer-header flex items-center justify-between p-4 border-b border-base-content/10">
+		{#if pinned}
+			<div
+				class="absolute left-0 top-0 z-10 h-full w-1 cursor-ew-resize touch-none transition-colors hover:bg-accent/60 {resizing
+					? 'bg-accent/80'
+					: 'bg-transparent'}"
+				role="separator"
+				aria-label="Resize pinned queue"
+				aria-orientation="vertical"
+				aria-valuemin={pinnedQueueWidth}
+				aria-valuemax={maxPinnedQueueWidth}
+				aria-valuenow={queueWidth}
+				onpointerdown={handleResizeStart}
+				onpointermove={handleResizeMove}
+				onpointerup={handleResizeEnd}
+				onpointercancel={handleResizeEnd}
+			></div>
+		{/if}
+		<div
+			class="queue-drawer-header flex items-center justify-between p-4 border-b border-base-content/10"
+		>
 			<div class="flex items-center gap-2">
 				<ListMusic class="h-5 w-5" />
 				{#if !pinned}

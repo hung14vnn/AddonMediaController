@@ -197,11 +197,13 @@ async def test_task_records_ytdlp_as_download_client(monkeypatch, tmp_path):
     store = AsyncMock()
     store.create_task.return_value = SimpleNamespace(id="task-1")
     bus = AsyncMock()
+    ownership = AsyncMock()
     service = YouTubeDownloadService(
         drop_import=AsyncMock(),
         download_store=store,
         event_bus=bus,
         staging_root=tmp_path,
+        ownership_service=ownership,
     )
     service.preview = AsyncMock(
         return_value={
@@ -238,6 +240,7 @@ async def test_task_records_ytdlp_as_download_client(monkeypatch, tmp_path):
     assert store.create_task.await_args.kwargs["artist_name"] == "Edited Artist"
     assert store.create_task.await_args.kwargs["album_title"] == "Edited Title"
     assert store.create_task.await_args.kwargs["track_title"] == "Edited Title"
+    ownership.select_track.assert_awaited_once_with("user-1", "youtube:track:abc")
     assert len(spawned) == 1
 
 

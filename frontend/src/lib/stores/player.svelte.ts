@@ -128,15 +128,14 @@ function createPlayerStore() {
 		return currentIndex < queue.length - 1;
 	});
 	const hasPrevious = $derived.by(() => {
-		// Previous also acts as restart once the current track has passed the
-		// three-second threshold, including when there is no earlier queue item.
+		// Previous also acts as restart when there is no earlier queue item.
 		if (progress > PREVIOUS_TRACK_RESTART_THRESHOLD_S) return isSeekable;
-		if (queue.length <= 1) return false;
+		if (queue.length === 0) return false;
 		if (shuffleEnabled) {
 			const si = shuffleOrder.indexOf(currentIndex);
-			return si > 0;
+			return si > 0 || (si === 0 && isSeekable);
 		}
-		return currentIndex > 0;
+		return currentIndex > 0 || isSeekable;
 	});
 	const currentQueueItem = $derived(queue.length > 0 ? queue[currentIndex] : null);
 	const queueLength = $derived(queue.length);
@@ -529,7 +528,11 @@ function createPlayerStore() {
 			return;
 		}
 		const idx = getPreviousIndex();
-		if (idx !== null) void loadQueueItem(idx);
+		if (idx !== null) {
+			void loadQueueItem(idx);
+		} else {
+			seekCurrent(0);
+		}
 	}
 
 	function subscribeToSource(source: PlaybackSource, gen: number): void {
