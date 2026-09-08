@@ -4,10 +4,12 @@
 	import { scrobbleManager } from '$lib/stores/scrobble.svelte';
 	import EqPanel from '$lib/components/EqPanel.svelte';
 	import WordSyncedLyrics from '$lib/components/WordSyncedLyrics.svelte';
-	import AudioQualityBadge from '$lib/components/AudioQualityBadge.svelte';
+	import SleepTimerPanel from '$lib/components/SleepTimerPanel.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { openGlobalPlaylistModal } from '$lib/components/AddToPlaylistModal.svelte';
 	import { karaokeController } from '$lib/stores/karaoke.svelte';
+	import { sleepTimerStore } from '$lib/stores/sleepTimer.svelte';
+	import { onMount } from 'svelte';
 	import { slide } from 'svelte/transition';
 	import { formatArtistCredit } from '$lib/utils/formatting';
 	import type { CrateTrack, LocalAlbumSummary } from '$lib/types';
@@ -29,7 +31,8 @@
 		Maximize2,
 		Check,
 		CircleX,
-		Mic
+		Mic,
+		Moon
 	} from 'lucide-svelte';
 
 	interface Props {
@@ -47,7 +50,6 @@
 	const np = $derived(playerStore.nowPlaying);
 	const isLocal = $derived(np?.sourceType === 'local');
 	const isPlaying = $derived(playerStore.isPlaying);
-	const format = $derived(playerStore.currentQueueItem?.format ?? null);
 	const isYouTube = $derived(np?.sourceType === 'youtube');
 	const supportsLyrics = $derived(
 		Boolean(np?.trackName?.trim() && formatArtistCredit(np?.artistName).trim())
@@ -72,8 +74,15 @@
 
 	let dragOver = $state(false);
 	let eqPanelOpen = $state(false);
+	let sleepTimerOpen = $state(false);
 	let lyricsOpen = $state(false);
 	let karaokePanelOpen = $state(false);
+
+	onMount(() => {
+		const closeInlineLyrics = () => (lyricsOpen = false);
+		window.addEventListener('droppedneedle:close-inline-lyrics', closeInlineLyrics);
+		return () => window.removeEventListener('droppedneedle:close-inline-lyrics', closeInlineLyrics);
+	});
 
 	$effect(() => {
 		karaokeController.syncTrack(np?.trackSourceId, np?.sourceType);
@@ -114,6 +123,7 @@
 
 	function openFullscreenLyrics() {
 		if (!supportsLyrics) return;
+		lyricsOpen = false;
 		window.dispatchEvent(new CustomEvent('droppedneedle:open-lyrics'));
 	}
 
@@ -212,7 +222,7 @@
 					class="pointer-events-none absolute inset-[27%] rounded-full border border-base-content/[0.08]"
 				></div>
 				<div
-					class="absolute inset-[33.5%] overflow-hidden rounded-full ring-1 ring-base-content/25 shadow-[0_0_0_2px_oklch(from_var(--color-base-100)_l_c_h_/_0.55),0_2px_8px_oklch(from_var(--color-base-100)_l_c_h_/_0.6)]"
+					class="absolute inset-[23%] overflow-hidden rounded-full ring-1 ring-base-content/25 shadow-[0_0_0_2px_oklch(from_var(--color-base-100)_l_c_h_/_0.55),0_2px_8px_oklch(from_var(--color-base-100)_l_c_h_/_0.6)]"
 				>
 					{#if np}
 						<AlbumImage
@@ -237,21 +247,6 @@
 				<div
 					class="absolute inset-[48.5%] rounded-full bg-base-100 ring-1 ring-base-content/30"
 				></div>
-			</div>
-			<div
-				class="tonearm pointer-events-none absolute -right-1 -top-1 h-1/2 w-1/2"
-				class:is-playing={isPlaying}
-			>
-				<div
-					class="absolute right-[4.5%] top-[4.5%] h-4 w-4 rounded-full bg-base-300 ring-2 ring-base-content/20"
-				></div>
-				<div
-					class="absolute right-[6.8%] top-[6.8%] h-1.5 w-[84%] origin-right rotate-[28deg] rounded-full bg-gradient-to-l from-base-content/40 to-base-content/15"
-				>
-					<div
-						class="absolute -left-1 top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-sm bg-base-content/55 ring-1 ring-base-content/25"
-					></div>
-				</div>
 			</div>
 		{/if}
 	</div>
@@ -438,11 +433,24 @@
 			</div>
 		{/if}
 
-		<div class="flex w-full max-w-md items-center justify-between gap-4">
+		<div class="flex w-[90%] max-w-md items-center justify-between gap-4">
 			<div class="flex min-w-0 items-center gap-2">
-				{#if format}
-					<AudioQualityBadge codec={format} />
-				{/if}
+				<div class="flex min-w-0 items-center gap-1.5">
+					{#if playerStore.volume === 0}
+						<VolumeX class="h-4 w-4 shrink-0 opacity-60" />
+					{:else}
+						<Volume2 class="h-4 w-4 shrink-0 opacity-60" />
+					{/if}
+					<input
+						type="range"
+						min="0"
+						max="100"
+						value={playerStore.volume}
+						oninput={onVolume}
+						aria-label="Volume"
+						class="range range-xs range-accent w-20 sm:w-24"
+					/>
+				</div>
 				{#if scrobbleManager.enabled && scrobbleManager.status !== 'idle'}
 					<div class="tooltip tooltip-top" data-tip={scrobbleManager.tooltip}>
 						{#if scrobbleManager.status === 'scrobbled'}
@@ -459,23 +467,25 @@
 				{/if}
 			</div>
 			<div class="flex shrink-0 items-center gap-2">
-				<div class="flex items-center gap-1.5">
-					{#if playerStore.volume === 0}
-						<VolumeX class="h-4 w-4 shrink-0 opacity-60" />
-					{:else}
-						<Volume2 class="h-4 w-4 shrink-0 opacity-60" />
-					{/if}
-					<input
-						type="range"
-						min="0"
-						max="100"
-						value={playerStore.volume}
-						oninput={onVolume}
-						aria-label="Volume"
-						class="range range-xs range-accent w-20 sm:w-24"
-					/>
-				</div>
 				{#if isLocal}
+					<div class="relative">
+						<div
+							class="tooltip tooltip-top"
+							data-tip={sleepTimerStore.isActive ? 'Sleep timer active' : 'Sleep timer'}
+						>
+							<button
+								class="btn btn-circle btn-ghost btn-sm"
+								class:text-accent={sleepTimerStore.isActive}
+								onclick={() => (sleepTimerOpen = !sleepTimerOpen)}
+								aria-label={sleepTimerStore.isActive
+									? 'Sleep timer active - adjust'
+									: 'Set sleep timer'}
+							>
+								<Moon class="h-4 w-4" />
+							</button>
+						</div>
+						<SleepTimerPanel bind:open={sleepTimerOpen} onclose={() => (sleepTimerOpen = false)} />
+					</div>
 					<div class="tooltip tooltip-top" data-tip={karaokeTip()}>
 						<button
 							class="btn btn-circle btn-ghost btn-sm"

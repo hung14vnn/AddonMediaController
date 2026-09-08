@@ -126,12 +126,15 @@
 
 	async function playAlbum(album: LocalAlbumSummary, shuffle = false) {
 		try {
-			const match = await api.global.get<LocalAlbumMatch>(
-				API.local.albumMatch(album.musicbrainz_id)
+			const tracks = await api.global.get<LocalAlbumMatch['tracks']>(
+				API.local.albumTracks(album.musicbrainz_id)
 			);
-			const tracks = [...match.tracks].sort((a, b) => a.track_number - b.track_number);
-			if (!tracks.length) return;
-			launchLocalPlayback(tracks, 0, shuffle, {
+			const sortedTracks = [...tracks].sort((a, b) => a.track_number - b.track_number);
+			if (!sortedTracks.length) {
+				playbackToast.show('That album has no playable tracks', 'error');
+				return;
+			}
+			launchLocalPlayback(sortedTracks, 0, shuffle, {
 				albumId: album.musicbrainz_id,
 				albumName: album.name,
 				artistName: album.artist_name,
@@ -155,12 +158,15 @@
 
 	async function queueAlbum(album: LocalAlbumSummary) {
 		try {
-			const match = await api.global.get<LocalAlbumMatch>(
-				API.local.albumMatch(album.musicbrainz_id)
+			const tracks = await api.global.get<LocalAlbumMatch['tracks']>(
+				API.local.albumTracks(album.musicbrainz_id)
 			);
-			const tracks = [...match.tracks].sort((a, b) => a.track_number - b.track_number);
-			if (!tracks.length) return;
-			const items = buildQueueItemsFromLocal(tracks, {
+			const sortedTracks = [...tracks].sort((a, b) => a.track_number - b.track_number);
+			if (!sortedTracks.length) {
+				playbackToast.show('That album has no playable tracks', 'error');
+				return;
+			}
+			const items = buildQueueItemsFromLocal(sortedTracks, {
 				albumId: album.musicbrainz_id,
 				albumName: album.name,
 				artistName: album.artist_name,
@@ -268,16 +274,16 @@
 	<section
 		class="relative z-10 isolate flex min-h-[calc(100dvh-4.5rem)] flex-col overflow-hidden px-4 pt-5 sm:px-6 lg:px-8"
 	>
-		{#if heroCover && deviceProfileReady && !mobileLowPower}
+		<!-- {#if heroCover && deviceProfileReady && !mobileLowPower}
 			<img class="local-lyrics-artwork pointer-events-none absolute -z-20" src={heroCover} alt="" />
 			<div
 				class="local-lyrics-wash pointer-events-none absolute inset-0 -z-10"
 				aria-hidden="true"
 			></div>
-		{/if}
+		{/if} -->
 
 		<div class="grid flex-1 grid-cols-1 items-center gap-6 lg:grid-cols-12">
-			<div class="lg:col-span-7 xl:col-span-8">
+			<div class="lg:col-span-8 xl:col-span-8">
 				<div bind:this={turntableHostEl} bind:clientHeight={deckHeight}>
 					<Turntable
 						onDropPlay={playCrateTrack}
@@ -290,7 +296,7 @@
 				</div>
 			</div>
 			<div
-				class="flex flex-col gap-4 lg:col-span-5 lg:h-[var(--deck-h)] xl:col-span-4"
+				class="flex flex-col gap-4 lg:col-span-4 lg:h-[var(--deck-h)] xl:col-span-4"
 				style:--deck-h={deckHeight ? `${deckHeight}px` : '44rem'}
 			>
 				{#if deviceProfileReady && !mobileLowPower}

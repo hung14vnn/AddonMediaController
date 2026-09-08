@@ -100,80 +100,6 @@
 		}
 	}
 
-	function injectMonochromeStyle(target: AmLyricsElement, attempts = 0) {
-		const root = target.shadowRoot;
-		if (!root) {
-			if (attempts < 30) requestAnimationFrame(() => injectMonochromeStyle(target, attempts + 1));
-			return;
-		}
-		if (root.getElementById('droppedneedle-word-lyrics-theme')) return;
-		const style = document.createElement('style');
-		style.id = 'droppedneedle-word-lyrics-theme';
-		style.textContent = `
-			.lyrics-container {
-				scrollbar-width: none !important;
-				padding: clamp(18vh, 22vh, 26vh) clamp(1.25rem, 5vw, 4rem) !important;
-			}
-			@media (min-width: 768px) {
-				.lyrics-container {
-					padding-top: 5vh !important;
-					padding-bottom: 5vh !important;
-				}
-			}
-			.lyrics-container::-webkit-scrollbar { display: none !important; }
-			.lyrics-line {
-				transform-origin: left center;
-				font-weight: 700 !important;
-				transition: opacity .42s ease, transform .55s cubic-bezier(.22,1,.36,1), filter .48s ease !important;
-			}
-			.lyrics-line:not(.active):not(.pre-active) { opacity: .30; filter: blur(.15px); }
-			.lyrics-line.active { opacity: 1; font-weight: 700 !important; }
-			.lyrics-line.pre-active { opacity: .58; }
-			.lyrics-line-container { transition: transform .7s cubic-bezier(.22,1,.36,1) !important; }
-			.lyrics-line.active .lyrics-line-container,
-			.lyrics-line.pre-active .lyrics-line-container {
-				transition: transform .7s cubic-bezier(.22,1,.36,1) !important;
-			}
-			.no-lyrics { color: rgba(255,255,255,.55) !important; font-size: 1rem !important; }
-			${
-				disableWordInterpolation
-					? `
-					.lyrics-line { filter: none !important; }
-					.lyrics-line::before,
-					.lyrics-line-container,
-					.lyrics-word,
-					.lyrics-syllable,
-					.lyrics-syllable span.char {
-						animation: none !important;
-						transition: none !important;
-						transform: none !important;
-					}
-					/* Replace the animated wipe with an immediate state change. The
-					   component still applies .highlight at the word start, but mobile
-					   avoids per-character animation work. */
-					.lyrics-syllable.highlight,
-					.lyrics-syllable.finished {
-						background-image: none !important;
-						background-color: var(--lyplus-text-primary) !important;
-						color: var(--lyplus-text-primary) !important;
-					}
-					.lyrics-syllable.highlight span.char,
-					.lyrics-syllable.finished span.char {
-						background-image: none !important;
-						background-color: var(--lyplus-text-primary) !important;
-						color: var(--lyplus-text-primary) !important;
-						-webkit-text-fill-color: var(--lyplus-text-primary) !important;
-					}
-					/* Keep am-lyrics' scroll-animate transform so line scrolling remains smooth. */
-					.lyrics-line.active:not(.scroll-animate) { transform: none !important; }
-					.lyrics-line-container { transform: none !important; }
-					`
-					: ''
-			}
-		`;
-		root.appendChild(style);
-	}
-
 	function reportAvailability(target: AmLyricsElement): void {
 		const root = target.shadowRoot;
 		if (!root) return;
@@ -209,7 +135,6 @@
 				}
 				reportAvailability(target);
 				loading = false;
-				injectMonochromeStyle(target);
 			})
 			.catch((error) => {
 				console.warn('Failed to load word-synced lyrics', error);

@@ -24,6 +24,7 @@ import {
 	reportPlexStopped
 } from '$lib/player/plexPlaybackApi';
 import { playbackToast } from '$lib/stores/playbackToast.svelte';
+import { sleepTimerStore } from '$lib/stores/sleepTimer.svelte';
 import { radioSession } from '$lib/stores/radioSession.svelte';
 import {
 	getStoredVolume,
@@ -560,12 +561,14 @@ function createPlayerStore() {
 					void reportJellyfinProgress(jf.trackSourceId, jf.playSessionId, progress, true);
 			}
 			if (state === 'ended') {
+				const sleepTimerConsumed = sleepTimerStore.onTrackEnded();
 				const endedItem = getCurrentItem();
 				void stopPreviousSession(endedItem, progress);
 				if (endedItem?.sourceType === 'plex' && endedItem.plexRatingKey)
 					void reportPlexScrobble(endedItem.plexRatingKey);
 				else if (endedItem?.sourceType === 'navidrome')
 					void reportNavidromeScrobble(endedItem.trackSourceId);
+				if (sleepTimerConsumed) return;
 				const nextIdx = getNextIndex();
 				if (nextIdx !== null) {
 					void loadQueueItem(nextIdx).then(() => {

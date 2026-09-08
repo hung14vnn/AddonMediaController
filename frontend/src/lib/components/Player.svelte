@@ -10,7 +10,10 @@
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
 	import QueueDrawer from '$lib/components/QueueDrawer.svelte';
+	import ContextMenu, { type MenuItem } from '$lib/components/ContextMenu.svelte';
 	import EqPanel from '$lib/components/EqPanel.svelte';
+	import SleepTimerPanel from '$lib/components/SleepTimerPanel.svelte';
+	import { sleepTimerStore } from '$lib/stores/sleepTimer.svelte';
 	import LyricsPanel from '$lib/components/LyricsPanel.svelte';
 	import { openGlobalPlaylistModal } from '$lib/components/AddToPlaylistModal.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
@@ -30,24 +33,26 @@
 		Disc3,
 		Shuffle,
 		SkipBack,
-		AlertCircle,
+		CircleAlert,
 		Pause,
 		Play,
 		SkipForward,
 		Volume2,
 		ExternalLink,
 		Check,
-		CheckCircle2,
+		CircleCheck,
 		Database,
 		CircleX,
 		ListMusic,
 		ListPlus,
 		SlidersHorizontal,
 		Music2,
-		Mic
+		Mic,
+		Moon
 	} from 'lucide-svelte';
 
 	let eqPanelOpen = $state(false);
+	let sleepTimerOpen = $state(false);
 	let queueDrawerOpen = $state(false);
 	let queuePinned = $state(false);
 
@@ -79,7 +84,10 @@
 			queueDrawerOpen = true;
 		};
 		const handleOpenLyrics = () => {
-			if (supportsLyrics) lyricsPanelOpen = true;
+			if (supportsLyrics) {
+				window.dispatchEvent(new CustomEvent('droppedneedle:close-inline-lyrics'));
+				lyricsPanelOpen = true;
+			}
 		};
 		window.addEventListener('droppedneedle:open-queue', handleOpenQueue);
 		window.addEventListener('droppedneedle:open-lyrics', handleOpenLyrics);
@@ -109,7 +117,83 @@
 	});
 
 	function toggleLyrics() {
+		if (!lyricsPanelOpen) {
+			window.dispatchEvent(new CustomEvent('droppedneedle:close-inline-lyrics'));
+		}
 		lyricsPanelOpen = !lyricsPanelOpen;
+	}
+
+	const isKaraokeBusy = $derived(
+		karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'
+	);
+
+	// The compact mobile player consolidates the desktop-only controls (lyrics,
+	// karaoke, queue, sleep timer) behind a "more actions" 3-dot menu so they
+	// remain reachable from small viewports without crowding the bar.
+	function getMobileMenuItems(): MenuItem[] {
+		const isLocal = playerStore.currentQueueItem?.sourceType === 'local';
+		const items: MenuItem[] = [
+			{
+				label: 'Previous',
+				icon: SkipBack,
+				disabled: !playerStore.hasPrevious,
+				onclick: () => playerStore.previousTrack()
+			},
+			{
+				label: 'Next',
+				icon: SkipForward,
+				disabled: !playerStore.hasNext,
+				onclick: () => playerStore.nextTrack()
+			},
+			{
+				label: playerStore.shuffleEnabled ? 'Turn off shuffle' : 'Turn on shuffle',
+				icon: Shuffle,
+				className: playerStore.shuffleEnabled ? 'text-accent' : '',
+				disabled: !playerStore.hasQueue,
+				onclick: () => playerStore.toggleShuffle()
+			},
+			{
+				label: 'Add to playlist',
+				icon: ListPlus,
+				disabled: !isLocal,
+				onclick: addCurrentTrackToPlaylist
+			},
+			{
+				label: 'Lyrics',
+				icon: Music2,
+				disabled: !supportsLyrics,
+				className: lyricsPanelOpen ? 'text-accent' : '',
+				onclick: () => toggleLyrics()
+			},
+			{
+				label: 'Karaoke',
+				icon: Mic,
+				className: playerStore.karaokeActive ? 'text-accent' : '',
+				disabled: !isLocal || isKaraokeBusy,
+				onclick: () => toggleKaraoke()
+			},
+			{
+				label: 'Queue',
+				icon: ListMusic,
+				className: queueDrawerOpen ? 'text-accent' : '',
+				onclick: () => toggleQueueDrawer()
+			},
+			{
+				label: 'Equalizer',
+				icon: SlidersHorizontal,
+				className:
+					eqStore.enabled && playerStore.nowPlaying?.sourceType !== 'youtube' ? 'text-accent' : '',
+				disabled: playerStore.nowPlaying?.sourceType === 'youtube',
+				onclick: () => (eqPanelOpen = !eqPanelOpen)
+			},
+			{
+				label: 'Sleep timer',
+				icon: Moon,
+				className: sleepTimerStore.isActive ? 'text-accent' : '',
+				onclick: () => (sleepTimerOpen = true)
+			}
+		];
+		return items;
 	}
 
 	function formatTime(seconds: number): string {
@@ -179,6 +263,46 @@
 		e.preventDefault();
 		e.stopPropagation();
 		swipeWasHandled = false;
+	}
+
+	function handlePlayerKeydown(e: KeyboardEvent): void {
+		if (e.key === 'ArrowLeft' && playerStore.hasPrevious) {
+			e.preventDefault();
+			playerStore.previousTrack();
+		} else if (e.key === 'ArrowRight' && playerStore.hasNext) {
+			e.preventDefault();
+			playerStore.nextTrack();
+		}
+	}
+
+	function playerGesture(node: HTMLElement) {
+		const onPointerDown = (event: Event) => handlePlayerPointerDown(event as PointerEvent);
+		const onPointerMove = (event: Event) => handlePlayerPointerMove(event as PointerEvent);
+		const onPointerUp = (event: Event) => handlePlayerPointerUp(event as PointerEvent);
+		const onPointerCancel = () => handlePlayerPointerCancel();
+		const onLostPointerCapture = () => handlePlayerLostPointerCapture();
+		const onClick = (event: Event) => suppressClickAfterSwipe(event as MouseEvent);
+		const onKeydown = (event: Event) => handlePlayerKeydown(event as KeyboardEvent);
+
+		node.addEventListener('pointerdown', onPointerDown);
+		node.addEventListener('pointermove', onPointerMove);
+		node.addEventListener('pointerup', onPointerUp);
+		node.addEventListener('pointercancel', onPointerCancel);
+		node.addEventListener('lostpointercapture', onLostPointerCapture);
+		node.addEventListener('click', onClick);
+		node.addEventListener('keydown', onKeydown);
+
+		return {
+			destroy() {
+				node.removeEventListener('pointerdown', onPointerDown);
+				node.removeEventListener('pointermove', onPointerMove);
+				node.removeEventListener('pointerup', onPointerUp);
+				node.removeEventListener('pointercancel', onPointerCancel);
+				node.removeEventListener('lostpointercapture', onLostPointerCapture);
+				node.removeEventListener('click', onClick);
+				node.removeEventListener('keydown', onKeydown);
+			}
+		};
 	}
 
 	async function toggleKaraoke(): Promise<void> {
@@ -254,12 +378,10 @@
 
 		<div
 			class="droppedneedle-player-inner flex items-center gap-2 px-3 pr-9 sm:gap-4 sm:px-4 sm:pr-10 max-w-screen-2xl mx-auto touch-pan-y"
-			onpointerdown={handlePlayerPointerDown}
-			onpointermove={handlePlayerPointerMove}
-			onpointerup={handlePlayerPointerUp}
-			onpointercancel={handlePlayerPointerCancel}
-			onlostpointercapture={handlePlayerLostPointerCapture}
-			onclick={suppressClickAfterSwipe}
+			role="group"
+			aria-label="Audio player"
+			tabindex="-1"
+			use:playerGesture
 		>
 			<div class="flex min-w-0 flex-1 items-center gap-2 sm:gap-3 lg:w-1/4 lg:flex-none">
 				{#key playerStore.nowPlaying.trackSourceId}
@@ -300,7 +422,7 @@
 									{#if playerStore.currentQueueItem?.sourceType === 'local' && playbackOriginTip}
 										<div class="tooltip tooltip-right shrink-0" data-tip={playbackOriginTip}>
 											{#if playerStore.playbackOrigin === 'download'}
-												<CheckCircle2
+												<CircleCheck
 													class="h-3.5 w-3.5 text-success"
 													aria-label="Playing from downloaded audio"
 												/>
@@ -348,7 +470,7 @@
 									{#if playerStore.currentQueueItem?.sourceType === 'local' && playbackOriginTip}
 										<div class="tooltip tooltip-right shrink-0" data-tip={playbackOriginTip}>
 											{#if playerStore.playbackOrigin === 'download'}
-												<CheckCircle2
+												<CircleCheck
 													class="h-3.5 w-3.5 text-success"
 													aria-label="Playing from downloaded audio"
 												/>
@@ -440,7 +562,7 @@
 								: 'Play'}
 					>
 						{#if playerStore.playbackState === 'error'}
-							<AlertCircle class="h-4 w-4" />
+							<CircleAlert class="h-4 w-4" />
 						{:else if playerStore.isBuffering}
 							<span class="loading loading-spinner loading-sm"></span>
 						{:else if playerStore.isPlaying}
@@ -449,6 +571,11 @@
 							<Play class="h-4 w-4 ml-0.5 fill-current" />
 						{/if}
 					</button>
+
+					<div class="relative md:hidden">
+						<ContextMenu items={getMobileMenuItems()} position="end" size="xs" />
+						<SleepTimerPanel bind:open={sleepTimerOpen} onclose={() => (sleepTimerOpen = false)} />
+					</div>
 
 					<button
 						class="btn btn-ghost btn-sm btn-circle hidden md:inline-flex"
@@ -560,6 +687,25 @@
 					</button>
 				</div>
 
+				<div class="relative">
+					<div
+						class="tooltip tooltip-left"
+						data-tip={sleepTimerStore.isActive ? 'Sleep timer active' : 'Sleep timer'}
+					>
+						<button
+							class="btn btn-ghost btn-sm btn-circle"
+							class:text-accent={sleepTimerStore.isActive}
+							onclick={() => (sleepTimerOpen = !sleepTimerOpen)}
+							aria-label={sleepTimerStore.isActive
+								? 'Sleep timer active - adjust'
+								: 'Set sleep timer'}
+						>
+							<Moon class="h-4 w-4" />
+						</button>
+					</div>
+					<SleepTimerPanel bind:open={sleepTimerOpen} onclose={() => (sleepTimerOpen = false)} />
+				</div>
+
 				<div class="hidden sm:flex items-center gap-1.5">
 					<Volume2 class="h-4 w-4 opacity-60 shrink-0" />
 					<input
@@ -657,7 +803,7 @@
 		albumName={playerStore.nowPlaying.albumName ?? ''}
 		trackKey={`${playerStore.nowPlaying.sourceType ?? ''}:${playerStore.nowPlaying.trackSourceId ?? ''}:${playerStore.nowPlaying.trackName ?? ''}:${playerStore.nowPlaying.artistName ?? ''}:${playerStore.nowPlaying.albumName ?? ''}`}
 		coverUrl={nowPlayingCoverUrl}
-		duration={playerStore.nowPlaying.duration ?? playerStore.duration}
+		duration={Math.max(playerStore.duration, playerStore.nowPlaying.duration ?? 0)}
 		onclose={() => (lyricsPanelOpen = false)}
 		{karaokeStatus}
 		karaokeAvailable={playerStore.currentQueueItem?.sourceType === 'local'}

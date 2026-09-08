@@ -890,17 +890,26 @@ textarea {
 /* Mobile Safari and Chromium can spend more energy compositing these fixed,
    translucent surfaces than decoding the audio itself. Keep the same opaque
    hierarchy on touch-first devices without continuously blurring the page. */
-.mobile-low-power-playback .droppedneedle-bottom-nav,
+/* .mobile-low-power-playback .droppedneedle-bottom-nav,
 .mobile-low-power-playback .droppedneedle-player-bar,
 .mobile-low-power-playback .local-lyrics-wash,
 .mobile-low-power-playback .glass-surface {
 	backdrop-filter: none !important;
 	-webkit-backdrop-filter: none !important;
+} */
+
+.droppedneedle-bottom-nav,
+.droppedneedle-player-bar,
+.local-lyrics-wash,
+.glass-surface {
+	backdrop-filter: none !important;
+	-webkit-backdrop-filter: none !important;
 }
+
 
 /* Large rotating/blurred artwork and perpetual status animations keep the GPU
    awake for the entire track. Mobile gets a static equivalent instead. */
-.mobile-low-power-playback .vinyl-spin,
+/* .mobile-low-power-playback .vinyl-spin,
 .mobile-low-power-playback .local-lyrics-artwork,
 .mobile-low-power-playback .animate-glow-pulse,
 .mobile-low-power-playback .animate-equalizer-1,
@@ -908,17 +917,31 @@ textarea {
 .mobile-low-power-playback .animate-equalizer-3,
 .mobile-low-power-playback .now-playing-bars span {
 	animation: none !important;
+} */
+
+.vinyl-spin,
+.local-lyrics-artwork,
+.animate-glow-pulse,
+.animate-equalizer-1,
+.animate-equalizer-2,
+.animate-equalizer-3,
+.now-playing-bars span {
+	animation: none !important;
 }
 
 /* The tiny bars beside the active track are a playback status indicator. Keep
    this animation on mobile even when larger decorative animations are paused. */
-.mobile-low-power-playback .now-playing-bars--playing span {
+/* .mobile-low-power-playback .now-playing-bars--playing span {
+	animation: now-playing-bar 1.2s ease-in-out infinite !important;
+} */
+ .now-playing-bars--playing span {
 	animation: now-playing-bar 1.2s ease-in-out infinite !important;
 }
 
 .mobile-low-power-playback .local-lyrics-artwork {
 	display: none !important;
 }
+
 
 /* A pinned queue becomes a desktop rail instead of covering the app. */
 @media (min-width: 80rem) {
@@ -1420,15 +1443,6 @@ textarea {
 		0 30px 60px -22px oklch(from var(--color-base-100) l c h / 0.85);
 }
 
-.tonearm {
-	transform-origin: 88% 12%;
-	transform: rotate(-148deg);
-	transition: transform 0.9s var(--ease-overshoot);
-}
-.tonearm.is-playing {
-	transform: rotate(-117deg);
-}
-
 .deck-halo {
 	background: radial-gradient(
 		circle at center,
@@ -1569,7 +1583,6 @@ textarea {
 	.local-lyrics-artwork {
 		animation: none !important;
 	}
-	.tonearm,
 	.crate-card,
 	.search-row,
 	.countdown-ring,

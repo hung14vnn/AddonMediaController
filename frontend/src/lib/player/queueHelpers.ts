@@ -9,6 +9,7 @@ import type {
 } from '$lib/types';
 import type { PlaylistTrack } from '$lib/api/playlists';
 import { API } from '$lib/constants';
+import { getApiUrl } from '$lib/api/api-utils';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 
 const SUPPORTED_CODECS = new Set(['aac', 'mp3', 'opus', 'flac', 'wav', 'wma', 'vorbis', 'alac']);
@@ -200,7 +201,11 @@ export function buildQueueItemsFromNavidrome(
 }
 
 export function buildQueueItemsFromLocal(tracks: LocalTrackInfo[], meta: TrackMeta): QueueItem[] {
-	const normalizedCoverUrl = getCoverUrl(meta.coverUrl, meta.albumId);
+	// Preserve the artwork returned by the local library before falling back to
+	// the cover proxy. Local catalog IDs can look like MusicBrainz IDs.
+	const normalizedCoverUrl = meta.coverUrl
+		? getApiUrl(meta.coverUrl)
+		: getCoverUrl(null, meta.albumId);
 	return tracks.map((t) => ({
 		trackSourceId: String(t.track_file_id),
 		trackName: t.title,

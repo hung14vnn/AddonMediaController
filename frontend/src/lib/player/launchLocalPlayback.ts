@@ -2,6 +2,7 @@ import { playerStore } from '$lib/stores/player.svelte';
 import { API } from '$lib/constants';
 import type { PlaybackMeta, QueueItem } from '$lib/player/types';
 import type { LocalTrackInfo } from '$lib/types';
+import { getApiUrl } from '$lib/api/api-utils';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 
 export function launchLocalPlayback(
@@ -10,7 +11,11 @@ export function launchLocalPlayback(
 	shuffle: boolean = false,
 	meta: PlaybackMeta
 ): void {
-	const normalizedCoverUrl = getCoverUrl(meta.coverUrl, meta.albumId);
+	// Local album artwork is authoritative. Do not let a local/catalog ID that
+	// happens to look like an MBID replace it with a Cover Art Archive URL.
+	const normalizedCoverUrl = meta.coverUrl
+		? getApiUrl(meta.coverUrl)
+		: getCoverUrl(null, meta.albumId);
 
 	const items: QueueItem[] = tracks.map((t) => ({
 		trackSourceId: String(t.track_file_id),

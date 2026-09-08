@@ -106,6 +106,7 @@
 	const pageScrollLockClass = 'lyrics-page-scroll-lock';
 
 	const showWordSynced = $derived(wordSyncedAvailable !== false);
+	const progressDuration = $derived(Math.max(duration, currentTime, 0));
 
 	$effect(() => {
 		if (trackKey === previousTrackKey) return;
@@ -194,9 +195,9 @@
 	tabindex="-1"
 	onkeydown={handleKeydown}
 >
-	{#if coverUrl}
+	<!-- {#if coverUrl}
 		<img class="lyrics-artwork" src={coverUrl} alt="" aria-hidden="true" />
-	{/if}
+	{/if} -->
 	<div class="lyrics-wash" aria-hidden="true"></div>
 	<div
 		class="lyrics-stage-inner relative z-10 w-full max-w-5xl mx-auto flex flex-col flex-1 min-h-0"
@@ -207,33 +208,14 @@
 		>
 			<div class="lyrics-stage-track-meta flex items-center gap-2 min-w-0 flex-1">
 				<div class="lyrics-stage-cover-wrap hidden md:flex" aria-hidden="true">
-					<div
-						class="lyrics-stage-disc turntable-platter vinyl-spin rounded-full"
-						class:is-paused={!isPlaying}
-					>
-						<div
-							class="pointer-events-none absolute inset-[9%] rounded-full border border-base-content/[0.06]"
-						></div>
-						<div
-							class="pointer-events-none absolute inset-[18%] rounded-full border border-base-content/[0.07]"
-						></div>
-						<div
-							class="pointer-events-none absolute inset-[27%] rounded-full border border-base-content/[0.08]"
-						></div>
-						<div
-							class="absolute inset-[25%] overflow-hidden rounded-full ring-1 ring-base-content/25 shadow-[0_0_0_2px_oklch(from_var(--color-base-100)_l_c_h_/_0.55),0_2px_8px_oklch(from_var(--color-base-100)_l_c_h_/_0.6)]"
-						>
-							{#if coverUrl}
-								<img class="lyrics-stage-cover" src={coverUrl} alt="" />
-							{:else}
-								<div class="lyrics-stage-cover lyrics-stage-cover-empty">
-									<Music2 class="h-12 w-12" />
-								</div>
-							{/if}
-						</div>
-						<div
-							class="absolute inset-[48.5%] rounded-full bg-base-100 ring-1 ring-base-content/30"
-						></div>
+					<div class="lyrics-stage-cover-frame">
+						{#if coverUrl}
+							<img class="lyrics-stage-cover" src={coverUrl} alt="" />
+						{:else}
+							<div class="lyrics-stage-cover lyrics-stage-cover-empty">
+								<Music2 class="h-12 w-12" />
+							</div>
+						{/if}
 					</div>
 				</div>
 				<div class="lyrics-stage-meta-copy flex items-center gap-2 min-w-0 mt-4">
@@ -259,12 +241,14 @@
 						type="range"
 						class="range range-xs range-accent flex-1"
 						min="0"
-						max={duration || 1}
-						value={Math.min(currentTime, duration || 1)}
+						max={progressDuration || 1}
+						value={Math.min(currentTime, progressDuration || 1)}
 						oninput={(event) => onseek(Number((event.target as HTMLInputElement).value))}
 						aria-label="Lyrics playback progress"
 					/>
-					<span class="text-[10px] text-white/55 tabular-nums w-7">{formatTime(duration)}</span>
+					<span class="text-[10px] text-white/55 tabular-nums w-7"
+						>{formatTime(progressDuration)}</span
+					>
 				</div>
 				<button
 					class="btn btn-ghost btn-xs btn-circle hidden md:inline-flex"
@@ -300,36 +284,6 @@
 					aria-label="Toggle queue"
 					title="Queue"><ListMusic class="h-5 w-5" /></button
 				>
-				{#if karaokeAvailable}
-					<button
-						class="btn btn-ghost btn-xs btn-circle"
-						class:text-accent={karaokeActive ||
-							karaokeStatus === 'ready' ||
-							karaokeStatus === 'preparing' ||
-							karaokeStatus === 'queued' ||
-							karaokeStatus === 'processing'}
-						disabled={karaokeStatus === 'preparing' ||
-							karaokeStatus === 'queued' ||
-							karaokeStatus === 'processing'}
-						onclick={ontogglekaraoke}
-						aria-label={karaokeActive ? 'Turn off karaoke' : 'Start karaoke'}
-						title={karaokeActive
-							? 'Turn off karaoke'
-							: karaokeStatus === 'ready'
-								? 'Karaoke ready'
-								: karaokeStatus === 'failed'
-									? karaokeError || 'Karaoke unavailable'
-									: karaokeStatus === 'idle'
-										? 'Checking karaoke status…'
-										: 'Karaoke'}
-					>
-						{#if karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'}
-							<span class="loading loading-spinner loading-xs"></span>
-						{:else}
-							<Mic class="h-5 w-5" />
-						{/if}
-					</button>
-				{/if}
 				<button
 					class="btn btn-ghost btn-sm btn-circle"
 					onclick={() => {
@@ -342,6 +296,39 @@
 				</button>
 			</div>
 		</div>
+
+		{#if karaokeAvailable}
+			<button
+				class="btn btn-circle absolute bottom-5 right-5 z-30 shadow-xl sm:bottom-7 sm:right-7"
+				class:btn-primary={karaokeActive}
+				class:btn-ghost={!karaokeActive}
+				class:text-accent={!karaokeActive &&
+					(karaokeStatus === 'ready' ||
+						karaokeStatus === 'preparing' ||
+						karaokeStatus === 'queued' ||
+						karaokeStatus === 'processing')}
+				disabled={karaokeStatus === 'preparing' ||
+					karaokeStatus === 'queued' ||
+					karaokeStatus === 'processing'}
+				onclick={ontogglekaraoke}
+				aria-label={karaokeActive ? 'Turn off karaoke' : 'Start karaoke'}
+				title={karaokeActive
+					? 'Turn off karaoke'
+					: karaokeStatus === 'ready'
+						? 'Karaoke ready'
+						: karaokeStatus === 'failed'
+							? karaokeError || 'Karaoke unavailable'
+							: karaokeStatus === 'idle'
+								? 'Checking karaoke status…'
+								: 'Karaoke'}
+			>
+				{#if karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'}
+					<span class="loading loading-spinner loading-sm"></span>
+				{:else}
+					<Mic class="h-5 w-5" />
+				{/if}
+			</button>
+		{/if}
 
 		<div class="lyrics-stage-content relative z-0 min-h-0 flex-1">
 			{#if karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'}
@@ -558,9 +545,14 @@
 			justify-content: center;
 		}
 
-		.lyrics-stage-disc {
+		.lyrics-stage-cover-frame {
 			width: 100%;
 			height: 100%;
+			overflow: hidden;
+			border-radius: 1rem;
+			background: rgba(255, 255, 255, 0.06);
+			box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+			border: 1px solid rgba(255, 255, 255, 0.1);
 		}
 
 		.lyrics-stage-cover {
