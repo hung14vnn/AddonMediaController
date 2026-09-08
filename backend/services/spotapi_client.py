@@ -74,6 +74,11 @@ def _artist_items(value: Any) -> list[dict[str, Any]]:
 
 def _images(value: Any) -> list[dict[str, Any]]:
     container = _mapping(value)
+    if isinstance(container.get("items"), list):
+        for item in container["items"]:
+            images = _images(item)
+            if images:
+                return images
     sources = container.get("sources")
     if not isinstance(sources, list):
         nested = _mapping(container.get("image"))
@@ -219,6 +224,15 @@ def _search_items(raw: Mapping[str, Any], kind: str) -> list[dict[str, Any]]:
     return _items(search.get(key))
 
 
+def _playlist_tracks(content: Mapping[str, Any]) -> list[dict[str, Any]]:
+    tracks: list[dict[str, Any]] = []
+    for entry in _items(content):
+        track = entry.get("itemV2") or entry.get("track") or entry.get("item")
+        if isinstance(track, Mapping):
+            tracks.append(_track_item(track))
+    return tracks
+
+
 class SpotApiClient:
     """Expose the subset of the existing Spotify catalog client used by routes."""
 
@@ -309,6 +323,43 @@ class SpotApiClient:
     async def get_track(self, track_id: str) -> dict[str, Any]:
         raw = await self._run(self._song().get_track_info, track_id)
         return _track_item(_mapping(_mapping(raw.get("data")).get("trackUnion")))
+
+    async def get_playlist(self, playlist_id: str) -> dict[str, Any]:
+        from spotapi import PublicPlaylist
+
+        def fetch() -> dict[str, Any]:
+            playlist = PublicPlaylist(playlist_id)
+            first_response = playlist.get_playlist_info(limit=343)
+            first = _mapping(_mapping(first_response.get("data")).get("playlistV2"))
+            if not first:
+                raise ValueError("Spotify playlist is empty or unavailable")
+            content = _mapping(first.get("content"))
+            tracks = _playlist_tracks(content)
+            total = int(content.get("totalCount") or len(tracks))
+            offset = len(tracks)
+            while offset < total:
+                response = playlist.get_playlist_info(limit=343, offset=offset)
+                page = _mapping(_mapping(response.get("data")).get("playlistV2"))
+                page_tracks = _playlist_tracks(_mapping(page.get("content")))
+                if not page_tracks:
+                    break
+                tracks.extend(page_tracks)
+                offset += len(page_tracks)
+            metadata = first
+            return {
+                "id": playlist_id,
+                "name": metadata.get("name") or "Spotify Playlist",
+                "description": metadata.get("description") or "",
+                "images": _images(metadata.get("images") or metadata.get("coverArt")),
+                "tracks": {"total": len(tracks)},
+                "_tracks": tracks,
+            }
+
+        return await self._run(fetch)
+
+    async def get_playlist_tracks(self, playlist_id: str) -> list[dict[str, Any]]:
+        playlist = await self.get_playlist(playlist_id)
+        return playlist.pop("_tracks", [])
 
     async def get_artist(self, artist_id: str) -> dict[str, Any]:
         raw = await self._run(self._artist().get_artist, artist_id)

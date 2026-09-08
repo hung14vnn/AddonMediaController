@@ -722,7 +722,7 @@ export const API = {
 		spotifyAuthUrl: () => '/api/v1/me/connections/spotify/auth/url',
 		spotifyPlaylists: () => '/api/v1/me/spotify/playlists',
 		spotifyTrackRequest: () => '/api/v1/me/spotify/tracks/request',
-		spotifyImport: (playlistId: string) => `/api/v1/me/spotify/playlists/${playlistId}/import`,
+		spotifyImport: () => '/api/v1/me/spotify/playlists/import',
 		personalMixRefresh: () => '/api/v1/me/personal-mix/refresh'
 	},
 	scrobble: {

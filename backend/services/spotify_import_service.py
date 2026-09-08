@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from urllib.parse import urlparse
 from collections.abc import Awaitable, Callable
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Any
@@ -160,6 +161,26 @@ class SpotifyImportService:
         if client is None:
             raise SpotifyNotLinkedError("Spotify account not linked")
         return client
+
+    async def _get_public_client(self):
+        return await self._client_factory.resolve_spotify_catalog()
+
+    @staticmethod
+    def normalize_playlist_id(value: str) -> str:
+        value = value.strip()
+        if value.startswith("spotify:playlist:"):
+            playlist_id = value.removeprefix("spotify:playlist:")
+        else:
+            parsed = urlparse(value)
+            parts = [part for part in parsed.path.split("/") if part]
+            playlist_id = parts[1] if len(parts) >= 2 and parts[0] == "playlist" else value
+        if not playlist_id or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for char in playlist_id):
+            raise ValueError("Enter a valid public Spotify playlist URL")
+        return playlist_id
+
+    async def get_public_playlist(self, playlist_id: str) -> dict:
+        client = await self._get_public_client()
+        return await client.get_playlist(playlist_id)
 
     async def resolve_track_for_download(
         self,
@@ -383,7 +404,7 @@ class SpotifyImportService:
     async def populate_playlist(
         self, user_id: str, spotify_playlist_id: str, playlist_id: str
     ) -> None:
-        client = await self._get_client(user_id)
+        client = await self._get_public_client()
 
         _pl_info, raw_tracks = await asyncio.gather(
             client.get_playlist(spotify_playlist_id),

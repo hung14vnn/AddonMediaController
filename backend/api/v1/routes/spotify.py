@@ -48,7 +48,7 @@ class SpotifyPlaylistListResponse(AppStruct):
 
 
 class SpotifyImportRequest(AppStruct):
-    name: str
+    url: str
 
 
 class SpotifyImportResponse(AppStruct):
@@ -211,6 +211,51 @@ async def request_spotify_track(
     return SpotifyTrackRequestResponse(
         status="queued", task_id=task_id, duration_seconds=duration_seconds
     )
+
+
+@router.post(
+    "/playlists/import",
+    response_model=SpotifyImportResponse,
+)
+async def import_public_spotify_playlist(
+    body: SpotifyImportRequest = MsgSpecBody(SpotifyImportRequest),
+    current_user: CurrentUserDep = None,
+    svc: SpotifyImportService = Depends(get_spotify_import_service),
+    playlist_service: PlaylistService = Depends(get_playlist_service),
+    local_service: LocalFilesService = Depends(get_local_files_service),
+) -> SpotifyImportResponse:
+    try:
+        playlist_id = svc.normalize_playlist_id(body.url)
+        playlist = await svc.get_public_playlist(playlist_id)
+        internal_id = await svc.ensure_playlist_record(
+            current_user.id, playlist_id, playlist.get("name") or "Spotify Playlist"
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Public Spotify playlist import setup failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Failed to fetch Spotify playlist")
+
+    task_key = f"spotify:import:{current_user.id}:{playlist_id}"
+    registry = TaskRegistry.get_instance()
+    if not registry.is_running(task_key):
+        task = asyncio.create_task(
+            _background_import(
+                svc,
+                current_user.id,
+                playlist_id,
+                internal_id,
+                current_user,
+                playlist_service,
+                local_service,
+            )
+        )
+        try:
+            registry.register(task_key, task)
+        except RuntimeError:
+            pass
+
+    return SpotifyImportResponse(playlist_id=internal_id)
 
 
 @router.post(

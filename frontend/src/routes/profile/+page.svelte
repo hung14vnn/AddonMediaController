@@ -39,15 +39,11 @@
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import MediaServerAccountsCard from '$lib/components/profile/MediaServerAccountsCard.svelte';
 	import ScrobblingDiscoveryCard from '$lib/components/profile/ScrobblingDiscoveryCard.svelte';
-	import SpotifyConnectionCard from '$lib/components/profile/SpotifyConnectionCard.svelte';
 	import ProfileConnectApps from '$lib/components/profile/ProfileConnectApps.svelte';
 	import PageSectionToc from '$lib/components/PageSectionToc.svelte';
 	import { page } from '$app/state';
 	import { browser } from '$app/environment';
-	import { onMount } from 'svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-	import { ConnectionsQueryKeyFactory } from '$lib/queries/connections/ConnectionsQueryKeyFactory';
 
 	const userId = authStore.user?.id ?? '';
 	const profileQuery = getProfileQuery(userId);
@@ -77,7 +73,6 @@
 			...(mediaAccountsEnabled ? [{ id: 'media-accounts', label: 'Media Accounts' }] : []),
 			{ id: 'connect-apps', label: 'Connect Apps' },
 			{ id: 'scrobbling', label: 'Scrobbling' },
-			{ id: 'spotify', label: 'Spotify' },
 			...(profile.library_stats.length > 0 ? [{ id: 'libraries', label: 'Your Libraries' }] : [])
 		];
 	});
@@ -129,20 +124,6 @@
 	let avatarFile: File | null = $state(null);
 	let draggingOver = $state(false);
 	let fileInput: HTMLInputElement | undefined = $state();
-
-	onMount(async () => {
-		const spotify = page.url.searchParams.get('spotify');
-		if (spotify === 'connected') {
-			toastStore.show({ message: 'Spotify connected successfully', type: 'success' });
-			await invalidateQueriesWithPersister({
-				queryKey: ConnectionsQueryKeyFactory.list(authStore.user?.id)
-			});
-			if (browser) history.replaceState({}, '', withBasePath('/profile'));
-		} else if (spotify === 'error') {
-			toastStore.show({ message: 'Spotify connection failed. Please try again.', type: 'error' });
-			if (browser) history.replaceState({}, '', withBasePath('/profile'));
-		}
-	});
 
 	function errMessage(e: unknown): string {
 		return e instanceof ApiError ? e.message : 'Could not reach the server';
@@ -664,10 +645,6 @@
 
 				<div id="scrobbling" class="scroll-mt-24 xl:ml-40">
 					<ScrobblingDiscoveryCard {navidromeEnabled} />
-				</div>
-
-				<div id="spotify" class="scroll-mt-24 xl:ml-40">
-					<SpotifyConnectionCard />
 				</div>
 
 				{#if profile.library_stats.length > 0}

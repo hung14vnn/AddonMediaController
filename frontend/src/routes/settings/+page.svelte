@@ -38,7 +38,6 @@
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
-	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
 
 	const integration = fromStore(integrationStore);
 
@@ -84,9 +83,6 @@
 		{ id: 'plex', label: 'Plex', tier: 'setup', icon: PlexIcon },
 		{ id: 'youtube', label: 'YouTube', tier: 'setup', icon: Youtube },
 		...(authStore.isAdmin ? [{ id: 'lastfm', label: 'Last.fm', tier: 'setup', icon: Radio }] : []),
-		...(authStore.isAdmin
-			? [{ id: 'spotify', label: 'Spotify', tier: 'setup', icon: SpotifyIcon }]
-			: []),
 		...(authStore.isAdmin
 			? [{ id: 'events', label: 'Live Events', tier: 'setup', icon: CalendarClock }]
 			: []),
