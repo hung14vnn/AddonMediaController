@@ -41,7 +41,6 @@
 		ExternalLink,
 		Check,
 		CircleCheck,
-		Database,
 		CircleX,
 		ListMusic,
 		ListPlus,
@@ -349,9 +348,7 @@
 	const playbackOriginTip = $derived(
 		playerStore.playbackOrigin === 'download'
 			? 'Playing from downloaded audio'
-			: playerStore.playbackOrigin === 'cache'
-				? 'Playing from playback cache'
-				: ''
+			: ''
 	);
 </script>
 
@@ -426,11 +423,6 @@
 													class="h-3.5 w-3.5 text-success"
 													aria-label="Playing from downloaded audio"
 												/>
-											{:else}
-												<Database
-													class="h-3.5 w-3.5 text-info"
-													aria-label="Playing from playback cache"
-												/>
 											{/if}
 										</div>
 									{/if}
@@ -473,11 +465,6 @@
 												<CircleCheck
 													class="h-3.5 w-3.5 text-success"
 													aria-label="Playing from downloaded audio"
-												/>
-											{:else}
-												<Database
-													class="h-3.5 w-3.5 text-info"
-													aria-label="Playing from playback cache"
 												/>
 											{/if}
 										</div>

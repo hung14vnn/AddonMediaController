@@ -8,10 +8,9 @@ vi.mock('$lib/api/client', () => ({
 	api: { global: { post: vi.fn(), put: vi.fn(), delete: vi.fn() } }
 }));
 
-const { mockRemoveMbid, mockDeleteOfflineTracks, mockDeletePlaybackTracks } = vi.hoisted(() => ({
+const { mockRemoveMbid, mockDeleteOfflineTracks } = vi.hoisted(() => ({
 	mockRemoveMbid: vi.fn(),
-	mockDeleteOfflineTracks: vi.fn(),
-	mockDeletePlaybackTracks: vi.fn()
+	mockDeleteOfflineTracks: vi.fn()
 }));
 
 vi.mock('$lib/stores/library', () => ({
@@ -24,10 +23,6 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 
 vi.mock('$lib/offline/offlineAudio', () => ({
 	deleteOfflineTracks: mockDeleteOfflineTracks
-}));
-
-vi.mock('$lib/player/playbackAudioCache', () => ({
-	deletePlaybackTracks: mockDeletePlaybackTracks
 }));
 
 vi.mock('../QueryClient', () => ({
@@ -54,11 +49,10 @@ beforeEach(() => {
 	mockPut.mockResolvedValue({});
 	mockDelete.mockResolvedValue({});
 	mockDeleteOfflineTracks.mockResolvedValue(0);
-	mockDeletePlaybackTracks.mockResolvedValue(0);
 });
 
 describe('track removal mutations', () => {
-	it('removes offline and playback cache copies after deleting one library track', async () => {
+	it('removes offline copies after deleting one library track', async () => {
 		const mutation = removeLibraryTrack() as unknown as {
 			mutationFn: (input: { fileId: string; cacheTrackIds: string[] }) => Promise<unknown>;
 			onSuccess: (
@@ -71,7 +65,6 @@ describe('track removal mutations', () => {
 		await mutation.onSuccess(data, input);
 
 		expect(mockDeleteOfflineTracks).toHaveBeenCalledWith('user-1', ['catalog-id', 'file-id']);
-		expect(mockDeletePlaybackTracks).toHaveBeenCalledWith('user-1', ['catalog-id', 'file-id']);
 	});
 
 	it('cleans every selected track after bulk library removal', async () => {
@@ -87,12 +80,6 @@ describe('track removal mutations', () => {
 		await mutation.onSuccess(data, input);
 
 		expect(mockDeleteOfflineTracks).toHaveBeenCalledWith('user-1', [
-			'catalog-1',
-			'catalog-2',
-			'file-1',
-			'file-2'
-		]);
-		expect(mockDeletePlaybackTracks).toHaveBeenCalledWith('user-1', [
 			'catalog-1',
 			'catalog-2',
 			'file-1',

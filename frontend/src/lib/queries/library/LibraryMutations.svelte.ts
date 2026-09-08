@@ -19,15 +19,13 @@ import type {
 import type { ScanRunRequestedResponse } from './LibraryOperationsTypes';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { deleteOfflineTracks } from '$lib/offline/offlineAudio';
-import { deletePlaybackTracks } from '$lib/player/playbackAudioCache';
 
 async function removeDeviceAudioCopies(trackIds: Iterable<string>): Promise<void> {
 	const userId = authStore.user?.id;
 	if (!userId) return;
 	const uniqueTrackIds = [...new Set(trackIds)];
 	await Promise.allSettled([
-		deleteOfflineTracks(userId, uniqueTrackIds),
-		deletePlaybackTracks(userId, uniqueTrackIds)
+		deleteOfflineTracks(userId, uniqueTrackIds)
 	]);
 }
 

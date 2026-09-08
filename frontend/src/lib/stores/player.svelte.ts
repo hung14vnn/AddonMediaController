@@ -49,7 +49,6 @@ import {
 import { resolveSourceUrl, buildNowPlayingMetadata } from './playerSourceResolver';
 import { resumeAudioEngine } from '$lib/player/audioElement';
 import { createOfflineTrackUrl } from '$lib/offline/offlineAudio';
-import { createPlaybackTrackUrl } from '$lib/player/playbackAudioCache';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { KaraokePlaybackSource } from '$lib/player/KaraokePlaybackSource';
 import {
@@ -287,26 +286,16 @@ function createPlayerStore() {
 		if (item.sourceType === 'local') {
 			const userId = authStore.user?.id;
 			const offline = userId ? await createOfflineTrackUrl(userId, item.trackSourceId) : null;
-			const cached =
-				!offline && userId && url
-					? await createPlaybackTrackUrl({
-							userId,
-							trackId: item.trackSourceId,
-							sourceUrl: url,
-							format: item.format
-						})
-					: null;
-			const localCopy = offline ?? cached;
-			const playbackUrl = localCopy?.url ?? url;
+			const playbackUrl = offline?.url ?? url;
 			isSeekable = true;
 			return {
 				source: createPlaybackSource('local', {
 					url: playbackUrl!,
 					seekable: true,
-					cleanup: localCopy?.revoke
+					cleanup: offline?.revoke
 				}),
 				loadUrl: playbackUrl,
-				playbackOrigin: localCopy?.source ?? 'https'
+				playbackOrigin: offline?.source ?? 'https'
 			};
 		}
 		if (item.sourceType === 'navidrome') {

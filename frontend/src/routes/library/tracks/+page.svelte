@@ -57,7 +57,6 @@
 		listOfflineTrackMetadata,
 		type OfflineTrackMetadata
 	} from '$lib/offline/offlineAudio';
-	import { clearPlaybackCache, deletePlaybackTracks } from '$lib/player/playbackAudioCache';
 
 	const PAGE_SIZE = 48;
 
@@ -80,7 +79,6 @@
 	let offlineDownloadingIds = new SvelteSet<string>();
 	let bulkOfflineDownloading = $state(false);
 	let clearingAllOffline = $state(false);
-	let clearingPlaybackCache = $state(false);
 	let deletingInvalidOffline = $state(false);
 	let invalidOfflineCheckComplete = $state(false);
 	let invalidOfflineIds = new SvelteSet<string>();
@@ -418,7 +416,6 @@
 		deletingInvalidOffline = true;
 		try {
 			const removed = await deleteOfflineTracks(userId, trackIds);
-			await deletePlaybackTracks(userId, trackIds).catch(() => undefined);
 			for (const trackId of trackIds) {
 				offlineAvailableIds.delete(trackId);
 				invalidOfflineIds.delete(trackId);
@@ -433,25 +430,6 @@
 			toastStore.show({ message: "Couldn't delete invalid offline tracks", type: 'error' });
 		} finally {
 			deletingInvalidOffline = false;
-		}
-	}
-
-	async function clearPlaybackCacheOnDevice(): Promise<void> {
-		if (clearingPlaybackCache || clearingAllOffline || deletingInvalidOffline) return;
-		if (
-			!confirm('Clear the automatic playback cache on this device? Offline downloads will be kept.')
-		) {
-			return;
-		}
-
-		clearingPlaybackCache = true;
-		try {
-			await clearPlaybackCache();
-			toastStore.show({ message: 'Playback cache cleared', type: 'success' });
-		} catch {
-			toastStore.show({ message: "Couldn't clear playback cache", type: 'error' });
-		} finally {
-			clearingPlaybackCache = false;
 		}
 	}
 
@@ -766,23 +744,6 @@
 						Clear all offline ({offlineTrackCount})
 					</button>
 				{/if}
-				<button
-					class="btn btn-outline btn-sm gap-1.5"
-					onclick={() => void clearPlaybackCacheOnDevice()}
-					disabled={clearingPlaybackCache ||
-						clearingAllOffline ||
-						deletingInvalidOffline ||
-						bulkOfflineDownloading ||
-						offlineDownloadingIds.size > 0}
-					aria-label="Clear playback cache"
-				>
-					{#if clearingPlaybackCache}
-						<Loader2 class="h-3.5 w-3.5 animate-spin" />
-					{:else}
-						<Trash2 class="h-3.5 w-3.5" />
-					{/if}
-					Clear cache
-				</button>
 			</div>
 		{/if}
 	</div>

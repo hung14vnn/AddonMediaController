@@ -2,14 +2,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { QueueItem } from '$lib/player/types';
 import { createOfflineTrackUrl } from '$lib/offline/offlineAudio';
-import { createPlaybackTrackUrl } from '$lib/player/playbackAudioCache';
 import { createPlaybackSource } from '$lib/player/createSource';
 import { authStore } from '$lib/stores/authStore.svelte';
 
 vi.mock('$lib/offline/offlineAudio', () => ({ createOfflineTrackUrl: vi.fn(async () => null) }));
-vi.mock('$lib/player/playbackAudioCache', () => ({
-	createPlaybackTrackUrl: vi.fn(async () => null)
-}));
 
 type StateCallback = (state: import('$lib/player/types').PlaybackState) => void;
 type ProgressCallback = (currentTime: number, duration: number) => void;
@@ -205,26 +201,20 @@ describe('low power playback', () => {
 		storage.set('droppedneedle_player_session_progress', stale);
 		expect(playerStore.restoreSession()?.progress).toBe(50);
 	});
-	it('keeps playback cache on online iPhones and downloaded audio offline', async () => {
+	it('streams online audio immediately and uses downloaded audio offline', async () => {
 		vi.spyOn(authStore, 'user', 'get').mockReturnValue({ id: 'test-user' } as NonNullable<
 			typeof authStore.user
 		>);
 		const nav = { userAgent: 'iPhone', onLine: true };
 		vi.stubGlobal('navigator', nav);
-		vi.mocked(createPlaybackTrackUrl).mockResolvedValueOnce({
-			url: 'blob:cached',
-			source: 'cache',
-			revoke: vi.fn()
-		});
 		await start();
 		expect(createOfflineTrackUrl).toHaveBeenCalled();
-		expect(createPlaybackTrackUrl).toHaveBeenCalled();
 		expect(createPlaybackSource).toHaveBeenLastCalledWith('local', {
-			url: 'blob:cached',
+			url: '/stream/test',
 			seekable: true,
-			cleanup: expect.any(Function)
+			cleanup: undefined
 		});
-		expect(playerStore.playbackOrigin).toBe('cache');
+		expect(playerStore.playbackOrigin).toBe('https');
 		nav.onLine = false;
 		vi.mocked(createOfflineTrackUrl).mockResolvedValueOnce({
 			url: 'blob:offline',
