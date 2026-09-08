@@ -142,6 +142,16 @@
 		}
 	}
 
+	function hideSourceFooter(target: AmLyricsElement): void {
+		const root = target.shadowRoot;
+		if (!root || root.querySelector('style[data-hide-source-footer]')) return;
+
+		const style = document.createElement('style');
+		style.dataset.hideSourceFooter = 'true';
+		style.textContent = '.lyrics-footer .footer-content { display: none !important; }';
+		root.appendChild(style);
+	}
+
 	onMount(() => {
 		let disposed = false;
 		const handleLineClick = (event: Event) => {
@@ -162,7 +172,9 @@
 				target.addEventListener('line-click', handleLineClick);
 				const root = target.shadowRoot;
 				if (root) {
+					hideSourceFooter(target);
 					lyricsObserver = new MutationObserver(() => {
+						hideSourceFooter(target);
 						reportAvailability(target);
 						scheduleInitialSync(target);
 					});

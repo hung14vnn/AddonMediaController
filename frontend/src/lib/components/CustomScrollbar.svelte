@@ -160,6 +160,10 @@
 		cursor: grabbing;
 	}
 
+	:global(html.lyrics-page-scroll-lock .custom-scrollbar) {
+		display: none;
+	}
+
 	@media (prefers-reduced-motion: reduce) {
 		.custom-scrollbar {
 			transition: none;
