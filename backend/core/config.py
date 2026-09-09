@@ -103,7 +103,7 @@ class Settings(BaseSettings):
     karaoke_cache_ttl_days: int = Field(default=45, ge=1)
     karaoke_cache_cleanup_interval_seconds: int = Field(default=3600, ge=60)
     trusted_proxy_ips: str = Field(
-        default="127.0.0.1",
+        default="127.0.0.1,::1",
         description="Comma-separated IPs/CIDRs trusted as reverse proxies for X-Forwarded-* headers. Configure the private proxy network in a reverse-proxy deployment; never use '*' on a directly reachable service.",
     )
     base_path: str = Field(
