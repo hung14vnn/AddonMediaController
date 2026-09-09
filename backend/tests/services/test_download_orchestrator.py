@@ -15,6 +15,7 @@ import time as _t
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import msgspec
 from unittest.mock import AsyncMock, MagicMock
 
@@ -25,10 +26,13 @@ from core.exceptions import (
     NewznabApiError,
     PermissionDeniedError,
     ResourceNotFoundError,
+    SlskdApiError,
+    SlskdAuthError,
     ValidationError,
 )
 from core.task_registry import TaskRegistry
 from infrastructure.persistence.download_store import DownloadStore
+from infrastructure.resilience.retry import CircuitOpenError
 from infrastructure.sse_publisher import SSEPublisher
 from models.common import ServiceStatus
 from models.download import DownloadTask, ScoredCandidate
@@ -48,6 +52,7 @@ from repositories.protocols.download_client import (
 from repositories.protocols.indexer import UsenetRelease
 from services.native.download_orchestrator import (
     _OUT_COMPLETED,
+    _OUT_DEADLINE,
     _OUT_NO_TRANSFER,
     _OUT_PREFERRED_QUALITY,
     _OUT_QUEUED,
@@ -4882,3 +4887,230 @@ async def test_coverage_single_row_never_completes_pinned_edition(tmp_path: Path
     await orch.process_task(task.id)
 
     assert (await store.get_task(task.id)).status == "partial"
+
+
+# Client-outage pause (issue #399)
+
+
+def _slskd_outage(cause: Exception) -> SlskdApiError:
+    """A transport-level slskd failure as the repository raises it: SlskdApiError
+    chained from the httpx error."""
+    err = SlskdApiError(f"slskd request failed: {cause}")
+    err.__cause__ = cause
+    return err
+
+
+@pytest.mark.asyncio
+async def test_client_outage_pauses_poll_then_resumes_same_transfer(tmp_path: Path):
+    """Consecutive client outages (refused/timeout/reset/open circuit) pause the
+    poll loop; the next status resumes the SAME transfer with no task failure and
+    no failover (#399)."""
+    completed = _status("completed", files_completed=1, succeeded=["peer/01.flac"])
+    client = _StubClient(completed)
+    client.get_status = AsyncMock(
+        side_effect=[
+            _slskd_outage(httpx.ConnectError("connection refused")),
+            _slskd_outage(httpx.TimeoutException("timed out")),
+            _slskd_outage(httpx.RemoteProtocolError("connection reset")),
+            CircuitOpenError(
+                "Circuit breaker 'slskd' is OPEN", breaker_name="slskd"
+            ),
+            completed,
+        ]
+    )
+    store, orch, *_ = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[_candidate(0.9)],
+        fp_result=ProcessResult(
+            succeeded=[str(tmp_path / "lib" / "a.flac")], failed=[]
+        ),
+        imported_rows=[{"file_path": "a"}],
+    )
+    task = await _new_task(store)
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "completed"
+    assert final.candidate_index == 0  # same candidate, no failover
+    assert client.enqueue.await_count == 1
+    assert client.get_status.await_count == 5
+    assert len(await store.list_download_attempts(task.id)) == 1
+    assert (
+        orch._bus._latest[f"download:{task.id}"]["client_outage"]["client"] == "stub"
+    )
+
+
+@pytest.mark.asyncio
+async def test_client_outage_freezes_stall_watchdog(tmp_path: Path):
+    """A stall-length outage (total outage sleep beyond the stall timeout) never
+    returns _OUT_STALLED: the watchdog is frozen while the client is down (#399)."""
+    frozen = _status("downloading", active=True, bytes_=100, matched=1)
+    done = _status("completed", files_completed=1, succeeded=["peer/01.flac"])
+    client = _StubClient(frozen)
+    store, orch, *_ = _build(
+        tmp_path, client=client, stall_minutes=0.001, queued_minutes=999.0
+    )
+    orch._poll_interval = 0.02
+    client.get_status = AsyncMock(
+        side_effect=[frozen]
+        + [_slskd_outage(httpx.ConnectError("refused")) for _ in range(6)]
+        + [frozen, done]
+    )
+    task = await _new_task(store, status="downloading", source_username="peer")
+    _write_manifest(orch, task.id, ["peer/01.flac"])
+
+    outcome, _ = await orch._poll_until_done(task)
+
+    assert outcome == _OUT_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_client_outage_extends_poll_deadline(tmp_path: Path, monkeypatch):
+    """Outage seconds extend the transfer ceiling: after a ~0.3s outage the loop
+    still gets (nearly) its full 0.3s budget instead of expiring on arrival (#399)."""
+    import services.native.download_orchestrator as orch_mod
+
+    monkeypatch.setattr(orch_mod, "_POLL_DEADLINE_SECONDS", 0.3)
+    calls = {"n": 0}
+
+    async def _flaky(handle):
+        calls["n"] += 1
+        if calls["n"] <= 6:
+            raise _slskd_outage(httpx.ConnectError("refused"))
+        return _status(
+            "downloading", active=True, bytes_=calls["n"] * 100, matched=1
+        )
+
+    client = _StubClient()
+    client.get_status = AsyncMock(side_effect=_flaky)
+    store, orch, *_ = _build(
+        tmp_path, client=client, stall_minutes=999.0, queued_minutes=999.0
+    )
+    orch._poll_interval = 0.05
+    task = await _new_task(store, status="downloading", source_username="peer")
+    _write_manifest(orch, task.id, ["peer/01.flac"])
+
+    outcome, _ = await orch._poll_until_done(task)
+
+    assert outcome == _OUT_DEADLINE
+    assert calls["n"] - 6 >= 3  # the full budget survived the outage
+
+
+@pytest.mark.asyncio
+async def test_client_outage_at_deadline_keeps_polling(tmp_path: Path, monkeypatch):
+    """The ceiling expiring with no reachable poll (last_status None) extends
+    through the outage instead of raising on the last read (#399)."""
+    import services.native.download_orchestrator as orch_mod
+
+    monkeypatch.setattr(orch_mod, "_POLL_DEADLINE_SECONDS", 0.05)
+    calls = {"n": 0}
+
+    async def _flaky(handle):
+        calls["n"] += 1
+        if calls["n"] <= 10:
+            raise _slskd_outage(httpx.ConnectError("refused"))
+        if calls["n"] == 11:
+            return _status(
+                "downloading", active=True, bytes_=100, matched=1
+            )
+        return _status("completed", files_completed=1, succeeded=["peer/01.flac"])
+
+    client = _StubClient()
+    client.get_status = AsyncMock(side_effect=_flaky)
+    store, orch, *_ = _build(
+        tmp_path, client=client, stall_minutes=999.0, queued_minutes=999.0
+    )
+    orch._poll_interval = 0.01
+    task = await _new_task(store, status="downloading", source_username="peer")
+    _write_manifest(orch, task.id, ["peer/01.flac"])
+
+    outcome, _ = await orch._poll_until_done(task)
+
+    assert outcome == _OUT_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_client_auth_error_still_fails_task(tmp_path: Path):
+    """SlskdAuthError is deterministic misconfiguration, not an outage: it keeps
+    failing fast with no client_outage signal (#399)."""
+    client = _StubClient()
+    client.get_status = AsyncMock(
+        side_effect=SlskdAuthError("slskd returned HTTP 401", code=401)
+    )
+    store, orch, *_ = _build(tmp_path, client=client, scorer_result=[_candidate(0.9)])
+    task = await _new_task(store)
+
+    await orch._run_orchestrator_safely(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "failed"
+    assert "client_outage" not in orch._bus._latest.get(f"download:{task.id}", {})
+
+
+@pytest.mark.asyncio
+async def test_non_connection_slskd_error_still_fails_task(tmp_path: Path):
+    """A non-connection SlskdApiError (HTTP 500, no transport cause) preserves the
+    existing fail-fast behavior: failed task, no client_outage signal (#399)."""
+    client = _StubClient()
+    client.get_status = AsyncMock(
+        side_effect=SlskdApiError("slskd returned HTTP 500", code=500)
+    )
+    store, orch, *_ = _build(tmp_path, client=client, scorer_result=[_candidate(0.9)])
+    task = await _new_task(store)
+
+    await orch._run_orchestrator_safely(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "failed"
+    assert "client_outage" not in orch._bus._latest.get(f"download:{task.id}", {})
+
+
+@pytest.mark.asyncio
+async def test_enqueue_outage_waits_and_retries_same_candidate(tmp_path: Path):
+    """An outage during enqueue waits and retries the SAME candidate instead of
+    failing over: two enqueue calls, candidate 0, completed (#399)."""
+    from repositories.protocols.download_client import TaskHandle
+
+    handle = TaskHandle(source="soulseek", username="peer", filenames=["peer/01.flac"])
+    client = _StubClient()
+    client.enqueue = AsyncMock(
+        side_effect=[_slskd_outage(httpx.ConnectError("refused")), handle]
+    )
+    store, orch, *_ = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[_candidate(0.9)],
+        fp_result=ProcessResult(
+            succeeded=[str(tmp_path / "lib" / "a.flac")], failed=[]
+        ),
+        imported_rows=[{"file_path": "a"}],
+    )
+    task = await _new_task(store)
+
+    await orch.process_task(task.id)
+
+    final = await store.get_task(task.id)
+    assert final.status == "completed"
+    assert final.candidate_index == 0
+    assert final.source_username == "peer"
+    assert client.enqueue.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_abort_outage_waits_and_retries_same_abort(tmp_path: Path):
+    """An outage during the source-switch abort waits and retries the SAME
+    abort instead of failing the switch (#399)."""
+    client = _StubClient()
+    client.abort = AsyncMock(
+        side_effect=[_slskd_outage(httpx.ConnectError("refused")), True]
+    )
+    store, orch, *_ = _build(tmp_path, client=client)
+    orch._poll_interval = 0.01
+    task = await _new_task(store)
+    _write_manifest(orch, task.id, ["peer/01.flac"])
+
+    await orch._abort_abandoned_transfer(task)
+
+    assert client.abort.await_count == 2

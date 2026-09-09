@@ -22,17 +22,21 @@ from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import msgspec
 
 from core.exceptions import (
     ConflictError,
     PermissionDeniedError,
     ResourceNotFoundError,
+    SlskdApiError,
+    SlskdAuthError,
     ValidationError,
 )
 from core.task_registry import TaskRegistry
 from infrastructure.persistence.download_store import DownloadStore
 from infrastructure.queue.priority_queue import RequestPriority
+from infrastructure.resilience.retry import CircuitOpenError
 from infrastructure.sse_publisher import SSEPublisher
 from models.acquisition_quality import AcquisitionQualitySnapshot
 from models.download_identity import SOURCE_SOULSEEK, soulseek_folder_identity
@@ -217,6 +221,69 @@ def _user_error_message(exc: Exception) -> str:
     if isinstance(exc, OrchestrationError):
         return str(exc)
     return "download failed"
+
+
+def _is_download_client_outage(exc: Exception) -> bool:
+    """True when ``exc`` means the download client is briefly unreachable (#399).
+
+    A short slskd outage (restart/rescan: connection refused, timeouts, reset
+    connections - or the 'slskd' circuit breaker standing open) must pause the
+    poll/enqueue/abort waits, never fail the task. ``SlskdAuthError`` (wrong API
+    key: deterministic misconfiguration) is excluded so it keeps failing fast,
+    as is any non-connection ``SlskdApiError`` (e.g. an HTTP 500 with no
+    transport cause). ``SabnzbdApiError`` is deliberately excluded too:
+    ``services/native`` must not import ``repositories/sabnzbd``, and that
+    client already absorbs blips with internal retries.
+    """
+    if isinstance(exc, CircuitOpenError):
+        return True
+    if isinstance(exc, SlskdAuthError):
+        return False
+    if not isinstance(exc, SlskdApiError):
+        return False
+    seen: set[int] = set()
+    pending: list[BaseException] = [exc]
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(
+            current,
+            (
+                httpx.ConnectError,
+                httpx.TimeoutException,
+                httpx.RemoteProtocolError,
+            ),
+        ):
+            return True
+        for chained in (current.__cause__, current.__context__):
+            if isinstance(chained, BaseException) and id(chained) not in seen:
+                pending.append(chained)
+    return False
+
+
+def _has_outage_cause(exc: Exception) -> bool:
+    """True when ``exc`` or anything in its ``__cause__``/``__context__`` chain is
+    a download-client outage (see ``_is_download_client_outage``).
+
+    The enqueue path needs this: ``SoulseekStrategy.enqueue`` converts every
+    client failure into ``OrchestrationError("enqueue failed")`` chained from the
+    original, so the outage evidence sits one link down the chain instead of on
+    the raised error."""
+    seen: set[int] = set()
+    pending: list[BaseException] = [exc]
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, Exception) and _is_download_client_outage(current):
+            return True
+        for chained in (current.__cause__, current.__context__):
+            if isinstance(chained, BaseException) and id(chained) not in seen:
+                pending.append(chained)
+    return False
 
 
 def _log_task_exception(task: "asyncio.Task") -> None:
@@ -1218,13 +1285,59 @@ class DownloadOrchestrator:
         if task.candidate_index is None or task.candidate_index >= len(candidates):
             raise OrchestrationError("candidate no longer available")
         candidate = candidates[task.candidate_index]
-        await self._strategy(task.source).enqueue(
-            task,
-            candidate,
-            strict_track_duration=strict_track_duration,
-            hold_on_wrong_track=hold_on_wrong_track,
-            remaining_positions=remaining_positions,
-        )
+        strategy = self._strategy(task.source)
+        # A down slskd cannot enqueue, and failing over to another slskd peer is
+        # pointless (#399): wait through a client outage and retry the SAME
+        # candidate instead of failing or failing over.
+        outage_active = False
+        outage_started_at = 0.0
+        outage_client = getattr(strategy.client, "client_name", None) or task.source
+        while True:
+            try:
+                await strategy.enqueue(
+                    task,
+                    candidate,
+                    strict_track_duration=strict_track_duration,
+                    hold_on_wrong_track=hold_on_wrong_track,
+                    remaining_positions=remaining_positions,
+                )
+            except OrchestrationError as exc:
+                if not _has_outage_cause(exc):
+                    raise
+                if not outage_active:
+                    outage_active = True
+                    outage_started_at = asyncio.get_running_loop().time()
+                    logger.warning(
+                        "download.client_outage",
+                        extra={"task_id": task.id, "client": outage_client},
+                    )
+                    await self._bus.publish(
+                        f"download:{task.id}",
+                        "client_outage",
+                        {
+                            "client": outage_client,
+                            "message": (
+                                "Download client unavailable - "
+                                "waiting for it to recover"
+                            ),
+                        },
+                    )
+                await asyncio.sleep(self._poll_interval)
+                current = await self._store.get_task(task.id)
+                if current is not None and current.status == DownloadStatus.CANCELLED:
+                    raise _Cancelled()
+                continue
+            if outage_active:
+                logger.info(
+                    "download.client_recovered",
+                    extra={
+                        "task_id": task.id,
+                        "client": outage_client,
+                        "outage_seconds": asyncio.get_running_loop().time()
+                        - outage_started_at,
+                    },
+                )
+            return
 
     async def _poll_until_done(self, task, *, expect_materialization: bool = False):  # noqa: ANN001, ANN201
         """Poll slskd until the transfer terminates, stalls, or hits the ceiling.
@@ -1248,15 +1361,88 @@ class DownloadOrchestrator:
         last_status = None
         slot_held = False
         preferred_deadline = task.preferred_quality_fallback_at
+        # A brief download-client outage (slskd restart/rescan, #399) pauses this
+        # loop instead of failing the task: the watchdog is frozen, the 6h ceiling
+        # is extended by the outage, and one bus event marks the stretch.
+        outage_active = False
+        outage_started_at = 0.0
+        outage_client = getattr(client, "client_name", None) or task.source
         try:
-            while loop.time() < deadline:
+            while True:
+                if loop.time() >= deadline:
+                    if last_status is None:
+                        # The ceiling expired without one reachable poll (a client
+                        # outage covered the window, #399): extend the ceiling and
+                        # keep waiting instead of failing on the last read.
+                        try:
+                            last_status = await client.get_status(handle)
+                        except Exception as exc:  # noqa: BLE001 - outage probe inspects any client failure
+                            if not _is_download_client_outage(exc):
+                                raise
+                            last_progress_time = loop.time()
+                            deadline += self._poll_interval
+                            await asyncio.sleep(self._poll_interval)
+                            current = await self._store.get_task(task.id)
+                            if (
+                                current is not None
+                                and current.status == DownloadStatus.CANCELLED
+                            ):
+                                raise _Cancelled()
+                            continue
+                    return _OUT_DEADLINE, last_status
                 # An out-of-band cancel (cancel_task) may have set status='cancelled'
                 # since this loop started - stop before processing so the import can't
                 # proceed against an explicit cancel.
                 current = await self._store.get_task(task.id)
                 if current is not None and current.status == DownloadStatus.CANCELLED:
                     raise _Cancelled()
-                status = await client.get_status(handle)
+                try:
+                    status = await client.get_status(handle)
+                except Exception as exc:  # noqa: BLE001 - outage probe inspects any client failure
+                    if not _is_download_client_outage(exc):
+                        raise
+                    # Skip this poll: freeze the watchdog so outage idle never trips
+                    # the stall/queued timeouts, then wait out the blip.
+                    last_progress_time = loop.time()
+                    if not outage_active:
+                        outage_active = True
+                        outage_started_at = last_progress_time
+                        logger.warning(
+                            "download.client_outage",
+                            extra={"task_id": task.id, "client": outage_client},
+                        )
+                        await self._bus.publish(
+                            f"download:{task.id}",
+                            "client_outage",
+                            {
+                                "client": outage_client,
+                                "message": (
+                                    "Download client unavailable - "
+                                    "waiting for it to recover"
+                                ),
+                            },
+                        )
+                    pause_started = loop.time()
+                    await asyncio.sleep(self._poll_interval)
+                    # Outage time never consumes the 6h transfer budget.
+                    deadline += loop.time() - pause_started
+                    current = await self._store.get_task(task.id)
+                    if (
+                        current is not None
+                        and current.status == DownloadStatus.CANCELLED
+                    ):
+                        raise _Cancelled()
+                    continue
+                if outage_active:
+                    outage_active = False
+                    logger.info(
+                        "download.client_recovered",
+                        extra={
+                            "task_id": task.id,
+                            "client": outage_client,
+                            "outage_seconds": loop.time() - outage_started_at,
+                        },
+                    )
                 last_status = status
                 # Concurrency cap: take a slot the moment this transfer is actively
                 # moving bytes, and hold it until the loop exits. A purely queued
@@ -1353,9 +1539,6 @@ class DownloadOrchestrator:
                     ):
                         return _OUT_QUEUED, status
                 await asyncio.sleep(self._poll_interval)
-            if last_status is None:
-                last_status = await client.get_status(handle)
-            return _OUT_DEADLINE, last_status
         finally:
             if slot_held:
                 self._download_slots.release()
@@ -1371,12 +1554,56 @@ class DownloadOrchestrator:
         if task.source != "soulseek":
             return
         manifest = self._read_manifest(task.id)
-        try:
-            aborted = await self._download_client_for(task).abort(manifest.handle)
-        except Exception as exc:  # noqa: BLE001 - repository errors stay internal
-            raise OrchestrationError("could not switch sources safely") from exc
-        if not aborted:
-            raise OrchestrationError("could not switch sources safely")
+        client = self._download_client_for(task)
+        # Aborting needs a live slskd (#399): wait through a client outage and
+        # retry the SAME abort instead of failing the switch.
+        outage_active = False
+        outage_started_at = 0.0
+        outage_client = getattr(client, "client_name", None) or task.source
+        while True:
+            try:
+                aborted = await client.abort(manifest.handle)
+            except Exception as exc:  # noqa: BLE001 - outage probe inspects any client failure
+                if not _is_download_client_outage(exc):
+                    raise OrchestrationError(
+                        "could not switch sources safely"
+                    ) from exc
+                if not outage_active:
+                    outage_active = True
+                    outage_started_at = asyncio.get_running_loop().time()
+                    logger.warning(
+                        "download.client_outage",
+                        extra={"task_id": task.id, "client": outage_client},
+                    )
+                    await self._bus.publish(
+                        f"download:{task.id}",
+                        "client_outage",
+                        {
+                            "client": outage_client,
+                            "message": (
+                                "Download client unavailable - "
+                                "waiting for it to recover"
+                            ),
+                        },
+                    )
+                await asyncio.sleep(self._poll_interval)
+                current = await self._store.get_task(task.id)
+                if current is not None and current.status == DownloadStatus.CANCELLED:
+                    raise _Cancelled()
+                continue
+            if outage_active:
+                logger.info(
+                    "download.client_recovered",
+                    extra={
+                        "task_id": task.id,
+                        "client": outage_client,
+                        "outage_seconds": asyncio.get_running_loop().time()
+                        - outage_started_at,
+                    },
+                )
+            if not aborted:
+                raise OrchestrationError("could not switch sources safely")
+            return
 
     async def _run_with_failover(self, task, *, resume: bool = False) -> None:  # noqa: ANN001
         """Drive a task through enqueue -> poll -> harvest, failing over to the next

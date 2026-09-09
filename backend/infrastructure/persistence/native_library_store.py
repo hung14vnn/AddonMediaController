@@ -237,7 +237,6 @@ _IMPORT_JOURNAL_TRANSITIONS: dict[str, frozenset[str]] = {
     "completed": frozenset(),
     "rolled_back": frozenset({"planned"}),
     "needs_attention": frozenset(),
-    "resolved": frozenset(),
 }
 _T = TypeVar("_T")
 logger = logging.getLogger(__name__)
@@ -1614,157 +1613,6 @@ class NativeLibraryStore(PersistenceBase):
 
 
     @staticmethod
-    def _ensure_library_management_import_resolved_state(
-        connection: sqlite3.Connection,
-    ) -> None:
-        """Rebuild the import tables once so their CHECKs admit `resolved`.
-
-        `resolved` is the terminal admin-verified state for stuck
-        `needs_attention` import bundles. Runs after the additive ratchets so
-        legacy tables already carry every expected column for the copy.
-        """
-
-        bundle_sql = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' "
-            "AND name = 'library_management_import_bundles'"
-        ).fetchone()
-        journal_sql = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' "
-            "AND name = 'library_management_import_journal'"
-        ).fetchone()
-        if bundle_sql is None or journal_sql is None:
-            return
-        if "'resolved'" in str(bundle_sql[0]) and "'resolved'" in str(
-            journal_sql[0]
-        ):
-            return
-        # _ensure_tables re-enables FK enforcement before the additive
-        # ratchets, so this CHECK-widening rebuild disables it locally.
-        connection.execute("PRAGMA foreign_keys=OFF")
-        connection.execute("BEGIN IMMEDIATE")
-        try:
-            connection.execute(
-                """
-                CREATE TABLE library_management_import_bundles__resolved_v1 (
-                    id TEXT PRIMARY KEY,
-                    idempotency_key TEXT NOT NULL UNIQUE CHECK(length(trim(idempotency_key)) > 0),
-                    origin TEXT NOT NULL CHECK(origin IN ('acquisition','drop_import')),
-                    policy_revision TEXT NOT NULL,
-                    request_json TEXT NOT NULL,
-                    request_hash TEXT NOT NULL
-                        CHECK(length(request_hash) = 64 AND request_hash = lower(request_hash)
-                              AND request_hash NOT GLOB '*[^0-9a-f]*'),
-                    state TEXT NOT NULL CHECK(state IN (
-                        'preparing','publishing','catalog_committed','cleanup_pending','completed',
-                        'rolled_back','needs_attention','resolved'
-                    )),
-                    result_json TEXT NOT NULL DEFAULT '{}',
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL,
-                    row_revision INTEGER NOT NULL DEFAULT 1
-                        CHECK(row_revision BETWEEN 1 AND 9223372036854775807)
-                )
-                """
-            )
-            connection.execute(
-                """
-                INSERT INTO library_management_import_bundles__resolved_v1 (
-                    id, idempotency_key, origin, policy_revision, request_json,
-                    request_hash, state, result_json, created_at, updated_at,
-                    row_revision
-                )
-                SELECT
-                    id, idempotency_key, origin, policy_revision, request_json,
-                    request_hash, state, result_json, created_at, updated_at,
-                    row_revision
-                FROM library_management_import_bundles
-                """
-            )
-            connection.execute("DROP TABLE library_management_import_bundles")
-            connection.execute(
-                "ALTER TABLE library_management_import_bundles__resolved_v1 "
-                "RENAME TO library_management_import_bundles"
-            )
-            connection.execute(
-                """
-                CREATE TABLE library_management_import_journal__resolved_v1 (
-                    bundle_id TEXT NOT NULL
-                        REFERENCES library_management_import_bundles(id) ON DELETE RESTRICT,
-                    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
-                    state TEXT NOT NULL CHECK(state IN (
-                        'planned','staged','validated','replacement_backed_up','published',
-                        'catalog_committed','cleanup_pending','completed','rollback_pending',
-                        'rolled_back','needs_attention','resolved'
-                    )),
-                    source_fingerprint TEXT NOT NULL
-                        CHECK(length(source_fingerprint) = 64
-                              AND source_fingerprint = lower(source_fingerprint)
-                              AND source_fingerprint NOT GLOB '*[^0-9a-f]*'),
-                    source_size INTEGER NOT NULL CHECK(source_size >= 0),
-                    source_mtime_ns INTEGER NOT NULL,
-                    temporary_relative_path TEXT NOT NULL,
-                    destination_root_id TEXT NOT NULL,
-                    destination_relative_path TEXT NOT NULL,
-                    staged_fingerprint TEXT,
-                    replacement_fingerprint TEXT,
-                    replacement_backup_relative_path TEXT,
-                    baseline_blob_sha256 TEXT REFERENCES library_management_blobs(sha256) ON DELETE RESTRICT,
-                    baseline_format TEXT,
-                    baseline_adapter_version TEXT,
-                    baseline_stat_revision TEXT,
-                    baseline_tag_revision TEXT,
-                    baseline_image_snapshot_json TEXT NOT NULL DEFAULT '[]',
-                    baseline_ancillary_snapshot_json TEXT NOT NULL DEFAULT '[]',
-                    baseline_file_mtime_ns INTEGER,
-                    baseline_file_mode INTEGER,
-                    failure_code TEXT,
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL,
-                    row_revision INTEGER NOT NULL DEFAULT 1
-                        CHECK(row_revision BETWEEN 1 AND 9223372036854775807),
-                    PRIMARY KEY(bundle_id, ordinal)
-                )
-                """
-            )
-            connection.execute(
-                """
-                INSERT INTO library_management_import_journal__resolved_v1 (
-                    bundle_id, ordinal, state, source_fingerprint, source_size,
-                    source_mtime_ns, temporary_relative_path, destination_root_id,
-                    destination_relative_path, staged_fingerprint,
-                    replacement_fingerprint, replacement_backup_relative_path,
-                    baseline_blob_sha256, baseline_format, baseline_adapter_version,
-                    baseline_stat_revision, baseline_tag_revision,
-                    baseline_image_snapshot_json, baseline_ancillary_snapshot_json,
-                    baseline_file_mtime_ns, baseline_file_mode, failure_code,
-                    created_at, updated_at, row_revision
-                )
-                SELECT
-                    bundle_id, ordinal, state, source_fingerprint, source_size,
-                    source_mtime_ns, temporary_relative_path, destination_root_id,
-                    destination_relative_path, staged_fingerprint,
-                    replacement_fingerprint, replacement_backup_relative_path,
-                    baseline_blob_sha256, baseline_format, baseline_adapter_version,
-                    baseline_stat_revision, baseline_tag_revision,
-                    baseline_image_snapshot_json, baseline_ancillary_snapshot_json,
-                    baseline_file_mtime_ns, baseline_file_mode, failure_code,
-                    created_at, updated_at, row_revision
-                FROM library_management_import_journal
-                """
-            )
-            connection.execute("DROP TABLE library_management_import_journal")
-            connection.execute(
-                "ALTER TABLE library_management_import_journal__resolved_v1 "
-                "RENAME TO library_management_import_journal"
-            )
-            connection.commit()
-            connection.execute("PRAGMA foreign_keys=ON")
-        except Exception:
-            connection.rollback()
-            connection.execute("PRAGMA foreign_keys=ON")
-            raise
-
-    @staticmethod
     def _ensure_foreign_key_validation_triggers(
         connection: sqlite3.Connection,
     ) -> None:
@@ -1930,7 +1778,6 @@ class NativeLibraryStore(PersistenceBase):
                 except sqlite3.OperationalError as error:
                     if "duplicate column name" not in str(error).casefold():
                         raise
-            self._ensure_library_management_import_resolved_state(connection)
             conversion_columns = {
                 str(row[1])
                 for row in connection.execute(
@@ -21650,7 +21497,6 @@ class NativeLibraryStore(PersistenceBase):
                 "catalog_committed",
                 "cleanup_pending",
                 "completed",
-                "resolved",
             }:
                 return
             connection.execute(
@@ -24701,47 +24547,6 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
-    async def resolve_library_management_import_bundle(
-        self, bundle_id: str, *, updated_at: float
-    ) -> LibraryManagementImportBundleRecord:
-        """Flip a `needs_attention` import bundle and its journals to `resolved`.
-
-        `resolved` is terminal: only a bundle currently in `needs_attention`
-        moves, and only its `needs_attention` journals move with it. The
-        caller verifies destination evidence before invoking this method.
-        """
-
-        def operation(
-            connection: sqlite3.Connection,
-        ) -> LibraryManagementImportBundleRecord:
-            connection.execute(
-                "UPDATE library_management_import_journal SET state='resolved',"
-                "failure_code=NULL,updated_at=?,row_revision=row_revision+1 "
-                "WHERE bundle_id=? AND state='needs_attention'",
-                (updated_at, bundle_id),
-            )
-            updated = connection.execute(
-                "UPDATE library_management_import_bundles SET state='resolved',"
-                "updated_at=?,row_revision=row_revision+1 WHERE id=? "
-                "AND state='needs_attention' RETURNING *",
-                (updated_at, bundle_id),
-            ).fetchone()
-            if updated is None:
-                current = connection.execute(
-                    "SELECT * FROM library_management_import_bundles WHERE id=?",
-                    (bundle_id,),
-                ).fetchone()
-                if current is None:
-                    raise ResourceNotFoundError("Import publication bundle not found.")
-                raise ConflictError(
-                    "Only an import bundle needing attention can be resolved."
-                )
-            return msgspec.convert(
-                dict(updated), type=LibraryManagementImportBundleRecord, strict=False
-            )
-
-        return await self._write(operation)
-
     async def mark_library_management_import_needs_attention(
         self, bundle_id: str, *, failure_code: str, updated_at: float
     ) -> LibraryManagementImportBundleRecord:
@@ -24751,13 +24556,13 @@ class NativeLibraryStore(PersistenceBase):
             connection.execute(
                 "UPDATE library_management_import_journal SET state='needs_attention',"
                 "failure_code=?,updated_at=?,row_revision=row_revision+1 "
-                "WHERE bundle_id=? AND state NOT IN ('completed','rolled_back','needs_attention','resolved')",
+                "WHERE bundle_id=? AND state NOT IN ('completed','rolled_back','needs_attention')",
                 (failure_code, updated_at, bundle_id),
             )
             updated = connection.execute(
                 "UPDATE library_management_import_bundles SET state='needs_attention',"
                 "updated_at=?,row_revision=row_revision+1 WHERE id=? "
-                "AND state NOT IN ('completed','rolled_back','needs_attention','resolved') RETURNING *",
+                "AND state NOT IN ('completed','rolled_back','needs_attention') RETURNING *",
                 (updated_at, bundle_id),
             ).fetchone()
             if updated is None:
@@ -27079,25 +26884,18 @@ class NativeLibraryStore(PersistenceBase):
             import_bundles = connection.execute(
                 "SELECT state,COUNT(*) AS count,MIN(updated_at) AS oldest_updated_at "
                 "FROM library_management_import_bundles "
-                "WHERE state NOT IN ('completed','rolled_back','resolved') GROUP BY state "
+                "WHERE state NOT IN ('completed','rolled_back') GROUP BY state "
                 "ORDER BY state"
             ).fetchall()
             import_journals = connection.execute(
                 "SELECT state,COUNT(*) AS count FROM library_management_import_journal "
-                "WHERE state NOT IN ('completed','rolled_back','resolved') GROUP BY state"
+                "WHERE state NOT IN ('completed','rolled_back') GROUP BY state"
             ).fetchall()
             import_recoverable_count = sum(
                 int(row["count"])
                 for row in import_bundles
                 if str(row["state"]) != "needs_attention"
             )
-            needs_attention_bundles = [
-                {"bundle_id": str(row["id"])}
-                for row in connection.execute(
-                    "SELECT id FROM library_management_import_bundles "
-                    "WHERE state='needs_attention' ORDER BY updated_at,id LIMIT 100"
-                ).fetchall()
-            ]
             import_oldest = min(
                 (
                     float(row["oldest_updated_at"])
@@ -27159,7 +26957,6 @@ class NativeLibraryStore(PersistenceBase):
                 ),
                 "oldest_updated_at": oldest,
                 "state_counts": states,
-                "needs_attention_bundles": needs_attention_bundles,
             }
 
         return await self._read(operation)

@@ -552,12 +552,7 @@ class LibraryManagementPublisher:
                 or bundle.policy_revision != record.policy_revision
             ):
                 raise ValidationError("The import recovery identity changed.")
-            if record.state in {
-                "completed",
-                "rolled_back",
-                "needs_attention",
-                "resolved",
-            }:
+            if record.state in {"completed", "rolled_back", "needs_attention"}:
                 return "skipped"
             if record.state in {"catalog_committed", "cleanup_pending"}:
                 recovered = await self._resume_import_cleanup(record, bundle)
@@ -2180,27 +2175,6 @@ class LibraryManagementPublisher:
         if recycle_bin_path is not None:
             roots[MANAGEMENT_RECYCLE_ROOT_ID] = Path(recycle_bin_path)
         return roots
-
-    def import_destination_path(
-        self,
-        policy_revision: str,
-        destination_root_id: str,
-        destination_relative_path: str,
-    ) -> Path:
-        """Resolve a sealed import destination with the publish-time mechanism.
-
-        Uses the same root projection and safe-path rules as publication, and
-        never creates parent directories: verification must observe the
-        filesystem, not mutate it.
-        """
-
-        roots = self._root_paths(policy_revision)
-        root = roots.get(destination_root_id)
-        if root is None:
-            raise LibraryManagementPolicyChangedError(
-                "An import destination root changed."
-            )
-        return self._safe_path(root, destination_relative_path)
 
     async def _prepare_plan_item(
         self,
