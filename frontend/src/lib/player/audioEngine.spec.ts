@@ -86,6 +86,17 @@ describe('AudioEngine', () => {
 			expect(mockFilters).toHaveLength(10);
 			expect(mockSource.connect).toHaveBeenCalledWith(mockFilters[0]);
 			expect(mockFilters[8].connect).toHaveBeenCalledWith(mockFilters[9]);
+			// EQ starts disabled, so the biquads are built but bypassed: the source
+			// feeds the destination directly and no filter runs per sample.
+			expect(mockSource.connect).toHaveBeenLastCalledWith(mockCtx.destination);
+		});
+
+		it('splices the filter chain in when the EQ is enabled', () => {
+			expect.assertions(2);
+			engine.connect(mockAudio);
+			engine.setEnabled(true, new Array(10).fill(0));
+
+			expect(mockSource.connect).toHaveBeenLastCalledWith(mockFilters[0]);
 			expect(mockFilters[9].connect).toHaveBeenCalledWith(mockCtx.destination);
 		});
 
@@ -250,13 +261,28 @@ describe('AudioEngine', () => {
 	});
 
 	describe('analyser', () => {
-		it('creates an analyser tapped off the end of the filter chain', () => {
-			expect.assertions(4);
+		it('does not create an analyser until the spectrum is first read', () => {
+			expect.assertions(2);
 			engine.connect(mockAudio);
 
+			// An AnalyserNode runs an FFT per quantum once connected, so it stays
+			// uncreated while nothing reads it.
+			expect(mockCtx.createAnalyser).not.toHaveBeenCalled();
+
+			engine.getFrequencyData();
+
 			expect(mockCtx.createAnalyser).toHaveBeenCalledTimes(1);
+		});
+
+		it('taps the analyser off the live signal path on first read', () => {
+			expect.assertions(4);
+			engine.connect(mockAudio);
+			engine.getFrequencyData();
+
 			expect(mockAnalyser.fftSize).toBe(128);
-			expect(mockFilters[9].connect).toHaveBeenCalledWith(mockAnalyser);
+			// EQ is bypassed by default, so the tap is the source, not the filters.
+			expect(mockSource.connect).toHaveBeenCalledWith(mockAnalyser);
+			expect(mockFilters[9].connect).not.toHaveBeenCalledWith(mockAnalyser);
 			// Analyser must be a terminal sink, else audio sums to destination twice.
 			expect(mockAnalyser.connect).not.toHaveBeenCalled();
 		});
@@ -275,6 +301,7 @@ describe('AudioEngine', () => {
 		it('disconnects the analyser on destroy', () => {
 			expect.assertions(2);
 			engine.connect(mockAudio);
+			engine.getFrequencyData();
 			engine.destroy();
 
 			expect(mockAnalyser.disconnect).toHaveBeenCalled();

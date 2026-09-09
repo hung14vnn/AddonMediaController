@@ -918,9 +918,22 @@ class FileProcessor:
         return result
 
     def _storage_output_format(self, source: Path, info: AudioInfo) -> str:
-        if self._saving_storage_mode and source.suffix.casefold() == ".flac":
+        if self._saving_storage_mode and self._needs_storage_conversion(source, info):
             return "m4a"
         return info.file_format
+
+    @staticmethod
+    def _needs_storage_conversion(source: Path, info: AudioInfo) -> bool:
+        file_format = info.file_format.casefold()
+        suffix_format = source.suffix.casefold().removeprefix(".")
+        if suffix_format == "alac":
+            return True
+        if file_format in {"flac", "alac", "ape", "wav", "wv"}:
+            return True
+        return (
+            file_format in {"m4a", "m4b", "mp4", "mov"}
+            and info.bit_depth is not None
+        )
 
     async def _prepare_storage_source(
         self, source: Path, info: AudioInfo
@@ -930,7 +943,7 @@ class FileProcessor:
         The shared publisher owns the final atomic write. The original FLAC is only
         removed after that publisher commits successfully.
         """
-        if not (self._saving_storage_mode and source.suffix.casefold() == ".flac"):
+        if not (self._saving_storage_mode and self._needs_storage_conversion(source, info)):
             return source, info, None
         digest = await asyncio.to_thread(self._hash_source_file, source)
         conversion_dir = self._conversion_dir or source.parent
@@ -950,7 +963,7 @@ class FileProcessor:
             temporary = converted.with_name(f".{converted.stem}.{uuid4().hex[:8]}.m4a")
             try:
                 await asyncio.to_thread(
-                    self._transcode_flac_to_aac, source, temporary
+                    self._transcode_lossless_to_aac, source, temporary
                 )
                 await asyncio.to_thread(os.replace, temporary, converted)
             finally:
@@ -969,7 +982,7 @@ class FileProcessor:
         return digest.hexdigest()
 
     @staticmethod
-    def _transcode_flac_to_aac(source: Path, target: Path) -> None:
+    def _transcode_lossless_to_aac(source: Path, target: Path) -> None:
         logger.info("Converting %s to AAC 256 kbps M4A", source.name)
         try:
             process = subprocess.run(
@@ -999,7 +1012,7 @@ class FileProcessor:
             )
         except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
             raise RuntimeError(
-                "FFmpeg is unavailable or timed out during FLAC conversion"
+                "FFmpeg is unavailable or timed out during lossless audio conversion"
             ) from exc
         if process.returncode != 0:
             detail = process.stderr.decode(errors="replace")

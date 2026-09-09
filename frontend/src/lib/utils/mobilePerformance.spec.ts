@@ -3,6 +3,7 @@ import {
 	installMobileLowPowerVisuals,
 	MOBILE_LOW_POWER_CLASS,
 	isIosDevice,
+	isMobileDevice,
 	usesMobileLowPowerVisuals
 } from './mobilePerformance';
 
@@ -44,6 +45,18 @@ describe('mobile low-power visuals', () => {
 		});
 
 		expect(usesMobileLowPowerVisuals()).toBe(true);
+	});
+
+	it('recognizes large mobile devices with coarse pointer capability', () => {
+		vi.stubGlobal('navigator', {
+			userAgent: 'Mozilla/5.0 (Linux; Android 15; Tablet)',
+			maxTouchPoints: 5
+		});
+		vi.stubGlobal('window', {
+			matchMedia: vi.fn((query: string) => ({ matches: query === '(pointer: coarse)' }))
+		});
+
+		expect(isMobileDevice()).toBe(true);
 	});
 
 	it('recognizes other touch-first mobile devices through pointer capabilities', () => {

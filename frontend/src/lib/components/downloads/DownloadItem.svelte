@@ -74,7 +74,9 @@
 	const progress = $derived(stream.state.progress);
 	const livePct = $derived(progress?.progress_percent ?? task.progress_percent);
 	const isIndeterminate = $derived(
-		task.source === 'spotiflac' && (progress?.bytes_total ?? task.total_size_bytes ?? 0) <= 0
+		task.source === 'spotiflac' &&
+			livePct > 0 &&
+			(progress?.bytes_total ?? task.total_size_bytes ?? 0) <= 0
 	);
 	const isOwnedByOther = $derived(authStore.isAdmin && task.user_id !== authStore.user?.id);
 

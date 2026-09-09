@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import signal
 import shutil
 import threading
 from pathlib import Path
@@ -22,6 +23,17 @@ _AUDIO_EXTENSIONS = {
     ".ogg",
     ".opus",
 }
+
+# Providers stage undecodable intermediates alongside the finished track: the
+# Deezer extension writes "<track>.encrypted.flac" next to "<track>.flac".
+# These carry an audio extension but no probeable stream, so they must never
+# reach the converter or the drop importer.
+_INTERMEDIATE_STEMS = {".encrypted", ".part", ".tmp", ".download"}
+
+
+def _is_provider_intermediate(path: Path) -> bool:
+    """Report whether a staged file is a provider work-in-progress artefact."""
+    return Path(path.stem).suffix.lower() in _INTERMEDIATE_STEMS
 
 
 class _CrossLoopAsyncLock:
@@ -374,59 +386,132 @@ class SpotiflacService:
                 {"status": "failed", "error": err_msg},
             )
 
+    @staticmethod
+    async def _wait_for_file_stable(source: Path) -> None:
+        previous: tuple[int, int] | None = None
+        stable_checks = 0
+        for _ in range(40):
+            stat = await asyncio.to_thread(source.stat)
+            current = (stat.st_size, stat.st_mtime_ns)
+            if current == previous and stat.st_size > 0:
+                stable_checks += 1
+                if stable_checks >= 6:
+                    return
+            else:
+                stable_checks = 0
+                previous = current
+            await asyncio.sleep(0.5)
+        raise RuntimeError(f"Downloaded file did not finish writing: {source.name}")
+
+    @staticmethod
+    async def _audio_codec(source: Path) -> str | None:
+        """Return the first audio stream's codec name, or None if unreadable."""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "default=nw=1:nk=1",
+                str(source),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=60)
+        except (OSError, asyncio.TimeoutError):
+            return None
+
+        if process.returncode != 0:
+            return None
+
+        return stdout.decode(errors="replace").strip().lower() or None
+
     async def _convert_to_m4a(self, source: Path) -> Path:
         """Convert an audio file to AAC 256 kbps M4A."""
         extension = source.suffix.lower()
+        decode_source = source
+        extracted_flac: Path | None = None
+        source_codec: str | None = None
 
-        # M4A is already in the desired container.
+        # An .m4a is only already in the desired form when its stream is AAC.
+        # The Deezer extension delivers FLAC inside an MP4 container, which
+        # would otherwise pass through untranscoded on the strength of its
+        # extension alone.
         if extension == ".m4a":
-            return source
+            source_codec = await self._audio_codec(source)
+            if source_codec == "aac":
+                return source
+            logger.info(
+                "%s is an .m4a carrying a non-AAC stream; transcoding it",
+                source.name,
+            )
+            # Some provider files contain FLAC packets inside an MP4 container.
+            # Older FFmpeg builds can segfault while decoding that combination
+            # directly, so remux the packets to a standalone FLAC first.
+            if source_codec == "flac":
+                extracted_flac = source.with_name(f".{source.stem}.source.flac")
+                decode_source = extracted_flac
 
         # Keep MP3 as-is to avoid lossy -> lossy transcoding.
         if extension == ".mp3":
             return source
 
         target = source.with_suffix(".m4a")
+        if target == source:
+            target = source.with_name(f"{source.stem}.aac{source.suffix}")
 
         logger.info(
             "Converting %s to AAC 256 kbps M4A",
             source.name,
         )
 
-        process = await asyncio.create_subprocess_exec(
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(source),
-            "-map",
-            "0:a:0",
-            "-map_metadata",
-            "0",
-            "-vn",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "256k",
-            "-movflags",
-            "+faststart",
-            str(target),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        _, stderr = await process.communicate()
-
-        if process.returncode != 0:
-            error = stderr.decode(errors="replace")
-
-            raise RuntimeError(
-                f"FFmpeg conversion failed for {source.name}: {error}"
+        try:
+            if extracted_flac is not None:
+                await self._run_ffmpeg(
+                    [
+                        "-i",
+                        str(source),
+                        "-map",
+                        "0:a:0",
+                        "-c:a",
+                        "copy",
+                        "-f",
+                        "flac",
+                        str(extracted_flac),
+                    ],
+                    source.name,
+                )
+            await self._run_ffmpeg(
+                [
+                    "-i",
+                    str(decode_source),
+                    "-map",
+                    "0:a:0",
+                    "-map_metadata",
+                    "-1",
+                    "-vn",
+                    "-threads",
+                    "1",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "256k",
+                    "-movflags",
+                    "+faststart",
+                    str(target),
+                ],
+                source.name,
             )
+        finally:
+            if extracted_flac is not None:
+                extracted_flac.unlink(missing_ok=True)
 
         if not target.exists() or target.stat().st_size == 0:
-            raise RuntimeError(
-                f"FFmpeg did not produce a valid output for {source.name}"
-            )
+            raise RuntimeError(f"FFmpeg did not produce a valid output for {source.name}")
 
         logger.info(
             "Converted %s -> %s (%.2f MB)",
@@ -436,6 +521,35 @@ class SpotiflacService:
         )
 
         return target
+
+    @staticmethod
+    async def _run_ffmpeg(arguments: list[str], source_name: str) -> None:
+        process = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-y",
+                "-nostdin",
+                *arguments,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(process.communicate(), timeout=600)
+        except asyncio.TimeoutError as exc:
+            if process is not None and process.returncode is None:
+                process.kill()
+                await process.communicate()
+            raise RuntimeError(
+                f"Audio conversion timed out for {source_name} after 600 seconds"
+            ) from exc
+
+        if process.returncode != 0:
+            error = stderr.decode(errors="replace").strip()
+            if process.returncode < 0:
+                detail = error or f"process terminated by {signal.Signals(-process.returncode).name}"
+            else:
+                detail = error or f"process exited with return code {process.returncode}"
+            raise RuntimeError(f"FFmpeg conversion failed for {source_name}: {detail}")
 
     async def _download(
         self,
@@ -498,6 +612,7 @@ class SpotiflacService:
                     for path in staging.rglob("*")
                     if path.is_file()
                     and path.suffix.lower() in _AUDIO_EXTENSIONS
+                    and not _is_provider_intermediate(path)
                 ]
                 if downloaded_files:
                     break
@@ -511,6 +626,7 @@ class SpotiflacService:
             files: list[Path] = []
 
             for path in downloaded_files:
+                await self._wait_for_file_stable(path)
                 converted = await self._convert_to_m4a(path)
                 files.append(converted)
 

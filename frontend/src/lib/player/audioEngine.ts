@@ -14,6 +14,9 @@ export class AudioEngine {
 	private source: MediaElementAudioSourceNode | null = null;
 	private filters: BiquadFilterNode[] = [];
 	private analyser: AnalyserNode | null = null;
+	private analyserTap: AudioNode | null = null;
+	private filterChainTail: AudioNode | null = null;
+	private eqActive = false;
 	private freqData: Uint8Array<ArrayBuffer> | null = null;
 	private connectedElement: HTMLAudioElement | null = null;
 	private contextStateHandler: (() => void) | null = null;
@@ -50,20 +53,20 @@ export class AudioEngine {
 				return filter;
 			});
 
+			// Filters are built once but only spliced into the signal path while the
+			// EQ is on. Ten biquads run per sample even at 0 dB, which is pure
+			// battery burn for the default (disabled) case.
 			let prev: AudioNode = this.source;
 			for (const filter of this.filters) {
 				prev.connect(filter);
 				prev = filter;
 			}
-			prev.connect(this.context.destination);
-
-			// Analyser is a terminal sink (not connected onward), so it never alters the audio.
-			if (typeof this.context.createAnalyser === 'function') {
-				this.analyser = this.context.createAnalyser();
-				this.analyser.fftSize = ANALYSER_FFT_SIZE;
-				this.analyser.smoothingTimeConstant = 0.82;
-				prev.connect(this.analyser);
-			}
+			this.filterChainTail = prev;
+			// applyRouting() picks the live tap: the filter tail while the EQ is on,
+			// the source while it is bypassed. The analyser itself is created lazily
+			// by getFrequencyData(), because an AnalyserNode runs an FFT over every
+			// rendered quantum once connected, read or not.
+			this.applyRouting();
 
 			this.connectedElement = audio;
 		} catch (error) {
@@ -80,7 +83,15 @@ export class AudioEngine {
 	 * no analyser is available. The buffer is owned and reused across frames.
 	 */
 	getFrequencyData(): Uint8Array | null {
-		if (!this.analyser) return null;
+		if (!this.analyser) {
+			if (!this.context || !this.analyserTap) return null;
+			if (typeof this.context.createAnalyser !== 'function') return null;
+			// Terminal sink (not connected onward), so it never alters the audio.
+			this.analyser = this.context.createAnalyser();
+			this.analyser.fftSize = ANALYSER_FFT_SIZE;
+			this.analyser.smoothingTimeConstant = 0.82;
+			this.analyserTap.connect(this.analyser);
+		}
 		if (!this.freqData || this.freqData.length !== this.analyser.frequencyBinCount) {
 			this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
 		}
@@ -91,6 +102,10 @@ export class AudioEngine {
 	setBandGain(index: number, dB: number): void {
 		if (index < 0 || index >= EQ_BAND_COUNT || !this.filters[index]) return;
 		this.filters[index].gain.value = Math.max(EQ_MIN_GAIN, Math.min(EQ_MAX_GAIN, dB));
+		if (!this.eqActive) {
+			this.eqActive = true;
+			this.applyRouting();
+		}
 	}
 
 	setAllGains(gains: readonly number[]): void {
@@ -98,6 +113,39 @@ export class AudioEngine {
 			if (this.filters[i]) {
 				this.filters[i].gain.value = Math.max(EQ_MIN_GAIN, Math.min(EQ_MAX_GAIN, gains[i] ?? 0));
 			}
+		}
+		if (!this.eqActive) {
+			this.eqActive = true;
+			this.applyRouting();
+		}
+	}
+
+	/**
+	 * Route the graph for the current EQ state: source -> filters -> destination
+	 * while enabled, source -> destination while bypassed. Disconnecting the
+	 * filter tail takes the biquads off the render thread entirely.
+	 */
+	private applyRouting(): void {
+		if (!this.context || !this.source || !this.filterChainTail) return;
+
+		this.source.disconnect();
+		this.filterChainTail.disconnect();
+
+		if (this.eqActive) {
+			let prev: AudioNode = this.source;
+			for (const filter of this.filters) {
+				prev.connect(filter);
+				prev = filter;
+			}
+			prev.connect(this.context.destination);
+			this.analyserTap = prev;
+		} else {
+			this.source.connect(this.context.destination);
+			this.analyserTap = this.source;
+		}
+
+		if (this.analyser && this.analyserTap) {
+			this.analyserTap.connect(this.analyser);
 		}
 	}
 
@@ -108,6 +156,10 @@ export class AudioEngine {
 			for (const filter of this.filters) {
 				filter.gain.value = 0;
 			}
+		}
+		if (this.eqActive !== enabled) {
+			this.eqActive = enabled;
+			this.applyRouting();
 		}
 	}
 
@@ -158,6 +210,9 @@ export class AudioEngine {
 		}
 		this.filters = [];
 		this.analyser = null;
+		this.analyserTap = null;
+		this.filterChainTail = null;
+		this.eqActive = false;
 		this.freqData = null;
 		this.source = null;
 		this.context = null;

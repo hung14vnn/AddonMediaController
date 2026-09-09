@@ -10,7 +10,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { formatArtistCredit } from '$lib/utils/formatting';
-	import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
+	import { isMobileDevice, usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 	import type { CrateTrack, LocalAlbumSummary, LocalAlbumMatch, CrateResponse } from '$lib/types';
 	import type { QueueItem } from '$lib/player/types';
 	import { launchLocalPlayback } from '$lib/player/launchLocalPlayback';
@@ -35,6 +35,7 @@
 
 	let reducedMotion = $state(false);
 	let mobileLowPower = $state(false);
+	let mobileDevice = $state(false);
 	let deviceProfileReady = $state(false);
 	// biases the crate toward the era of whatever was last dropped on the deck
 	let eraDecade = $state<number | undefined>(undefined);
@@ -213,6 +214,7 @@
 
 	onMount(() => {
 		if (!browser) return;
+		mobileDevice = isMobileDevice();
 		mobileLowPower = usesMobileLowPowerVisuals();
 		deviceProfileReady = true;
 		// queue mutations happen inline here (drag to Up Next, search, etc.) so the toast is redundant
@@ -299,7 +301,7 @@
 				class="flex flex-col gap-4 lg:col-span-4 lg:h-[var(--deck-h)] xl:col-span-4"
 				style:--deck-h={deckHeight ? `${deckHeight}px` : '44rem'}
 			>
-				{#if deviceProfileReady && !mobileLowPower}
+				{#if deviceProfileReady && !mobileDevice}
 					<div class="glass-surface min-h-0 flex-[3] rounded-3xl border border-base-content/5 p-3">
 						<Crate
 							tracks={crateTracks}

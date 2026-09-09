@@ -15,16 +15,30 @@ export function isIosDevice(): boolean {
 	);
 }
 
+/** Identify mobile devices, including tablets using a desktop browser mode. */
+export function isMobileDevice(): boolean {
+	if (typeof navigator === 'undefined') return false;
+
+	const userAgentData = (navigator as Navigator & { userAgentData?: { mobile?: boolean } })
+		.userAgentData;
+	if (userAgentData?.mobile === true) return true;
+	if (isIosDevice() || /Android|Mobile/i.test(navigator.userAgent)) return true;
+
+	return (
+		navigator.maxTouchPoints > 0 &&
+		typeof window !== 'undefined' &&
+		typeof window.matchMedia === 'function' &&
+		window.matchMedia('(pointer: coarse)').matches
+	);
+}
+
 /**
  * Identify phones and tablets without relying on viewport width. A narrow desktop
  * window should keep the full visual treatment, while installed mobile PWAs and
  * tablets should avoid effects that continuously composite large blurred layers.
  */
 export function usesMobileLowPowerVisuals(): boolean {
-	if (typeof navigator === 'undefined') return false;
-
-	if (isIosDevice() || /Android|Mobile/i.test(navigator.userAgent)) return true;
-	if (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) return true;
+	if (isMobileDevice()) return true;
 
 	return (
 		typeof window !== 'undefined' &&
