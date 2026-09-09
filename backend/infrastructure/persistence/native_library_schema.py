@@ -957,7 +957,7 @@ CREATE TABLE IF NOT EXISTS library_management_import_bundles (
               AND request_hash NOT GLOB '*[^0-9a-f]*'),
     state TEXT NOT NULL CHECK(state IN (
         'preparing','publishing','catalog_committed','cleanup_pending','completed',
-        'rolled_back','needs_attention'
+        'rolled_back','needs_attention','resolved'
     )),
     result_json TEXT NOT NULL DEFAULT '{}',
     created_at REAL NOT NULL,
@@ -973,7 +973,7 @@ CREATE TABLE IF NOT EXISTS library_management_import_journal (
     state TEXT NOT NULL CHECK(state IN (
         'planned','staged','validated','replacement_backed_up','published',
         'catalog_committed','cleanup_pending','completed','rollback_pending',
-        'rolled_back','needs_attention'
+        'rolled_back','needs_attention','resolved'
     )),
     source_fingerprint TEXT NOT NULL
         CHECK(length(source_fingerprint) = 64
