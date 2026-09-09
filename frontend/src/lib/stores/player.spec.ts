@@ -162,9 +162,9 @@ describe('low power playback', () => {
 		capturedProgressCallbacks[0](1.1, 180);
 		expect(playerStore.progress).toBe(1);
 		expect(playerStore.playbackProgress).toBe(1.1);
-		await vi.advanceTimersByTimeAsync(250);
-		capturedProgressCallbacks[0](1.25, 180);
-		expect(playerStore.progress).toBe(1.25);
+		await vi.advanceTimersByTimeAsync(1_000);
+		capturedProgressCallbacks[0](2, 180);
+		expect(playerStore.progress).toBe(2);
 		doc.hidden = true;
 		doc.dispatchEvent(new Event('visibilitychange'));
 		await vi.advanceTimersByTimeAsync(60_000);

@@ -24,6 +24,7 @@ from api.v1.schemas.library_target import (
     TargetCatalogRemovalResponse,
     ManagementReenableRequest,
     ManagementReenableResponse,
+    TrackMetadataUpdateRequest,
 )
 from api.v1.schemas.edition_conversion import (
     EditionConversionCancelRequest,
@@ -767,7 +768,11 @@ async def remove_target_track(
     curator: CurrentCuratorDep,
     writer: TargetCatalogWriterServiceDep,
 ) -> TargetCatalogRemovalResponse:
-    removed = await writer.remove_track(track_id, actor_user_id=curator.id)
+    removed = await writer.remove_track(
+        track_id,
+        actor_user_id=curator.id,
+        is_admin=curator.role == "admin",
+    )
     return TargetCatalogRemovalResponse(
         success=True, id=track_id, removed_track_ids=removed
     )
@@ -780,6 +785,24 @@ async def get_target_track_tags(
     writer: TargetCatalogWriterServiceDep,
 ) -> AudioTag:
     return await writer.read_tags(track_id)
+
+
+@router.post("/tracks/{track_id}/metadata", response_model=TargetCatalogRemovalResponse)
+async def update_target_track_metadata(
+    track_id: str,
+    user: CurrentUserDep,
+    writer: TargetCatalogWriterServiceDep,
+    body: TrackMetadataUpdateRequest = MsgSpecBody(TrackMetadataUpdateRequest),
+) -> TargetCatalogRemovalResponse:
+    await writer.update_track_metadata(
+        track_id,
+        title=body.title,
+        artist=body.artist,
+        album=body.album,
+        actor_user_id=user.id,
+        is_admin=user.role == "admin",
+    )
+    return TargetCatalogRemovalResponse(success=True, id=track_id, removed_track_ids=[])
 
 
 @router.post(

@@ -1896,6 +1896,27 @@ async def test_target_track_removal_hides_shared_track_for_actor_only() -> None:
 
 
 @pytest.mark.asyncio
+async def test_admin_target_track_removal_skips_other_user_ownership_check() -> None:
+    store = AsyncMock()
+    store.get_target_track.return_value = {
+        "id": "shared-track",
+        "availability": "indexed",
+        "recording_mbid": "recording-1",
+    }
+    store.mark_target_tracks_missing.return_value = ["shared-track"]
+    writer = TargetCatalogWriterService(store, MagicMock(), MagicMock())
+    writer._validated_path = AsyncMock(side_effect=ResourceNotFoundError("gone"))
+
+    removed = await writer.remove_track(
+        "shared-track", actor_user_id="admin-1", is_admin=True
+    )
+
+    assert removed == ["shared-track"]
+    store.target_track_has_other_user_access.assert_not_awaited()
+    store.mark_target_tracks_missing.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_target_ownership_projection_is_conservative_and_provider_independent(
     target_services,
 ) -> None:

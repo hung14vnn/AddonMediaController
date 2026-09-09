@@ -2649,6 +2649,41 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def update_target_track_metadata(
+        self,
+        track_id: str,
+        *,
+        title: str,
+        artist: str,
+        album: str,
+        actor_user_id: str,
+    ) -> None:
+        def operation(connection: sqlite3.Connection) -> None:
+            resolved = self._resolve_target_id(connection, kind="track", identifier=track_id)
+            if resolved is None:
+                raise ResourceNotFoundError("Library track not found.")
+            cursor = connection.execute(
+                "UPDATE local_tracks SET title=?, title_folded=?, artist_name=?, "
+                "artist_name_folded=?, album_title=?, album_title_folded=?, "
+                "tag_album_title=?, row_revision=row_revision+1 WHERE id=? "
+                "AND availability='indexed'",
+                (
+                    title,
+                    _fold(title),
+                    artist,
+                    _fold(artist),
+                    album,
+                    _fold(album),
+                    album,
+                    resolved,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ResourceNotFoundError("Library track not found.")
+            self._bump_catalog(connection)
+
+        await self._write(operation)
+
     async def get_library_management_tag_editor_subject(
         self, track_id: str
     ) -> dict[str, Any] | None:

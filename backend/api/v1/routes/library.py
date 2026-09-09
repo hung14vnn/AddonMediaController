@@ -46,6 +46,11 @@ from services.native.library_scanner import LibraryScanner
 
 logger = logging.getLogger(__name__)
 
+
+def _is_musicbrainz_identity(value: object) -> bool:
+    normalized = str(value or "").strip().casefold()
+    return bool(normalized) and not normalized.startswith(("youtube:", "spotify:"))
+
 router = APIRouter(route_class=MsgSpecRoute, prefix="/library", tags=["library"])
 
 
@@ -325,10 +330,34 @@ async def get_track_tags(
 @router.post("/tracks/{file_id}", response_model=LibraryTrackResponse)
 async def update_track_tags(
     file_id: str,
-    current_user: CurrentAdminDep,
+    current_user: CurrentUserDep,
     body: TrackTagUpdateRequest = MsgSpecBody(TrackTagUpdateRequest),
     scanner: LibraryScanner = Depends(get_library_scanner),
 ):
+    if current_user.role != "admin":
+        current = await scanner.read_track_tags(file_id)
+        if any(
+            _is_musicbrainz_identity(getattr(current, field, None))
+            for field in ("musicbrainz_recording_id", "musicbrainz_release_track_id")
+        ):
+            raise ValidationError(
+                "Only tracks without a MusicBrainz mapping can be edited by users."
+            )
+        unchanged = (
+            body.album == current.album
+            and body.track_number == current.track_number
+            and body.album_artist == current.album_artist
+            and body.disc_number == current.disc_number
+            and body.year == current.year
+            and body.genre == current.genre
+            and body.musicbrainz_release_group_id is None
+            and body.musicbrainz_release_id is None
+            and body.musicbrainz_recording_id is None
+            and body.musicbrainz_artist_id is None
+            and body.musicbrainz_album_artist_id is None
+        )
+        if not unchanged:
+            raise ValidationError("Users may change only the title and artist.")
     new_tag = AudioTag(
         title=body.title,
         artist=body.artist,

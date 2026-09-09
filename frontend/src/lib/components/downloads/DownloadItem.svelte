@@ -79,6 +79,9 @@
 			(progress?.bytes_total ?? task.total_size_bytes ?? 0) <= 0
 	);
 	const isOwnedByOther = $derived(authStore.isAdmin && task.user_id !== authStore.user?.id);
+	const primaryTitle = $derived(
+		task.download_type === 'track' && task.track_title ? task.track_title : task.album_title
+	);
 
 	let reviewOpen = $state(false);
 	// Once retry is clicked the row is about to move to the active queue (the failed task
@@ -117,10 +120,10 @@
 			<h3 class="truncate text-sm font-semibold sm:text-base">
 				{#if hasAlbumLink}
 					<a href={albumHref(task.release_group_mbid)} class="hover:text-primary transition-colors">
-						{task.album_title}
+						{primaryTitle}
 					</a>
 				{:else}
-					{task.album_title}
+					{primaryTitle}
 				{/if}
 			</h3>
 			<p class="truncate text-xs text-base-content/60">
@@ -133,7 +136,7 @@
 				{/if}
 				{#if task.year}<span class="text-base-content/30"> · </span>{task.year}{/if}
 				{#if task.download_type === 'track' && task.track_title}
-					<span class="text-base-content/30"> · </span>{task.track_title}
+					<span class="text-base-content/30"> · </span>{task.album_title}
 				{/if}
 			</p>
 			<div class="mt-1 flex flex-wrap items-center gap-1.5">

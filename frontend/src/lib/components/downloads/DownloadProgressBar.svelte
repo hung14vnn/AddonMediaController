@@ -7,108 +7,14 @@
 		filesTotal?: number;
 		indeterminate?: boolean;
 	}
-	let {
-		percent = 0,
-		bytesDownloaded = 0,
-		bytesTotal = 0,
-		filesCompleted = 0,
-		filesTotal = 0,
-		indeterminate = false
-	}: Props = $props();
-
-	const clamped = $derived(Math.max(0, Math.min(100, percent)));
-
-	function fmtSize(bytes: number): string {
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-		return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-	}
+	let { filesCompleted = 0, filesTotal = 0 }: Props = $props();
 </script>
 
-<div class="flex flex-col gap-1" role="status" aria-live="polite" aria-label="Download progress">
-	<div class="dl-track">
-		<div
-			class="dl-fill"
-			class:indeterminate
-			style={indeterminate ? undefined : `--progress-scale:${clamped / 100}`}
-		></div>
-	</div>
-	<div class="flex items-center justify-between text-[11px] text-base-content/50 tabular-nums">
-		<span>{clamped.toFixed(0)}%</span>
-		<span>
-			{#if bytesTotal > 0}{fmtSize(bytesDownloaded)} / {fmtSize(bytesTotal)}{/if}
-			{#if filesTotal > 0}<span class="text-base-content/30"> · </span>{filesCompleted}/{filesTotal} files{/if}
-		</span>
-	</div>
+<div
+	class="flex justify-end text-[11px] text-base-content/50 tabular-nums"
+	role="status"
+	aria-live="polite"
+	aria-label="Download files"
+>
+	{#if filesTotal > 0}{filesCompleted}/{filesTotal} files{/if}
 </div>
-
-<style>
-	.dl-track {
-		position: relative;
-		height: 6px;
-		border-radius: 3px;
-		background: oklch(from var(--color-base-300) l c h);
-		overflow: hidden;
-	}
-	.dl-fill {
-		position: absolute;
-		inset: 0 auto 0 0;
-		width: 100%;
-		height: 100%;
-		border-radius: 3px;
-		background: linear-gradient(
-			90deg,
-			oklch(from var(--color-primary) l c h / 0.7),
-			oklch(from var(--color-primary) l c h)
-		);
-		transform: scaleX(var(--progress-scale, 1));
-		transform-origin: left center;
-		transition: transform 0.6s var(--ease-spring, ease-out);
-	}
-	.dl-fill.indeterminate {
-		width: 35%;
-		animation: dl-indeterminate 1s ease-in-out 1;
-	}
-	.dl-fill::after {
-		content: '';
-		position: absolute;
-		inset: 0;
-		background: linear-gradient(
-			90deg,
-			transparent,
-			oklch(from var(--color-primary) l c h / 0.28),
-			transparent
-		);
-		animation: dl-sweep 1s ease-in-out 1;
-	}
-	@keyframes dl-sweep {
-		0% {
-			transform: translateX(-100%);
-		}
-		100% {
-			transform: translateX(100%);
-		}
-	}
-	@keyframes dl-indeterminate {
-		0% {
-			transform: translateX(-120%);
-		}
-		50% {
-			transform: translateX(180%);
-		}
-		100% {
-			transform: translateX(-120%);
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.dl-fill {
-			transition: none;
-		}
-		.dl-fill::after {
-			animation: none;
-		}
-		.dl-fill.indeterminate {
-			animation: none;
-		}
-	}
-</style>

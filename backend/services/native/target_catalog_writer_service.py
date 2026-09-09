@@ -9,6 +9,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+import msgspec
+
 from core.exceptions import ExternalServiceError, ResourceNotFoundError, ValidationError
 from infrastructure.audio.tagger import AudioTagger
 from infrastructure.persistence.native_library_store import NativeLibraryStore
@@ -19,6 +21,12 @@ from services.native.recycle_bin import recycle
 
 
 logger = logging.getLogger(__name__)
+
+
+def _is_musicbrainz_identity(value: object) -> bool:
+    """Provider-scoped IDs such as youtube:track:* are not MusicBrainz links."""
+    normalized = str(value or "").strip().casefold()
+    return bool(normalized) and not normalized.startswith(("youtube:", "spotify:"))
 
 
 class TargetCatalogWriterService:
@@ -44,19 +52,62 @@ class TargetCatalogWriterService:
             raise ValidationError("Could not read the audio file.") from error
         return tag
 
+    async def update_track_metadata(
+        self,
+        track_id: str,
+        *,
+        title: str,
+        artist: str,
+        album: str,
+        actor_user_id: str,
+        is_admin: bool = False,
+    ) -> None:
+        row = await self._store.get_target_track(track_id)
+        if row is None or row["availability"] != "indexed":
+            raise ResourceNotFoundError("Library track not found.")
+        current = await self.read_tags(track_id)
+        if not is_admin and any(
+            _is_musicbrainz_identity(getattr(current, field, None))
+            for field in ("musicbrainz_recording_id", "musicbrainz_release_track_id")
+        ):
+            raise ValidationError(
+                "Only tracks without a MusicBrainz mapping can be edited by users."
+            )
+        values = {"title": title.strip(), "artist": artist.strip(), "album": album.strip()}
+        if not all(values.values()):
+            raise ValidationError("Title, artist, and album are required.")
+        updated = msgspec.structs.replace(current, **values)
+        path = await self._validated_path(track_id)
+        try:
+            await asyncio.to_thread(self._tagger.write_mb_tags, path, updated)
+        except (OSError, ValueError) as error:
+            raise ExternalServiceError("Could not update the audio metadata.") from error
+        await self._store.update_target_track_metadata(
+            track_id,
+            title=updated.title,
+            artist=updated.artist,
+            album=updated.album,
+            actor_user_id=actor_user_id,
+        )
+
     async def remove_track(
         self,
         track_id: str,
         *,
         actor_user_id: str,
+        is_admin: bool = False,
         delete_file: bool = True,
     ) -> list[str]:
         row = await self._store.get_target_track(track_id)
         if row is None or row["availability"] != "indexed":
             raise ResourceNotFoundError("Library track not found.")
         provider_id = str(row.get("recording_mbid") or "").strip()
-        if provider_id and await self._store.target_track_has_other_user_access(
-            track_id, actor_user_id
+        if (
+            not is_admin
+            and provider_id
+            and await self._store.target_track_has_other_user_access(
+                track_id, actor_user_id
+            )
         ):
             # Keep the shared file/catalog alive and hide only this track for the
             # requesting user. This also handles album-inherited access.

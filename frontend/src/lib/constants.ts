@@ -310,6 +310,8 @@ export const API = {
 			return `/api/v1/library/albums/${encodeURIComponent(albumId)}/reidentification/releases?${query.toString()}`;
 		},
 		trackTags: (fileId: string) => `/api/v1/library/tracks/${fileId}/tags`,
+		updateTrackMetadata: (trackId: string) =>
+			`/api/v1/library/tracks/${encodeURIComponent(trackId)}/metadata`,
 		removeTrack: (fileId: string) => `/api/v1/library/tracks/${fileId}`,
 		removeTracks: () => '/api/v1/library/tracks/batch-delete',
 		activity: () => '/api/v1/library/activity',

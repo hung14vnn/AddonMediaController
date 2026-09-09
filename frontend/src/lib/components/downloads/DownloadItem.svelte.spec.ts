@@ -115,6 +115,14 @@ describe('DownloadItem.svelte', () => {
 		expect(h.cancelMutate).toHaveBeenCalled();
 	});
 
+	it('shows the track title first for a track download', async () => {
+		renderItem(
+			task({ download_type: 'track', track_title: 'Karma Police', status: 'downloading' })
+		);
+		await expect.element(page.getByRole('heading', { name: 'Karma Police' })).toBeVisible();
+		await expect.element(page.getByText('OK Computer')).toBeVisible();
+	});
+
 	it('shows a Searching badge for a queued task with no search job', async () => {
 		renderItem(task({ status: 'queued', search_job_id: null, candidate_index: null }));
 		await expect.element(page.getByText('Searching')).toBeVisible();

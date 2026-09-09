@@ -100,6 +100,12 @@ class ManagementReenableResponse(AppStruct):
     reenabled: bool
 
 
+class TrackMetadataUpdateRequest(AppStruct):
+    title: str
+    artist: str
+    album: str
+
+
 class ReleaseEditionResult(AppStruct):
     release_mbid: str
     release_group_mbid: str

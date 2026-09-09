@@ -51,6 +51,7 @@ import { resumeAudioEngine } from '$lib/player/audioElement';
 import { createOfflineTrackUrl } from '$lib/offline/offlineAudio';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { KaraokePlaybackSource } from '$lib/player/KaraokePlaybackSource';
+import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 import {
 	setMediaSessionActionHandler,
 	updateMediaSessionMetadata,
@@ -85,7 +86,10 @@ const PREVIOUS_TRACK_RESTART_THRESHOLD_S = 3;
 const ERROR_SKIP_DELAY_MS = 2000;
 const MAX_HISTORY_LENGTH = 3;
 const SESSION_PERSIST_INTERVAL_MS = 30_000;
-const PROGRESS_UI_INTERVAL_MS = 250;
+// Mobile keeps the lower-frequency UI updates to avoid extra playback/visual
+// work. On the web, publish every available `timeupdate` so word-synced lyrics
+// can stay smooth; the raw playback clock remains high precision everywhere.
+const PROGRESS_UI_INTERVAL_MS = usesMobileLowPowerVisuals() ? 1_000 : 0;
 const JELLYFIN_REPORT_INTERVAL_MS = 10_000;
 const MAX_JELLYFIN_REPORT_FAILURES = 3;
 
@@ -186,7 +190,11 @@ function createPlayerStore() {
 		progress = value;
 		if (typeof document !== 'undefined' && document.hidden) return;
 		const now = Date.now();
-		if (force || now - lastProgressPublishTime >= PROGRESS_UI_INTERVAL_MS) {
+		if (
+			force ||
+			PROGRESS_UI_INTERVAL_MS === 0 ||
+			now - lastProgressPublishTime >= PROGRESS_UI_INTERVAL_MS
+		) {
 			visibleProgress = value;
 			lastProgressPublishTime = now;
 		}

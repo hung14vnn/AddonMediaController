@@ -36,6 +36,7 @@
 		ListStart,
 		Loader2,
 		Music2,
+		Pencil,
 		Search,
 		Trash2,
 		Users,
@@ -72,6 +73,11 @@
 	let addingToPlaylist = $state(false);
 	let offlineOnly = $state(false);
 	let accessTrack = $state<NativeTrackListItem | null>(null);
+	let editTrack = $state<NativeTrackListItem | null>(null);
+	let editTitle = $state('');
+	let editArtist = $state('');
+	let editAlbum = $state('');
+	let savingEdit = $state(false);
 	let targetSelectionInitialized = false;
 	let targetMembershipGeneration = 0;
 	let existingTargetTrackIds = new SvelteSet<string>();
@@ -578,6 +584,39 @@
 		);
 	}
 
+	function openEditTrack(track: NativeTrackListItem) {
+		editTrack = track;
+		editTitle = track.title;
+		editArtist = track.artist_name;
+		editAlbum = track.album_title;
+	}
+
+	async function saveTrackMetadata() {
+		if (!editTrack || savingEdit) return;
+		if (!editTitle.trim() || !editArtist.trim() || !editAlbum.trim()) {
+			toastStore.show({ message: 'Title, artist, and album are required', type: 'error' });
+			return;
+		}
+		savingEdit = true;
+		try {
+			await api.global.post(API.library.updateTrackMetadata(editTrack.id), {
+				title: editTitle.trim(),
+				artist: editArtist.trim(),
+				album: editAlbum.trim()
+			});
+			toastStore.show({ message: `Updated "${editTitle.trim()}"`, type: 'success' });
+			editTrack = null;
+			await fetchTracks();
+		} catch (error) {
+			toastStore.show({
+				message: error instanceof Error ? error.message : "Couldn't update this track",
+				type: 'error'
+			});
+		} finally {
+			savingEdit = false;
+		}
+	}
+
 	function toggleSelectionEnabled() {
 		selectionEnabled = !selectionEnabled;
 		if (!selectionEnabled) clearSelection();
@@ -632,6 +671,10 @@
 	}
 
 	function getTrackMenuItems(track: NativeTrackListItem): MenuItem[] {
+		const hasMusicBrainzTrackMapping =
+			Boolean(track.musicbrainz_recording_id) &&
+			!track.musicbrainz_recording_id?.toLowerCase().startsWith('youtube:') &&
+			!track.musicbrainz_recording_id?.toLowerCase().startsWith('spotify:');
 		return [
 			...(!targetPlaylistId
 				? [
@@ -655,6 +698,9 @@
 			},
 			{ label: 'Add to Queue', icon: ListPlus, onclick: () => addTrackToQueue(track) },
 			{ label: 'Play Next', icon: ListStart, onclick: () => playTrackNext(track) },
+			...(!hasMusicBrainzTrackMapping
+				? [{ label: 'Edit track', icon: Pencil, onclick: () => openEditTrack(track) }]
+				: []),
 			...(authStore.isAdmin
 				? [{ label: 'Track access', icon: Users, onclick: () => (accessTrack = track) }]
 				: []),
@@ -1097,3 +1143,36 @@
 </div>
 
 <TrackAccessModal track={accessTrack} onclose={() => (accessTrack = null)} />
+
+{#if editTrack}
+	<dialog class="modal" open aria-labelledby="edit-track-title">
+		<div class="modal-box max-w-lg">
+			<h2 id="edit-track-title" class="text-xl font-semibold">Edit track</h2>
+			<p class="mt-1 text-sm text-base-content/60">
+				You can edit local metadata while this track is not mapped to MusicBrainz.
+			</p>
+			<div class="mt-5 grid gap-3">
+				<label class="grid gap-1 text-sm">
+					<span>Title</span>
+					<input class="input input-bordered" bind:value={editTitle} />
+				</label>
+				<label class="grid gap-1 text-sm">
+					<span>Artist</span>
+					<input class="input input-bordered" bind:value={editArtist} />
+				</label>
+				<label class="grid gap-1 text-sm">
+					<span>Album</span>
+					<input class="input input-bordered" bind:value={editAlbum} />
+				</label>
+			</div>
+			<div class="modal-action">
+				<button class="btn btn-ghost" disabled={savingEdit} onclick={() => (editTrack = null)}>Cancel</button>
+				<button class="btn btn-primary" disabled={savingEdit} onclick={() => void saveTrackMetadata()}>
+					{#if savingEdit}<span class="loading loading-spinner loading-sm"></span>{/if}
+					Save
+				</button>
+			</div>
+		</div>
+		<div class="modal-backdrop"><button aria-label="Close" onclick={() => (editTrack = null)}>close</button></div>
+	</dialog>
+{/if}
