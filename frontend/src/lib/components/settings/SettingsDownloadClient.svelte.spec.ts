@@ -20,7 +20,9 @@ vi.mock('$lib/queries/downloads/DownloadClientQueries.svelte', () => ({
 			verify_downloads: true,
 			min_bitrate_kbps: 128,
 			preflight_score_auto_accept: 0.7,
-			preflight_score_manual_min: 0.5
+			preflight_score_manual_min: 0.5,
+			downloads_subpath: '',
+			slskd_incomplete_mount: ''
 		},
 		isLoading: false,
 		isError: false
@@ -30,7 +32,11 @@ vi.mock('$lib/queries/downloads/DownloadClientQueries.svelte', () => ({
 			// Non-"Connected" status header so the only /Connected/ match is the test result line below.
 			configured: true,
 			client: { status: 'error', version: null, message: 'Not reachable' },
-			mount: { ok: true, move_supported: true, reason: 'ok', path: '/data/downloads/slskd' }
+			mount: { ok: true, move_supported: true, reason: 'ok', path: '/data/downloads/slskd' },
+			// Mount passes but nothing resolves, so the subfolder box renders.
+			mount_advisory: 'slskd has 5 finished downloads but nothing is visible.',
+			slskd_downloads_dir: '/data/downloads/slskd',
+			effective_downloads_path: '/data/downloads/slskd'
 		}
 	}),
 	saveDownloadClientConfig: () => ({
@@ -67,6 +73,35 @@ describe('SettingsDownloadClient.svelte', () => {
 			expect.objectContaining({ url: 'http://slskd:5030', api_key: 'slskd****' })
 		);
 		await expect.element(page.getByText(/Connected/)).toBeInTheDocument();
+	});
+
+	it('shows the effective lookup folder under the mount header', async () => {
+		render(SettingsDownloadClient);
+		await page.getByRole('button', { name: 'Expand' }).click();
+		await expect
+			.element(page.getByTestId('effective-downloads-path'))
+			.toHaveTextContent('/data/downloads/slskd');
+	});
+
+	it('tells the user to leave the subfolder empty when the mount already matches slskd', async () => {
+		render(SettingsDownloadClient);
+		await page.getByRole('button', { name: 'Expand' }).click();
+		await expect.element(page.getByText(/Leave this empty/)).toBeInTheDocument();
+	});
+
+	it('warns on a full path in the subfolder and trims it to relative', async () => {
+		render(SettingsDownloadClient);
+		await page.getByRole('button', { name: 'Expand' }).click();
+		const input = page.getByPlaceholder('e.g. downloads/slskd/complete');
+		await expect.element(input).toBeInTheDocument();
+		await input.fill('/data/downloads/slskd/complete');
+		await expect.element(page.getByText(/looks like a full path/)).toBeInTheDocument();
+		await page.getByRole('button', { name: 'Trim to relative' }).click();
+		// Trimmed to the part after the mount, so the warning clears.
+		await expect.element(page.getByText(/looks like a full path/)).not.toBeInTheDocument();
+		await expect
+			.element(page.getByTestId('effective-downloads-path'))
+			.toHaveTextContent('/data/downloads/slskd/complete');
 	});
 
 	it('reveals the incomplete-folder input and sends it on save', async () => {

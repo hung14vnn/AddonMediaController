@@ -2238,6 +2238,7 @@ export interface DownloadClientStatus {
 	mount: DownloadsMountStatus;
 	mount_advisory?: string | null;
 	slskd_downloads_dir?: string | null;
+	effective_downloads_path?: string | null;
 }
 
 export interface HomeIntegrationStatus {

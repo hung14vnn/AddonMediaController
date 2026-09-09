@@ -99,6 +99,9 @@ class DownloadClientStatusResponse(AppStruct):
     # slskd's own configured downloads dir (its in-container path), shown as a hint so the
     # user can match it to DroppedNeedle's mount. None when slskd didn't report it.
     slskd_downloads_dir: str | None = None
+    # The actual lookup dir: the mount plus the UI subfolder. The UI shows it so a
+    # wrong subfolder reads as a wrong path instead of a mystery empty folder.
+    effective_downloads_path: str | None = None
 
 
 class SearchAlbumRequest(AppStruct):
