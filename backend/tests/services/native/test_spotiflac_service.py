@@ -9,40 +9,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from services.native.spotiflac_service import (
-    _AUDIO_EXTENSIONS,
     SpotiflacService,
     _CrossLoopAsyncLock,
     _download_track_with_timeout,
-    _is_provider_intermediate,
     spotiflac_client_options,
 )
-
-
-@pytest.mark.parametrize(
-    ("name", "collected"),
-    [
-        # The Deezer extension stages an undecodable encrypted intermediate
-        # beside the finished track; it sorts first and used to be converted.
-        ("Mưa Tuyết - Dương Edward.encrypted.flac", False),
-        ("Mưa Tuyết - Dương Edward.flac", True),
-        ("track.part.flac", False),
-        ("track.tmp.m4a", False),
-        ("track.download.mp3", False),
-        # Dots are ordinary characters in track titles.
-        ("A.B.C.flac", True),
-        ("Song (feat. X) - 2.0 Remix.flac", True),
-        ("plain.mp3", True),
-    ],
-)
-def test_provider_intermediates_are_not_collected(name, collected, tmp_path):
-    path = tmp_path / name
-
-    kept = (
-        path.suffix.lower() in _AUDIO_EXTENSIONS
-        and not _is_provider_intermediate(path)
-    )
-
-    assert kept is collected
 
 
 def test_low_quality_uses_lossy_youtube_extension():

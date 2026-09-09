@@ -111,7 +111,7 @@ async def test_storage_conversion_uses_writable_staging_not_source_directory(
         targets.append(target)
         target.write_bytes(b"converted")
 
-    monkeypatch.setattr(processor, "_transcode_lossless_to_aac", transcode)
+    monkeypatch.setattr(processor, "_transcode_flac_to_aac", transcode)
     source_info = AudioInfo(
         duration_seconds=137.0,
         bitrate=2652,
