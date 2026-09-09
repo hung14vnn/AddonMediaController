@@ -17,6 +17,7 @@ import type {
 	LibraryManagementChangeImpact,
 	LibraryManagementDuplicateResolutionPreviewRequest,
 	LibraryManagementDiscardRequest,
+	LibraryManagementImportBundleResolveResponse,
 	LibraryManagementPreviewCreateRequest,
 	LibraryManagementPreviewCreatedResponse,
 	LibraryManagementPreviewDetailResponse,
@@ -282,6 +283,14 @@ export const purgeLibraryManagementBaselinesMutation = () =>
 			),
 		onSuccess: showQueued('Organization baselines purged'),
 		onError: showActionError('Could not purge organization baselines')
+	}));
+
+export const resolveLibraryManagementImportBundleMutation = () =>
+	createMutation(() => ({
+		mutationFn: (input: { bundleId: string }) =>
+			api.global.post<LibraryManagementImportBundleResolveResponse>(
+				API.libraryManagement.resolveImportBundle(input.bundleId)
+			)
 	}));
 
 export const controlLibraryManagementOperationMutation = (action: 'pause' | 'resume' | 'stop') =>

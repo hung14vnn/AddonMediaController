@@ -407,6 +407,11 @@ _ADMIN_ENDPOINTS = [
     ("POST", "/api/v1/library/management/previews/job-1/reissue", None),
     (
         "POST",
+        "/api/v1/library/management/recovery/import-bundles/bundle-1/resolve",
+        None,
+    ),
+    (
+        "POST",
         "/api/v1/settings/library/policy-apply-preview",
         {"scope_ids": [], "expected_policy_revision": "policy"},
     ),

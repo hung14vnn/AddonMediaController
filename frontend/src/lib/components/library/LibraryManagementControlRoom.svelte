@@ -32,7 +32,8 @@
 	import {
 		controlLibraryManagementOperationMutation,
 		discardLibraryManagementPreviewMutation,
-		reissueLibraryManagementPreviewMutation
+		reissueLibraryManagementPreviewMutation,
+		resolveLibraryManagementImportBundleMutation
 	} from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import {
 		forgetLibraryManagementPreviewToken,
@@ -61,6 +62,8 @@
 	const resumeOperation = controlLibraryManagementOperationMutation('resume');
 	const reissuePreview = reissueLibraryManagementPreviewMutation();
 	const discardPreview = discardLibraryManagementPreviewMutation();
+	const resolveImportBundle = resolveLibraryManagementImportBundleMutation();
+	let resolvingBundleId = $state<string | null>(null);
 	type RunnerMode = 'manage' | 'baseline_restore';
 
 	let runnerMode = $state<RunnerMode | null>(runnerModeFromUrl());
@@ -112,6 +115,7 @@
 			).length
 	);
 	const recoveryUnavailable = $derived(recoveryQuery.isError);
+	const needsAttentionBundles = $derived(recoveryQuery.data?.needs_attention_bundles ?? []);
 
 	onMount(() => {
 		const events = createLibraryManagementEvents();
@@ -194,6 +198,29 @@
 			'.';
 		bulkSummary = summary;
 		toastStore.show({ message: summary, type: failed ? 'error' : 'success' });
+	}
+
+	async function resolveNeedsAttentionBundle(bundleId: string): Promise<void> {
+		if (!authStore.isAdmin || resolvingBundleId) return;
+		resolvingBundleId = bundleId;
+		try {
+			const result = await resolveImportBundle.mutateAsync({ bundleId });
+			await invalidateLibraryManagementSurfaces().catch(() => undefined);
+			toastStore.show({
+				message: `Import bundle marked as handled (${result.verified_files}/${result.total_files} files verified).`,
+				type: 'success'
+			});
+		} catch (error) {
+			toastStore.show({
+				message:
+					error instanceof Error && error.message
+						? error.message
+						: 'Could not mark this import bundle as handled',
+				type: 'error'
+			});
+		} finally {
+			resolvingBundleId = null;
+		}
 	}
 
 	async function bulkDismissStale(items: StaleGroupItems): Promise<void> {
@@ -562,6 +589,17 @@
 							.needs_attention_count} bundles need review; {recoveryQuery.data
 							.cleanup_pending_count} have safe cleanup pending. No uncertain file is deleted automatically.</span
 					>
+					{#if authStore.isAdmin && needsAttentionBundles.length > 0}<div
+							class="flex w-full flex-wrap gap-2"
+						>
+							{#each needsAttentionBundles as bundle (bundle.bundle_id)}<button
+									type="button"
+									class="btn btn-warning btn-sm"
+									disabled={resolvingBundleId !== null}
+									onclick={() => void resolveNeedsAttentionBundle(bundle.bundle_id)}
+									>Mark {bundle.bundle_id} as handled</button
+								>{/each}
+						</div>{/if}
 				</div>{:else if recoveryUnavailable}<div class="alert alert-error items-start" role="alert">
 					<AlertTriangle class="mt-0.5 h-5 w-5" /><span
 						><strong>Recovery status is unavailable</strong><br />Do not start new file writes until

@@ -324,6 +324,10 @@ class LibraryManagementOperationHistoryResponse(AppStruct):
     next_cursor: str | None = None
 
 
+class LibraryManagementNeedsAttentionBundle(AppStruct):
+    bundle_id: str
+
+
 class LibraryManagementRecoveryDiagnosticsResponse(AppStruct):
     recoverable_bundle_count: int
     nonterminal_journal_count: int
@@ -331,6 +335,16 @@ class LibraryManagementRecoveryDiagnosticsResponse(AppStruct):
     cleanup_pending_count: int
     oldest_updated_at: float | None = None
     state_counts: dict[str, int] = msgspec.field(default_factory=dict)
+    needs_attention_bundles: list[LibraryManagementNeedsAttentionBundle] = (
+        msgspec.field(default_factory=list)
+    )
+
+
+class LibraryManagementImportBundleResolveResponse(AppStruct):
+    bundle_id: str
+    state: str
+    verified_files: int
+    total_files: int
 
 
 class LibraryManagementProfileCreateRequest(AppStruct):

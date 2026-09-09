@@ -662,6 +662,18 @@ export interface LibraryManagementRecoveryDiagnosticsResponse {
 	cleanup_pending_count: number;
 	oldest_updated_at: number | null;
 	state_counts: Record<string, number>;
+	needs_attention_bundles?: LibraryManagementNeedsAttentionBundle[];
+}
+
+export interface LibraryManagementNeedsAttentionBundle {
+	bundle_id: string;
+}
+
+export interface LibraryManagementImportBundleResolveResponse {
+	bundle_id: string;
+	state: string;
+	verified_files: number;
+	total_files: number;
 }
 
 export interface LibraryManagementHistoryParams {

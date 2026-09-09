@@ -29,6 +29,7 @@ from api.v1.schemas.library_management_preview import (
     LibraryManagementPreviewCreatedResponse,
     LibraryManagementPreviewDetailResponse,
     LibraryManagementPreviewReissueResponse,
+    LibraryManagementImportBundleResolveResponse,
     LibraryManagementProfileCopyRequest,
     LibraryManagementProfileCreateRequest,
     LibraryManagementProfileDeleteRequest,
@@ -550,6 +551,19 @@ async def get_library_management_recovery_diagnostics(
     service: LibraryManagementRecoveryServiceDep,
 ) -> LibraryManagementRecoveryDiagnosticsResponse:
     return LibraryManagementRecoveryDiagnosticsResponse(**await service.diagnostics())
+
+
+@router.post(
+    "/library/management/recovery/import-bundles/{bundle_id}/resolve",
+    response_model=LibraryManagementImportBundleResolveResponse,
+)
+async def resolve_library_management_import_bundle(
+    bundle_id: str,
+    service: LibraryManagementRecoveryServiceDep,
+) -> LibraryManagementImportBundleResolveResponse:
+    return LibraryManagementImportBundleResolveResponse(
+        **await service.resolve_import_bundle(bundle_id)
+    )
 
 
 @router.get(

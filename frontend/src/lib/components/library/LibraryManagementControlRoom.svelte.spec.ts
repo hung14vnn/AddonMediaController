@@ -5,6 +5,7 @@ import { render } from 'vitest-browser-svelte';
 const h = vi.hoisted(() => ({
 	discard: vi.fn(),
 	reissue: vi.fn(),
+	resolveImportBundle: vi.fn(),
 	goto: vi.fn(),
 	replaceState: vi.fn(),
 	apiGet: vi.fn(),
@@ -27,7 +28,8 @@ const h = vi.hoisted(() => ({
 			needs_attention_count: 0,
 			cleanup_pending_count: 0,
 			oldest_updated_at: null,
-			state_counts: {}
+			state_counts: {},
+			needs_attention_bundles: [] as Array<{ bundle_id: string }>
 		},
 		isLoading: false,
 		isError: false
@@ -106,6 +108,10 @@ vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () 
 	controlLibraryManagementOperationMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	discardLibraryManagementPreviewMutation: () => ({ mutateAsync: h.discard, isPending: false }),
 	reissueLibraryManagementPreviewMutation: () => ({ mutateAsync: h.reissue, isPending: false }),
+	resolveLibraryManagementImportBundleMutation: () => ({
+		mutateAsync: h.resolveImportBundle,
+		isPending: false
+	}),
 	createLibraryManagementPreviewMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	createLibraryManagementBaselineRestorePreviewMutation: () => ({
 		mutateAsync: vi.fn(),
@@ -180,12 +186,33 @@ function historyWith(items: Array<Record<string, unknown>>): {
 	return { data: { pages: [{ items }] }, isLoading: false, isError: false };
 }
 
+function recoveryDataWith(overrides: Partial<typeof h.recovery.data> = {}): typeof h.recovery.data {
+	return {
+		recoverable_bundle_count: 0,
+		nonterminal_journal_count: 0,
+		needs_attention_count: 0,
+		cleanup_pending_count: 0,
+		oldest_updated_at: null,
+		state_counts: {},
+		needs_attention_bundles: [],
+		...overrides
+	};
+}
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	h.appPage.url = new URL('https://music.example.test/library/management#management-controls');
 	h.operations = { data: { pages: [{ items: [] }] }, isLoading: false, isError: false };
+	h.recovery.data = recoveryDataWith();
+	h.recovery.isLoading = false;
 	h.recovery.isError = false;
 	h.admin = true;
+	h.resolveImportBundle.mockResolvedValue({
+		bundle_id: 'bundle-1',
+		state: 'resolved',
+		verified_files: 4,
+		total_files: 4
+	});
 	h.apiPost.mockResolvedValue({});
 	h.reissue.mockResolvedValue({ job_id: 'reissued-1', preview_token: 'token-1' });
 	h.invalidate.mockResolvedValue(undefined);
@@ -531,5 +558,74 @@ describe('LibraryManagementControlRoom', () => {
 		await expect
 			.element(page.getByRole('button', { name: /Dismiss .* stale/ }))
 			.not.toBeInTheDocument();
+	});
+
+	it('marks a stuck import bundle as handled and refreshes recovery state', async () => {
+		h.recovery.data = recoveryDataWith({
+			needs_attention_count: 1,
+			needs_attention_bundles: [{ bundle_id: 'bundle-1' }]
+		});
+		render(LibraryManagementControlRoom);
+
+		await expect.element(page.getByText('Recovery needs attention')).toBeVisible();
+		await page.getByRole('button', { name: 'Mark bundle-1 as handled' }).click();
+
+		await vi.waitFor(() => expect(h.resolveImportBundle).toHaveBeenCalledTimes(1));
+		expect(h.resolveImportBundle).toHaveBeenCalledWith({ bundleId: 'bundle-1' });
+		await vi.waitFor(() => expect(h.invalidate).toHaveBeenCalledOnce());
+		expect(h.toast).toHaveBeenCalledWith({
+			message: 'Import bundle marked as handled (4/4 files verified).',
+			type: 'success'
+		});
+	});
+
+	it('toasts the verification failure when resolving an import bundle fails', async () => {
+		h.recovery.data = recoveryDataWith({
+			needs_attention_count: 1,
+			needs_attention_bundles: [{ bundle_id: 'bundle-1' }]
+		});
+		h.resolveImportBundle.mockRejectedValue(new Error('2 files failed verification'));
+		render(LibraryManagementControlRoom);
+
+		await page.getByRole('button', { name: 'Mark bundle-1 as handled' }).click();
+
+		await vi.waitFor(() => expect(h.toast).toHaveBeenCalledTimes(1));
+		expect(h.toast).toHaveBeenCalledWith({
+			message: '2 files failed verification',
+			type: 'error'
+		});
+		expect(h.invalidate).not.toHaveBeenCalled();
+	});
+
+	it('hides the import bundle resolve action from non-admins', async () => {
+		h.admin = false;
+		h.recovery.data = recoveryDataWith({
+			needs_attention_count: 1,
+			needs_attention_bundles: [{ bundle_id: 'bundle-1' }]
+		});
+		render(LibraryManagementControlRoom);
+
+		await expect.element(page.getByText('Recovery needs attention')).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: 'Mark bundle-1 as handled' }))
+			.not.toBeInTheDocument();
+	});
+
+	it('shows counts without resolve actions when no bundle identities are reported', async () => {
+		h.recovery.data = recoveryDataWith({ needs_attention_count: 2, cleanup_pending_count: 1 });
+		render(LibraryManagementControlRoom);
+
+		await expect.element(page.getByText('Recovery needs attention')).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: /Mark .* as handled/ }))
+			.not.toBeInTheDocument();
+	});
+
+	it('dismisses the recovery alert once diagnostics report nothing pending', async () => {
+		h.recovery.data = recoveryDataWith();
+		render(LibraryManagementControlRoom);
+
+		await expect.element(page.getByText('Off everywhere')).toBeVisible();
+		await expect.element(page.getByText('Recovery needs attention')).not.toBeInTheDocument();
 	});
 });

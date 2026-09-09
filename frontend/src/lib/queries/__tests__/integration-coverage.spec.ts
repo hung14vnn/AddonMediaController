@@ -454,6 +454,11 @@ const COVERAGE: Array<[string, string, string]> = [
 		'/api/v1/library/management/recovery/diagnostics'
 	],
 	[
+		'resolve library management import bundle',
+		API.libraryManagement.resolveImportBundle('B1'),
+		'/api/v1/library/management/recovery/import-bundles/B1/resolve'
+	],
+	[
 		'pause identification',
 		API.library.pauseIdentification(),
 		'/api/v1/library/identification/pause'

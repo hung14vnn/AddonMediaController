@@ -27,6 +27,7 @@ from api.v1.schemas.library_management_preview import (
 )
 from api.v1.schemas.library_operations import OperationResponse
 from core.config import Settings
+from core.exceptions import ConflictError, ResourceNotFoundError
 from core.dependencies import (
     get_edition_conversion_service,
     get_library_management_duplicate_service,
@@ -467,6 +468,7 @@ def test_recovery_diagnostics_are_bounded_admin_state(app: FastAPI) -> None:
         "cleanup_pending_count": 1,
         "oldest_updated_at": 10.0,
         "state_counts": {"cleanup_pending": 1, "needs_attention": 1},
+        "needs_attention_bundles": [],
     }
 
 
@@ -690,6 +692,10 @@ def test_management_routes_are_admin_only(app: FastAPI) -> None:
     assert client.get("/settings/library-management").status_code == 403
     assert client.get("/library/management/previews/job-1").status_code == 403
     assert client.get("/library/management/recovery/diagnostics").status_code == 403
+    assert (
+        client.post("/library/management/recovery/import-bundles/b-1/resolve").status_code
+        == 403
+    )
 
     unauthenticated = FastAPI()
     unauthenticated.include_router(router)
@@ -697,6 +703,10 @@ def test_management_routes_are_admin_only(app: FastAPI) -> None:
     assert client.get("/settings/library-management").status_code == 401
     assert client.get("/library/management/previews/job-1").status_code == 401
     assert client.get("/library/management/recovery/diagnostics").status_code == 401
+    assert (
+        client.post("/library/management/recovery/import-bundles/b-1/resolve").status_code
+        == 401
+    )
 
 
 def test_preview_route_uses_fixed_5xx_copy(
@@ -797,6 +807,10 @@ def test_management_route_inventory_is_complete() -> None:
         ("POST", "/library/management/baselines/purge-impact"),
         ("POST", "/library/management/baselines/purge"),
         ("GET", "/library/management/recovery/diagnostics"),
+        (
+            "POST",
+            "/library/management/recovery/import-bundles/{bundle_id}/resolve",
+        ),
     }
 
 
@@ -844,3 +858,59 @@ def test_target_library_route_inventory_is_complete() -> None:
         ("POST", "/library/resolve-tracks"),
         ("PUT", "/library/albums/{local_album_id}/edition"),
     }
+
+
+def _resolve_recovery(app: FastAPI) -> AsyncMock:
+    recovery = AsyncMock(spec=LibraryManagementRecoveryService)
+    app.dependency_overrides[get_library_management_recovery_service] = (
+        lambda: recovery
+    )
+    return recovery
+
+
+def test_resolve_import_bundle_returns_contract_shape(app: FastAPI) -> None:
+    recovery = _resolve_recovery(app)
+    recovery.resolve_import_bundle.return_value = {
+        "bundle_id": "bundle-1",
+        "state": "resolved",
+        "verified_files": 2,
+        "total_files": 2,
+    }
+    override_admin_auth(app)
+
+    response = build_test_client(app).post(
+        "/library/management/recovery/import-bundles/bundle-1/resolve"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "bundle_id": "bundle-1",
+        "state": "resolved",
+        "verified_files": 2,
+        "total_files": 2,
+    }
+    recovery.resolve_import_bundle.assert_awaited_once_with("bundle-1")
+
+
+def test_resolve_import_bundle_maps_domain_errors(app: FastAPI) -> None:
+    recovery = _resolve_recovery(app)
+    override_admin_auth(app)
+    client = build_test_client(app)
+
+    recovery.resolve_import_bundle.side_effect = ResourceNotFoundError(
+        "Import publication bundle not found."
+    )
+    missing = client.post(
+        "/library/management/recovery/import-bundles/bundle-1/resolve"
+    )
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "NOT_FOUND"
+
+    recovery.resolve_import_bundle.side_effect = ConflictError(
+        "Only an import bundle needing attention can be resolved."
+    )
+    conflict = client.post(
+        "/library/management/recovery/import-bundles/bundle-1/resolve"
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "CONFLICT"

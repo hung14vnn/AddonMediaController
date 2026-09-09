@@ -13,7 +13,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
-from core.exceptions import ConflictError, StaleRevisionError, ValidationError
+from core.exceptions import (
+    ConflictError,
+    LibraryManagementPolicyChangedError,
+    ResourceNotFoundError,
+    StaleRevisionError,
+    ValidationError,
+)
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 from models.library_management import (
     LibraryFileMutationJournal,
@@ -229,6 +235,71 @@ class LibraryManagementRecoveryService:
 
     async def diagnostics(self) -> dict[str, object]:
         return await self._store.library_management_recovery_diagnostics()
+
+    async def resolve_import_bundle(self, bundle_id: str) -> dict[str, object]:
+        """Close a stuck `needs_attention` import bundle after verification.
+
+        Every `needs_attention` journal must still prove its destination file
+        on disk: the destination resolves through the publisher's own root
+        mechanism and its content hash must equal the sealed
+        `staged_fingerprint`. Any failure closes the request with a
+        `ConflictError` carrying per-file `{ordinal, reason}` details and
+        changes no state. Staged temporaries are user data and are never
+        deleted here.
+        """
+
+        record = await self._store.get_library_management_import_bundle(bundle_id)
+        if record is None:
+            raise ResourceNotFoundError("Import publication bundle not found.")
+        if record.state != "needs_attention":
+            raise ConflictError(
+                "Only an import bundle needing attention can be resolved."
+            )
+        journals = await self._store.list_library_management_import_journals(
+            bundle_id
+        )
+        pending = [
+            journal for journal in journals if journal.state == "needs_attention"
+        ]
+        failures: list[dict[str, object]] = []
+        for journal in pending:
+            if journal.staged_fingerprint is None:
+                failures.append({"ordinal": journal.ordinal, "reason": "unverifiable"})
+                continue
+            try:
+                destination = self._publisher.import_destination_path(
+                    record.policy_revision,
+                    journal.destination_root_id,
+                    journal.destination_relative_path,
+                )
+                digest = await asyncio.to_thread(
+                    LibraryManagementPublisher._hash_file, destination
+                )
+            except (LibraryManagementPolicyChangedError, ValidationError):
+                failures.append({"ordinal": journal.ordinal, "reason": "unverifiable"})
+            except (FileNotFoundError, NotADirectoryError):
+                failures.append({"ordinal": journal.ordinal, "reason": "missing"})
+            except OSError:
+                failures.append({"ordinal": journal.ordinal, "reason": "unverifiable"})
+            else:
+                if digest != journal.staged_fingerprint:
+                    failures.append(
+                        {"ordinal": journal.ordinal, "reason": "fingerprint_mismatch"}
+                    )
+        if failures:
+            raise ConflictError(
+                "The import bundle destinations failed verification.",
+                details=failures,
+            )
+        resolved = await self._store.resolve_library_management_import_bundle(
+            bundle_id, updated_at=self._clock()
+        )
+        return {
+            "bundle_id": resolved.id,
+            "state": resolved.state,
+            "verified_files": len(pending),
+            "total_files": len(pending),
+        }
 
     async def _recover_bundle(
         self,

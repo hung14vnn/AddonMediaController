@@ -530,6 +530,8 @@ export const API = {
 		baselinePurgeImpact: () => '/api/v1/library/management/baselines/purge-impact',
 		purgeBaselines: () => '/api/v1/library/management/baselines/purge',
 		recoveryDiagnostics: () => '/api/v1/library/management/recovery/diagnostics',
+		resolveImportBundle: (bundleId: string) =>
+			`/api/v1/library/management/recovery/import-bundles/${encodeURIComponent(bundleId)}/resolve`,
 		preview: (jobId: string) => `/api/v1/library/management/previews/${encodeURIComponent(jobId)}`,
 		applyPreview: (jobId: string) =>
 			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/apply`,
