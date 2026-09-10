@@ -91,7 +91,7 @@ const CACHE_TTL_GROUPS = {
 		ARTIST_DETAIL_BASIC: 5 * 60 * 1000,
 		ARTIST_DETAIL_EXTENDED: 30 * 60 * 1000,
 		ARTIST_DETAIL_LASTFM: 30 * 60 * 1000,
-		ARTIST_DISCOVERY: 5 * 60 * 1000
+		ARTIST_DISCOVERY: 60 * 60 * 1000
 	},
 	charts: {
 		TIME_RANGE_OVERVIEW: 2 * 60 * 1000,
@@ -134,6 +134,25 @@ const requestKindQuery = (requestKind: RequestKind = 'album') =>
 	`?request_kind=${encodeURIComponent(requestKind)}`;
 
 export const API = {
+	karaoke: {
+		prepare: () => '/api/v1/karaoke',
+		job: (jobId: string) => `/api/v1/karaoke/jobs/${encodeURIComponent(jobId)}`,
+		status: (trackFileId: string) => `/api/v1/karaoke/${encodeURIComponent(trackFileId)}/status`,
+		entries: () => '/api/v1/karaoke/entries',
+		deleteEntry: () => '/api/v1/karaoke/entries'
+	},
+	lyrics: (
+		source: string,
+		trackId: string,
+		artist: string,
+		title: string,
+		album: string,
+		duration?: number
+	) => {
+		const params = new URLSearchParams({ source, track_id: trackId, artist, title, album });
+		if (duration) params.set('duration', String(duration));
+		return `/api/v1/lyrics?${params}`;
+	},
 	auth: {
 		setupStatus: () => '/api/v1/auth/setup/status',
 		me: () => '/api/v1/auth/me',
@@ -158,6 +177,8 @@ export const API = {
 			const params = new URLSearchParams({ artist_name: artistName });
 			return `/api/v1/artists/${id}/lastfm?${params.toString()}`;
 		},
+		spotifyTracks: (id: string, artistName: string) =>
+			`/api/v1/artists/${id}/spotify-tracks?artist_name=${encodeURIComponent(artistName)}`,
 		follow: (id: string) => `/api/v1/artists/${id}/follow`,
 		autoDownload: (id: string) => `/api/v1/artists/${id}/auto-download`,
 		purchaseOptions: (id: string, artistName: string) => {
@@ -189,6 +210,9 @@ export const API = {
 	library: {
 		mbids: () => '/api/v1/library/mbids',
 		membership: () => '/api/v1/library/membership',
+		trackExistence: () => '/api/v1/library/tracks/existence',
+		adminTrackOwnershipAssignment: (trackId: string) =>
+			`/api/v1/library/admin/track-ownership/${encodeURIComponent(trackId)}`,
 		albums: (page = 1, sort = 'recent', q?: string, format?: string, pageSize = 50) => {
 			let url = `/api/v1/library/albums?page=${page}&page_size=${pageSize}&sort=${sort}`;
 			if (q) url += `&q=${encodeURIComponent(q)}`;
@@ -286,12 +310,16 @@ export const API = {
 			return `/api/v1/library/albums/${encodeURIComponent(albumId)}/reidentification/releases?${query.toString()}`;
 		},
 		trackTags: (fileId: string) => `/api/v1/library/tracks/${fileId}/tags`,
+		updateTrackMetadata: (trackId: string) =>
+			`/api/v1/library/tracks/${encodeURIComponent(trackId)}/metadata`,
 		removeTrack: (fileId: string) => `/api/v1/library/tracks/${fileId}`,
+		removeTracks: () => '/api/v1/library/tracks/batch-delete',
 		activity: () => '/api/v1/library/activity',
 		activityStream: () => '/api/v1/library/activity/stream',
 		operationsStream: () => '/api/v1/library/operations/stream',
 		pauseIdentification: () => '/api/v1/library/identification/pause',
 		resumeIdentification: () => '/api/v1/library/identification/resume',
+		cancelIdentification: () => '/api/v1/library/identification/cancel',
 		scanRuns: (limit?: number, cursor?: string) => {
 			const query = new URLSearchParams();
 			if (limit !== undefined) query.set('limit', String(limit));
@@ -468,6 +496,7 @@ export const API = {
 		pathMapping: () => '/api/v1/settings/library/path-mapping',
 		restorableRoots: () => '/api/v1/settings/library/restorable-roots',
 		restoreRoots: () => '/api/v1/settings/library/restore-roots',
+		cleanupRemovedRoots: () => '/api/v1/settings/library/cleanup-removed-roots',
 		addPath: () => '/api/v1/settings/library/paths',
 		removePath: (path: string) => `/api/v1/settings/library/paths?path=${encodeURIComponent(path)}`,
 		removeAlbum: (mbid: string) => `/api/v1/library/album/${mbid}`,
@@ -583,11 +612,15 @@ export const API = {
 			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/items/${ordinal}/artwork/${encodeURIComponent(sha256)}`
 	},
 	search: {
+		all: (query: string, limitArtists = 24, limitAlbums = 24) =>
+			`/api/v1/search?q=${encodeURIComponent(query.trim())}&limit_artists=${limitArtists}&limit_albums=${limitAlbums}`,
 		artists: (query: string, limit = 50, offset = 0) =>
 			`/api/v1/search/artists?q=${encodeURIComponent(query)}&limit=${limit}${offset ? `&offset=${offset}` : ''}`,
 		albums: (query: string, limit = 50, offset = 0) =>
 			`/api/v1/search/albums?q=${encodeURIComponent(query)}&limit=${limit}${offset ? `&offset=${offset}` : ''}`,
 		enrichment: () => '/api/v1/search/enrich/batch',
+		tracks: (query: string, _limit = 10) =>
+			`/api/v1/search?q=${encodeURIComponent(query.trim())}&buckets=tracks&limit_artists=0&limit_albums=0`,
 		suggest: (query: string, limit = 5) =>
 			`/api/v1/search/suggest?q=${encodeURIComponent(query.trim())}&limit=${limit}`
 	},
@@ -608,8 +641,6 @@ export const API = {
 	homeIntegrationStatus: () => '/api/v1/home/integration-status',
 	discover: () => '/api/v1/discover',
 	discoverRefresh: () => '/api/v1/discover/refresh',
-	discoverActivity: () => '/api/v1/discover/activity',
-	discoverQueuePreview: (mbid: string) => `/api/v1/discover/queue/preview/${mbid}`,
 	discoverQueue: () => '/api/v1/discover/queue',
 	discoverQueueStatus: () => '/api/v1/discover/queue/status',
 	discoverQueueGenerate: () => '/api/v1/discover/queue/generate',
@@ -695,7 +726,8 @@ export const API = {
 		plexAuthPoll: (pinId: number) => `/api/v1/me/connections/plex/auth/poll?pin_id=${pinId}`,
 		spotifyAuthUrl: () => '/api/v1/me/connections/spotify/auth/url',
 		spotifyPlaylists: () => '/api/v1/me/spotify/playlists',
-		spotifyImport: (playlistId: string) => `/api/v1/me/spotify/playlists/${playlistId}/import`,
+		spotifyTrackRequest: () => '/api/v1/me/spotify/tracks/request',
+		spotifyImport: () => '/api/v1/me/spotify/playlists/import',
 		personalMixRefresh: () => '/api/v1/me/personal-mix/refresh'
 	},
 	scrobble: {
@@ -791,11 +823,15 @@ export const API = {
 	dropImport: {
 		uploads: () => '/api/v1/import/uploads',
 		jobs: (all: boolean = false) => `/api/v1/import/jobs${all ? '?all=true' : ''}`,
+		clearDiscarded: () => '/api/v1/import/items/discarded',
+		clearFinished: () => '/api/v1/import/jobs/finished',
 		job: (jobId: string) => `/api/v1/import/jobs/${jobId}`,
 		match: (itemId: number) => `/api/v1/import/items/${itemId}/match`,
 		discard: (itemId: number) => `/api/v1/import/items/${itemId}/discard`
 	},
 	downloadClients: {
+		spotiflac: () => '/api/v1/download-clients/spotiflac',
+		spotiflacTest: () => '/api/v1/download-clients/spotiflac/test',
 		sabnzbd: () => '/api/v1/download-clients/sabnzbd',
 		sabnzbdTest: () => '/api/v1/download-clients/sabnzbd/test',
 		sabnzbdStatus: () => '/api/v1/download-clients/sabnzbd/status',
@@ -854,12 +890,13 @@ export const API = {
 		heldManagementRetry: (taskId: string) => `/api/v1/downloads/held/management/${taskId}/retry`,
 		heldManagementDiscard: (taskId: string) =>
 			`/api/v1/downloads/held/management/${taskId}/discard`,
-		heldVerdictDiscard: (taskId: string) => `/api/v1/downloads/held/verdict/${taskId}/discard`,
 		heldAudio: (id: number) => `/api/v1/downloads/held/${id}/audio`,
 		reimport: (taskId: string) => `/api/v1/downloads/${taskId}/reimport`,
 		cutoffUnmet: () => '/api/v1/downloads/cutoff-unmet',
 		upgradeAlbum: () => '/api/v1/downloads/upgrade/album',
-		upgradeTrack: () => '/api/v1/downloads/upgrade/track'
+		upgradeTrack: () => '/api/v1/downloads/upgrade/track',
+		youtubePreview: () => '/api/v1/downloads/youtube/preview',
+		youtube: () => '/api/v1/downloads/youtube'
 	},
 	requests: {
 		new: () => '/api/v1/requests/new',
