@@ -368,6 +368,11 @@ class PreferencesService:
             settings.api_key = settings.api_key.strip()
         return settings
 
+    def get_slskd_incomplete_mount(self) -> str | None:
+        """Return the optional absolute slskd incomplete-downloads mount."""
+        value = self.get_download_client_settings_raw().slskd_incomplete_mount.strip()
+        return value or None
+
     def save_download_client_settings(
         self, settings: DownloadClientConnectionSettings
     ) -> None:

@@ -388,6 +388,57 @@ async def warm_plex_mbid_cache(service_getter=None) -> None:
             break
 
 
+async def warm_artist_discovery_cache_periodically(
+    artist_discovery_service_getter,
+    library_db: "LibraryDB",
+    interval: int = 14400,
+    delay: float = 0.5,
+) -> None:
+    await asyncio.sleep(300)
+    while True:
+        try:
+            artists = await library_db.get_artists()
+            if not artists:
+                await asyncio.sleep(interval)
+                continue
+            mbids = [
+                artist["mbid"]
+                for artist in artists
+                if artist.get("mbid") and not is_unknown_mbid(artist["mbid"])
+            ]
+            if not mbids:
+                await asyncio.sleep(interval)
+                continue
+            await artist_discovery_service_getter().precache_artist_discovery(
+                mbids, delay=delay
+            )
+        except asyncio.CancelledError:
+            break
+        except Exception as error:  # noqa: BLE001 - warming is best effort
+            logger.error(
+                "Artist discovery cache warming failed: %s", error, exc_info=True
+            )
+        await asyncio.sleep(interval)
+
+
+def start_artist_discovery_cache_warming_task(
+    artist_discovery_service_getter,
+    library_db: "LibraryDB",
+    interval: int = 14400,
+    delay: float = 0.5,
+) -> asyncio.Task:
+    task = asyncio.create_task(
+        warm_artist_discovery_cache_periodically(
+            artist_discovery_service_getter,
+            library_db,
+            interval=interval,
+            delay=delay,
+        )
+    )
+    TaskRegistry.get_instance().register("artist-discovery-warming", task)
+    return task
+
+
 
 
 DISCOVER_WARMER_STARTUP_DELAY = 5

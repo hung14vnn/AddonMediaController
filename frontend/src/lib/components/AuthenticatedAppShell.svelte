@@ -81,7 +81,8 @@
 		ShieldCheck,
 		Heart,
 		LibraryBig,
-		Cog
+		Cog,
+		Search
 	} from 'lucide-svelte';
 	import type { Component, Snippet } from 'svelte';
 	import NewReleasesNavBadge from '$lib/components/NewReleasesNavBadge.svelte';

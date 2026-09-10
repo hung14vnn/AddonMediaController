@@ -354,6 +354,7 @@
 										id="management-inspector"
 										class="management-audit-inline-inspector"
 										role="region"
+										tabindex="0"
 										aria-label={`${detailLabel}: ${entry.title}`}
 										aria-live="polite"
 										data-testid="management-audit-inspector"
@@ -373,6 +374,7 @@
 			<aside
 				id="management-inspector"
 				class="management-audit-inspector"
+				tabindex="0"
 				aria-label={`${detailLabel}: ${selectedEntry.title}`}
 				aria-live="polite"
 				data-testid="management-audit-inspector"

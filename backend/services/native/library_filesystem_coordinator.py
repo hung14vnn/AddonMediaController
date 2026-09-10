@@ -21,7 +21,7 @@ _RENAME_NOREPLACE = 1 << 0
 _NOREPLACE_UNSUPPORTED_ERRNOS = frozenset(
     {errno.ENOSYS, errno.EINVAL, errno.EOPNOTSUPP, errno.ENOTTY}
 )
-_LIBC = ctypes.CDLL(None, use_errno=True)
+_LIBC = None if os.name == "nt" else ctypes.CDLL(None, use_errno=True)
 
 
 def _wake_async_future(future: asyncio.Future[None]) -> None:
@@ -310,6 +310,9 @@ def _renameat2_noreplace(
     old_dir_fd: int, old_name: str, new_dir_fd: int, new_name: str
 ) -> None:
     """renameat2(RENAME_NOREPLACE): fail with EEXIST instead of overwriting."""
+
+    if _LIBC is None:
+        raise OSError(errno.ENOSYS, "renameat2 is unavailable on this platform")
 
     result = _LIBC.renameat2(
         ctypes.c_int(old_dir_fd),

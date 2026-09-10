@@ -27,7 +27,7 @@ def _dominant_genre(rows: list[dict]) -> str | None:
 
 
 def _library_user_id(user: "UserRecord | None") -> str | None:
-	return None if user is None or user.role == "admin" else user.id
+    return None if user is None or user.role == "admin" else user.id
 
 
 def _dominant_release_type(rows: list[dict]) -> str | None:
@@ -40,9 +40,9 @@ def _dominant_release_type(rows: list[dict]) -> str | None:
             value = value.strip()
             if value:
                 counts[value] += 1
-	if not counts:
-		return None
-	return counts.most_common(1)[0][0]
+    if not counts:
+        return None
+    return counts.most_common(1)[0][0]
 
 
 class TargetLibraryViewService:

@@ -17,7 +17,7 @@ from api.v1.schemas.local_files import (
     LocalTrackInfo,
 )
 from core.dependencies import (
-    NativeLyricsServiceDep,
+    get_native_lyrics_service,
     get_local_files_service,
     get_preferences_service,
 )
@@ -25,6 +25,7 @@ from core.exceptions import ExternalServiceError
 from infrastructure.msgspec_fastapi import MsgSpecRoute
 from middleware import CurrentUserDep
 from services.local_files_service import LocalFilesService
+from services.compat.native_lyrics_service import NativeLyricsService
 from services.preferences_service import PreferencesService
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ def _with_download_allowed(
 async def get_local_track_lyrics(
     file_id: str,
     current_user: CurrentUserDep,
-    service: NativeLyricsServiceDep,
+    service: NativeLyricsService = Depends(get_native_lyrics_service),
 ) -> LocalLyricsResponse:
     lyrics = await service.get(file_id)
     if lyrics is None:

@@ -65,6 +65,18 @@ from .repo_providers import (
 logger = logging.getLogger(__name__)
 
 
+async def _schedule_identified_album_work(
+    local_album_id: str, input_policy_revision: str
+) -> list[object]:
+    """Schedule post-identification work for the target catalog."""
+    return await asyncio.gather(
+        get_automatic_scan_management_service().schedule_identified_album(
+            local_album_id, input_policy_revision
+        ),
+        get_artist_identity_reconciliation_service().enqueue_album(local_album_id),
+    )
+
+
 async def _invalidate_artist_reconciliation_catalog() -> None:
     """Invalidate projections after an artist identity reconciliation commit."""
     from services.search_service import SearchService
@@ -2270,10 +2282,10 @@ def get_search_enrichment_service() -> "SearchEnrichmentService":
     mb_repo = get_musicbrainz_repository()
     lb_repo = get_listenbrainz_repository()
     preferences_service = get_preferences_service()
-	lastfm_repo = get_lastfm_repository()
-	return SearchEnrichmentService(
-		lb_repo, preferences_service, lastfm_repo, plugin_host=get_plugin_host()
-	)
+    lastfm_repo = get_lastfm_repository()
+    return SearchEnrichmentService(
+        lb_repo, preferences_service, lastfm_repo, plugin_host=get_plugin_host()
+    )
 
 
 @singleton

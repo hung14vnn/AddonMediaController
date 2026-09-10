@@ -199,7 +199,6 @@
 		{/if}
 	</div>
 {:else if source === 'soulseek' && task.status === 'downloading' && !task.held_for_review}
-{:else if source === 'soulseek' && task.status === 'downloading' && !task.held_for_review}
 	<div
 		class:source-telemetry-compact={compact}
 		class="source-telemetry mt-2"
