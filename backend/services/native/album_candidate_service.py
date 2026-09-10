@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection
 from infrastructure.queue.priority_queue import RequestPriority
 from models.identification import AlbumCandidate, GroupingTrack
 from repositories.protocols.identification import IdentificationProviderProtocol
 from services.native.album_evidence_engine import MAX_CANDIDATES
+
+logger = logging.getLogger(__name__)
 
 ALBUM_SEARCH_LIMIT = 8
 RECORDING_SEARCH_LIMIT = 5
@@ -61,22 +64,41 @@ class AlbumCandidateService:
             exact.source_kinds = ["administrator_exact_release"]
             return [exact]
 
+        # Folded: tag MBIDs keep their verbatim case, so mixed-case
+        # unanimous tags must still count as unanimous (both display lanes
+        # casefold too). Lookups below use the original strings.
         embedded_groups = {
-            track.release_group_mbid for track in tracks if track.release_group_mbid
+            track.release_group_mbid.casefold()
+            for track in tracks
+            if track.release_group_mbid
         }
         embedded_releases = [track.release_mbid for track in tracks]
-        if any(embedded_releases):
-            if not all(embedded_releases) or len(set(embedded_releases)) != 1:
+        present_releases = [value for value in embedded_releases if value]
+        if present_releases:
+            # Blanks abstain (matching the release-group seed below): only
+            # genuine disagreement between populated tags refuses the lookup.
+            if len({str(value).casefold() for value in present_releases}) != 1:
                 return []
             if checkpoint is not None and not await checkpoint():
                 return []
             exact = await self._provider.get_exact_release_candidate(
-                str(embedded_releases[0]), priority
+                str(present_releases[0]), priority
             )
-            if exact is None:
-                return []
-            exact.source_kinds = ["embedded_exact_release"]
-            return [exact]
+            if exact is not None:
+                exact.source_kinds = ["embedded_exact_release"]
+                return [exact]
+            # Stale embedded tags (merged/deleted releases) must not orphan
+            # the album: fall through to full recall instead of returning no
+            # candidates. The embedded release-group seed below still applies,
+            # and sealing still needs proof. NOTE: the explicit
+            # administrator_exact_release branch above keeps returning [] on a
+            # miss - an admin demanding one release must never silently get
+            # another.
+            logger.debug(
+                "recall: agreed embedded release %s unfetchable; "
+                "falling through to full recall",
+                str(present_releases[0]),
+            )
         # F-MATCH-02 (owner-signed): non-exact recall orders deduplicated
         # cached-fingerprint seeds first (audio truth, mirroring
         # ``AlbumIdentifier._candidate_release_groups``), then the single

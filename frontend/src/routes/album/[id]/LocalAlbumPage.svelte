@@ -24,7 +24,6 @@
 	import { getTrackContextMenuItems } from './albumPlaybackHandlers';
 	import type { QueueItem } from '$lib/player/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { integrationStore } from '$lib/stores/integration';
 	import { toastStore } from '$lib/stores/toast';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
@@ -42,6 +41,7 @@
 		AlbumBasicInfo,
 		AlbumEditionItem,
 		LocalTrackInfo,
+		NativePickBasis,
 		NativeTrackListItem
 	} from '$lib/types';
 	import { createLibraryContributionMutation } from '$lib/queries/libraryContributions/LibraryContributionMutations.svelte';
@@ -63,12 +63,11 @@
 		() => Boolean(album?.musicbrainz_release_group_id)
 	);
 	const editions = $derived(editionsQuery.data?.items ?? []);
-	const downloadClientConfigured = $derived($integrationStore.download_client);
 	const rgMbid = $derived(album?.musicbrainz_release_group_id ?? '');
 	const localPinQuery = getLocalAlbumEditionPinQuery(
 		() => authStore.user?.id,
 		() => album?.id ?? '',
-		() => authStore.isTrusted && downloadClientConfigured && Boolean(rgMbid)
+		() => authStore.isTrusted && Boolean(rgMbid)
 	);
 	// the per-copy pin wins; the RG pin is the shared fallback (null on ambiguity)
 	const pinnedMbid = $derived(
@@ -98,6 +97,18 @@
 				: album?.identification_status === 'manual_identity_needs_review'
 					? 'Manual identity needs review'
 					: null
+	);
+	// Per-basis qualifier copy; an unknown future basis shows no qualifier
+	// (fail-closed, mirroring LocalIdentityBadge).
+	const pickBasisQualifier: Record<NativePickBasis, string> = {
+		pin: 'Year and cover shown from your pinned pressing.',
+		owned: 'Year and cover shown from your identified edition.',
+		embedded_tags: 'Year and cover shown from the best-fit pressing until the edition is verified.'
+	};
+	const qualifierText = $derived(
+		album?.album_identity_state === 'release_group_linked' && album.pick_basis
+			? (pickBasisQualifier[album.pick_basis] ?? null)
+			: null
 	);
 	const managementIdentityAttention = $derived(
 		album?.management_identity_readiness === 'exact_release_required'
@@ -206,7 +217,8 @@
 				});
 				toastStore.show({ message: 'Edition pinned.', type: 'success' });
 			}
-			await albumQuery.refetch();
+			// No manual refetch: the pin mutations already invalidate this
+			// page's album-detail key on success.
 		} catch (e) {
 			toastStore.show({
 				message: e instanceof Error ? e.message : 'Could not change the edition',
@@ -270,10 +282,18 @@
 					subject="album"
 					showDescription
 					className="mt-3"
+					pickBasis={album.pick_basis ?? null}
 				/>
 				<p class="mt-2 text-sm text-base-content/50">
 					{album.year ?? 'Year unknown'} · {album.track_count}
 					{album.track_count === 1 ? 'track' : 'tracks'}
+					{#if qualifierText}
+						<span
+							class="ml-1 align-middle text-xs text-base-content/45"
+							title={qualifierText}
+							aria-label={qualifierText}>· best-fit edition</span
+						>
+					{/if}
 				</p>
 				<div class="mt-5 flex flex-wrap items-center gap-2">
 					<button
@@ -360,7 +380,7 @@
 					>
 				{/if}
 			</div>
-			{#if album.musicbrainz_release_group_id && authStore.isTrusted && downloadClientConfigured && editions.length > 0}
+			{#if album.musicbrainz_release_group_id && authStore.isTrusted && editions.length > 0}
 				<div class="dropdown mt-3">
 					<button type="button" class="btn btn-ghost btn-xs gap-1" tabindex="0">
 						{#if hasEffectivePin}

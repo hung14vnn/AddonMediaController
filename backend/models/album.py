@@ -39,3 +39,4 @@ class AlbumInfo(AppStruct):
     album_3d_thumb_url: str | None = None
     service_status: dict[str, str] | None = None
     selected_release_mbid: str | None = None
+    pick_basis: str | None = None

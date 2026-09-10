@@ -41,7 +41,9 @@ const album: LibraryAlbumDetail = {
 	management_excluded_at: null,
 	active_edition_conversion: null,
 	contribution_id: null,
-	contribution_state: null
+	contribution_state: null,
+	display_release_mbid: null,
+	pick_basis: null
 };
 
 function track(id: string, number: number): NativeTrackListItem {

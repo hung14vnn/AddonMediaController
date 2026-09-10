@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 
@@ -65,6 +66,7 @@ from services.native.album_evidence_engine import (
     _fold,
 )
 from services.native.album_identification_service import (
+    ScopedCacheInvalidator,
     _candidate_key,
     _to_grouping_track,
 )
@@ -97,6 +99,9 @@ class _ProviderUnavailable(Exception):
         super().__init__(message)
         self.retry_after_seconds = retry_after_seconds
 
+logger = logging.getLogger(__name__)
+
+
 class IdentityRepairService:
     def __init__(
         self,
@@ -107,6 +112,7 @@ class IdentityRepairService:
         provider_available: Callable[[], bool] | None = None,
         wal_checkpoint: WalCheckpointService | None = None,
         edition_opt_in: Callable[[str], bool] | None = None,
+        invalidate: ScopedCacheInvalidator | None = None,
     ) -> None:
         self._store = store
         self._provider = provider
@@ -114,6 +120,7 @@ class IdentityRepairService:
         self._canonical_provider = canonical_provider
         self._provider_available = provider_available
         self._wal_checkpoint = wal_checkpoint
+        self._invalidate = invalidate
         # D-EDITION-AUTO S-3: resolves the Library Management profile-level
         # opt-in (with per-root override) for one root id. None keeps the
         # pre-auto behavior byte-for-byte (opt-in OFF everywhere).
@@ -1647,6 +1654,27 @@ class IdentityRepairService:
             actor_user_id=actor_user_id,
             now=time.time(),
         )
+        if self._invalidate is not None:
+            try:
+                # Same domain set as identification: undo restores a prior
+                # identity, which search/home/discover may have cached too.
+                await self._invalidate(
+                    {
+                        "library",
+                        "artist",
+                        "search",
+                        "home",
+                        "discover",
+                        "compatibility",
+                        "artwork",
+                        "review",
+                    },
+                    [album_id],
+                )
+            except Exception:  # noqa: BLE001 - undo already committed; never fail it
+                logger.warning(
+                    "Undo invalidation failed for album %s", album_id[:8], exc_info=True
+                )
         return AutomaticEditionUndoResponse(
             local_album_id=album_id,
             outcome=result["outcome"],

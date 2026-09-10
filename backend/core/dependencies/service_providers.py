@@ -552,19 +552,8 @@ def get_mb_provider_availability() -> Callable[[], bool]:
     return lambda: not get_mb_provider_circuit_breaker().is_open()
 
 
-@singleton
-def get_target_album_identification_service() -> "AlbumIdentificationService":
-    from services.native.album_candidate_service import AlbumCandidateService
-    from services.native.album_evidence_engine import AlbumEvidenceEngine
-    from services.native.album_identification_service import AlbumIdentificationService
-    from services.native.conditional_fingerprint_service import (
-        ConditionalFingerprintService,
-    )
-
-    from .cache_providers import get_native_library_store
-
-    store = get_native_library_store()
-    cache = get_cache()
+def _build_commit_invalidator(store, cache):
+    """Scoped post-commit invalidation shared by identification and repair."""
 
     async def invalidate(
         domains: set[str], local_album_ids: Sequence[str] | None = None
@@ -607,6 +596,24 @@ def get_target_album_identification_service() -> "AlbumIdentificationService":
                 include_lists=True,
             )
         await get_discovery_snapshot_store().mark_discover_stale()
+
+    return invalidate
+
+
+@singleton
+def get_target_album_identification_service() -> "AlbumIdentificationService":
+    from services.native.album_candidate_service import AlbumCandidateService
+    from services.native.album_evidence_engine import AlbumEvidenceEngine
+    from services.native.album_identification_service import AlbumIdentificationService
+    from services.native.conditional_fingerprint_service import (
+        ConditionalFingerprintService,
+    )
+
+    from .cache_providers import get_native_library_store
+
+    store = get_native_library_store()
+    cache = get_cache()
+    invalidate = _build_commit_invalidator(store, cache)
 
     return AlbumIdentificationService(
         store,
@@ -721,6 +728,9 @@ def get_target_identity_repair_service() -> "IdentityRepairService":
         # Keep automatic edition acceptance behind the profile-level opt-in.
         edition_opt_in=(
             get_library_management_profile_service().automatic_edition_acceptance_enabled
+        ),
+        invalidate=_build_commit_invalidator(
+            get_native_library_store(), get_cache()
         ),
     )
 

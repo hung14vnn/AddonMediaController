@@ -94,6 +94,10 @@ class TargetNativeAlbumDetail(TargetNativeAlbum):
     management_exclusion_revision: int | None = None
     management_excluded_at: float | None = None
     active_edition_conversion: ActiveEditionConversionSummary | None = None
+    # Best-fit display pick (pin → owned → unanimous embedded tags). Display
+    # only: never identity evidence, never consumed by management gates.
+    display_release_mbid: str | None = None
+    pick_basis: Literal["pin", "owned", "embedded_tags"] | None = None
 
 
 class ManagementReenableRequest(AppStruct):

@@ -548,7 +548,14 @@ class LibraryReviewService:
             now=time.time() if now is None else now,
         )
         review = result["review"]
-        if review["local_album_id"] is not None:
+        # Confirming a tier-row edition is catalog-only: the lane promises
+        # files never change there, so (unlike a needs_review accept) it
+        # never schedules management. The sealed exact stays eligible for
+        # later explicit management runs.
+        if (
+            review["local_album_id"] is not None
+            and result.get("prior_state") != TIER_STATE
+        ):
             await self._schedule_scan_management(str(review["local_album_id"]))
         return ReviewActionResponse(
             review_id=review_id,

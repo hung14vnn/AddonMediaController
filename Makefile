@@ -193,6 +193,17 @@ frontend-test-connect-apps: ## Connect Apps: SettingsConnectApps component + dat
 	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project client src/lib/components/settings/SettingsConnectApps.svelte.spec.ts
 	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project server src/lib/queries/connect-apps
 
+frontend-test-best-fit-edition: ## Best-fit edition: badge, album page, review browser/detail specs
+	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project client src/lib/components/library/LocalIdentityBadge.svelte.spec.ts
+	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project client src/lib/components/library/LibraryReviewBrowser.svelte.spec.ts
+	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project client src/lib/components/library/LibraryReviewDetail.svelte.spec.ts
+	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project client "src/routes/album/[id]/localPage.svelte.spec.ts"
+	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project client "src/routes/album/[id]/AlbumHeader.svelte.spec.ts"
+	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project client src/lib/components/library/AlbumIdentificationPanel.svelte.spec.ts
+	cd "$(FRONTEND_DIR)" && $(NPM) exec vitest run --project client src/lib/components/library/AlbumOrganizationDialog.svelte.spec.ts
+
+test-best-fit-edition: backend-test-best-fit-edition frontend-test-best-fit-edition ## Best-fit edition: full feature suite
+
 test-compat: backend-test-compat frontend-test-connect-apps ## Connect Apps: full backend + frontend suite
 
 backend-test-album-refresh: $(BACKEND_VENV_STAMP) ## Run album refresh endpoint tests
@@ -200,6 +211,13 @@ backend-test-album-refresh: $(BACKEND_VENV_STAMP) ## Run album refresh endpoint 
 
 backend-test-album-owned-release: $(BACKEND_VENV_STAMP) ## Owned album shows the edition on disc, not the largest ranked release
 	$(PYTEST) tests/services/test_album_service.py tests/services/test_album_singleflight.py -v
+
+backend-test-best-fit-edition: $(BACKEND_VENV_STAMP) ## Best-fit edition: display tiers, stale-tag fallback, edition hold, undo invalidation
+	$(PYTEST) tests/services/test_edition_selection.py tests/services/native/test_identification_pipeline.py tests/services/native/test_lane_equivalence_oracle.py tests/routes/test_undo_automatic_edition_route.py tests/services/native/test_library_review_operations.py tests/services/native/test_target_consumer_services.py -v
+	# NOTE: test_target_consumer_services.py carries 2 pre-existing failures on main
+	# (test_target_local_routes_cover_full_catalog_read_surface,
+	# test_target_native_contract_separates_local_and_provider_ids_and_redirects_aliases),
+	# verified failing on the untouched tree - unrelated to this feature.
 
 backend-test-local-stats: $(BACKEND_VENV_STAMP) ## Listening Room stats sourced from the library DB (home entry-card parity)
 	$(PYTEST) tests/services/test_local_files_service.py tests/test_advanced_settings_roundtrip.py -v

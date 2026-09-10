@@ -27,7 +27,7 @@ from infrastructure.persistence.album_release_pin_store import AlbumReleasePinSt
 from infrastructure.persistence.library_db import LibraryDB
 from infrastructure.queue.priority_queue import RequestPriority
 from models.album import Track
-from services.album_service import AlbumService
+from services.album_service import AlbumService, _edition_pick_metrics
 
 RG = "11111111-1111-4111-8111-111111111111"
 REL_STD = "22222222-2222-4222-8222-222222222222"
@@ -342,29 +342,61 @@ async def test_effective_selection_precedence_and_pin_clear(tmp_path: Path):
     for row in rows:
         row["release_mbid"] = REL_AUTO_11
     library_db.get_library_files_for_album = AsyncMock(return_value=rows)
-    selected, owned, _pinned = await service._effective_release_id(RG, payload)
+    selected, owned, _pinned, _basis = await service._effective_release_id(RG, payload)
     assert selected == REL_AUTO_11
     assert owned == REL_AUTO_11
 
 
 @pytest.mark.asyncio
-async def test_effective_selection_falls_back_for_ambiguous_or_missing_evidence(
+async def test_effective_selection_falls_back_for_missing_evidence(
     tmp_path: Path,
 ):
+    # No library rows plus a pin for an edition outside the group: nothing
+    # to infer from, so the pick is the ranked first release. (Multi-album
+    # ambiguity is a target-wiring case - see
+    # test_target_two_albums_sharing_a_group_yield_no_library_evidence.)
     service, _library_db, pins, *_ = _make_album_service(tmp_path)
-    service._library_db.get_library_files_for_album = AsyncMock(
-        return_value=[
-            *({"release_group_mbid": "local-a"} for _ in range(10)),
-            *({"release_group_mbid": "local-b"} for _ in range(10)),
-        ]
-    )
+    service._library_db.get_library_files_for_album = AsyncMock(return_value=[])
     await pins.set(RG, "77777777-7777-4777-8777-777777777777")
 
-    selected, owned, pinned = await service._effective_release_id(RG, _avalon_payload())
+    selected, owned, pinned, basis = await service._effective_release_id(
+        RG, _avalon_payload()
+    )
 
     assert selected == REL_AUTO_11
     assert owned is None
     assert pinned == "77777777-7777-4777-8777-777777777777"
+    assert basis == "ranked"
+
+
+@pytest.mark.asyncio
+async def test_identically_tagged_duplicates_never_combine(tmp_path: Path):
+    """Two active albums with the same unanimous embedded MBID (preserved
+    Beets duplicates) still yield no embedded inference - unanimity is
+    per-album, and cross-album rows never combine. Rows mirror the live
+    target wiring (per-album ids throughout)."""
+    service, _library_db, _pins, *_ = _make_album_service(tmp_path)
+    service._library_db.get_library_files_for_album = AsyncMock(
+        return_value=[
+            {
+                "local_album_id": album,
+                "release_group_mbid": album,
+                "embedded_release_mbid": REL_AUTO_11,
+                "release_mbid": None,
+                "provider_release_mbid": None,
+            }
+            for album in ("local-a", "local-b")
+            for _ in range(10)
+        ]
+    )
+
+    selected, owned, _pinned, basis = await service._effective_release_id(
+        RG, _avalon_payload()
+    )
+
+    assert selected == REL_AUTO_11
+    assert owned is None
+    assert basis == "ranked"
 
 
 @pytest.mark.asyncio
@@ -378,7 +410,7 @@ async def test_effective_selection_propagates_pin_and_library_lookup_failures(
 
     # Ambiguous pin reads degrade to unpinned so shared-RG pages still resolve;
     # only real lookup failures propagate.
-    selected, _owned, pinned = await service._effective_release_id(
+    selected, _owned, pinned, _basis = await service._effective_release_id(
         RG, _avalon_payload()
     )
     assert pinned is None
@@ -411,7 +443,10 @@ def test_closest_release_preserves_ranking_on_ties_and_ignores_unknown_counts():
 async def test_partial_collection_and_no_library_use_expected_fallbacks(tmp_path: Path):
     service, _library_db, _pins, *_ = _make_album_service(tmp_path)
     service._library_db.get_library_files_for_album = AsyncMock(
-        return_value=[{"release_group_mbid": "local-a"} for _ in range(18)]
+        return_value=[
+            {"local_album_id": "local-a", "release_group_mbid": "local-a"}
+            for _ in range(18)
+        ]
     )
     assert (await service._effective_release_id(RG, _avalon_payload()))[
         0
@@ -421,6 +456,277 @@ async def test_partial_collection_and_no_library_use_expected_fallbacks(tmp_path
     assert (await service._effective_release_id(RG, _avalon_payload()))[
         0
     ] == REL_AUTO_11
+
+
+def _embedded_rows(
+    embedded: str | None, count: int = 20, release_mbid: str | None = None
+) -> list[dict]:
+    # Target-wiring row shape (the live path): per-album ids throughout.
+    return [
+        {
+            "local_album_id": "local-a",
+            "release_group_mbid": "local-a",
+            "embedded_release_mbid": embedded,
+            "release_mbid": release_mbid,
+            "provider_release_mbid": None,
+        }
+        for _ in range(count)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_embedded_tags_tier_beats_file_count_inference(tmp_path: Path):
+    service, _library_db, _pins, *_ = _make_album_service(tmp_path)
+    service._library_db.get_library_files_for_album = AsyncMock(
+        return_value=_embedded_rows(REL_AUTO_11)
+    )
+
+    selected, owned, _pinned, basis = await service._effective_release_id(
+        RG, _avalon_payload()
+    )
+
+    # 20 files would infer the 20-track edition; unanimous tags win instead,
+    # and owned stays None (display inference is not identity evidence).
+    assert selected == REL_AUTO_11
+    assert owned is None
+    assert basis == "embedded_tags"
+
+
+@pytest.mark.asyncio
+async def test_acquisition_resolver_follows_display_tags_win(tmp_path: Path):
+    """Acquisition shares the display precedence: with unanimous embedded tags
+    for the 11-track edition, resolve_edition picks it (not the 20-track
+    file-count inference the ranked lane would prefer)."""
+    service, _library_db, _pins, *_ = _make_album_service(tmp_path)
+    service._library_db.get_library_files_for_album = AsyncMock(
+        return_value=_embedded_rows(REL_AUTO_11)
+    )
+    service._mb_repo.get_release_group_by_id.return_value = _avalon_payload()
+
+    display_selected = (
+        await service._effective_release_id(RG, _avalon_payload())
+    )[0]
+
+    assert await service.resolve_edition(RG) == REL_AUTO_11
+    assert display_selected == REL_AUTO_11
+
+
+@pytest.mark.asyncio
+async def test_embedded_tags_fire_from_real_library_rows(tmp_path: Path):
+    """The unanimous-embedded tier must work through the real LibraryDB,
+    not just mocked row dicts. Seeds 20 scanned rows whose tags name the
+    11-track edition and reads them back unmocked - file-count alone would
+    infer the 20-track edition."""
+    service, library_db, _pins, *_ = _make_album_service(tmp_path)
+    for index in range(1, 21):
+        await library_db.upsert_library_file(
+            {
+                "release_group_mbid": RG,
+                "release_mbid": None,
+                "embedded_release_mbid": REL_AUTO_11,
+                "track_number": index,
+                "disc_number": 1,
+                "track_title": f"Track {index}",
+                "album_title": "Avalon",
+                "file_path": f"/m/avalon/{index:02d}.flac",
+                "file_size_bytes": 1,
+                "file_mtime": 0.0,
+                "file_format": "flac",
+                "source": "scan",
+                "confidence": 1.0,
+                "is_compilation": 0,
+            }
+        )
+
+    selected, owned, _pinned, basis = await service._effective_release_id(
+        RG, _avalon_payload()
+    )
+
+    assert selected == REL_AUTO_11
+    assert owned is None
+    assert basis == "embedded_tags"
+
+
+@pytest.mark.asyncio
+async def test_pin_and_owned_beat_embedded_tags(tmp_path: Path):
+    service, _library_db, pins, *_ = _make_album_service(tmp_path)
+    service._library_db.get_library_files_for_album = AsyncMock(
+        return_value=_embedded_rows(REL_AUTO_11)
+    )
+
+    await pins.set(RG, REL_AUTO_OTHER_11)
+    selected, _owned, _pinned, basis = await service._effective_release_id(
+        RG, _avalon_payload()
+    )
+    assert selected == REL_AUTO_OTHER_11
+    assert basis == "pin"
+
+    await pins.clear(RG)
+    service._library_db.get_library_files_for_album = AsyncMock(
+        return_value=_embedded_rows(REL_AUTO_11, release_mbid=REL_AUTO_20)
+    )
+    selected, owned, _pinned, basis = await service._effective_release_id(
+        RG, _avalon_payload()
+    )
+    assert selected == REL_AUTO_20
+    assert owned == REL_AUTO_20
+    assert basis == "owned"
+
+
+@pytest.mark.asyncio
+async def test_partial_or_conflicting_embedded_tags_fall_through(tmp_path: Path):
+    service, _library_db, _pins, *_ = _make_album_service(tmp_path)
+
+    rows = _embedded_rows(REL_AUTO_11)
+    rows[0]["embedded_release_mbid"] = None
+    service._library_db.get_library_files_for_album = AsyncMock(return_value=rows)
+    selected, _owned, _pinned, basis = await service._effective_release_id(
+        RG, _avalon_payload()
+    )
+    assert selected == REL_AUTO_20
+    assert basis == "file_count"
+
+    rows = _embedded_rows(REL_AUTO_11)
+    rows[0]["embedded_release_mbid"] = REL_AUTO_20
+    service._library_db.get_library_files_for_album = AsyncMock(return_value=rows)
+    selected, _owned, _pinned, basis = await service._effective_release_id(
+        RG, _avalon_payload()
+    )
+    assert selected == REL_AUTO_20
+    assert basis == "file_count"
+
+
+@pytest.mark.asyncio
+async def test_invalid_or_stale_embedded_tags_fall_through(tmp_path: Path):
+    service, _library_db, _pins, *_ = _make_album_service(tmp_path)
+
+    service._library_db.get_library_files_for_album = AsyncMock(
+        return_value=_embedded_rows("not-a-mbid")
+    )
+    selected, _owned, _pinned, basis = await service._effective_release_id(
+        RG, _avalon_payload()
+    )
+    assert selected == REL_AUTO_20
+    assert basis == "file_count"
+
+    service._library_db.get_library_files_for_album = AsyncMock(
+        return_value=_embedded_rows("88888888-8888-4888-8888-888888888888")
+    )
+    selected, _owned, _pinned, basis = await service._effective_release_id(
+        RG, _avalon_payload()
+    )
+    assert selected == REL_AUTO_20
+    assert basis == "file_count"
+
+
+REL_HEX_11 = "abcdefab-cdef-abcd-efab-cdefabcdefab"
+REL_HEX_20 = "12345678-9abc-defa-bcde-fabcdefabcdef"
+
+
+def _hex_payload() -> dict:
+    return {
+        "id": RG,
+        "title": "Hex",
+        "releases": [
+            {
+                "id": REL_HEX_11,
+                "title": "Hex",
+                "status": "Official",
+                "date": "2008-08-04",
+                "country": "XW",
+                "media": [{"track-count": 11}],
+            },
+            {
+                "id": REL_HEX_20,
+                "title": "Hex",
+                "status": "Official",
+                "date": "2009-01-01",
+                "country": "US",
+                "media": [{"track-count": 20}],
+            },
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_pick_membership_is_case_insensitive(tmp_path: Path):
+    """Stored MBIDs keep their verbatim case; every membership check folds.
+    Uses hex-letter MBIDs (upper() must actually change something)."""
+    service, _library_db, pins, *_ = _make_album_service(tmp_path)
+
+    service._library_db.get_library_files_for_album = AsyncMock(
+        return_value=_embedded_rows(REL_HEX_11.upper())
+    )
+    selected, _owned, _pinned, basis = await service._effective_release_id(
+        RG, _hex_payload()
+    )
+    assert selected == REL_HEX_11
+    assert basis == "embedded_tags"
+
+    service._library_db.get_library_files_for_album = AsyncMock(
+        return_value=_embedded_rows(None, release_mbid=REL_HEX_11.upper())
+    )
+    selected, owned, _pinned, basis = await service._effective_release_id(
+        RG, _hex_payload()
+    )
+    assert selected == REL_HEX_11
+    assert owned == REL_HEX_11.upper()
+    assert basis == "owned"
+
+    await pins.set(RG, REL_HEX_11.upper())
+    service._library_db.get_library_files_for_album = AsyncMock(return_value=[])
+    selected, _owned, pinned, basis = await service._effective_release_id(
+        RG, _hex_payload()
+    )
+    assert selected == REL_HEX_11
+    assert pinned == REL_HEX_11.upper()
+    assert basis == "pin"
+
+
+@pytest.mark.asyncio
+async def test_list_editions_reports_selected_basis(tmp_path: Path):
+    service, _library_db, _pins, *_ = _make_album_service(tmp_path)
+    # list_editions resolves the RG payload (standard 12-track + deluxe 20-track);
+    # 20 files would infer deluxe, but unanimous standard tags win.
+    service._library_db.get_library_files_for_album = AsyncMock(
+        return_value=_embedded_rows(REL_STD)
+    )
+
+    editions = await service.list_editions(RG)
+
+    assert editions["selected_release_mbid"] == REL_STD
+    assert editions["selected_basis"] == "embedded_tags"
+
+
+@pytest.mark.asyncio
+async def test_effective_selection_counts_pick_basis(tmp_path: Path):
+    service, _library_db, _pins, *_ = _make_album_service(tmp_path)
+    service._library_db.get_library_files_for_album = AsyncMock(
+        return_value=_embedded_rows(REL_AUTO_11)
+    )
+    before = dict(_edition_pick_metrics.snapshot().counters)
+
+    await service._effective_release_id(RG, _avalon_payload())
+
+    after = _edition_pick_metrics.snapshot().counters
+    assert after.get("edition_pick:embedded_tags", 0) == (
+        before.get("edition_pick:embedded_tags", 0) + 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_releases_yields_no_selection_or_basis(tmp_path: Path):
+    service, _library_db, _pins, *_ = _make_album_service(tmp_path)
+    service._library_db.get_library_files_for_album = AsyncMock(
+        return_value=_embedded_rows(REL_AUTO_11)
+    )
+
+    selected, owned, pinned, basis = await service._effective_release_id(RG, {"id": RG})
+
+    assert selected is None
+    assert owned is None
+    assert pinned is None
+    assert basis is None
 
 
 @pytest.mark.asyncio

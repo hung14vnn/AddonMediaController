@@ -85,6 +85,14 @@
 		return stateLabels[code] ?? code.replaceAll('_', ' ');
 	}
 	const isConfirmLane = $derived(filters.state === 'edition_to_confirm');
+	const confirmCount = $derived(stateCounts['edition_to_confirm'] ?? 0);
+	// Above this many open editions the lane shows the full explainer banner;
+	// below it a quiet one-liner suffices.
+	const CONFIRM_BANNER_THRESHOLD = 25;
+	// The scoped state counts collapse to the active lane (the counts query
+	// carries the same state filter as the page), so the clear-queue link
+	// reads the global all-time total instead - otherwise it is always 0 here.
+	const resolvedCount = $derived(response?.counts_by_state?.['resolved'] ?? 0);
 	const reasonEntries = $derived(
 		Object.entries(reasonCounts)
 			.filter(([code]) => isConfirmLane || code !== 'EDITION_UNCERTAIN')
@@ -100,17 +108,20 @@
 	const bulkFilters = $derived<Filters>(
 		bulkReason ? { ...filters, reasonCode: bulkReason, cursor: undefined } : filters
 	);
-	const filtered = $derived(
+	// Filters beyond the lane itself: the clear-queue message must not claim
+	// an empty lane when these merely match nothing (the table owns that
+	// empty state instead).
+	const hasAncillaryFilters = $derived(
 		Boolean(
 			filters.search ||
 			filters.reasonCode ||
 			filters.rootId ||
 			filters.policy ||
 			filters.candidateAvailable ||
-			filters.hideMatching ||
-			filters.state !== 'needs_review'
+			filters.hideMatching
 		)
 	);
+	const filtered = $derived(Boolean(hasAncillaryFilters || filters.state !== 'needs_review'));
 
 	function updateUrl(next: Filters): void {
 		const params = new SvelteURLSearchParams();
@@ -145,6 +156,13 @@
 			state: filters.state === code ? undefined : code,
 			cursor: undefined
 		});
+	}
+
+	// Cross-lane jump from the clear-queue link: the count is an all-time
+	// total, so the stale lane cursor is dropped (keeping sort) to land on
+	// the first page of the resolved lane.
+	function selectStateFresh(code: string): void {
+		updateUrl({ state: code, sort: filters.sort, cursor: undefined });
 	}
 
 	function openBucketBulk(code: string, action: BulkReviewAction): void {
@@ -195,7 +213,7 @@
 	{#if (response?.filtered_total ?? 0) > 500 && waitingCount > 0}
 		<div class="alert alert-info mt-4" role="status">
 			<div>
-				<strong>First scan in progress — large numbers are normal.</strong>
+				<strong>First scan in progress - large numbers are normal.</strong>
 				<p class="text-sm">
 					Files stay playable while matching runs. 1) Wait for Matching to drain 2) Bulk-keep rows
 					with no result 3) Work conflicting or ambiguous rows.
@@ -203,16 +221,35 @@
 			</div>
 		</div>
 	{/if}
-	{#if isConfirmLane}
+	{#if isConfirmLane && confirmCount > CONFIRM_BANNER_THRESHOLD}
 		<div class="alert alert-info mt-4" role="status">
 			<div>
-				<strong>Edition to confirm — release group pinned, pressing unproven.</strong>
+				<strong>Edition to confirm - release group pinned, pressing unproven.</strong>
 				<p class="text-sm">
 					Title and artist matched; year, country and cover are not proven. Open a row to accept the
-					exact edition or pick manually. These rows never count toward Needs review.
+					exact edition or pick manually. These albums never count toward Needs review. Your files
+					never change here - this only picks which pressing is shown.
 				</p>
 			</div>
 		</div>
+	{:else if isConfirmLane && confirmCount > 0}
+		<p class="mt-4 text-sm text-base-content/55" role="status">
+			{confirmCount.toLocaleString()}
+			{confirmCount === 1 ? 'edition' : 'editions'} to confirm. Your files never change here - this only
+			picks which pressing is shown.
+		</p>
+	{:else if isConfirmLane && response && !hasAncillaryFilters}
+		<p class="mt-4 text-sm text-base-content/55" role="status">
+			Edition queue is clear.
+			{#if resolvedCount > 0}
+				<button
+					class="link link-primary"
+					aria-label="View {resolvedCount.toLocaleString()} resolved reviews"
+					onclick={() => selectStateFresh('resolved')}
+					>{resolvedCount.toLocaleString()} resolved</button
+				>
+			{/if}
+		</p>
 	{/if}
 	{#if stateEntries.length}
 		<div

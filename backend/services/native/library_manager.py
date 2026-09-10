@@ -723,6 +723,7 @@ class LibraryManager:
             "release_group_mbid": release_group_mbid,
             "release_mbid": release_mbid,
             "recording_mbid": recording_mbid,
+            "embedded_release_mbid": tag.musicbrainz_release_id,
             "disc_number": tag.disc_number,
             "track_number": tag.track_number,
             "track_title": tag.title,

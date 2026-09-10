@@ -38,6 +38,7 @@ from services.native.album_evidence_engine import (
     AlbumEvidenceEngine,
     is_edition_uncertain,
 )
+from infrastructure.observability.library_metrics import LibraryMetrics
 from core.exceptions import ExternalServiceError, StaleRevisionError
 from infrastructure.queue.priority_queue import RequestPriority
 from repositories.edition_policy import (
@@ -80,6 +81,8 @@ PostIdentificationCallback = Callable[[str, str], Awaitable[object]]
 MAX_NEW_FINGERPRINTS_PER_ATTEMPT = 2
 
 logger = logging.getLogger(__name__)
+
+_edition_hold_metrics = LibraryMetrics.for_library_workload()
 
 
 def _valid_mbid(value: str | None) -> bool:
@@ -362,6 +365,19 @@ def _embedded_release_decision(
             reason_code="CONFLICTING_EMBEDDED_IDS",
         )
     return None
+
+
+def _populated_releases_agree(tracks: list[GroupingTrack]) -> bool:
+    """True when every populated embedded release MBID names one release.
+
+    Blank tracks abstain (matching the release-group seed and the recall
+    gate, which both count populated claims only); genuine disagreement
+    still returns False.
+    """
+    populated = {
+        str(track.release_mbid).casefold() for track in tracks if track.release_mbid
+    }
+    return len(populated) == 1
 
 
 def _enforce_existing_album_identity(
@@ -851,7 +867,23 @@ class AlbumIdentificationService:
             )
             release_decision = _embedded_release_decision(tracks)
             decision = _stored_track_identity_decision(raw_tracks)
-            if decision is None and release_decision is not None:
+            # Partial-unanimous embedded release tags name one release while
+            # the remaining tracks merely lack tags (no conflict): attempt
+            # the agreed release through recall instead of holding. Scoring,
+            # the lone quorum, and the edition gate still validate it.
+            # Local-metadata albums keep the hold - with no provider to
+            # fetch and check the agreed release, the gap is unresolvable.
+            attempt_partial_unanimous = (
+                not local_metadata_only
+                and release_decision is not None
+                and release_decision.reason_code == "INCOMPLETE_EMBEDDED_RELEASE_IDS"
+                and _populated_releases_agree(tracks)
+            )
+            if (
+                decision is None
+                and release_decision is not None
+                and not attempt_partial_unanimous
+            ):
                 decision = release_decision
             elif decision is None and local_metadata_only:
                 decision = _embedded_decision(tracks, raw_tracks)
@@ -1261,9 +1293,45 @@ class AlbumIdentificationService:
                         )
                     except Exception:  # noqa: BLE001 - never mask the original
                         logger.exception("Failed to record management_schedule_pending")
+            prior_identity = context["identity"] or {}
+            # Mirrors the store's hold branch exactly (same pre-commit inputs
+            # the tx revision-guards): tier params complete, prior sealed
+            # automatic exact, same release group. Anything less complete
+            # never reaches the tier branch, so it must not signal.
+            tier_complete = bool(
+                tier_terminal
+                and decision.release_group_mbid
+                and decision.ranked_edition_keys
+            )
+            prior_exact = bool(
+                prior_identity.get("decision_source") == "automatic"
+                and prior_identity.get("release_mbid")
+            )
+            same_group = (
+                str(prior_identity.get("release_group_mbid") or "").casefold()
+                == str(decision.release_group_mbid or "").casefold()
+            )
+            if tier_complete and prior_exact and same_group:
+                # The sealed exact survived a weak re-match. Deliberately
+                # quiet - no review row, no identified side effects; the
+                # attempt flag is the audit.
+                _edition_hold_metrics.increment("tier_hold:kept_exact")
+                logger.info(
+                    "identify edition hold: kept sealed exact album=%s release=%s",
+                    str(job["local_album_id"]),
+                    str(prior_identity["release_mbid"]),
+                )
+            elif tier_complete and prior_exact:
+                # Tier for a different group: the old exact demotes to the
+                # new group pin with a tier row for review (the contradiction
+                # stays visible by design).
+                _edition_hold_metrics.increment("tier_demotion:rg_only")
             if self._invalidate is not None:
                 # ST1: thread the local album id so the provider hook can
                 # resolve rg/artist entity ids from the committed row.
+                # Runs after the hold/demotion signal: the commit already
+                # landed, so a post-commit invalidation failure must not lose
+                # the metric for it.
                 await self._invalidate(
                     {
                         "library",

@@ -4,6 +4,7 @@ import logging
 import asyncio
 import math
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Optional, TYPE_CHECKING
 import msgspec
@@ -38,6 +39,7 @@ from core.exceptions import ConflictError, ExternalServiceError, ResourceNotFoun
 from services.audiodb_image_service import AudioDBImageService
 from repositories.audiodb_models import AudioDBAlbumImages
 from services.spotify_catalog import spotify_album_id
+from infrastructure.observability.library_metrics import LibraryMetrics
 
 if TYPE_CHECKING:
     from infrastructure.persistence.album_release_pin_store import AlbumReleasePinStore
@@ -57,6 +59,22 @@ logger = logging.getLogger(__name__)
 _album_source_context: ContextVar[MbSourceContext | None] = ContextVar(
     "album_source_context", default=None
 )
+
+
+def _is_valid_mbid(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+# Pick-basis distribution, computed picks only: cached album serves return
+# before _effective_release_id runs, so these counters undercount serves and
+# must never be compared against request volume.
+_edition_pick_metrics = LibraryMetrics.for_library_workload()
 
 
 class AlbumService:
@@ -832,7 +850,7 @@ class AlbumService:
             return AlbumTracksInfo(tracks=[], total_tracks=0), False
 
         canonical_rg_id = release_group.get("id") or release_group_id
-        selected_release_id, _owned, _pinned = await self._effective_release_id(
+        selected_release_id, _owned, _pinned, _basis = await self._effective_release_id(
             canonical_rg_id, release_group
         )
         ranked_ids = [r.get("id") for r in ranked_releases[:3] if r.get("id")]
@@ -1133,17 +1151,26 @@ class AlbumService:
 
     async def _library_edition_evidence(
         self, release_group_id: str
-    ) -> tuple[str | None, int | None]:
-        """Return stored edition and file count only when one local album is active.
+    ) -> tuple[str | None, int | None, str | None]:
+        """Return stored edition, file count, and unanimous embedded release.
 
-        A provider group can map to preserved duplicates. Never combine active albums;
-        empty historical albums contribute no rows.
+        Target-wired rows (the live path) group by local album; legacy
+        ``library_files`` rows have no album boundary, so preserved
+        duplicates combine there. Combining stays conservative: the
+        embedded value requires full coverage - every row must carry the
+        same non-empty embedded release MBID, else None - so a split vote
+        can never outvote per-album unanimity. Rows whose tags predate the
+        embedded column (NULL until rescan) simply do not count.
         """
         rows = await self._library_db.get_library_files_for_album(release_group_id)
 
         if not rows:
-            return None, None
+            return None, None, None
 
+        # Key shapes differ per wiring: target rows (the live path) carry
+        # local_album_id + provider_release_mbid (+ per-file release_mbid);
+        # legacy library_files rows carry only release_mbid. The guard and
+        # lookups below are each live on exactly one lane.
         local_album_ids = {
             str(
                 row.get("local_album_id")
@@ -1153,20 +1180,32 @@ class AlbumService:
             for row in rows
         }
         if len(local_album_ids) != 1:
-            return None, None
+            return None, None, None
 
         release_counts: dict[str, int] = {}
+        embedded_values: set[str] = set()
+        embedded_complete = True
         for row in rows:
             value = row.get("provider_release_mbid") or row.get("release_mbid")
             if value:
                 release_mbid = str(value)
                 release_counts[release_mbid] = release_counts.get(release_mbid, 0) + 1
+            embedded = row.get("embedded_release_mbid")
+            if embedded:
+                embedded_values.add(str(embedded).casefold())
+            else:
+                embedded_complete = False
         owned = (
             min(release_counts, key=lambda value: (-release_counts[value], value))
             if release_counts
             else None
         )
-        return owned, len(rows)
+        unanimous_embedded = (
+            next(iter(embedded_values))
+            if embedded_complete and len(embedded_values) == 1
+            else None
+        )
+        return owned, len(rows), unanimous_embedded
 
     @staticmethod
     def _closest_release_id(ranked_releases: list[dict], file_count: int) -> str | None:
@@ -1194,12 +1233,15 @@ class AlbumService:
 
     async def _effective_release_id(
         self, release_group_id: str, release_group: dict
-    ) -> tuple[str | None, str | None, str | None]:
-        """Resolve selected, owned, and pinned release IDs.
+    ) -> tuple[str | None, str | None, str | None, str | None]:
+        """Resolve selected, owned, and pinned release IDs plus the pick basis.
 
-        Precedence is a valid manual pin, explicit stored album identity, the closest
-        media count for one active local album, then the existing release ranking.
+        Precedence is a valid manual pin, explicit stored album identity, the
+        unanimous embedded release tag across the group's rows, the closest
+        media count to the file total, then the existing release ranking.
         Inferred choices never become owned identification evidence.
+        Basis is one of pin/owned/embedded_tags/file_count/ranked, or None
+        when nothing is selected.
         """
         releases = release_group.get("releases") or release_group.get(
             "release-list", []
@@ -1218,20 +1260,59 @@ class AlbumService:
         # wire call whenever the selected release succeeds - reversing the
         # volume-optimal stop-on-first-tracks property. Revisit only behind a
         # mirror adoption or a measured inter-call gap >100 ms.
-        pinned, (owned, file_count) = await asyncio.gather(
+        pinned, (owned, file_count, unanimous_embedded) = await asyncio.gather(
             self._pinned_release_id(release_group_id),
             self._library_edition_evidence(release_group_id),
         )
 
-        if pinned in release_ids:
-            return pinned, owned, pinned
-        if owned in release_ids:
-            return owned, owned, pinned
+        # Membership is case-insensitive throughout: stored pins and owned
+        # MBIDs keep their verbatim case while MusicBrainz ships lowercase.
+        # The selected ID is always the canonical release-list entry.
+        if pinned is not None:
+            pin_match = next(
+                (
+                    release_id
+                    for release_id in release_ids
+                    if release_id.casefold() == pinned.casefold()
+                ),
+                None,
+            )
+            if pin_match is not None:
+                _edition_pick_metrics.increment("edition_pick:pin")
+                return pin_match, owned, pinned, "pin"
+        if owned is not None:
+            owned_match = next(
+                (
+                    release_id
+                    for release_id in release_ids
+                    if release_id.casefold() == owned.casefold()
+                ),
+                None,
+            )
+            if owned_match is not None:
+                _edition_pick_metrics.increment("edition_pick:owned")
+                return owned_match, owned, pinned, "owned"
+        if unanimous_embedded is not None and _is_valid_mbid(unanimous_embedded):
+            embedded_match = next(
+                (
+                    release_id
+                    for release_id in release_ids
+                    if release_id.casefold() == unanimous_embedded
+                ),
+                None,
+            )
+            if embedded_match is not None:
+                _edition_pick_metrics.increment("edition_pick:embedded_tags")
+                return embedded_match, owned, pinned, "embedded_tags"
         if file_count is not None:
             inferred = self._closest_release_id(ranked_releases, file_count)
             if inferred:
-                return inferred, owned, pinned
-        return (ranked_ids[0] if ranked_ids else None), owned, pinned
+                _edition_pick_metrics.increment("edition_pick:file_count")
+                return inferred, owned, pinned, "file_count"
+        if ranked_ids:
+            _edition_pick_metrics.increment("edition_pick:ranked")
+            return ranked_ids[0], owned, pinned, "ranked"
+        return None, owned, pinned, None
 
     async def _pinned_release_id(self, release_group_id: str) -> str | None:
         if self._release_pins is None:
@@ -1245,11 +1326,18 @@ class AlbumService:
             return None
 
     async def resolve_edition(self, release_group_id: str) -> str | None:
+        """The one effective-edition resolver, shared by display and acquisition.
+
+        'Acquire this edition' targets the edition the user sees, so downloads
+        follow the same tags-win precedence as the album page (pin > owned
+        identity > unanimous embedded tags > file count > ranked), pinned by
+        test_acquisition_resolver_follows_display_tags_win.
+        """
         release_group_id = await self._provider_album_id(release_group_id)
         release_group_id = validate_mbid(release_group_id, "album")
         release_group = await self._fetch_release_group(release_group_id)
         canonical_id = str(release_group.get("id") or release_group_id)
-        selected, _owned, _pinned = await self._effective_release_id(
+        selected, _owned, _pinned, _basis = await self._effective_release_id(
             canonical_id, release_group
         )
         return selected
@@ -1262,7 +1350,7 @@ class AlbumService:
         releases = release_group.get("releases") or release_group.get(
             "release-list", []
         )
-        selected, owned, pinned = await self._effective_release_id(
+        selected, owned, pinned, basis = await self._effective_release_id(
             canonical_id, release_group
         )
         items = []
@@ -1292,6 +1380,7 @@ class AlbumService:
             "pinned_release_mbid": pinned,
             "owned_release_mbid": owned,
             "selected_release_mbid": selected,
+            "selected_basis": basis,
         }
 
     async def _bust_album_caches(self, release_group_id: str) -> None:
@@ -1441,8 +1530,8 @@ class AlbumService:
             release_group, canonical_rg_id, artist_name, artist_id, in_library
         )
 
-        selected_release_id, _owned, _pinned = await self._effective_release_id(
-            canonical_rg_id, release_group
+        selected_release_id, _owned, _pinned, pick_basis = (
+            await self._effective_release_id(canonical_rg_id, release_group)
         )
         primary_id = primary_release.get("id") if primary_release else None
         for release_id in dict.fromkeys(
@@ -1453,6 +1542,9 @@ class AlbumService:
             )
             if basic_info.tracks:
                 basic_info.selected_release_mbid = release_id
+                basic_info.pick_basis = (
+                    pick_basis if release_id == selected_release_id else "ranked"
+                )
                 break
 
         return basic_info

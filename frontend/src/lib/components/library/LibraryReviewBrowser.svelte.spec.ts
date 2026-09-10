@@ -37,10 +37,10 @@ const h = vi.hoisted(() => ({
 		next_cursor: 'cursor-2',
 		has_more: true,
 		filtered_total: 20,
-		counts_by_state: { needs_review: 40, keep_tagged: 5 },
+		counts_by_state: { needs_review: 40, keep_tagged: 5 } as Record<string, number>,
 		counts_by_reason: {},
 		counts_by_reason_filtered: {},
-		counts_by_state_filtered: { needs_review: 12, keep_tagged: 3 },
+		counts_by_state_filtered: { needs_review: 12, keep_tagged: 3 } as Record<string, number>,
 		catalog_revision: 9
 	}
 }));
@@ -105,6 +105,7 @@ import LibraryReviewBrowser from './LibraryReviewBrowser.svelte';
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	h.reviewPage.counts_by_state = { needs_review: 40, keep_tagged: 5 };
 	h.reviewPage.counts_by_state_filtered = { needs_review: 12, keep_tagged: 3 };
 	setLibraryReviewUrl(
 		'/library/review?state=all&cursor=cursor-1&reason=CONTRADICTORY&root=root-1&sort=album'
@@ -199,5 +200,70 @@ describe('LibraryReviewBrowser state depths (N-02/T30)', () => {
 
 		await expect.element(page.getByRole('button', { name: 'Needs review · 40' })).toBeVisible();
 		await expect.element(page.getByText('All-time totals')).toBeVisible();
+	});
+});
+
+describe('LibraryReviewBrowser confirm lane', () => {
+	it('collapses the banner to a quiet line when few editions remain', async () => {
+		// The scoped counts carry the page's own state filter, so they only
+		// ever contain the active lane.
+		h.reviewPage.counts_by_state_filtered = { edition_to_confirm: 3 };
+		setLibraryReviewUrl('/library/review?state=edition_to_confirm');
+		render(LibraryReviewBrowser);
+
+		await expect.element(page.getByText(/3 editions to confirm\./)).toBeVisible();
+		await expect
+			.element(page.getByText('Edition to confirm - release group pinned, pressing unproven.'))
+			.not.toBeInTheDocument();
+	});
+
+	it('shows a clear-queue summary linking to resolved rows', async () => {
+		// Cross-lane totals come from the global counts: the scoped field is
+		// empty on a drained lane.
+		h.reviewPage.counts_by_state_filtered = {};
+		h.reviewPage.counts_by_state = { needs_review: 40, keep_tagged: 5, resolved: 40 };
+		setLibraryReviewUrl('/library/review?state=edition_to_confirm&cursor=cursor-9');
+		render(LibraryReviewBrowser);
+
+		await expect.element(page.getByText('Edition queue is clear.')).toBeVisible();
+		const link = page.getByRole('button', { name: 'View 40 resolved reviews' });
+		await expect.element(link).toBeVisible();
+		await link.click();
+		// The jump drops the stale lane cursor: the count is an all-time total.
+		expect(h.goto).toHaveBeenLastCalledWith('/library/review?state=resolved', {
+			noScroll: true,
+			keepFocus: true
+		});
+	});
+
+	it('hides the clear-queue claim when filters narrow the lane', async () => {
+		h.reviewPage.counts_by_state_filtered = {};
+		h.reviewPage.counts_by_state = { needs_review: 40, keep_tagged: 5, resolved: 40 };
+		setLibraryReviewUrl('/library/review?state=edition_to_confirm&reason=EDITION_UNCERTAIN');
+		render(LibraryReviewBrowser);
+
+		// The table owns the filtered empty state; the lane makes no claim.
+		await expect.element(page.getByText('Edition queue is clear.')).not.toBeInTheDocument();
+	});
+
+	it('shows the banner above the threshold', async () => {
+		h.reviewPage.counts_by_state_filtered = { edition_to_confirm: 26 };
+		setLibraryReviewUrl('/library/review?state=edition_to_confirm');
+		render(LibraryReviewBrowser);
+
+		await expect
+			.element(page.getByText('Edition to confirm - release group pinned, pressing unproven.'))
+			.toBeVisible();
+	});
+
+	it('shows the quiet line at the threshold', async () => {
+		h.reviewPage.counts_by_state_filtered = { edition_to_confirm: 25 };
+		setLibraryReviewUrl('/library/review?state=edition_to_confirm');
+		render(LibraryReviewBrowser);
+
+		await expect.element(page.getByText(/25 editions to confirm\./)).toBeVisible();
+		await expect
+			.element(page.getByText('Edition to confirm - release group pinned, pressing unproven.'))
+			.not.toBeInTheDocument();
 	});
 });

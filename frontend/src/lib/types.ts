@@ -14,6 +14,19 @@ export type Artist = {
 	local_id?: string | null;
 };
 
+/**
+ * Provider-lane edition pick basis (mirrors AlbumService._effective_release_id):
+ * pin > owned identity > unanimous embedded tags > file count > ranked.
+ */
+export type EditionPickBasis = 'pin' | 'owned' | 'embedded_tags' | 'file_count' | 'ranked';
+
+/**
+ * Native-lane pick basis (TargetNativeLibraryService._display_pick): per-copy
+ * pin, owned identity, or unanimous tags only - there is no file-count/ranked
+ * fallback on that path, so unproven albums without tags get no pick.
+ */
+export type NativePickBasis = 'pin' | 'owned' | 'embedded_tags';
+
 export type Album = {
 	title: string;
 	artist: string | null;
@@ -36,6 +49,7 @@ export type Album = {
 	listen_count?: number | null;
 	score?: number;
 	selected_release_mbid?: string | null;
+	pick_basis?: EditionPickBasis | null;
 	local_id?: string | null;
 	cover_available?: boolean;
 };
@@ -1764,6 +1778,8 @@ export interface LibraryAlbumDetail extends LibraryAlbumSummary {
 		row_revision: number;
 		final_preview_job_id: string | null;
 	} | null;
+	display_release_mbid: string | null;
+	pick_basis: NativePickBasis | null;
 }
 
 export type ContributionState =

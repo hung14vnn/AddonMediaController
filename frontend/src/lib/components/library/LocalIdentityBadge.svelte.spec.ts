@@ -24,4 +24,51 @@ describe('LocalIdentityBadge.svelte', () => {
 
 		await expect.element(page.getByText('This artist is linked to MusicBrainz.')).toBeVisible();
 	});
+
+	it('shows a best-fit edition when tags agree on a pressing', async () => {
+		render(LocalIdentityBadge, {
+			props: {
+				state: 'release_group_linked',
+				subject: 'album',
+				showDescription: true,
+				pickBasis: 'embedded_tags'
+			}
+		} as Parameters<typeof render<typeof LocalIdentityBadge>>[1]);
+
+		await expect.element(page.getByText('Best-fit edition', { exact: true })).toBeVisible();
+		await expect
+			.element(
+				page.getByText('Your files agree on this pressing, shown as the best fit until verified.')
+			)
+			.toBeVisible();
+	});
+
+	it('shows a best-fit edition when the pressing is pinned', async () => {
+		render(LocalIdentityBadge, {
+			props: {
+				state: 'release_group_linked',
+				subject: 'album',
+				showDescription: true,
+				pickBasis: 'pin'
+			}
+		} as Parameters<typeof render<typeof LocalIdentityBadge>>[1]);
+
+		await expect.element(page.getByText('Best-fit edition', { exact: true })).toBeVisible();
+	});
+
+	it('shows a best-fit edition when the pressing matches the identity', async () => {
+		render(LocalIdentityBadge, {
+			props: {
+				state: 'release_group_linked',
+				subject: 'album',
+				showDescription: true,
+				pickBasis: 'owned'
+			}
+		} as Parameters<typeof render<typeof LocalIdentityBadge>>[1]);
+
+		await expect.element(page.getByText('Best-fit edition', { exact: true })).toBeVisible();
+		await expect
+			.element(page.getByText('This pressing matches your identified edition and is shown.'))
+			.toBeVisible();
+	});
 });

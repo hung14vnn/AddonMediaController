@@ -53,6 +53,7 @@ _LIBRARY_FILE_VALUE_COLUMNS = (
     "release_group_mbid",
     "release_mbid",
     "recording_mbid",
+    "embedded_release_mbid",
     "disc_number",
     "track_number",
     "track_title",
@@ -315,6 +316,7 @@ class LibraryDB(PersistenceBase):
                 release_group_mbid TEXT,
                 release_mbid TEXT,
                 recording_mbid TEXT,
+                embedded_release_mbid TEXT,
                 disc_number INTEGER NOT NULL DEFAULT 1,
                 track_number INTEGER NOT NULL,
                 track_title TEXT NOT NULL,
@@ -431,6 +433,12 @@ class LibraryDB(PersistenceBase):
         # File-tag release type (RELEASETYPE/MUSICBRAINZ_ALBUMTYPE); NULL keeps the
         # legacy Compilation-or-None output until a rescan fills the row.
         _safe_alter(conn, "ALTER TABLE library_files ADD COLUMN release_type TEXT")
+        # Embedded MusicBrainz release ID from file tags (Beets/Picard); NULL
+        # rows are simply not unanimous, so the edition pick falls through to
+        # file-count/ranked until a rescan fills the row.
+        _safe_alter(
+            conn, "ALTER TABLE library_files ADD COLUMN embedded_release_mbid TEXT"
+        )
         for column, column_type in (
             ("track_sort_name", "TEXT"),
             ("artist_sort_name", "TEXT"),

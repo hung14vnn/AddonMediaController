@@ -11,6 +11,7 @@ import msgspec.json
 from api.v1.schemas.library_operations import (
     ArtistMergeApplyRequest,
     ArtistMergePreviewRequest,
+    AutomaticEditionUndoRequest,
     BulkReviewApplyRequest,
     BulkReviewPreviewRequest,
     BulkReviewSelection,
@@ -1143,6 +1144,92 @@ async def test_manual_candidate_override_records_choice_and_attaches_only_suppor
 
 
 @pytest.mark.asyncio
+async def test_tier_edition_accept_never_schedules_management(
+    store: NativeLibraryStore,
+) -> None:
+    """Confirming a tier-row edition is catalog-only: the lane promises files
+    never change there, so (unlike the needs_review accept above) the sealed
+    exact must not schedule management."""
+    await _seed_album(store, "1", two_tracks=True, review_state="edition_to_confirm")
+    context = await store.get_album_identification_context("album-1")
+    assert context is not None
+    tag_revision, file_revision, policy_revision = album_input_revisions(
+        context["tracks"]
+    )
+    attempt = IdentificationAttempt(
+        id="attempt-tier",
+        local_album_id="album-1",
+        input_tag_revision=tag_revision,
+        input_policy_revision=policy_revision,
+        input_file_revision=file_revision,
+        input_identity_revision=album_identity_revision(
+            context["identity"], context["tracks"]
+        ),
+        matcher_version="feedback-fixes-v1",
+        state="edition_uncertain",
+        terminal_reason_code="EDITION_UNCERTAIN",
+        started_at=2,
+        completed_at=2,
+    )
+    evidence = CandidateEvidence(
+        release_group_mbid="rg-tier",
+        release_mbid="release-tier",
+        matcher_version="feedback-fixes-v1",
+        track_evidence=[
+            TrackEvidence(
+                local_track_id="track-1-1",
+                classification="supported",
+                recording_mbid="recording-1",
+            ),
+            TrackEvidence(
+                local_track_id="track-1-2",
+                classification="supported",
+                recording_mbid="recording-2",
+            ),
+        ],
+        # The engine said SUPPORTED; the gate vetoed it into a tier row, so
+        # the tier-ness lives in the review state, not the evidence reason.
+        reason_code="SUPPORTED",
+    )
+    await store.replace_review_attempt(
+        "review-1",
+        expected_review_revision=1,
+        attempt=attempt,
+        evidence=[
+            IdentificationEvidenceRecord(
+                id="evidence-tier",
+                attempt_id=attempt.id,
+                candidate_key="rg-tier:release-tier",
+                evidence=evidence,
+                created_at=2,
+            )
+        ],
+        updated_at=2,
+    )
+    callback = AsyncMock()
+    response = await LibraryReviewService(
+        store, on_identified=callback
+    ).accept_candidate(
+        "review-1",
+        CandidateAcceptanceRequest(
+            expected_review_revision=2,
+            expected_catalog_revision=await store.get_catalog_revision(),
+            expected_evidence_revision="evidence-tier",
+            candidate_key="rg-tier:release-tier",
+            manual_override=False,
+            confirmation=True,
+        ),
+        "admin",
+        now=3,
+    )
+    assert response.state == "resolved"
+    context = await store.get_album_identification_context("album-1")
+    assert context is not None
+    assert context["identity"]["release_mbid"] == "release-tier"
+    callback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_review_candidate_acceptance_preserves_missing_track_identity_history(
     store: NativeLibraryStore, db_path: Path
 ) -> None:
@@ -1441,6 +1528,81 @@ async def test_bulk_candidate_preview_finds_and_binds_one_shared_safe_candidate(
         "album-1",
         "album-2",
     }
+
+
+@pytest.mark.asyncio
+async def test_bulk_tier_edition_accept_never_schedules_management(
+    store: NativeLibraryStore,
+) -> None:
+    """Bulk confirms honor the same tier exemption as single accepts: the
+    sealed exact lands, the row resolves, and no management is scheduled."""
+    await _seed_album(store, "1", review_state="edition_to_confirm")
+    attempt = IdentificationAttempt(
+        id="attempt-1",
+        local_album_id="album-1",
+        matcher_version="feedback-fixes-v1",
+        state="edition_uncertain",
+        terminal_reason_code="EDITION_UNCERTAIN",
+        started_at=2,
+        completed_at=2,
+    )
+    await store.replace_review_attempt(
+        "review-1",
+        expected_review_revision=1,
+        attempt=attempt,
+        evidence=[
+            IdentificationEvidenceRecord(
+                id="evidence-1",
+                attempt_id=attempt.id,
+                candidate_key="rg-tier:release-tier",
+                evidence=CandidateEvidence(
+                    release_group_mbid="rg-tier",
+                    release_mbid="release-tier",
+                    matcher_version="feedback-fixes-v1",
+                    reason_code="SUPPORTED",
+                ),
+                created_at=2,
+            )
+        ],
+        updated_at=2,
+    )
+    reviews = LibraryReviewService(store)
+    selection = BulkReviewSelection(
+        review_ids=["review-1"],
+        expected_revisions={"review-1": 2},
+        catalog_revision=await store.get_catalog_revision(),
+    )
+    preview = await reviews.preview_bulk(
+        BulkReviewPreviewRequest(
+            action="accept_candidate",
+            selection=selection,
+            candidate_key="rg-tier:release-tier",
+        ),
+        now=11,
+    )
+    assert preview.eligible_count == 1
+    operation = await reviews.apply_bulk(
+        BulkReviewApplyRequest(
+            preview_token=preview.preview_token,
+            idempotency_key="bulk-tier-1",
+            action="accept_candidate",
+            selection=selection,
+            candidate_key="rg-tier:release-tier",
+        ),
+        "admin",
+        now=12,
+    )
+    assert operation.expected_work_count == 1
+    callback = AsyncMock()
+    worker = LibraryOperationService(store, on_identified=callback)
+    claimed = await worker.claim("worker", now=13)
+    assert claimed is not None
+    completed = await worker.run_bulk_claimed(claimed, "worker", "admin", now=14)
+    assert completed.succeeded_count == 1
+    callback.assert_not_awaited()
+    context = await store.get_album_identification_context("album-1")
+    assert context is not None
+    assert context["identity"]["release_mbid"] == "release-tier"
 
 
 @pytest.mark.asyncio
@@ -8336,6 +8498,71 @@ async def test_undo_restores_prior_manual_identity_snapshot(
     assert len(undo_audits) == 1
     assert undo_audits[0]["actor_user_id"] == "admin"
     assert reviews == []
+
+
+@pytest.mark.asyncio
+async def test_undo_automatic_edition_invalidates_display_caches(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    await _seed_album(store, "1")
+    context = await store.get_album_identification_context("album-1")
+    assert context is not None
+    _seed_stored_attempt(
+        db_path,
+        local_album_id="album-1",
+        attempt_id="attempt-auto-invalidate",
+        revisions=album_input_revisions(context["tracks"]),
+        evidence=[
+            (
+                "evidence-auto-invalidate",
+                _suggestion_evidence(release_mbid="release-one"),
+            )
+        ],
+    )
+    provider = _SuggestedEditionProvider(
+        {
+            "release-one": _tie_release(
+                "release-one", status="Official", date="2021-05-01", country="DE"
+            )
+        }
+    )
+    preparation, created, _ = await _run_auto_preparation(
+        store, provider, idempotency_key="auto-invalidate", opt_in=True
+    )
+    accepted = (
+        await preparation.findings(
+            created.id, finding_category="exact_release_auto_accepted"
+        )
+    ).items[0]
+    assert accepted.automatic_undo is not None
+    invalidate = AsyncMock()
+    service = IdentityRepairService(store, invalidate=invalidate)
+    response = await service.undo_automatic_edition(
+        "album-1",
+        AutomaticEditionUndoRequest(
+            expected_album_revision=accepted.automatic_undo.expected_album_revision,
+            expected_identity_revision=(
+                accepted.automatic_undo.expected_identity_revision
+            ),
+        ),
+        "admin",
+    )
+    assert response.local_album_id == "album-1"
+    invalidate.assert_awaited_once()
+    domains, album_ids = invalidate.await_args.args
+    assert album_ids == ["album-1"]
+    # Same domain set as identification: undo restores a prior identity,
+    # which search/home/discover may have cached too.
+    assert set(domains) == {
+        "library",
+        "artist",
+        "search",
+        "home",
+        "discover",
+        "compatibility",
+        "artwork",
+        "review",
+    }
 
 
 @pytest.mark.asyncio

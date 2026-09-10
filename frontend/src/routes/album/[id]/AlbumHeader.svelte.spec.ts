@@ -75,7 +75,9 @@ const localAlbum: LibraryAlbumDetail = {
 	management_excluded: false,
 	management_exclusion_revision: null,
 	management_excluded_at: null,
-	active_edition_conversion: null
+	active_edition_conversion: null,
+	display_release_mbid: null,
+	pick_basis: null
 };
 
 vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
@@ -302,9 +304,7 @@ describe('AlbumHeader automatic edition selection', () => {
 	it('pins an unowned RG through the RG URL without touching the per-album route', async () => {
 		const onrefresh = renderHeader({ localCopies: [] });
 
-		await page
-			.getByRole('button', { name: 'Edition: Automatic · 2008 · US · 20 tracks' })
-			.click();
+		await page.getByRole('button', { name: 'Edition: Automatic · 2008 · US · 20 tracks' }).click();
 		await page.getByRole('button', { name: '2008 · XW · 11 tracks' }).click();
 		await vi.waitFor(() => {
 			expect(h.setPin).toHaveBeenCalledWith({
