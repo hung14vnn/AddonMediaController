@@ -86,7 +86,10 @@ from services.native.wal_checkpoint_service import WalCheckpointService
 
 
 MANAGEMENT_READINESS_PURPOSE = "management_readiness"
-MANAGEMENT_MAPPING_VERSION = "management-edition-readiness-v4"
+# v5: the engine's proof-gated artist-subset escape changed mapping outcomes
+# (collab-credit albums with full track MBIDs now map ready instead of
+# needs_review), so pre-v5 preparation snapshots must refresh.
+MANAGEMENT_MAPPING_VERSION = "management-edition-readiness-v5"
 
 
 # MusicBrainz breaker timeout is 60 s; this 2x window (matching the artist

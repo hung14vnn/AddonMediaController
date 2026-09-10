@@ -209,6 +209,9 @@ test-compat: backend-test-compat frontend-test-connect-apps ## Connect Apps: ful
 backend-test-album-refresh: $(BACKEND_VENV_STAMP) ## Run album refresh endpoint tests
 	$(PYTEST) tests/routes/test_album_refresh.py tests/services/test_navidrome_cache_invalidation.py -v
 
+backend-test-ident-quiet-reconfirm: $(BACKEND_VENV_STAMP) ## Quiet re-confirmation + collab-artist subset rule (engine, finish path, oracle)
+	$(PYTEST) tests/services/native/test_album_evidence_engine.py tests/services/native/test_identification_pipeline.py tests/services/native/test_library_review_operations.py tests/services/native/test_lane_equivalence_oracle.py tests/infrastructure/test_native_library_store.py -v
+
 backend-test-album-owned-release: $(BACKEND_VENV_STAMP) ## Owned album shows the edition on disc, not the largest ranked release
 	$(PYTEST) tests/services/test_album_service.py tests/services/test_album_singleflight.py -v
 

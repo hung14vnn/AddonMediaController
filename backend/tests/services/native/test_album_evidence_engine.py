@@ -17,6 +17,7 @@ from services.native.album_evidence_engine import (
     MATCHER_VERSION,
     ORDINARY_UNKNOWN_LIMIT,
     AlbumEvidenceEngine,
+    _artist_subset_match,
     _otherwise_supported,
 )
 from services.native.local_album_grouper import (
@@ -1415,6 +1416,444 @@ def test_tribute_artist_mismatch_still_vetoes_despite_supported_titles() -> None
     decision = AlbumEvidenceEngine().decide(local, [tribute])
     assert decision.outcome == "contradictory"
     assert decision.reason_code == "CONFLICTING_TRACK_EVIDENCE"
+
+
+def _collab_case() -> tuple[list[GroupingTrack], AlbumCandidate]:
+    """Single shape mirroring the live "Bad Omens; Poppy" vs "Bad Omens" row:
+    every track carries matching release-track + recording MBIDs."""
+    local = [
+        _track(
+            "collab-one",
+            "Violence Against Nature",
+            number=1,
+            duration=200,
+            recording="recording-a",
+            release_track="track-a",
+            album="Violence Against Nature",
+            artist="Bad Omens; Poppy",
+        )
+    ]
+    candidate = _candidate(
+        "collab-rg",
+        [
+            _candidate_track(
+                "Violence Against Nature",
+                1,
+                duration=200,
+                recording="recording-a",
+                release_track="track-a",
+            )
+        ],
+        title="Violence Against Nature",
+        artist="Bad Omens",
+    )
+    return local, candidate
+
+
+def test_collab_artist_subset_with_mbid_proof_identifies() -> None:
+    """Provider proof outranks a collaboration-credit difference: subset
+    artist ("Bad Omens; Poppy" vs "Bad Omens") plus full track MBIDs
+    identifies instead of vetoing."""
+    local, candidate = _collab_case()
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+    assert decision.outcome == "identified"
+    assert decision.reason_code == "SUPPORTED"
+    assert decision.candidates[0].album_artist_classification == "supported"
+
+
+def test_collab_artist_subset_without_proof_still_vetoes() -> None:
+    """The subset escape needs MBID proof: descriptive-only support under a
+    subset artist still vetoes."""
+    local = [
+        _track(
+            "collab-one",
+            "Violence Against Nature",
+            number=1,
+            duration=200,
+            album="Violence Against Nature",
+            artist="Bad Omens; Poppy",
+        )
+    ]
+    candidate = _candidate(
+        "collab-rg",
+        [_candidate_track("Violence Against Nature", 1, duration=200)],
+        title="Violence Against Nature",
+        artist="Bad Omens",
+    )
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+    assert decision.outcome == "contradictory"
+    assert decision.reason_code == "CONFLICTING_TRACK_EVIDENCE"
+
+
+def test_collab_artist_subset_partial_proof_still_vetoes() -> None:
+    """One MBID-proven track is not enough: every present track must carry
+    proof for the subset escape."""
+    local = [
+        _track(
+            "proof-one",
+            "Track One",
+            number=1,
+            duration=200,
+            recording="recording-a",
+            release_track="track-a",
+            album="Album",
+            artist="Alpha; Beta",
+        ),
+        _track(
+            "proof-two",
+            "Track Two",
+            number=2,
+            duration=200,
+            album="Album",
+            artist="Alpha; Beta",
+        ),
+    ]
+    candidate = _candidate(
+        "collab-rg",
+        [
+            _candidate_track(
+                "Track One", 1, duration=200, recording="recording-a", release_track="track-a"
+            ),
+            _candidate_track("Track Two", 2, duration=200),
+        ],
+        title="Album",
+        artist="Alpha",
+    )
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+    assert decision.outcome == "contradictory"
+    assert decision.reason_code == "CONFLICTING_TRACK_EVIDENCE"
+
+
+def test_collab_artist_superset_candidate_with_proof_identifies() -> None:
+    """Containment works in both directions: a provider-side collaboration
+    ("Alpha × Beta") against a single local artist ("Beta") identifies."""
+    local = [
+        _track(
+            "superset-one",
+            "Track One",
+            number=1,
+            duration=200,
+            recording="recording-a",
+            release_track="track-a",
+            album="Album",
+            artist="Beta",
+        )
+    ]
+    candidate = _candidate(
+        "collab-rg",
+        [
+            _candidate_track(
+                "Track One", 1, duration=200, recording="recording-a", release_track="track-a"
+            )
+        ],
+        title="Album",
+        artist="Alpha × Beta",
+    )
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+    assert decision.outcome == "identified"
+    assert decision.reason_code == "SUPPORTED"
+
+
+def test_disjoint_artist_with_mbid_proof_still_vetoes() -> None:
+    """MBID proof never excuses a genuinely different artist: disjoint
+    credits veto even when every track matches."""
+    local = [
+        _track(
+            "tribute-one",
+            "Track One",
+            number=1,
+            duration=200,
+            recording="recording-a",
+            release_track="track-a",
+            album="Album",
+            artist="Tribute Band",
+        )
+    ]
+    candidate = _candidate(
+        "tribute-rg",
+        [
+            _candidate_track(
+                "Track One", 1, duration=200, recording="recording-a", release_track="track-a"
+            )
+        ],
+        title="Album",
+        artist="Michael Jackson",
+    )
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+    assert decision.outcome == "contradictory"
+    assert decision.reason_code == "CONFLICTING_TRACK_EVIDENCE"
+
+
+def test_collab_artist_subset_with_fingerprint_only_still_vetoes() -> None:
+    """Fingerprint MBIDs are support-only, never authoritative proof: a
+    subset artist agreed only via fingerprint still vetoes."""
+    local = [
+        _track(
+            "fp-one",
+            "Track One",
+            number=1,
+            duration=200,
+            fingerprint_recording="recording-a",
+            album="Album",
+            artist="Alpha; Beta",
+        )
+    ]
+    candidate = _candidate(
+        "collab-rg",
+        [_candidate_track("Track One", 1, duration=200, recording="recording-a")],
+        title="Album",
+        artist="Alpha",
+    )
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+    assert decision.outcome == "contradictory"
+    assert decision.reason_code == "CONFLICTING_TRACK_EVIDENCE"
+
+
+@pytest.mark.parametrize("proof", ["recording", "release_track"])
+def test_collab_artist_subset_with_single_kind_proof_identifies(proof: str) -> None:
+    """Either MBID kind opens the escape: recording-only and
+    release-track-only proof both identify under a subset artist."""
+    mbids: dict[str, str | None] = {"recording": None, "release_track": None}
+    mbids[proof] = f"{proof}-a"
+    local = [
+        _track(
+            "single-kind-one",
+            "Track One",
+            number=1,
+            duration=200,
+            recording=mbids["recording"],
+            release_track=mbids["release_track"],
+            album="Album",
+            artist="Alpha; Beta",
+        )
+    ]
+    candidate = _candidate(
+        "collab-rg",
+        [
+            _candidate_track(
+                "Track One",
+                1,
+                duration=200,
+                recording=mbids["recording"],
+                release_track=mbids["release_track"],
+            )
+        ],
+        title="Album",
+        artist="Alpha",
+    )
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+    assert decision.outcome == "identified"
+    assert decision.reason_code == "SUPPORTED"
+
+
+def test_collab_artist_subset_with_placeholder_track_identifies() -> None:
+    """The proof quorum counts present claims only: an abstaining
+    placeholder track neither proves nor blocks the escape."""
+    local = [
+        _track(
+            "present-one",
+            "Track One",
+            number=1,
+            duration=200,
+            recording="recording-a",
+            release_track="track-a",
+            album="Album",
+            artist="Alpha; Beta",
+        ),
+        _track(
+            "present-two",
+            "Track Two",
+            number=2,
+            duration=200,
+            recording="recording-b",
+            release_track="track-b",
+            album="Album",
+            artist="Alpha; Beta",
+        ),
+        _track(
+            "placeholder-three",
+            "",
+            number=3,
+            duration=None,
+            album="Album",
+            artist="Alpha; Beta",
+            title_provenance="absent",
+        ),
+    ]
+    candidate = _candidate(
+        "collab-rg",
+        [
+            _candidate_track(
+                "Track One", 1, duration=200, recording="recording-a", release_track="track-a"
+            ),
+            _candidate_track(
+                "Track Two", 2, duration=200, recording="recording-b", release_track="track-b"
+            ),
+            _candidate_track("Track Three", 3, duration=200),
+        ],
+        title="Album",
+        artist="Alpha",
+    )
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+    assert decision.outcome == "identified"
+    assert decision.reason_code == "SUPPORTED"
+
+
+def test_collab_artist_subset_with_hard_conflict_track_still_vetoes() -> None:
+    """A provider-proof conflict anywhere blocks the escape, even when the
+    remaining tracks are fully proven."""
+    local = [
+        _track(
+            "proof-one",
+            "Track One",
+            number=1,
+            duration=200,
+            recording="recording-a",
+            release_track="track-a",
+            album="Album",
+            artist="Alpha; Beta",
+        ),
+        _track(
+            "conflict-two",
+            "Track Two",
+            number=2,
+            duration=200,
+            recording="recording-local",
+            album="Album",
+            artist="Alpha; Beta",
+        ),
+    ]
+    candidate = _candidate(
+        "collab-rg",
+        [
+            _candidate_track(
+                "Track One", 1, duration=200, recording="recording-a", release_track="track-a"
+            ),
+            _candidate_track(
+                "Track Two", 2, duration=200, recording="recording-remote"
+            ),
+        ],
+        title="Album",
+        artist="Alpha",
+    )
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+    assert decision.outcome == "contradictory"
+    assert decision.reason_code == "CONFLICTING_TRACK_EVIDENCE"
+
+
+def test_near_artist_without_proof_identifies() -> None:
+    """The escape is consulted only after a contradictory base: an artist
+    within the 0.20 distance needs no MBID proof at all."""
+    local = [
+        _track(
+            f"near-{index}",
+            f"Track {index}",
+            number=index,
+            duration=200,
+            album="Album",
+            artist="Bad Omens!",
+        )
+        for index in (1, 2)
+    ]
+    candidate = _candidate(
+        "near-rg",
+        [
+            _candidate_track(f"Track {index}", index, duration=200)
+            for index in (1, 2)
+        ],
+        title="Album",
+        artist="Bad Omens",
+    )
+    decision = AlbumEvidenceEngine().decide(local, [candidate])
+    assert decision.outcome == "identified"
+    assert decision.reason_code == "SUPPORTED"
+
+
+def test_collab_artist_subset_two_editions_pin_group_not_release() -> None:
+    """The escape un-vetoes but the margin still polices editions: two
+    same-group editions that both clear the subset rule land on the
+    edition-uncertain tier (soft confirm), never a hard review nor a
+    forced exact pick."""
+    # Same recordings shared across both editions (the realistic shape);
+    # local files carry recording MBIDs only, so both editions match by
+    # identity and differ only in the artist-credit cost term.
+    local = [
+        _track(
+            f"edition-{index}",
+            f"Track {index}",
+            number=index,
+            duration=200,
+            recording=f"recording-{index}",
+            album="Album",
+            artist="Bad Omens; Poppy",
+        )
+        for index in (1, 2)
+    ]
+
+    def _edition(release: str, artist: str) -> AlbumCandidate:
+        return AlbumCandidate(
+            release_group_mbid="edition-rg",
+            release_mbid=release,
+            album_title="Album",
+            album_artist_name=artist,
+            tracks=[
+                CandidateTrack(
+                    title=f"Track {index}",
+                    position=index,
+                    absolute_position=index,
+                    disc_number=1,
+                    duration_seconds=200,
+                    recording_mbid=f"recording-{index}",
+                    release_track_mbid=f"{release}-track-{index}",
+                )
+                for index in (1, 2)
+            ],
+            release_type="album",
+            secondary_types=[],
+        )
+
+    decision = AlbumEvidenceEngine().decide(
+        local,
+        [_edition("release-collab", "Bad Omens & Poppy"), _edition("release-solo", "Bad Omens")],
+    )
+    assert decision.outcome == "edition_uncertain"
+    assert decision.reason_code == "EDITION_UNCERTAIN"
+    assert decision.release_group_mbid == "edition-rg"
+
+
+@pytest.mark.parametrize(
+    ("local", "candidate", "expected"),
+    [
+        ("Bad Omens; Poppy", "Bad Omens", True),
+        ("Bad Omens", "Bad Omens; Poppy", True),
+        ("BABYMETAL; Poppy", "BABYMETAL", True),
+        ("Anthony Green; The High and Driving Band", "Anthony Green", True),
+        ("Alpha × Beta", "Beta", True),
+        ("Simon & Garfunkel", "Simon and Garfunkel", False),
+        ("Lead feat. Guest", "Lead", True),
+        ("Lead ft Guest", "Guest", True),
+        ("Lead with Guest", "Lead", True),
+        ("Lead vs Guest", "Guest", True),
+        ("Poppy; Bad Omens", "Bad Omens; Poppy", True),
+        ("Tribute Band", "Michael Jackson", False),
+        ("Bill Withers", "Bill Wither", False),
+        ("Witherspoon", "Spoon", False),
+        ("Poppy", "Poppy Seeds", False),
+        ("Alpha; Beta", "Beta; Gamma", False),
+        ("A; B; C", "B", True),
+        ("Lead featuring Guest", "Lead", True),
+        ("Lead + Guest", "Lead", True),
+        ("Lead / Guest", "Guest", True),
+        ("Lead, Guest", "Lead", True),
+        ("Lead FT. Guest", "Lead", True),
+        ("Lead FEAT Guest", "Guest", True),
+        ("Lead vs. Guest", "Lead", True),
+        ("", "Bad Omens", False),
+        ("Bad Omens", "", False),
+    ],
+)
+def test_artist_subset_match_cases(local: str, candidate: str, expected: bool) -> None:
+    assert _artist_subset_match(local, candidate) is expected
 
 
 # ---------------------------------------------------------------------------

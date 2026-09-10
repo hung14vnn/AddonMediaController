@@ -325,7 +325,7 @@ class RepairCreateRequest(AppStruct):
     idempotency_key: str
     root_ids: list[str] = msgspec.field(default_factory=list)
     source_matcher_version: str | None = None
-    target_matcher_version: str = "feedback-fixes-v2"
+    target_matcher_version: str = "quiet-reconfirm-v1"
 
 
 class RepairEstimateResponse(AppStruct):

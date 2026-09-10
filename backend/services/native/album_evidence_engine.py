@@ -29,7 +29,7 @@ from services.native.match_scoring_core import (
     score_release,
 )
 
-MATCHER_VERSION = "feedback-fixes-v2"
+MATCHER_VERSION = "quiet-reconfirm-v1"
 PAIR_COST_CEILING = 0.40
 ALBUM_DISTANCE_CEILING = 0.35
 CANDIDATE_MARGIN_FLOOR = 0.05
@@ -232,6 +232,94 @@ def _album_metadata_class(local: str, candidate: str) -> str:
     return "supported" if _distance(local, candidate) <= 0.20 else "contradictory"
 
 
+# Quiet-reconfirm: collaboration separators for the artist subset rule below.
+# Word separators need boundaries so e.g. "Withers" never splits; single
+# characters split anywhere (they cannot appear inside a folded token).
+_ARTIST_WORD_SEPARATOR = re.compile(r"\b(?:feat|ft|featuring|with|vs)\b\.?", re.IGNORECASE)
+_ARTIST_CHAR_SEPARATORS = frozenset({";", "×", "&", "+", ",", "/"})
+# Authoritative per-track proof for the subset rule: embedded/stored MBIDs
+# only. Fingerprint agreement emits its own kind in _pair and stays
+# support-only, never authoritative proof.
+_IDENTITY_TRACK_KINDS = frozenset({"release_track_mbid", "recording_mbid"})
+
+
+def _artist_name_tokens(value: str) -> frozenset[str]:
+    """Split a credit string into folded artist tokens (empty set when blank)."""
+    cleaned = _ARTIST_WORD_SEPARATOR.sub(";", value)
+    tokens = set()
+    current: list[str] = []
+    for character in cleaned:
+        if character in _ARTIST_CHAR_SEPARATORS:
+            tokens.add(_fold("".join(current)))
+            current = []
+        else:
+            current.append(character)
+    tokens.add(_fold("".join(current)))
+    tokens.discard("")
+    return frozenset(tokens)
+
+
+def _artist_subset_match(local: str, candidate: str) -> bool:
+    """True when one credit's artist set contains the other's.
+
+    Catches "Bad Omens; Poppy" vs "Bad Omens" (and reversed/order variants)
+    while disjoint credits ("Tribute Band" vs "Michael Jackson") fail.
+    """
+    local_tokens = _artist_name_tokens(local)
+    candidate_tokens = _artist_name_tokens(candidate)
+    if not local_tokens or not candidate_tokens:
+        return False
+    return local_tokens <= candidate_tokens or candidate_tokens <= local_tokens
+
+
+def _has_full_track_mbid_proof(
+    track_evidence: list[TrackEvidence], local_tracks: list[GroupingTrack]
+) -> bool:
+    """True when every present-claim track is MBID-supported.
+
+    Present-claim-only like the other quorums: placeholder/absent tracks
+    abstain instead of failing the gate.
+    """
+    present = [
+        item
+        for item, track in zip(track_evidence, local_tracks, strict=True)
+        if track.title_provenance in _PRESENT_PROVENANCE
+    ]
+    if not present:
+        return False
+    return all(
+        item.classification == "supported"
+        and bool(_IDENTITY_TRACK_KINDS.intersection(item.evidence_kinds))
+        for item in present
+    )
+
+
+def _album_artist_class(
+    local: str,
+    candidate: str,
+    *,
+    track_evidence: list[TrackEvidence],
+    local_tracks: list[GroupingTrack],
+) -> str:
+    """Artist gate: hard distance check with a proof-gated subset escape.
+
+    The 0.20 veto stays for genuinely different artists (tribute/wrong-artist
+    noise). The escape fires only when the credits are subset-related AND
+    every present track already carries MBID proof of these tracks - the
+    provider proof outranks the credit-string difference. Recording-level
+    proof can match across editions of the same recordings; any residual
+    edition ambiguity is still policed by the margin and RG-tier rules.
+    """
+    base = _album_metadata_class(local, candidate)
+    if base != "contradictory":
+        return base
+    if not _artist_subset_match(local, candidate):
+        return "contradictory"
+    if not _has_full_track_mbid_proof(track_evidence, local_tracks):
+        return "contradictory"
+    return "supported"
+
+
 def _album_title_class(local: str, candidate: str) -> str:
     """Album-title gate with edition-suffix normalization (F-MATCH-01).
 
@@ -323,8 +411,9 @@ def _near_miss_supported(
     Only descriptive misses (e.g. no_acceptable_candidate_track from a guest
     suffix or edition bonus-track delta) qualify. Provider-proof conflicts
     (MBID/duration/ambiguous) never reach here: the caller keeps those on the
-    CONFLICTING_TRACK_EVIDENCE veto. Album title/artist stay hard gates so
-    tribute-album noise (wrong artist) still vetoes above.
+    CONFLICTING_TRACK_EVIDENCE veto. Album title stays a hard gate and the
+    artist gate keeps its proof-gated subset escape narrow, so tribute-album
+    noise (wrong artist) still vetoes above.
     """
     if title_class != "supported" or artist_class != "supported":
         return False
@@ -767,7 +856,12 @@ class AlbumEvidenceEngine:
             ("", "absent"),
         )
         title_class = _album_title_class(album_title, candidate.album_title)
-        artist_class = _album_metadata_class(album_artist, candidate.album_artist_name)
+        artist_class = _album_artist_class(
+            album_artist,
+            candidate.album_artist_name,
+            track_evidence=track_evidence,
+            local_tracks=local_tracks,
+        )
         present_evidence = [
             item
             for item, track in zip(track_evidence, local_tracks, strict=True)

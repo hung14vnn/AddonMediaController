@@ -643,6 +643,64 @@ def _album_identity_revision(
     ).hexdigest()
 
 
+# Mirrors the engine's winner margin (CANDIDATE_MARGIN_FLOOR): a
+# disagreeing candidate this close to the top is genuine ambiguity, not
+# re-confirmation. A local constant (not imported) so persistence never
+# depends on services.
+_QUIET_MARGIN_FLOOR = 0.05
+
+
+def _quiet_candidate_agrees(
+    evidence: CandidateEvidence,
+    stored_group: object,
+    stored_release: object,
+) -> bool:
+    """True when one candidate names the stored identity.
+
+    Release-group agreement is required; releases must agree whenever both
+    sides name one (an RG-only candidate against a stored exact release
+    still agrees - the album is settled, only exact-edition proof is
+    missing).
+    """
+    if (evidence.release_group_mbid or "").casefold() != str(stored_group).casefold():
+        return False
+    candidate_release = evidence.release_mbid or ""
+    return (
+        not stored_release
+        or not candidate_release
+        or str(stored_release).casefold() == candidate_release.casefold()
+    )
+
+
+def _quiet_top_candidate_agrees(
+    evidence: list[IdentificationEvidenceRecord],
+    stored_group: object,
+    stored_release: object,
+) -> bool:
+    """True when every top-scoring candidate names the stored identity
+    with no near disagreeing rival.
+
+    A top tie fails closed unless every tied candidate agrees (same
+    identity named twice is settled, not ambiguous), as does any
+    disagreeing candidate within _QUIET_MARGIN_FLOOR of the top.
+    """
+    if not evidence or not stored_group:
+        return False
+    top_score = max(record.evidence.score for record in evidence)
+    tops = [
+        record.evidence for record in evidence if record.evidence.score == top_score
+    ]
+    if not tops or not all(
+        _quiet_candidate_agrees(top, stored_group, stored_release) for top in tops
+    ):
+        return False
+    return all(
+        _quiet_candidate_agrees(record.evidence, stored_group, stored_release)
+        or top_score - record.evidence.score >= _QUIET_MARGIN_FLOOR
+        for record in evidence
+    )
+
+
 def _identification_identity_rows(
     connection: sqlite3.Connection, album_id: str
 ) -> tuple[sqlite3.Row | None, list[sqlite3.Row]]:
@@ -9353,6 +9411,22 @@ class NativeLibraryStore(PersistenceBase):
                         skipped_protected_track_ids.add(
                             str(guarded_track.local_track_id)
                         )
+            # Quiet re-confirmation: a contradictory re-match whose top
+            # candidate agrees with the protected (manual/legacy) identity is
+            # a settled question, not new information. The engine vetoes
+            # still fire (attempt + evidence keep them); only the review
+            # filing below is suppressed. Restricted to the track-evidence
+            # veto so stale-identity disagreements keep their review.
+            quiet_reconfirm = bool(
+                effective_outcome == "contradictory"
+                and attempt.terminal_reason_code == "CONFLICTING_TRACK_EVIDENCE"
+                and protected_identity
+                and _quiet_top_candidate_agrees(
+                    evidence,
+                    current_before["release_group_mbid"],
+                    current_before["release_mbid"],
+                )
+            )
             degradation_flags = list(attempt.degradation_flags)
             if skipped_protected_track_ids:
                 degradation_flags.append(
@@ -9360,6 +9434,8 @@ class NativeLibraryStore(PersistenceBase):
                 )
             if held_exact:
                 degradation_flags.append("edition_hold:kept_exact")
+            if quiet_reconfirm:
+                degradation_flags.append("identity_reconfirmed:kept_protected")
             connection.execute(
                 "INSERT INTO library_identification_attempts "
                 "(id, local_album_id, local_track_id, trigger, requested_by_user_id, "
@@ -9777,6 +9853,22 @@ class NativeLibraryStore(PersistenceBase):
                     "WHERE local_album_id = ? AND state IN ('needs_review', 'edition_to_confirm')",
                     (attempt.id, completed_at, attempt.local_album_id),
                 )
+            elif quiet_reconfirm:
+                # The re-match agrees with the protected identity: resolve
+                # stale reviews, file nothing, touch the album revision so
+                # the next run guards on fresh state. Identity rows (album,
+                # track, artist) are left untouched - nothing is rewritten.
+                connection.execute(
+                    "UPDATE local_albums SET updated_at = ?, row_revision = row_revision + 1 "
+                    "WHERE id = ? AND row_revision = ?",
+                    (completed_at, attempt.local_album_id, expected_album_revision),
+                )
+                connection.execute(
+                    "UPDATE library_identification_reviews SET state = 'resolved', "
+                    "attempt_id = ?, updated_at = ?, row_revision = row_revision + 1 "
+                    "WHERE local_album_id = ? AND state IN ('needs_review', 'edition_to_confirm')",
+                    (attempt.id, completed_at, attempt.local_album_id),
+                )
             else:
                 current_identity = connection.execute(
                     "SELECT decision_source FROM local_album_external_identities "
@@ -9857,8 +9949,10 @@ class NativeLibraryStore(PersistenceBase):
                     # UI already renders it distinctly) instead of hard
                     # `needs_review`. Hard-conflict (`contradictory`),
                     # tied (`ambiguous`), and empty (`no_candidate`)
-                    # outcomes keep `needs_review`; the job terminal mapping
-                    # below is unchanged either way.
+                    # outcomes keep `needs_review` when they reach this
+                    # branch (the quiet-reconfirm arm above already diverted
+                    # contradictory re-matches that agree with the protected
+                    # identity, and maps those to `succeeded`).
                     review_state = (
                         "edition_to_confirm"
                         if effective_outcome == "insufficient_evidence"
@@ -9890,9 +9984,13 @@ class NativeLibraryStore(PersistenceBase):
                             active_review["id"],
                         ),
                     )
+            # Quiet re-confirmation succeeds with a contradictory attempt and
+            # no selected candidate: "succeeded" means "no action needed",
+            # not "identified". Never assume a selected candidate here.
             terminal_state = (
                 "succeeded"
-                if effective_outcome in ("identified", "edition_uncertain")
+                if quiet_reconfirm
+                or effective_outcome in ("identified", "edition_uncertain")
                 else "needs_review"
             )
             updated = connection.execute(
