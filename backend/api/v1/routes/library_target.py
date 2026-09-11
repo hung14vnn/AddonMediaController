@@ -457,7 +457,7 @@ async def get_target_album(
         raise ResourceNotFoundError("Library album not found.")
     return msgspec.structs.replace(
         album,
-        download_allowed=preferences.is_library_download_allowed(_user.role),
+        download_allowed=preferences.is_library_download_allowed(user.role),
     )
 
 
