@@ -665,10 +665,11 @@ async def _queue_playlist_tracks(
                 if not spotify_resolution:
                     source_track_id = str(track.track_source_id or "")
                     if len(source_track_id) == 22:
+                        spotify_release_group = f"spotify:album:{source_track_id}"
                         resolved.append(
                             (
                                 track,
-                                resolved_release_group_mbid,
+                                spotify_release_group,
                                 f"spotify:track:{source_track_id}",
                                 {"spotify_track_id": source_track_id},
                             )
