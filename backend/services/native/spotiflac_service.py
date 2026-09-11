@@ -374,8 +374,15 @@ class SpotiflacService:
                 {"status": "failed", "error": err_msg},
             )
 
-    async def _convert_to_m4a(self, source: Path) -> Path:
-        """Convert an audio file to AAC 256 kbps M4A."""
+    async def _convert_to_m4a(self, source: Path, quality: str) -> Path:
+        """Convert lossless audio to AAC 256 kbps M4A when requested."""
+        # HIGH and LOW already request a lossy/smaller provider result.  A
+        # second lossy conversion is unnecessary and can reject otherwise
+        # valid FLAC artifacts produced by an extension, so preserve the
+        # provider file as-is for every non-lossless quality.
+        if quality != "LOSSLESS":
+            return source
+
         extension = source.suffix.lower()
 
         # M4A is already in the desired container.
@@ -418,6 +425,11 @@ class SpotiflacService:
 
         if process.returncode != 0:
             error = stderr.decode(errors="replace")
+            # FFmpeg can leave a zero-byte or partial target behind when the
+            # input is an encrypted/provider artifact.  Do not let that file
+            # be mistaken for a successful conversion on a later retry.
+            with contextlib.suppress(OSError):
+                target.unlink()
 
             raise RuntimeError(
                 f"FFmpeg conversion failed for {source.name}: {error}"
@@ -463,6 +475,8 @@ class SpotiflacService:
 
             downloaded_files: list[Path] = []
             provider_errors: list[str] = []
+            files: list[Path] = []
+            conversion_errors: list[str] = []
 
             for provider in _PROVIDER_FALLBACKS:
                 await self._bus.publish(
@@ -499,24 +513,55 @@ class SpotiflacService:
                     if path.is_file()
                     and path.suffix.lower() in _AUDIO_EXTENSIONS
                 ]
-                if downloaded_files:
+                if not downloaded_files:
+                    continue
+
+                # A provider can report success while leaving only an
+                # encrypted/provider artifact.  Validate immediately so that
+                # the next provider gets a chance to supply a usable file.
+                for path in sorted(downloaded_files):
+                    if path.stem.casefold().endswith(".encrypted"):
+                        error = "encrypted provider artifact"
+                        conversion_errors.append(f"{path.name}: {error}")
+                        logger.warning(
+                            "Skipping unusable SpotiFLAC audio artifact %s for task %s: %s",
+                            path.name,
+                            task_id,
+                            error,
+                        )
+                        with contextlib.suppress(OSError):
+                            path.unlink()
+                        continue
+                    try:
+                        converted = await self._convert_to_m4a(path, quality)
+                    except Exception as exc:  # noqa: BLE001 - validate provider artifacts
+                        error = str(exc) or type(exc).__name__
+                        conversion_errors.append(f"{path.name}: {error}")
+                        logger.warning(
+                            "Skipping unusable SpotiFLAC audio artifact %s for task %s: %s",
+                            path.name,
+                            task_id,
+                            error,
+                        )
+                        with contextlib.suppress(OSError):
+                            path.unlink()
+                        continue
+                    files.append(converted)
+                    if converted != path:
+                        with contextlib.suppress(OSError):
+                            path.unlink()
+
+                if files:
                     break
-
-            if not downloaded_files:
-                raise RuntimeError(
-                    "No configured SpotiFLAC provider produced an audio file"
-                    + (f" ({'; '.join(provider_errors)})" if provider_errors else "")
-                )
-
-            files: list[Path] = []
-
-            for path in downloaded_files:
-                converted = await self._convert_to_m4a(path)
-                files.append(converted)
 
             if not files:
                 raise RuntimeError(
-                    "SpotiFLAC did not produce a supported audio file"
+                    "SpotiFLAC did not produce a usable audio file"
+                    + (
+                        f" ({'; '.join(provider_errors + conversion_errors)})"
+                        if provider_errors or conversion_errors
+                        else ""
+                    )
                 )
 
             task = await self._store.get_task(task_id)

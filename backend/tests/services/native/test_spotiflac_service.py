@@ -203,6 +203,87 @@ async def test_wedged_provider_falls_through_to_next_extension(monkeypatch, tmp_
 
 
 @pytest.mark.asyncio
+async def test_download_skips_encrypted_audio_artifact(monkeypatch, tmp_path):
+    class FakeSpotiFLAC:
+        def __init__(self, **options):
+            self.output_dir = Path(options["output_dir"])
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def download_track(self, _url):
+            (self.output_dir / " NHỨC TIỀM THỨC - Hà An Huy.flac").write_bytes(
+                b"encrypted"
+            )
+            (self.output_dir / "NHỨC TIỀM THỨC - Hà An Huy.flac").write_bytes(
+                b"valid"
+            )
+
+    spotiflac_package = ModuleType("SpotiFLAC")
+    spotiflac_package.__path__ = []
+    spotiflac_client = ModuleType("SpotiFLAC.client")
+    spotiflac_client.AsyncSpotiFLAC = FakeSpotiFLAC
+    monkeypatch.setitem(sys.modules, "SpotiFLAC", spotiflac_package)
+    monkeypatch.setitem(sys.modules, "SpotiFLAC.client", spotiflac_client)
+    monkeypatch.setattr(
+        "services.native.spotiflac_service._patch_spotiflac_cross_loop_lock",
+        lambda: None,
+    )
+
+    store = AsyncMock()
+    store.get_task.return_value = SimpleNamespace(
+        release_group_mbid=None,
+        recording_mbid=None,
+        artist_name="Artist",
+        artist_mbid=None,
+        album_title="Album",
+        track_title="Track",
+        cover_url=None,
+    )
+    drop_import = AsyncMock()
+    service = SpotiflacService(
+        drop_import=drop_import,
+        preferences_service=AsyncMock(),
+        download_store=store,
+        event_bus=AsyncMock(),
+    )
+
+    async def convert(path, _quality):
+        if path.name.startswith(" "):
+            raise RuntimeError("encrypted input")
+        return path.with_suffix(".m4a")
+
+    service._convert_to_m4a = convert
+
+    await service._download(
+        "task-1",
+        "user-1",
+        "https://open.spotify.com/track/1",
+        "LOSSLESS",
+        tmp_path,
+    )
+
+    drop_import.create_job.assert_awaited_once()
+    assert [name for name, _path in drop_import.create_job.await_args.kwargs["uploads"]] == [
+        "NHỨC TIỀM THỨC - Hà An Huy.m4a"
+    ]
+    assert store.update_status.await_args.kwargs["files_completed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_non_lossless_quality_keeps_flac_without_conversion(tmp_path):
+    service = SpotiflacService.__new__(SpotiflacService)
+    source = tmp_path / "track.flac"
+    source.write_bytes(b"fLaC")
+
+    assert await service._convert_to_m4a(source, "HIGH") == source
+    assert await service._convert_to_m4a(source, "LOW") == source
+
+
+@pytest.mark.asyncio
 async def test_track_request_preserves_spotify_local_album_identity():
     service = SpotiflacService.__new__(SpotiflacService)
     service._start = AsyncMock(return_value="task-1")
