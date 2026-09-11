@@ -249,6 +249,7 @@ class AcquisitionDispatcher:
         origin: str = "user",
         release_mbid: str | None = None,
         release_track_mbid: str | None = None,
+        spotify_track_id: str | None = None,
         track_number: int | None = None,
         disc_number: int | None = None,
     ) -> str:
@@ -290,6 +291,7 @@ class AcquisitionDispatcher:
                 "release_group_mbid": release_group_mbid,
                 "artist_mbid": artist_mbid,
                 "cover_url": cover_url,
+                "spotify_track_id": spotify_track_id,
                 "origin": origin,
             },
             native_kwargs=native_kwargs,

@@ -156,9 +156,14 @@ class SpotiflacService:
         recording_mbid: str,
         **kwargs,
     ) -> str:  # noqa: ANN003
+        spotify_track_id = kwargs.get("spotify_track_id")
         return await self._start(
             user_id,
-            f"{artist_name} {track_title}",
+            (
+                f"https://open.spotify.com/track/{spotify_track_id}"
+                if spotify_track_id
+                else f"{artist_name} {track_title}"
+            ),
             "tracks",
             download_type="track",
             recording_mbid=recording_mbid,
@@ -323,25 +328,28 @@ class SpotiflacService:
     ) -> None:
         """Resolve the Spotify URL after the task is visible in the queue."""
         try:
-            from SpotiFLAC.client import AsyncSpotiFLAC
+            if query.startswith("https://open.spotify.com/track/"):
+                url = query
+            else:
+                from SpotiFLAC.client import AsyncSpotiFLAC
 
-            _patch_spotiflac_cross_loop_lock()
-            async with AsyncSpotiFLAC(
-                **spotiflac_client_options(str(output), quality)
-            ) as client:
-                results = await client.search(query, limit=5)
+                _patch_spotiflac_cross_loop_lock()
+                async with AsyncSpotiFLAC(
+                    **spotiflac_client_options(str(output), quality)
+                ) as client:
+                    results = await client.search(query, limit=5)
 
-            match = next(iter(results.get(result_kind) or []), None)
-            if match is None:
-                raise ValidationError(
-                    "SpotiFLAC could not find a Spotify match for this request"
+                match = next(iter(results.get(result_kind) or []), None)
+                if match is None:
+                    raise ValidationError(
+                        "SpotiFLAC could not find a Spotify match for this request"
+                    )
+
+                url = (
+                    match.external_url
+                    if result_kind == "tracks"
+                    else match.get("external_url")
                 )
-
-            url = (
-                match.external_url
-                if result_kind == "tracks"
-                else match.get("external_url")
-            )
             if not url:
                 raise ValidationError(
                     "SpotiFLAC returned a result without a Spotify URL"

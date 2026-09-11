@@ -663,6 +663,16 @@ async def _queue_playlist_tracks(
             if not album_matches:
                 spotify_resolution = spotify_resolutions.get(track.id)
                 if not spotify_resolution:
+                    source_track_id = str(track.track_source_id or "")
+                    if len(source_track_id) == 22:
+                        resolved.append(
+                            (
+                                track,
+                                resolved_release_group_mbid,
+                                f"spotify:track:{source_track_id}",
+                                {"spotify_track_id": source_track_id},
+                            )
+                        )
                     continue
                 recording_mbid = spotify_resolution["recording_mbid"]
                 resolved_release_group_mbid = spotify_resolution["release_group_mbid"]
@@ -721,6 +731,7 @@ async def _queue_playlist_tracks(
                 or track.artist_id,
                 cover_url=(spotify_resolution or {}).get("cover_url")
                 or track.cover_url,
+                spotify_track_id=(spotify_resolution or {}).get("spotify_track_id"),
             )
         except Exception:  # noqa: BLE001 - one bad track must not sink the batch
             logger.exception("Playlist track request failed for %s", recording_mbid)
