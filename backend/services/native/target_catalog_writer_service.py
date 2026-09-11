@@ -13,6 +13,7 @@ import msgspec
 
 from core.exceptions import ExternalServiceError, ResourceNotFoundError, ValidationError
 from infrastructure.audio.tagger import AudioTagger
+from infrastructure.validators import validate_provider_cover_url
 from infrastructure.persistence.native_library_store import NativeLibraryStore
 from models.audio import AudioTag
 from services.local_files_service import LocalFilesService
@@ -59,6 +60,7 @@ class TargetCatalogWriterService:
         title: str,
         artist: str,
         album: str,
+        cover_url: str | None = None,
         actor_user_id: str,
         is_admin: bool = False,
     ) -> None:
@@ -89,6 +91,10 @@ class TargetCatalogWriterService:
             album=updated.album,
             actor_user_id=actor_user_id,
         )
+        if cover_url and validate_provider_cover_url(cover_url):
+            await self._library.set_imported_album_artwork(
+                str(row["local_album_id"]), cover_url
+            )
 
     async def remove_track(
         self,

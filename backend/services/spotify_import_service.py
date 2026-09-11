@@ -372,6 +372,35 @@ class SpotifyImportService:
         client = await self._client_factory.resolve_spotify_catalog()
         return await client.get_track(spotify_track_id)
 
+    async def search_catalog_tracks(
+        self, query: str, *, limit: int = 8
+    ) -> list[dict[str, Any]]:
+        """Search Spotify's public catalog for metadata editing/import helpers."""
+        normalized = query.strip()
+        if not normalized:
+            return []
+        client = await self._client_factory.resolve_spotify_catalog()
+        tracks, _ = await client.search_tracks(normalized, limit=max(1, min(limit, 20)))
+        result: list[dict[str, Any]] = []
+        for track in tracks:
+            album = track.get("album") or {}
+            artists = track.get("artists") or []
+            result.append(
+                {
+                    "id": track.get("id") or "",
+                    "title": track.get("name") or "",
+                    "artist": ", ".join(
+                        str(artist.get("name"))
+                        for artist in artists
+                        if artist.get("name")
+                    ),
+                    "album": album.get("name") or "",
+                    "cover_url": _best_image_url(album.get("images") or []),
+                    "duration_ms": _track_duration_ms(track),
+                }
+            )
+        return [track for track in result if track["id"]]
+
     async def resolve_playlist_tracks_for_download(
         self,
         user_id: str,
@@ -382,7 +411,16 @@ class SpotifyImportService:
     ) -> dict[str, dict[str, Any]]:
         """Resolve saved playlist rows through their original Spotify playlist."""
         client = await self._get_client(user_id)
-        spotify_tracks = await client.get_playlist_tracks(spotify_playlist_id)
+        try:
+            spotify_tracks = await client.get_playlist_tracks(spotify_playlist_id)
+        except Exception:  # noqa: BLE001 - saved source IDs remain usable
+            # Spotify can deny playlist-items access even when individual track
+            # catalog access is allowed. Imported rows retain the original
+            # Spotify track ID, so continue with ID-based resolution below.
+            logger.warning(
+                "Spotify playlist items unavailable; resolving saved track IDs directly"
+            )
+            spotify_tracks = []
         by_key: dict[tuple[str, str, str], list[dict]] = {}
         for track in spotify_tracks:
             album = track.get("album") or {}
@@ -400,6 +438,24 @@ class SpotifyImportService:
 
         resolved: dict[str, dict[str, Any]] = {}
         for playlist_track in playlist_tracks:
+            # Imported rows retain the original Spotify track ID in
+            # track_source_id. Prefer it over display-name matching because
+            # legacy imports may contain mojibake artist/title text (for
+            # example, UTF-8 decoded as Latin-1), which cannot match Spotify's
+            # correctly decoded catalog response.
+            source_track_id = str(getattr(playlist_track, "track_source_id", "") or "")
+            if source_track_id and len(source_track_id) == 22:
+                try:
+                    resolved[playlist_track.id] = await self.resolve_track_for_download(
+                        source_track_id, priority=priority
+                    )
+                    continue
+                except Exception:  # noqa: BLE001 - fall back to metadata matching
+                    logger.debug(
+                        "Spotify source ID resolution failed for playlist track %s",
+                        playlist_track.id,
+                        exc_info=True,
+                    )
             key = (
                 (playlist_track.artist_name or "").casefold(),
                 (playlist_track.track_name or "").casefold(),

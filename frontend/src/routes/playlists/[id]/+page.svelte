@@ -78,6 +78,19 @@
 		return null;
 	}
 
+	function offlineTrackIdentity(track: PlaylistDetail['tracks'][number]): string {
+		return [track.track_name, track.artist_name, track.album_name]
+			.map((value) => (value ?? '').trim().toLocaleLowerCase())
+			.join('\u0000');
+	}
+
+	function offlineTrackKeys(track: PlaylistDetail['tracks'][number]): string[] {
+		const keys = [offlineTrackIdentity(track)];
+		const id = offlineTrackId(track);
+		if (id) keys.push(`id:${id}`);
+		return keys;
+	}
+
 	let offlineEligibleTracks = $derived.by(() => {
 		const seen = new SvelteSet<string>();
 		return (playlist?.tracks ?? []).filter((track) => {
@@ -88,7 +101,9 @@
 		});
 	});
 	let downloadedPlaylistCount = $derived(
-		offlineEligibleTracks.filter((track) => playlistOfflineIds.has(offlineTrackId(track)!)).length
+		offlineEligibleTracks.filter((track) =>
+			offlineTrackKeys(track).some((key) => playlistOfflineIds.has(key))
+		).length
 	);
 	let remainingOfflineCount = $derived(offlineEligibleTracks.length - downloadedPlaylistCount);
 
@@ -101,7 +116,15 @@
 		try {
 			const records = await listOfflineTrackMetadata(userId);
 			playlistOfflineIds.clear();
-			for (const record of records) playlistOfflineIds.add(record.trackId);
+			for (const record of records) {
+				playlistOfflineIds.add(`id:${record.trackId}`);
+				if (record.libraryTrackId) playlistOfflineIds.add(`id:${record.libraryTrackId}`);
+				playlistOfflineIds.add(
+					[record.title, record.artistName, record.albumName]
+						.map((value) => (value ?? '').trim().toLocaleLowerCase())
+						.join('\u0000')
+				);
+			}
 		} catch {
 			// Offline storage is optional; playlist playback remains available.
 		}
@@ -130,7 +153,7 @@
 	async function downloadPlaylistOffline(): Promise<void> {
 		if (offlineBusy || !authStore.user?.id || remainingOfflineCount === 0) return;
 		const pending = offlineEligibleTracks.filter(
-			(track) => !playlistOfflineIds.has(offlineTrackId(track)!)
+			(track) => !offlineTrackKeys(track).some((key) => playlistOfflineIds.has(key))
 		);
 		offlineBusy = true;
 		let saved = 0;
@@ -139,7 +162,7 @@
 			for (const track of pending) {
 				try {
 					await downloadOfflineTrack(playlistOfflineInput(track));
-					playlistOfflineIds.add(offlineTrackId(track)!);
+					offlineTrackKeys(track).forEach((key) => playlistOfflineIds.add(key));
 					saved++;
 				} catch {
 					failed++;
@@ -172,9 +195,9 @@
 		try {
 			const ids = offlineEligibleTracks
 				.map(offlineTrackId)
-				.filter((id): id is string => Boolean(id && playlistOfflineIds.has(id)));
+				.filter((id): id is string => Boolean(id && playlistOfflineIds.has(`id:${id}`)));
 			const removed = await deleteOfflineTracks(userId, ids);
-			ids.forEach((id) => playlistOfflineIds.delete(id));
+			ids.forEach((id) => playlistOfflineIds.delete(`id:${id}`));
 			toastStore.show({
 				message: `Removed ${removed} offline track${removed === 1 ? '' : 's'} from this playlist`,
 				type: 'success'
@@ -189,18 +212,13 @@
 
 	let missingTrackCount = $derived.by(() => {
 		if (!playlist) return 0;
-		const seen = new SvelteSet<string>();
-		for (const t of playlist.tracks) {
+		return playlist.tracks.filter((t) => {
 			// library_file_id means owned locally (request-missing skips these too).
-			if (
-				t.album_id &&
+			return Boolean(
 				!t.library_file_id &&
 				(!t.available_sources || t.available_sources.length === 0)
-			) {
-				seen.add(t.album_id);
-			}
-		}
-		return seen.size;
+			);
+		}).length;
 	});
 
 	let requesting = $state(false);
@@ -282,27 +300,19 @@
 		sources: Record<string, string[]>,
 		trackIds: Set<string>
 	): boolean {
-		for (const [id, value] of Object.entries(sources)) {
-			if (trackIds.has(id) && Array.isArray(value) && value.length > 0) return true;
-		}
-		return false;
+		return Object.entries(sources).some(
+			([id, value]) => trackIds.has(id) && Array.isArray(value) && value.length > 0
+		);
 	}
 
 	async function resolveAndCacheSources(playlistId: string) {
 		const cached = getSourcesFromCache(playlistId);
 		if (cached && playlist && playlist.id === playlistId) {
-			const ids = new Set(playlist.tracks.map((t) => t.id));
-			if (hasUsableSourcesForPlaylist(cached, ids)) {
-				// Playlist was just cloned from live detailQuery data, so healed
-				// backend rows are already present; fill gaps from cache only.
-				applySourcesMap(cached, true);
-				return;
-			}
-			// Empty/stale cache is never fresh: drop it and fetch live.
-			invalidateSourcesCache(playlistId);
+			// Use cached values for immediate rendering, but always revalidate. Library
+			// files can be imported after this cache was written.
+			applySourcesMap(cached, true);
 		} else if (cached) {
 			applySourcesMap(cached, true);
-			return;
 		}
 		try {
 			const sources = await resolvePlaylistSources(playlistId);

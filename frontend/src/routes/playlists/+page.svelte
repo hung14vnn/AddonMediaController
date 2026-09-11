@@ -254,7 +254,7 @@
 
 {#if showSpotifyImport}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="presentation" onclick={(event) => event.target === event.currentTarget && (showSpotifyImport = false)}>
-		<dialog open class="w-full max-w-lg rounded-2xl border border-base-300 bg-base-100 p-6 shadow-2xl" aria-modal="true" aria-labelledby="spotify-import-title">
+		<div class="w-full max-w-lg rounded-2xl border border-base-300 bg-base-100 p-6 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="spotify-import-title">
 			<div class="mb-5 flex items-center justify-between gap-4">
 				<div>
 					<h2 id="spotify-import-title" class="text-lg font-semibold">Import from Spotify</h2>
@@ -274,6 +274,6 @@
 					Import playlist
 				</button>
 			</form>
-		</dialog>
+		</div>
 	</div>
 {/if}

@@ -712,7 +712,10 @@ async def _get_cover_art(c: Ctx) -> Response:
             result = await c.services.coverart.get_release_group_cover(
                 track.rg_mbid, size, is_disconnected=disc
             )
-        elif track.cover_url:
+        # Provider-backed imports can have both a projected release-group ID
+        # and the provider's original artwork URL.  Prefer the canonical cover,
+        # but retain the provider image when the canonical lookup has no art.
+        if result is None and track.cover_url:
             result = await c.services.coverart.get_external_cover(
                 track.cover_url, is_disconnected=disc
             )

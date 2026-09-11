@@ -155,7 +155,7 @@
 				{/if}
 				<!-- Plugin sources take the generic path: no client-specific badges or
 					remote-queue hints, just the source key. -->
-				{#if task.source && task.source !== 'soulseek' && task.source !== 'usenet'}
+				{#if task.source && task.source !== 'soulseek' && task.source !== 'usenet' && task.source !== 'spotiflac'}
 					<span class="badge badge-ghost badge-sm">{task.source}</span>
 				{/if}
 				{#if isOwnedByOther}

@@ -408,7 +408,7 @@
 									<GripVertical class="h-4 w-4" />
 								</button>
 							{:else}
-								<div class="shrink-0 w-4 h-4"></div>
+								<div class="hidden sm:block shrink-0 w-4 h-4"></div>
 							{/if}
 
 							<div class="shrink-0 w-10 h-10 rounded overflow-hidden">

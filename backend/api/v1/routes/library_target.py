@@ -857,6 +857,7 @@ async def update_target_track_metadata(
         title=body.title,
         artist=body.artist,
         album=body.album,
+        cover_url=body.cover_url,
         actor_user_id=user.id,
         is_admin=user.role == "admin",
     )

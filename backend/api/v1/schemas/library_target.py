@@ -108,6 +108,7 @@ class TrackMetadataUpdateRequest(AppStruct):
     title: str
     artist: str
     album: str
+    cover_url: str | None = None
 
 
 class ReleaseEditionResult(AppStruct):

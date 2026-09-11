@@ -986,14 +986,20 @@ class PreferencesService:
         return any(i.enabled for i in self.get_indexers())
 
     def is_builtin_download_ready(self) -> bool:
-        """A user-configured download client (Soulseek OR Usenet) is set up.
-        Chooses the dispatcher; dies with those clients in 2.0."""
-        return self.is_soulseek_ready() or self.is_usenet_ready()
+        """A user-configured download client is ready.
+
+        SpotiFLAC is an in-process client, so its readiness is based on the
+        enabled flag and the configured output directory being mounted. Keep it
+        in this shared predicate so UI integration gates and acquisition fallback
+        selection agree about whether a download client exists.
+        """
+        spotiflac = self.get_spotiflac_connection()
+        spotiflac_ready = spotiflac.enabled and Path(spotiflac.downloads_mount).is_dir()
+        return self.is_soulseek_ready() or self.is_usenet_ready() or spotiflac_ready
 
     def is_download_source_ready(self) -> bool:
-        """At least one acquisition source is set up: Soulseek, Usenet, or Free
-        Music (D24). The single source of truth for "can the user acquire" -
-        after 2.0 this reduces to Free Music alone."""
+        """At least one acquisition source is set up: Soulseek, Usenet,
+        SpotiFLAC, or Free Music (D24)."""
         return (
             self.is_builtin_download_ready() or self.get_free_music_settings().enabled
         )

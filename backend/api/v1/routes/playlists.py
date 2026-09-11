@@ -63,6 +63,21 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 
 
+def _repair_mojibake(value: str | None) -> str:
+    """Repair common UTF-8-as-Latin-1 text from older playlist imports."""
+    if not value:
+        return ""
+    try:
+        repaired = value.encode("latin1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return value
+    bad_markers = sum(value.count(marker) for marker in ("Ã", "Â", "Ä", "Å", "Æ", "Ð", "Ñ"))
+    repaired_markers = sum(
+        repaired.count(marker) for marker in ("Ã", "Â", "Ä", "Å", "Æ", "Ð", "Ñ")
+    )
+    return repaired if bad_markers > repaired_markers else value
+
+
 async def _get_user_navidrome_folder_ids(
     current_user: CurrentUserDep,
     scope_service: NavidromeFolderScopeService = Depends(
@@ -512,16 +527,14 @@ async def request_missing_tracks(
     if isinstance(result, RedactedDetailView):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # Playlist rows hold a release-group MBID, not a recording MBID. Resolve the
-    # recording first and require it to belong to that exact release group, so this
-    # action can request only the playlist track without risking a same-name track
-    # from a different album.
+    # Playlist rows may hold a release-group MBID, not a recording MBID. When it is
+    # present, resolve the recording first and require it to belong to that exact
+    # release group. Imported Spotify rows can lack an album ID, so those are kept
+    # here and resolved by the Spotify fallback or a strong album-name match.
     candidates: list[tuple[object, str]] = []
     seen_tracks: set[tuple[str, str, str]] = set()
     for track in result.tracks:
-        release_group_mbid = track.album_id
-        if not release_group_mbid:
-            continue
+        release_group_mbid = track.album_id or ""
         if track.library_file_id:
             continue
         if track.available_sources and len(track.available_sources) > 0:
@@ -603,14 +616,19 @@ async def _queue_playlist_tracks(
                 priority=RequestPriority.BACKGROUND_SYNC,
             )
         except Exception:  # noqa: BLE001 - MusicBrainz fallback remains available
-            logger.exception("Spotify playlist fallback could not be loaded")
+            logger.warning(
+                "Spotify playlist items unavailable; using saved IDs and MusicBrainz metadata"
+            )
 
     resolved: list[tuple[object, str, str, dict | None]] = []
     seen_recordings: set[str] = set()
     for track, release_group_mbid in candidates:
+        artist_name = _repair_mojibake(track.artist_name)
+        track_name = _repair_mojibake(track.track_name)
+        album_name = _repair_mojibake(track.album_name)
         matches = await musicbrainz.search_recordings(
-            track.artist_name or "",
-            track.track_name or "",
+            artist_name,
+            track_name,
             priority=RequestPriority.BACKGROUND_SYNC,
         )
         matching = [
@@ -629,15 +647,15 @@ async def _queue_playlist_tracks(
             # rather than a MusicBrainz release group. Fall back to the album name,
             # but require a strong match so a same-name recording is not filed under
             # an unrelated album.
-            album_name = (track.album_name or "").casefold().strip()
+            normalized_album_name = album_name.casefold().strip()
             album_matches = [
                 (match, group)
                 for match in matches
                 for group in match.release_groups
-                if album_name
+                if normalized_album_name
                 and SequenceMatcher(
                     None,
-                    album_name,
+                    normalized_album_name,
                     (group.release_group_title or "").casefold().strip(),
                 ).ratio()
                 >= 0.78
@@ -662,7 +680,7 @@ async def _queue_playlist_tracks(
                 key=lambda item: item[0].score
                 + SequenceMatcher(
                     None,
-                    album_name,
+                    normalized_album_name,
                     (item[1].release_group_title or "").casefold().strip(),
                 ).ratio()
                 * 100,
@@ -680,19 +698,22 @@ async def _queue_playlist_tracks(
 
     queued = 0
     for track, release_group_mbid, recording_mbid, spotify_resolution in resolved:
+        artist_name = _repair_mojibake(track.artist_name)
+        track_name = _repair_mojibake(track.track_name)
+        album_name = _repair_mojibake(track.album_name)
         try:
             task_id = await acquisition.request_track(
                 user_id=user_id,
                 recording_mbid=recording_mbid,
                 release_group_mbid=release_group_mbid,
                 artist_name=(spotify_resolution or {}).get("artist_name")
-                or track.artist_name
+                or artist_name
                 or "Unknown Artist",
                 track_title=(spotify_resolution or {}).get("track_title")
-                or track.track_name
+                or track_name
                 or "Unknown Track",
                 album_title=(spotify_resolution or {}).get("album_title")
-                or track.album_name
+                or album_name
                 or None,
                 duration_seconds=(spotify_resolution or {}).get("duration_seconds")
                 or track.duration,

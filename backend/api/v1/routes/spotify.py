@@ -4,7 +4,7 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from core.dependencies import (
     get_acquisition_dispatcher,
@@ -63,6 +63,19 @@ class SpotifyTrackRequestResponse(AppStruct):
     status: str
     task_id: str | None = None
     duration_seconds: int | None = None
+
+
+class SpotifyTrackSearchResult(AppStruct):
+    id: str
+    title: str
+    artist: str
+    album: str
+    cover_url: str | None
+    duration_ms: int | None
+
+
+class SpotifyTrackSearchResponse(AppStruct):
+    tracks: list[SpotifyTrackSearchResult]
 
 
 async def _background_import(
@@ -164,6 +177,22 @@ async def list_spotify_playlists(
             )
             for p in playlists
         ]
+    )
+
+
+@router.get("/tracks/search", response_model=SpotifyTrackSearchResponse)
+async def search_spotify_tracks(
+    q: str = Query(min_length=1, max_length=200),
+    _current_user: CurrentUserDep = None,
+    svc: SpotifyImportService = Depends(get_spotify_import_service),
+) -> SpotifyTrackSearchResponse:
+    try:
+        tracks = await svc.search_catalog_tracks(q)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to search Spotify catalog: %s", exc)
+        raise HTTPException(status_code=502, detail="Failed to search Spotify")
+    return SpotifyTrackSearchResponse(
+        tracks=[SpotifyTrackSearchResult(**track) for track in tracks]
     )
 
 

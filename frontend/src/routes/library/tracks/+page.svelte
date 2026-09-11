@@ -77,6 +77,10 @@
 	let editTitle = $state('');
 	let editArtist = $state('');
 	let editAlbum = $state('');
+	let editCoverUrl = $state<string | null>(null);
+	let spotifySearchQuery = $state('');
+	let spotifySearchResults = $state<SpotifyTrackSearchResult[]>([]);
+	let searchingSpotify = $state(false);
 	let savingEdit = $state(false);
 	let targetSelectionInitialized = false;
 	let targetMembershipGeneration = 0;
@@ -89,6 +93,15 @@
 	let invalidOfflineCheckComplete = $state(false);
 	let invalidOfflineIds = new SvelteSet<string>();
 	let offlineTrackCount = $state(0);
+
+	type SpotifyTrackSearchResult = {
+		id: string;
+		title: string;
+		artist: string;
+		album: string;
+		cover_url: string | null;
+		duration_ms: number | null;
+	};
 
 	const totalPages = $derived(Math.ceil(data.total / PAGE_SIZE));
 	let targetPlaylistId = $derived(page.url.searchParams.get('playlist'));
@@ -589,6 +602,40 @@
 		editTitle = track.title;
 		editArtist = track.artist_name;
 		editAlbum = track.album_title;
+		editCoverUrl = track.cover_url ?? null;
+		spotifySearchQuery = `${track.artist_name} ${track.title}`;
+		spotifySearchResults = [];
+	}
+
+	async function searchSpotifyTracks() {
+		const query = spotifySearchQuery.trim();
+		if (!query || searchingSpotify) return;
+		searchingSpotify = true;
+		try {
+			const response = await api.global.get<{ tracks: SpotifyTrackSearchResult[] }>(
+				API.me.spotifyTrackSearch(query)
+			);
+			spotifySearchResults = response.tracks;
+		} catch (error) {
+			toastStore.show({
+				message: error instanceof Error ? error.message : "Couldn't search Spotify",
+				type: 'error'
+			});
+		} finally {
+			searchingSpotify = false;
+		}
+	}
+
+	function applySpotifyTrack(track: SpotifyTrackSearchResult) {
+		editTitle = track.title;
+		editArtist = track.artist;
+		editAlbum = track.album;
+		editCoverUrl = track.cover_url;
+		spotifySearchResults = [];
+	}
+
+	function handleSpotifySearchKeydown(event: KeyboardEvent) {
+		if (event.key === 'Enter') void searchSpotifyTracks();
 	}
 
 	async function saveTrackMetadata() {
@@ -602,7 +649,8 @@
 			await api.global.post(API.library.updateTrackMetadata(editTrack.id), {
 				title: editTitle.trim(),
 				artist: editArtist.trim(),
-				album: editAlbum.trim()
+				album: editAlbum.trim(),
+				cover_url: editCoverUrl
 			});
 			toastStore.show({ message: `Updated "${editTitle.trim()}"`, type: 'success' });
 			editTrack = null;
@@ -1152,6 +1200,33 @@
 				You can edit local metadata while this track is not mapped to MusicBrainz.
 			</p>
 			<div class="mt-5 grid gap-3">
+				<div class="rounded-box border border-base-300 p-3">
+					<label class="grid gap-1 text-sm">
+						<span>Search Spotify</span>
+						<div class="join w-full">
+							<input
+								class="input input-bordered join-item w-full"
+								placeholder="Artist - title"
+								bind:value={spotifySearchQuery}
+								onkeydown={handleSpotifySearchKeydown}
+							/>
+							<button class="btn join-item" disabled={searchingSpotify} onclick={() => void searchSpotifyTracks()}>
+								{#if searchingSpotify}<span class="loading loading-spinner loading-sm"></span>{:else}<Search class="h-4 w-4" />{/if}
+								Search
+							</button>
+						</div>
+					</label>
+					{#if spotifySearchResults.length}
+						<div class="mt-3 grid gap-2" aria-label="Spotify results">
+							{#each spotifySearchResults as result}
+								<button class="flex items-center gap-3 rounded-lg p-2 text-left hover:bg-base-200" onclick={() => applySpotifyTrack(result)}>
+									{#if result.cover_url}<img class="h-10 w-10 rounded object-cover" src={result.cover_url} alt="" />{:else}<div class="h-10 w-10 rounded bg-base-300"></div>{/if}
+									<span class="min-w-0"><strong class="block truncate">{result.title}</strong><small class="block truncate text-base-content/60">{result.artist} · {result.album}</small></span>
+								</button>
+							{/each}
+						</div>
+					{/if}
+				</div>
 				<label class="grid gap-1 text-sm">
 					<span>Title</span>
 					<input class="input input-bordered" bind:value={editTitle} />

@@ -25,7 +25,7 @@ from infrastructure.cache.cache_keys import (
 )
 from infrastructure.resilience.retry import with_retry, CircuitBreaker, CircuitOpenError
 from infrastructure.resilience.rate_limiter import TokenBucketRateLimiter
-from infrastructure.validators import validate_mbid, validate_spotify_cover_url
+from infrastructure.validators import validate_mbid, validate_provider_cover_url
 from infrastructure.audio.tagger import AudioTagger
 from infrastructure.queue.priority_queue import RequestPriority, get_priority_queue
 from infrastructure.http.deduplication import RequestDeduplicator
@@ -312,11 +312,11 @@ class CoverArtRepository:
     ) -> Optional[tuple[bytes, str, str]]:
         """Fetch an already-resolved provider artwork URL for compatibility APIs.
 
-        This is intentionally restricted to Spotify's HTTPS CDN.  The URL is
-        supplied by imported metadata, so allowing arbitrary URLs here would
-        turn the cover endpoint into an SSRF proxy.
+        This is intentionally restricted to supported provider HTTPS CDNs.
+        The URL is supplied by imported metadata, so allowing arbitrary URLs
+        here would turn the cover endpoint into an SSRF proxy.
         """
-        if not validate_spotify_cover_url(url):
+        if not validate_provider_cover_url(url):
             return None
         await check_disconnected(is_disconnected)
         try:
@@ -328,7 +328,8 @@ class CoverArtRepository:
             content_type = response.headers.get("content-type", "")
             if not self._is_successful_image_payload(response.content, content_type):
                 return None
-            return response.content, content_type.split(";", 1)[0].strip(), "spotify"
+            source = "youtube" if "ytimg.com" in url else "spotify"
+            return response.content, content_type.split(";", 1)[0].strip(), source
         except ClientDisconnectedError:
             raise
         except Exception:  # noqa: BLE001 - artwork is an optional fallback

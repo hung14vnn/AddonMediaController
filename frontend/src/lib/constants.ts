@@ -729,6 +729,8 @@ export const API = {
 		spotifyAuthUrl: () => '/api/v1/me/connections/spotify/auth/url',
 		spotifyPlaylists: () => '/api/v1/me/spotify/playlists',
 		spotifyTrackRequest: () => '/api/v1/me/spotify/tracks/request',
+		spotifyTrackSearch: (query: string) =>
+			`/api/v1/me/spotify/tracks/search?q=${encodeURIComponent(query.trim())}`,
 		spotifyImport: () => '/api/v1/me/spotify/playlists/import',
 		personalMixRefresh: () => '/api/v1/me/personal-mix/refresh'
 	},

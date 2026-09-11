@@ -79,6 +79,7 @@ def validate_audiodb_image_url(url: str) -> bool:
 
 
 SPOTIFY_CDN_SUFFIX = ".scdn.co"
+YOUTUBE_COVER_HOSTS = frozenset({"i.ytimg.com", "img.youtube.com"})
 
 
 def validate_spotify_cover_url(url: str) -> bool:
@@ -104,6 +105,28 @@ def validate_spotify_cover_url(url: str) -> bool:
         return False
 
     return hostname == "scdn.co" or hostname.endswith(SPOTIFY_CDN_SUFFIX)
+
+
+def validate_provider_cover_url(url: str) -> bool:
+    """Validate a cover URL from a supported media provider.
+
+    Provider artwork is fetched by the compatibility cover endpoint, so keep
+    the allow-list limited to the CDNs we intentionally support.  This is
+    separate from ``validate_spotify_cover_url`` because that function is also
+    used when importing Spotify metadata.
+    """
+    if validate_spotify_cover_url(url):
+        return True
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urlparse(url)
+    except Exception:  # noqa: BLE001
+        return False
+    return (
+        parsed.scheme == "https"
+        and (parsed.hostname or "").lower() in YOUTUBE_COVER_HOSTS
+    )
 
 
 def is_valid_mbid(mbid: Optional[str]) -> bool:

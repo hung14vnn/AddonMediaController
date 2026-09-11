@@ -239,6 +239,18 @@ describe('Playlist detail page', () => {
 		);
 	});
 
+	it('recognizes offline tracks after their library source ID changes', async () => {
+		mockListOfflineTrackMetadata.mockResolvedValue([
+			{ trackId: 'spotify-source-id', title: 'Test Track', artistName: 'Test Artist', albumName: 'Test Album' }
+		]);
+		detailQuery.data = makePlaylist({
+			tracks: [makeTrack({ track_source_id: 'new-library-file-id' })]
+		});
+		renderDetail();
+
+		await expect.element(page.getByRole('button', { name: 'Available offline' })).toBeVisible();
+	});
+
 	it('clears only downloaded tracks that belong to the playlist', async () => {
 		mockListOfflineTrackMetadata.mockResolvedValue([
 			{ trackId: 'file-1' },
@@ -483,7 +495,7 @@ describe('Playlist detail page', () => {
 		detailQuery.data = makePlaylist({
 			tracks: [
 				makeTrack({ id: 'missing-1', available_sources: [] }),
-				makeTrack({ id: 'missing-2', album_id: 'alb-2', available_sources: [] })
+				makeTrack({ id: 'missing-2', album_id: null, available_sources: [] })
 			]
 		});
 		renderDetail('pl-1');
@@ -529,7 +541,7 @@ describe('Playlist detail page', () => {
 		expect(mockPlayQueue.mock.calls[0][1]).toBe(1);
 	});
 
-	it('missing banner counts albums without sources but skips library_file_id rows', async () => {
+	it('missing banner counts tracks without sources but skips library_file_id rows', async () => {
 		detailQuery.data = makePlaylist({
 			tracks: [
 				makeTrack({
@@ -554,10 +566,10 @@ describe('Playlist detail page', () => {
 		renderDetail('pl-1');
 
 		await expect.element(page.getByText('Missing Track')).toBeVisible();
-		// Owned library_file_id rows are skipped, so only 1 album is missing.
+		// Owned library_file_id rows are skipped, so only 1 track is missing.
 		await expect.element(page.getByText(/not in your library/)).toBeVisible();
 		expect(page.getByText(/albums not in your library/).elements()).toHaveLength(0);
-		await expect.element(page.getByRole('button', { name: 'Request album', exact: true })).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Request track', exact: true })).toBeVisible();
 	});
 
 	it('does not cache empty resolve results', async () => {

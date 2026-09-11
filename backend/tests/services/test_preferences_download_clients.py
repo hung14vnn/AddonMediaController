@@ -52,6 +52,25 @@ def test_soulseek_ready_makes_source_ready(prefs):
     assert prefs.is_download_source_ready() is True
 
 
+def test_spotiflac_ready_makes_source_ready(prefs, tmp_path):
+    prefs.save_spotiflac_connection(
+        SpotiflacConnectionSettings(enabled=True, downloads_mount=str(tmp_path))
+    )
+
+    assert prefs.is_builtin_download_ready() is True
+    assert prefs.is_download_source_ready() is True
+
+
+def test_spotiflac_without_a_mounted_output_directory_is_not_ready(prefs, tmp_path):
+    prefs.save_spotiflac_connection(
+        SpotiflacConnectionSettings(
+            enabled=True, downloads_mount=str(tmp_path / "missing")
+        )
+    )
+
+    assert prefs.is_builtin_download_ready() is False
+
+
 def test_usenet_ready_requires_sabnzbd_and_an_enabled_indexer(prefs):
     # The reported bug: slskd disabled, SABnzbd enabled - Home must NOT show "connect a
     # download client". But SABnzbd alone (no indexer) can't find anything, so it only

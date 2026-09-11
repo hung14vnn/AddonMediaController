@@ -3092,6 +3092,30 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def find_target_track_by_title_artist(
+        self, *, title: str, artist_name: str
+    ) -> dict[str, Any] | None:
+        """Return an indexed native-library track matching title and artist.
+
+        Playlist source resolution uses this fallback for imported tracks that do
+        not have a MusicBrainz release-group ID. Keep the query contract aligned
+        with the legacy library repository so newly imported native files can be
+        linked to existing playlist rows.
+        """
+        if not title.strip() or not artist_name.strip():
+            return None
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any] | None:
+            row = connection.execute(
+                "SELECT id, title AS track_title FROM local_tracks "
+                "WHERE availability = 'indexed' AND title_folded = ? "
+                "AND artist_name_folded = ? ORDER BY imported_at DESC, id LIMIT 1",
+                (_fold(title), _fold(artist_name)),
+            ).fetchone()
+            return _row(row)
+
+        return await self._read(operation)
+
     async def list_target_tracks_in_directory(
         self,
         root_id: str,
