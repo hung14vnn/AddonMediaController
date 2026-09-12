@@ -204,8 +204,8 @@ const childrenSnippet = createRawSnippet(() => ({
 	render: () => '<div data-testid="page-content">Page</div>'
 }));
 
-function renderLayout() {
-	return render(Layout, {
+async function renderLayout() {
+	return await render(Layout, {
 		props: { children: childrenSnippet } as Record<string, unknown>
 	} as Parameters<typeof render<typeof Layout>>[1]);
 }
@@ -260,7 +260,7 @@ describe('AuthenticatedAppShell sidebar scroll at short desktop heights (#281)',
 	});
 
 	it('bounds the sidebar height to the viewport with vertical overflow', async () => {
-		renderLayout();
+		await renderLayout();
 		await expect.element(page.getByTestId('page-content')).toBeInTheDocument();
 		await waitForStableSidebar();
 
@@ -275,7 +275,7 @@ describe('AuthenticatedAppShell sidebar scroll at short desktop heights (#281)',
 	});
 
 	it('makes the bottom sidebar controls reachable by scrolling when collapsed', async () => {
-		renderLayout();
+		await renderLayout();
 		const logout = page.getByRole('button', { name: 'Log out' });
 		await expect.element(logout).toBeInTheDocument();
 		await waitForStableSidebar();
@@ -312,7 +312,7 @@ describe('AuthenticatedAppShell sidebar scroll at short desktop heights (#281)',
 	}
 
 	it('keeps the bottom controls reachable in the expanded drawer state', async () => {
-		renderLayout();
+		await renderLayout();
 		await expect.element(page.getByTestId('page-content')).toBeInTheDocument();
 		await waitForStableSidebar();
 
@@ -417,7 +417,7 @@ describe('AuthenticatedAppShell mobile overflow menu (#182)', () => {
 
 	it('exposes the missing destinations behind More with resolved hrefs', async () => {
 		authStore.setUser(testUser());
-		renderLayout();
+		await renderLayout();
 		await expect.element(page.getByTestId('page-content')).toBeInTheDocument();
 
 		expect(barEntryNames()).toEqual(['Home', 'Discover', 'Search', 'Library', 'Settings', 'More']);
@@ -438,7 +438,7 @@ describe('AuthenticatedAppShell mobile overflow menu (#182)', () => {
 
 	it('hides Settings and admin entries from non-admins', async () => {
 		authStore.setUser(testUser('user'));
-		renderLayout();
+		await renderLayout();
 		await expect.element(page.getByTestId('page-content')).toBeInTheDocument();
 
 		// No Settings tab to bounce to Home; the five-slot grid keeps even spacing.
@@ -458,7 +458,7 @@ describe('AuthenticatedAppShell mobile overflow menu (#182)', () => {
 
 	it('fits six slots without horizontal overflow at 360px', async () => {
 		authStore.setUser(testUser());
-		renderLayout();
+		await renderLayout();
 		await expect.element(page.getByTestId('page-content')).toBeInTheDocument();
 
 		const nav = bottomNav();
@@ -476,7 +476,7 @@ describe('AuthenticatedAppShell mobile overflow menu (#182)', () => {
 	it('highlights More and the matching entry when a sheet destination is active', async () => {
 		authStore.setUser(testUser());
 		window.history.pushState({}, '', '/dn/downloads');
-		renderLayout();
+		await renderLayout();
 		await expect.element(page.getByTestId('page-content')).toBeInTheDocument();
 
 		const more = bottomNav().querySelector('button[aria-label="More navigation options"]');
@@ -495,7 +495,7 @@ describe('AuthenticatedAppShell mobile overflow menu (#182)', () => {
 		authStore.setUser(testUser());
 		integrationState.download_client = false;
 		try {
-			renderLayout();
+			await renderLayout();
 			await expect.element(page.getByTestId('page-content')).toBeInTheDocument();
 
 			const sheet = openMoreSheet();
@@ -538,7 +538,7 @@ describe('AuthenticatedAppShell global toast (toastStore)', () => {
 	}
 
 	it('renders a management success toast with role=status', async () => {
-		renderLayout();
+		await renderLayout();
 		await expect.element(page.getByTestId('page-content')).toBeInTheDocument();
 
 		toastStore.show({ message: 'Organization preview queued', type: 'success' });
@@ -551,7 +551,7 @@ describe('AuthenticatedAppShell global toast (toastStore)', () => {
 	});
 
 	it('renders error toasts and dismisses them', async () => {
-		renderLayout();
+		await renderLayout();
 		await expect.element(page.getByTestId('page-content')).toBeInTheDocument();
 
 		toastStore.show({ message: 'Could not queue the management preview', type: 'error' });

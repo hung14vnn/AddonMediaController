@@ -58,7 +58,7 @@ beforeEach(() => {
 });
 
 it('keeps a linked artist on its MusicBrainz route', async () => {
-	render(ArtistPage, {
+	await render(ArtistPage, {
 		props: {
 			data: {
 				artistId: 'provider-artist-id',
@@ -75,7 +75,7 @@ it('keeps a linked artist on its MusicBrainz route', async () => {
 
 it('mounts the provider once when local detail returns 404', async () => {
 	h.localDetail404 = true;
-	render(ArtistPage, {
+	await render(ArtistPage, {
 		props: {
 			data: {
 				artistId: 'provider-artist-id',
@@ -90,7 +90,7 @@ it('mounts the provider once when local detail returns 404', async () => {
 });
 
 it('replaces a linked local route with its MusicBrainz route', async () => {
-	render(ArtistPage, {
+	await render(ArtistPage, {
 		props: {
 			data: {
 				artistId: 'local-artist-id',
@@ -111,7 +111,7 @@ it('replaces a linked local route with its MusicBrainz route', async () => {
 
 it('keeps a local-only artist on its local route', async () => {
 	h.artist.musicbrainz_artist_id = null;
-	render(ArtistPage, {
+	await render(ArtistPage, {
 		props: {
 			data: {
 				artistId: 'local-artist-id',

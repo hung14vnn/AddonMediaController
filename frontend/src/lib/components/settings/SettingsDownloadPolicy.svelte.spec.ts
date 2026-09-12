@@ -117,7 +117,7 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 			...structuredClone(basePolicy),
 			quality_recipe: structuredClone(PRESETS.balanced.recipe)
 		};
-		const { container } = render(SettingsDownloadPolicy);
+		const { container } = await render(SettingsDownloadPolicy);
 
 		await expect
 			.element(
@@ -137,7 +137,7 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 	});
 
 	it('keeps upgrade controls in the same save mutation as the recipe', async () => {
-		const { container } = render(SettingsDownloadPolicy);
+		const { container } = await render(SettingsDownloadPolicy);
 		await page.getByRole('checkbox', { name: 'Allow automatic upgrades' }).click();
 		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
 
@@ -162,7 +162,7 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 				}
 			]
 		};
-		const { container } = render(SettingsDownloadPolicy);
+		const { container } = await render(SettingsDownloadPolicy);
 		const cutoff = cutoffSelect(container);
 		await expect.element(cutoff).toHaveValue('mp3_256');
 		expect(
@@ -177,7 +177,7 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 	});
 
 	it('sends the edited order and custom recipe values in the mutation payload', async () => {
-		const { container } = render(SettingsDownloadPolicy);
+		const { container } = await render(SettingsDownloadPolicy);
 		await page.getByRole('radio', { name: 'Custom' }).nth(1).click();
 		await page.getByRole('spinbutton', { name: 'Custom MP3 minimum bitrate' }).fill('16');
 		await page.getByRole('spinbutton', { name: 'Custom MP3 target bitrate' }).fill('160');
@@ -202,7 +202,7 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 	});
 
 	it('adds, edits, removes, and reorders entries through the composed settings surface', async () => {
-		const { container } = render(SettingsDownloadPolicy);
+		const { container } = await render(SettingsDownloadPolicy);
 		await page.getByRole('radio', { name: /24-bit \/ 96 kHz/ }).click();
 		await page.getByRole('button', { name: 'Add FLAC recipe entry' }).click();
 		expect(rows(container)).toHaveLength(3);
@@ -234,7 +234,7 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 				}
 			]
 		};
-		const { container } = render(SettingsDownloadPolicy);
+		const { container } = await render(SettingsDownloadPolicy);
 		await page.getByRole('radio', { name: 'Custom' }).nth(1).click();
 		await page.getByRole('spinbutton', { name: 'Custom MP3 minimum bitrate' }).fill('192');
 		await page.getByRole('spinbutton', { name: 'Custom MP3 target bitrate' }).fill('224');
@@ -251,7 +251,7 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 		expect(rows(container)[2]).toHaveTextContent('Custom · 16-160-191 kbps');
 	});
 	it('rejects duplicate custom FLAC resolution with a position-aware error', async () => {
-		const { container } = render(SettingsDownloadPolicy);
+		const { container } = await render(SettingsDownloadPolicy);
 		await page.getByRole('radio', { name: 'Custom' }).first().click();
 		await page.getByRole('spinbutton', { name: 'Custom FLAC bit depth' }).fill('24');
 		await page.getByRole('spinbutton', { name: 'Custom FLAC sample rate' }).fill('96000');
@@ -272,7 +272,7 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 	});
 
 	it('requires confirmation before replacing dirty edits with a preset and lets Cancel preserve them', async () => {
-		const { container } = render(SettingsDownloadPolicy);
+		const { container } = await render(SettingsDownloadPolicy);
 		await page.getByRole('radio', { name: /24-bit \/ 96 kHz/ }).click();
 		await page.getByRole('button', { name: 'Add FLAC recipe entry' }).click();
 		const trigger = page.getByRole('button', { name: 'Apply Best available preset' });
@@ -304,7 +304,7 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 			quality_preference_order: ['lossless', 'mp3_320'],
 			lossless_preference: '24_96'
 		};
-		const { container } = render(SettingsDownloadPolicy);
+		const { container } = await render(SettingsDownloadPolicy);
 		await expect.element(page.getByRole('alert').first()).toHaveTextContent(/projected/i);
 		expect(
 			rows(container)
@@ -343,7 +343,7 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 			quality_recipe_error: 'The saved policy allows additional formats.',
 			quality_recipe: structuredClone(recipe)
 		};
-		const { container } = render(SettingsDownloadPolicy);
+		const { container } = await render(SettingsDownloadPolicy);
 
 		await expect
 			.element(page.getByRole('alert').first())
@@ -355,7 +355,7 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 	it('shows loading without rendering editable defaults', async () => {
 		h.policy = undefined;
 		h.pending = true;
-		const { container } = render(SettingsDownloadPolicy);
+		const { container } = await render(SettingsDownloadPolicy);
 		await expect
 			.element(page.getByRole('region', { name: 'Loading acquisition policy' }))
 			.toHaveAttribute('aria-busy', 'true');
@@ -367,7 +367,7 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 		h.pending = false;
 		h.isError = true;
 		h.error = new Error('network');
-		const { container } = render(SettingsDownloadPolicy);
+		const { container } = await render(SettingsDownloadPolicy);
 		await expect
 			.element(page.getByRole('alert'))
 			.toHaveTextContent('Could not load acquisition policy');
@@ -378,7 +378,7 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 
 	it('preserves the draft after a failed save and restores it with Discard', async () => {
 		h.mutateAsync = vi.fn().mockRejectedValue(new Error('conflict'));
-		const { container } = render(SettingsDownloadPolicy);
+		const { container } = await render(SettingsDownloadPolicy);
 		await page.getByRole('radio', { name: /24-bit \/ 96 kHz/ }).click();
 		await page.getByRole('button', { name: 'Add FLAC recipe entry' }).click();
 		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
@@ -386,5 +386,96 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 		expect(rows(container)).toHaveLength(3);
 		await page.getByRole('button', { name: 'Discard' }).click();
 		expect(rows(container)).toHaveLength(2);
+	});
+	it('heals a stale preference order when removing the FLAC entry narrows the range', async () => {
+		h.policy = {
+			...structuredClone(basePolicy),
+			quality_min: 'low',
+			quality_max: 'lossless',
+			quality_recipe: [
+				{ format: 'flac', quality: 'cd' },
+				{
+					format: 'mp3',
+					quality: '320_plus',
+					min_bitrate_kbps: 320,
+					target_bitrate_kbps: 320,
+					max_bitrate_kbps: null
+				},
+				{
+					format: 'mp3',
+					quality: '256_319',
+					min_bitrate_kbps: 256,
+					target_bitrate_kbps: 256,
+					max_bitrate_kbps: 319
+				},
+				{
+					format: 'mp3',
+					quality: '192_255',
+					min_bitrate_kbps: 192,
+					target_bitrate_kbps: 192,
+					max_bitrate_kbps: 255
+				},
+				{
+					format: 'mp3',
+					quality: 'below_192',
+					min_bitrate_kbps: 16,
+					target_bitrate_kbps: 128,
+					max_bitrate_kbps: 191
+				}
+			],
+			quality_preference_order: ['lossless', 'mp3_320', 'mp3_256', 'mp3_192', 'low']
+		};
+		const { container } = await render(SettingsDownloadPolicy);
+		expect(rows(container)).toHaveLength(5);
+		await page.getByRole('button', { name: 'Remove FLAC · CD quality' }).click();
+		expect(rows(container)).toHaveLength(4);
+		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
+
+		expect(h.mutateAsync).toHaveBeenCalledTimes(1);
+		const saved = h.mutateAsync.mock.calls[0][0] as Record<string, unknown>;
+		expect(saved.quality_min).toBe('low');
+		expect(saved.quality_max).toBe('mp3_320');
+		expect(saved.quality_cutoff).toBe('mp3_320');
+		const order = saved.quality_preference_order as string[];
+		const expected = ['mp3_320', 'mp3_256', 'mp3_192', 'low'];
+		expect(order.length === 0 || [...order].sort().join() === [...expected].sort().join()).toBe(
+			true
+		);
+		expect(order).not.toEqual(['lossless', 'mp3_320', 'mp3_256', 'mp3_192', 'low']);
+	});
+
+	it('heals a stale preference order when adding an entry widens the range', async () => {
+		const { container } = await render(SettingsDownloadPolicy);
+		expect(rows(container)).toHaveLength(2);
+		await page.getByRole('radio', { name: 'Below 192' }).click();
+		await page.getByRole('button', { name: 'Add MP3 recipe entry' }).click();
+		expect(rows(container)).toHaveLength(3);
+		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
+
+		expect(h.mutateAsync).toHaveBeenCalledTimes(1);
+		const saved = h.mutateAsync.mock.calls[0][0] as Record<string, unknown>;
+		expect(saved.quality_min).toBe('low');
+		expect(saved.quality_max).toBe('lossless');
+		const order = saved.quality_preference_order as string[];
+		const expected = ['lossless', 'mp3_320', 'mp3_256', 'mp3_192', 'low'];
+		expect(order.length === 0 || [...order].sort().join() === [...expected].sort().join()).toBe(
+			true
+		);
+		expect(order).not.toEqual(['lossless', 'mp3_320']);
+	});
+
+	it('preserves the stored preference-order permutation when the range is unchanged', async () => {
+		h.policy = {
+			...structuredClone(basePolicy),
+			quality_preference_order: ['mp3_320', 'lossless']
+		};
+		await render(SettingsDownloadPolicy);
+		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
+
+		expect(h.mutateAsync).toHaveBeenCalledTimes(1);
+		const saved = h.mutateAsync.mock.calls[0][0] as Record<string, unknown>;
+		expect(saved.quality_min).toBe('mp3_320');
+		expect(saved.quality_max).toBe('lossless');
+		expect(saved.quality_preference_order).toEqual(['mp3_320', 'lossless']);
 	});
 });

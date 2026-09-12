@@ -95,7 +95,7 @@ describe('Player.svelte lyrics button', () => {
 		};
 
 		playerStore.playQueue([makeTrack('navidrome')]);
-		render(Player);
+		await render(Player);
 
 		await expect.element(page.getByLabelText('Toggle lyrics')).toBeInTheDocument();
 	});
@@ -120,7 +120,7 @@ describe('Player.svelte lyrics button', () => {
 		};
 
 		playerStore.playQueue([makeTrack('navidrome')]);
-		render(Player);
+		await render(Player);
 
 		await expect.element(page.getByLabelText('Toggle lyrics')).toBeEnabled();
 	});
@@ -135,7 +135,7 @@ describe('Player.svelte lyrics button', () => {
 		};
 
 		playerStore.playQueue([makeTrack('navidrome')]);
-		render(Player);
+		await render(Player);
 
 		await expect.element(page.getByLabelText('Toggle lyrics')).toBeEnabled();
 	});
@@ -150,7 +150,7 @@ describe('Player.svelte lyrics button', () => {
 		};
 
 		playerStore.playQueue([makeTrack('navidrome')]);
-		render(Player);
+		await render(Player);
 
 		await expect.element(page.getByLabelText('Toggle lyrics')).toBeEnabled();
 	});
@@ -165,7 +165,7 @@ describe('Player.svelte lyrics button', () => {
 		};
 
 		playerStore.playQueue([makeTrack('youtube')]);
-		render(Player);
+		await render(Player);
 
 		await expect.element(page.getByLabelText('Toggle lyrics')).toBeEnabled();
 	});
@@ -180,7 +180,7 @@ describe('Player.svelte lyrics button', () => {
 		};
 
 		playerStore.playQueue([makeTrack('plex')]);
-		render(Player);
+		await render(Player);
 
 		await expect.element(page.getByLabelText('Toggle lyrics')).toBeEnabled();
 	});
@@ -195,7 +195,7 @@ describe('Player.svelte lyrics button', () => {
 		};
 
 		playerStore.playQueue([makeTrack('local')]);
-		render(Player);
+		await render(Player);
 
 		await expect.element(page.getByLabelText('Toggle lyrics')).toBeInTheDocument();
 	});

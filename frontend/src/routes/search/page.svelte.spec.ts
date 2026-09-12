@@ -79,7 +79,7 @@ describe('search result enrichment demand', () => {
 		});
 		globalThis.fetch = mockFetch as typeof fetch;
 
-		render(SearchPageTestHarness, { data: { query: 'muse' } });
+		await render(SearchPageTestHarness, { data: { query: 'muse' } });
 		await expect.element(page.getByRole('heading', { name: 'Albums' })).toBeInTheDocument();
 		await page.getByRole('heading', { name: 'Albums' }).hover();
 		finishArtists?.(
@@ -161,7 +161,7 @@ describe('search result enrichment demand', () => {
 			return supplementalTrackResponseOrThrow(url);
 		}) as typeof fetch;
 
-		render(SearchPageTestHarness, { data: { query: 'local first' } });
+		await render(SearchPageTestHarness, { data: { query: 'local first' } });
 
 		await expect.element(page.getByText('Local First')).toBeInTheDocument();
 		await expect
@@ -239,7 +239,7 @@ describe('search result enrichment demand', () => {
 			return supplementalTrackResponseOrThrow(url);
 		}) as typeof fetch;
 
-		render(SearchPageTestHarness, { data: { query: 'local survivor' } });
+		await render(SearchPageTestHarness, { data: { query: 'local survivor' } });
 
 		await expect.element(page.getByText('Local Survivor')).toBeVisible();
 		await expect
@@ -287,7 +287,7 @@ describe('search result enrichment demand', () => {
 			return supplementalTrackResponseOrThrow(url);
 		}) as typeof fetch;
 
-		render(SearchPageTestHarness, { data: { query: 'cached muse' } });
+		await render(SearchPageTestHarness, { data: { query: 'cached muse' } });
 
 		await expect.element(page.getByText('Cached Muse')).toBeInTheDocument();
 		await expect
@@ -336,7 +336,7 @@ describe('search result enrichment demand', () => {
 			return supplementalTrackResponseOrThrow(url);
 		}) as typeof fetch;
 
-		render(SearchPageTestHarness, { data: { query: 'artist' } });
+		await render(SearchPageTestHarness, { data: { query: 'artist' } });
 
 		for (const title of ['Artist 1', 'Artist 2', 'Artist 3', 'Artist 4', 'Artist 5', 'Artist 6']) {
 			await expect.element(page.getByText(title)).toBeInTheDocument();
@@ -394,7 +394,7 @@ describe('search result enrichment demand', () => {
 			return supplementalTrackResponseOrThrow(url);
 		}) as typeof fetch;
 
-		render(SearchPageTestHarness, { data: { query: 'top result' } });
+		await render(SearchPageTestHarness, { data: { query: 'top result' } });
 
 		await expect.element(page.getByText('Top Result Artist')).toBeInTheDocument();
 		for (const title of ['Artist 1', 'Artist 2', 'Artist 3', 'Artist 4', 'Artist 5']) {

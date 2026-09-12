@@ -98,7 +98,7 @@ beforeEach(() => {
 
 describe('Library Management route page', () => {
 	it('defaults to the Overview tab and keeps History reachable', async () => {
-		render(LibraryManagementPage);
+		await render(LibraryManagementPage);
 		await expect.element(page.getByRole('heading', { name: 'Library Management' })).toBeVisible();
 		await expect
 			.element(page.getByRole('tab', { name: 'Overview' }))
@@ -145,7 +145,7 @@ describe('Library Management route page', () => {
 	});
 
 	it('writes the chosen tab to the URL without scrolling', async () => {
-		render(LibraryManagementPage);
+		await render(LibraryManagementPage);
 		await page.getByRole('tab', { name: 'Organize files' }).click();
 		expect(h.goto).toHaveBeenCalledOnce();
 		const [url, options] = h.goto.mock.calls[0] as [URL, Record<string, unknown>];
@@ -156,7 +156,7 @@ describe('Library Management route page', () => {
 
 	it('routes the runner parameter to the Organize tab', async () => {
 		h.appPage.url = new URL('https://music.example.test/library/management?runner=manage');
-		render(LibraryManagementPage);
+		await render(LibraryManagementPage);
 		await vi.waitFor(() => expect(h.goto).toHaveBeenCalled());
 		const [url] = h.goto.mock.calls[0] as [URL, Record<string, unknown>];
 		expect(url.searchParams.get('tab')).toBe('organize');
@@ -170,7 +170,7 @@ describe('Library Management route page', () => {
 		['#recent-runs', 'scanning']
 	])('maps legacy link %s to the %s tab', async (hash, tab) => {
 		h.appPage.url = new URL(`https://music.example.test/library/management${hash}`);
-		render(LibraryManagementPage);
+		await render(LibraryManagementPage);
 		await vi.waitFor(() => expect(h.goto).toHaveBeenCalled());
 		const [url] = h.goto.mock.calls[0] as [URL, Record<string, unknown>];
 		expect(url.searchParams.get('tab')).toBe(tab);
@@ -178,7 +178,7 @@ describe('Library Management route page', () => {
 
 	it('routes the scanning legacy link to the Scanning tab', async () => {
 		h.appPage.url = new URL('https://music.example.test/library/management#scanning-controls');
-		render(LibraryManagementPage);
+		await render(LibraryManagementPage);
 		await expect.element(page.getByRole('tab', { name: 'Scanning' })).toBeVisible();
 		await vi.waitFor(() => expect(h.goto).toHaveBeenCalled());
 		const [url] = h.goto.mock.calls[0] as [URL, Record<string, unknown>];
@@ -187,7 +187,7 @@ describe('Library Management route page', () => {
 
 	it('mounts automation settings with the saved roots and policy revision on that tab', async () => {
 		h.appPage.url = new URL('https://music.example.test/library/management?tab=automation');
-		render(LibraryManagementPage);
+		await render(LibraryManagementPage);
 		await vi.waitFor(() => expect(h.settingsRender).toHaveBeenCalled());
 		expect(h.settingsRender).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -206,12 +206,12 @@ describe('Library Management route page', () => {
 			isError: false
 		};
 		h.appPage.url = new URL('https://music.example.test/library/management?tab=organize');
-		render(LibraryManagementPage);
+		await render(LibraryManagementPage);
 		await expect.element(page.getByText('The local library is disabled').first()).toBeVisible();
 		expect(h.organizeRender).not.toHaveBeenCalled();
 		expect(h.karaokeRender).not.toHaveBeenCalled();
 		h.appPage.url = new URL('https://music.example.test/library/management?tab=automation');
-		render(LibraryManagementPage);
+		await render(LibraryManagementPage);
 		await expect.element(page.getByText('The local library is disabled').nth(1)).toBeVisible();
 		expect(h.settingsRender).not.toHaveBeenCalled();
 	});
@@ -244,7 +244,7 @@ describe('Library Management route page', () => {
 			}
 		];
 
-		render(LibraryManagementPage);
+		await render(LibraryManagementPage);
 
 		await expect
 			.element(page.getByRole('tab', { name: /Scanning/ }).getByText('50%'))
