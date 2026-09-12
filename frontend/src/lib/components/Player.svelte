@@ -547,7 +547,7 @@
 								: 'Play'}
 					>
 						{#if playerStore.playbackState === 'error'}
-							<CircleAlert class="h-4 w-4" />
+							<CircleAlert class="h-5 w-5" />
 						{:else if playerStore.isBuffering}
 							<span class="loading loading-spinner loading-sm"></span>
 						{:else if playerStore.isPlaying}

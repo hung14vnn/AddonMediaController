@@ -30,7 +30,7 @@
 		listOfflineTrackMetadata
 	} from '$lib/offline/offlineAudio';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { Music, Lock, Download, Loader2, Trash2, Check } from 'lucide-svelte';
+	import { Music, Lock, Download, LoaderCircle, Trash2, Check } from 'lucide-svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import type { PageData } from './$types';
@@ -646,7 +646,7 @@
 						disabled={requesting}
 					>
 						{#if requesting}
-							<Loader2 class="h-3.5 w-3.5 animate-spin" />
+							<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
 						{:else}
 							<Download class="h-3.5 w-3.5" />
 						{/if}

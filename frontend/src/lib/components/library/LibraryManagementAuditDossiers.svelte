@@ -7,7 +7,7 @@
 		ChevronRight,
 		FolderCog,
 		Image,
-		Layers3,
+		Layers,
 		Tags
 	} from 'lucide-svelte';
 
@@ -249,7 +249,7 @@
 								{/if}
 								{#if changeCount(dossier, 'sidecars')}
 									<span
-										><Layers3 class="h-3 w-3" /> {changeCount(dossier, 'sidecars')} sidecars</span
+										><Layers class="h-3 w-3" /> {changeCount(dossier, 'sidecars')} sidecars</span
 									>
 								{/if}
 							</div>
@@ -335,7 +335,7 @@
 														class="h-3 w-3"
 													/>{:else if change === 'artwork'}<Image
 														class="h-3 w-3"
-													/>{:else if change === 'path'}<FolderCog class="h-3 w-3" />{:else}<Layers3
+													/>{:else if change === 'path'}<FolderCog class="h-3 w-3" />{:else}<Layers
 														class="h-3 w-3"
 													/>{/if}
 												<span>{changeLabel(change)}</span>

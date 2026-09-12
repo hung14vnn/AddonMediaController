@@ -34,7 +34,7 @@
 		Shuffle,
 		ListPlus,
 		ListStart,
-		Loader2,
+		LoaderCircle,
 		Music2,
 		Pencil,
 		Archive,
@@ -956,7 +956,7 @@
 					aria-busy="true"
 					aria-label="Stop loading tracks"
 				>
-					<Loader2 class="h-3.5 w-3.5 animate-spin" />
+					<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
 					{loader.progressText ?? 'Loading tracks'}
 				</button>
 			{:else}

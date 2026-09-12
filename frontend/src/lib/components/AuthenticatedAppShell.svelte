@@ -76,7 +76,7 @@
 		Inbox,
 		ListMusic,
 		ListChecks,
-		ArrowUpCircle,
+		CircleArrowUp,
 		LogOut,
 		ShieldCheck,
 		Heart,
@@ -756,7 +756,7 @@
 								<span
 									class="absolute -top-0.5 -right-0.5 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-accent text-accent-content shadow-sm shadow-accent/30"
 								>
-									<ArrowUpCircle class="h-3 w-3" />
+									<CircleArrowUp class="h-3 w-3" />
 								</span>
 							{/if}
 						</a>

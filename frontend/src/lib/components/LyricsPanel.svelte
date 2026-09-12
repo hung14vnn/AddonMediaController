@@ -329,7 +329,7 @@
 				{:else}
 					<Mic class="h-5 w-5" />
 				{/if}
-			</button>
+				</button>
 		{/if}
 
 		<div class="lyrics-stage-content relative z-0 min-h-0 flex-1">
