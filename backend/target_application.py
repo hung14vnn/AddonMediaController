@@ -39,6 +39,7 @@ from api.v1.routes import (
     discover,
     downloads,
     downloads_search,
+    events,
     following,
     free_music,
     home,
@@ -163,6 +164,7 @@ from core.dependencies import (
     init_app_state,
     get_target_album_identification_service,
     get_target_identification_queue,
+    get_sse_publisher,
     get_library_contribution_verification_worker,
     get_background_workload_gate,
     get_library_policy_resolver,
@@ -215,12 +217,14 @@ from middleware import (
     DegradationMiddleware,
     HSTSMiddleware,
     PerformanceMiddleware,
+    PerUserRateLimitMiddleware,
     RateLimitMiddleware,
 )
 from services.native.library_filesystem_watcher import (
     WATCHER_TASK_NAME,
     start_library_filesystem_watcher,
 )
+from services.native.library_revision_poller import start_library_revision_poller
 from services.native.library_scan_supervisor import (
     SUPERVISOR_TASK_NAME,
     start_target_scan_supervisor,
@@ -452,8 +456,9 @@ def _include_complete_target_routes(app: FastAPI) -> None:
         system.router,
         spotify.router,
         now_playing.router,
-        lyrics.router,
-        karaoke.router,
+		lyrics.router,
+		karaoke.router,
+		events.router,
         profile.router,
         playlists.router,
         version.router,
@@ -785,6 +790,11 @@ async def production_target_lifespan(app: FastAPI):
         from core.dependencies.service_providers import get_wal_checkpoint_service
 
         start_target_wal_checkpoint_task(get_wal_checkpoint_service())
+        # Single process-wide library-revision poll feeding the mux SSE stream;
+        # replaces the per-connection poll loop in the old activity streams.
+        start_library_revision_poller(
+            get_target_identification_queue, get_sse_publisher
+        )
         await start_target_operational_runtime(
             settings=settings,
             preferences=preferences,
@@ -851,7 +861,12 @@ def create_production_target_application() -> FastAPI:
     app.add_middleware(HSTSMiddleware)
     app.add_middleware(DegradationMiddleware)
     app.add_middleware(PerformanceMiddleware)
-    app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
+	app.add_middleware(CompressibleGZipMiddleware, minimum_size=1000, compresslevel=6)
+    # Per-user buckets run after auth (last-added executes first): the global
+    # limiter below stays as the pre-auth backstop against unauthenticated
+    # floods and caps aggregate traffic, while authenticated users additionally
+    # get their own burst budgets.
+    app.add_middleware(PerUserRateLimitMiddleware)
     app.add_middleware(AuthMiddleware)
     app.add_middleware(
         RateLimitMiddleware,
