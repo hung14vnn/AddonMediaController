@@ -11,7 +11,6 @@
 	import DiscoverQueueDeck from '$lib/components/discover/DiscoverQueueDeck.svelte';
 	import PlaylistDiscoveryModal from '$lib/components/PlaylistDiscoveryModal.svelte';
 	import WeeklyExploration from '$lib/components/WeeklyExploration.svelte';
-	import ServicePromptCard from '$lib/components/ServicePromptCard.svelte';
 	import DiscoverArtistHero from '$lib/components/DiscoverArtistHero.svelte';
 	import DiscoverArtistMiniBand from '$lib/components/DiscoverArtistMiniBand.svelte';
 	import SectionDivider from '$lib/components/SectionDivider.svelte';
@@ -20,7 +19,6 @@
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import LiveUpdatingBadge from '$lib/components/LiveUpdatingBadge.svelte';
 	import { api } from '$lib/api/client';
-	import { isDismissed } from '$lib/utils/dismissedPrompts';
 	import { withBasePath } from '$lib/utils/basePath';
 	import {
 		Compass,
@@ -100,12 +98,6 @@
 	function sectionUpdating(section: string): boolean {
 		return discoverData?.section_status?.[section] === 'updating';
 	}
-	let dismissVersion = $state(0);
-	let servicePrompts = $derived.by(() => {
-		void dismissVersion;
-		return (discoverData?.service_prompts ?? []).filter((p) => !isDismissed(p.service));
-	});
-
 	let hasWeeklyExploration = $derived(
 		!!discoverData?.weekly_exploration && discoverData.weekly_exploration.tracks.length > 0
 	);
@@ -187,10 +179,6 @@
 		}
 		shuffledGenres = copy;
 	}
-
-	function handlePromptDismiss(_service: string) {
-		dismissVersion++;
-	}
 </script>
 
 <svelte:head>
@@ -223,14 +211,6 @@
 		</div>
 	{:else}
 		<div class="px-4 sm:px-6 lg:px-8">
-			{#if servicePrompts.length > 0}
-				<div class="space-y-3 mb-6">
-					{#each servicePrompts as prompt, i (`service-prompt-${prompt.service}-${i}`)}
-						<ServicePromptCard {prompt} ondismiss={handlePromptDismiss} />
-					{/each}
-				</div>
-			{/if}
-
 			{#if (loading && !discoverData) || isBuilding}
 				{#if isBuilding}
 					<div class="mb-8 flex flex-col items-center justify-center gap-2 px-4 text-center">
@@ -530,7 +510,7 @@
 							</div>
 						{/if}
 
-						{#if !hasContent && servicePrompts.length > 0}
+						{#if !hasContent && degradedSources.length === 0}
 							<div class="flex flex-col items-center justify-center py-12 sm:py-16">
 								<Compass class="mb-4 h-12 w-12 sm:mb-6 sm:h-14 sm:w-14 text-base-content/50" />
 								<h2 class="mb-2 text-center text-xl font-bold sm:text-2xl">

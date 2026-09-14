@@ -297,3 +297,10 @@ export interface BatchRequestResult {
 export async function requestMissingTracks(id: string): Promise<BatchRequestResult> {
 	return api.global.post<BatchRequestResult>(API.playlists.requestMissing(id));
 }
+
+export async function requestPlaylistTrack(
+	playlistId: string,
+	trackId: string
+): Promise<BatchRequestResult> {
+	return api.global.post<BatchRequestResult>(API.playlists.requestTrack(playlistId, trackId));
+}

@@ -3059,6 +3059,42 @@ class NativeLibraryStore(PersistenceBase):
 
         await self._write(operation)
 
+    async def update_target_track_audio_facts(
+        self,
+        track_id: str,
+        *,
+        file_path: str,
+        relative_path: str,
+        file_size_bytes: int,
+        file_mtime_ns: int,
+        stat_revision: str,
+        file_format: str,
+        bit_rate: int | None,
+        sample_rate: int | None,
+        bit_depth: int | None,
+        channels: int | None,
+        duration_seconds: float | None,
+    ) -> None:
+        def operation(connection: sqlite3.Connection) -> None:
+            resolved = self._resolve_target_id(connection, kind="track", identifier=track_id)
+            if resolved is None:
+                raise ResourceNotFoundError("Library track not found.")
+            cursor = connection.execute(
+                "UPDATE local_tracks SET file_path=?, relative_path=?, path_hash=?, "
+                "file_size_bytes=?, file_mtime_ns=?, stat_revision=?, "
+                "file_format=?, bit_rate=?, sample_rate=?, bit_depth=?, channels=?, "
+                "duration_seconds=?, row_revision=row_revision+1 "
+                "WHERE id=? AND availability='indexed'",
+                (file_path, relative_path, hashlib.sha256(relative_path.encode()).hexdigest(),
+                 file_size_bytes, file_mtime_ns, stat_revision, file_format, bit_rate,
+                 sample_rate, bit_depth, channels, duration_seconds, resolved),
+            )
+            if cursor.rowcount != 1:
+                raise ResourceNotFoundError("Library track not found.")
+            self._bump_catalog(connection)
+
+        await self._write(operation)
+
     async def get_library_management_tag_editor_subject(
         self, track_id: str
     ) -> dict[str, Any] | None:
@@ -3113,6 +3149,79 @@ class NativeLibraryStore(PersistenceBase):
                 (_fold(title), _fold(artist_name)),
             ).fetchone()
             return _row(row)
+
+        return await self._read(operation)
+
+    async def find_target_track_by_metadata(
+        self,
+        *,
+        title: str,
+        artist_name: str | None = None,
+        album_title: str | None = None,
+        track_number: int | None = None,
+        disc_number: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Find an indexed track when provider artist tags are not identical.
+
+        Downloaded files may carry a featured-artist string, a deluxe/remaster
+        album edition, or a different track position than the imported playlist
+        entry.  Requiring all of those to match byte-for-byte left freshly
+        downloaded files invisible to playlist source resolution while the
+        recording-MBID ownership gate still reported them as owned, so the entry
+        could never leave the missing list.  Title is therefore the only hard
+        predicate; album, artist and position rank the candidates instead.
+        """
+        if not title.strip():
+            return None
+
+        def operation(connection: sqlite3.Connection) -> dict[str, Any] | None:
+            rows = connection.execute(
+                "SELECT id, title AS track_title, album_title_folded, "
+                "artist_name_folded, album_artist_name_folded, "
+                "track_number, disc_number FROM local_tracks "
+                "WHERE availability = 'indexed' AND title_folded = ? "
+                "ORDER BY imported_at DESC, id LIMIT 200",
+                (_fold(title),),
+            ).fetchall()
+            if not rows:
+                return None
+
+            folded_album = _fold(album_title) if album_title else ""
+            folded_artist = _fold(artist_name) if artist_name else ""
+
+            def score(row: sqlite3.Row) -> tuple[int, int, int]:
+                album_score = 0
+                if folded_album:
+                    row_album = str(row["album_title_folded"] or "")
+                    if row_album == folded_album:
+                        album_score = 2
+                    elif row_album and (
+                        row_album.startswith(folded_album)
+                        or folded_album.startswith(row_album)
+                    ):
+                        # "Album" vs "Album (Deluxe Edition)" is the same release
+                        # for the purpose of locating an already-downloaded file.
+                        album_score = 1
+                artist_score = 0
+                if folded_artist and folded_artist in {
+                    str(row["artist_name_folded"] or ""),
+                    str(row["album_artist_name_folded"] or ""),
+                }:
+                    artist_score = 1
+                position_score = 0
+                if track_number is not None and row["track_number"] == track_number:
+                    position_score += 1
+                if disc_number is not None and row["disc_number"] == disc_number:
+                    position_score += 1
+                return (album_score, artist_score, position_score)
+
+            best = max(rows, key=score)
+            # A title-only hit is too weak on its own: common titles repeat
+            # across unrelated releases. Require corroboration from at least one
+            # other field before claiming the playlist entry is satisfied.
+            if score(best) == (0, 0, 0):
+                return None
+            return {"id": best["id"], "track_title": best["track_title"]}
 
         return await self._read(operation)
 
@@ -6051,8 +6160,11 @@ class NativeLibraryStore(PersistenceBase):
     ) -> list[dict[str, Any]]:
         def operation(connection: sqlite3.Connection) -> list[dict[str, Any]]:
             rows = connection.execute(
-                "SELECT * FROM library_playlist_tracks WHERE playlist_id = ? "
-                "ORDER BY position",
+                "SELECT pt.*, t.availability AS local_track_availability, "
+                "t.file_path AS local_track_path "
+                "FROM library_playlist_tracks pt "
+                "LEFT JOIN local_tracks t ON t.id = pt.local_track_id "
+                "WHERE pt.playlist_id = ? ORDER BY pt.position",
                 (playlist_id,),
             ).fetchall()
             return [dict(row) for row in rows]
@@ -6087,8 +6199,14 @@ class NativeLibraryStore(PersistenceBase):
         def operation(connection: sqlite3.Connection) -> dict[str, Any] | None:
             return _row(
                 connection.execute(
-                    "SELECT * FROM library_playlist_tracks "
-                    "WHERE playlist_id = ? AND id = ?",
+                    # Same availability join as list_target_playlist_tracks: a
+                    # single-row read must not report a deleted local file as
+                    # still owned just because it skipped the join.
+                    "SELECT pt.*, t.availability AS local_track_availability, "
+                    "t.file_path AS local_track_path "
+                    "FROM library_playlist_tracks pt "
+                    "LEFT JOIN local_tracks t ON t.id = pt.local_track_id "
+                    "WHERE pt.playlist_id = ? AND pt.id = ?",
                     (playlist_id, track_id),
                 ).fetchone()
             )
@@ -6357,7 +6475,9 @@ class NativeLibraryStore(PersistenceBase):
             rows = connection.execute(
                 "SELECT playlist_id, COUNT(*) AS count, "
                 "COALESCE(SUM(COALESCE(duration, 0)), 0) AS duration "
-                "FROM library_playlist_tracks WHERE local_track_id IS NOT NULL "
+                "FROM library_playlist_tracks pt "
+                "JOIN local_tracks lt ON lt.id = pt.local_track_id "
+                "WHERE lt.availability = 'indexed' "
                 "GROUP BY playlist_id"
             ).fetchall()
             return {
@@ -6377,12 +6497,14 @@ class NativeLibraryStore(PersistenceBase):
                 "SELECT pt.playlist_id, pt.track_name, pt.artist_name, pt.album_name, "
                 "pt.album_id, pt.track_number, pt.disc_number, pt.source_type, "
                 "pt.track_source_id "
-                "FROM library_playlist_tracks pt JOIN library_playlists p "
-                "ON p.id = pt.playlist_id"
+                "FROM library_playlist_tracks pt "
+                "LEFT JOIN local_tracks lt ON lt.id = pt.local_track_id "
+                "JOIN library_playlists p ON p.id = pt.playlist_id "
+                "WHERE (pt.local_track_id IS NULL OR lt.availability = 'indexed')"
             )
             parameters: tuple[str, ...] = ()
             if user_id is not None:
-                query += " WHERE p.user_id = ?"
+                query += " AND p.user_id = ?"
                 parameters = (user_id,)
             wanted: list[set[tuple[str, ...]]] = []
             for track in tracks:
@@ -12461,13 +12583,15 @@ class NativeLibraryStore(PersistenceBase):
             for scope in scopes:
                 if scope.relative_path == ".":
                     rows = connection.execute(
-                        "SELECT id FROM local_tracks WHERE root_id = ?",
+                        "SELECT id FROM local_tracks "
+                        "WHERE root_id = ? AND availability IN ('indexed', 'excluded')",
                         (scope.root_id,),
                     ).fetchall()
                 else:
                     prefix = _escape_like(scope.relative_path.rstrip("/"))
                     rows = connection.execute(
                         "SELECT id FROM local_tracks WHERE root_id = ? "
+                        "AND availability IN ('indexed', 'excluded') "
                         "AND relative_path LIKE ? ESCAPE '\\'",
                         (scope.root_id, prefix + "/%"),
                     ).fetchall()
@@ -15138,6 +15262,7 @@ class NativeLibraryStore(PersistenceBase):
                 "identification_enqueued": 0,
                 "reviews_resolved": 0,
             }
+            identification_changed = False
             queued_albums: set[str] = set()
             missing_track_ids: set[str] = set()
             missing_album_ids: set[str] = set()
@@ -15269,26 +15394,53 @@ class NativeLibraryStore(PersistenceBase):
             for offset in range(0, len(missing_track_ids), 500):
                 track_ids = sorted(missing_track_ids)[offset : offset + 500]
                 placeholders = ",".join("?" for _ in track_ids)
-                counts["reviews_resolved"] += connection.execute(
-                    "UPDATE library_identification_reviews SET state = 'resolved', "
-                    "reason_code = 'SUBJECT_MISSING', updated_at = ?, decided_at = ?, "
-                    "row_revision = row_revision + 1 WHERE state = 'needs_review' "
-                    f"AND local_track_id IN ({placeholders})",
+                # Do not leave identification work retrying a file that the
+                # completed scan confirmed is gone. A future scan can enqueue
+                # it again if the file returns.
+                cancelled = connection.execute(
+                    "UPDATE library_identification_jobs SET state = 'cancelled', "
+                    "last_failure_code = 'SUBJECT_MISSING', "
+                    "attention_cause = 'SUBJECT_MISSING', terminal_at = ?, "
+                    "updated_at = ?, lease_owner = NULL, lease_expires_at = NULL, "
+                    "heartbeat_at = NULL, row_revision = row_revision + 1, "
+                    "event_revision = event_revision + 1 WHERE local_track_id IN ("
+                    f"{placeholders}) AND state IN ('queued','running','paused')",
                     (now, now, *track_ids),
                 ).rowcount
+                removed = connection.execute(
+                    "DELETE FROM library_identification_reviews "
+                    f"WHERE local_track_id IN ({placeholders})",
+                    track_ids,
+                ).rowcount
+                counts["reviews_resolved"] += removed
+                identification_changed |= bool(cancelled or removed)
             for offset in range(0, len(missing_album_ids), 500):
                 album_ids = sorted(missing_album_ids)[offset : offset + 500]
                 placeholders = ",".join("?" for _ in album_ids)
-                counts["reviews_resolved"] += connection.execute(
-                    "UPDATE library_identification_reviews SET state = 'resolved', "
-                    "reason_code = 'SUBJECT_MISSING', updated_at = ?, decided_at = ?, "
-                    "row_revision = row_revision + 1 WHERE state = 'needs_review' "
-                    f"AND local_album_id IN ({placeholders}) "
-                    "AND NOT EXISTS (SELECT 1 FROM local_tracks track "
-                    "WHERE track.local_album_id = library_identification_reviews.local_album_id "
+                cancelled = connection.execute(
+                    "UPDATE library_identification_jobs SET state = 'cancelled', "
+                    "last_failure_code = 'SUBJECT_MISSING', "
+                    "attention_cause = 'SUBJECT_MISSING', terminal_at = ?, "
+                    "updated_at = ?, lease_owner = NULL, lease_expires_at = NULL, "
+                    "heartbeat_at = NULL, row_revision = row_revision + 1, "
+                    "event_revision = event_revision + 1 WHERE local_album_id IN ("
+                    f"{placeholders}) AND state IN ('queued','running','paused') AND "
+                    "NOT EXISTS (SELECT 1 FROM local_tracks track "
+                    "WHERE track.local_album_id = library_identification_jobs.local_album_id "
                     "AND track.availability = 'indexed')",
                     (now, now, *album_ids),
                 ).rowcount
+                removed = connection.execute(
+                    "DELETE FROM library_identification_reviews "
+                    "WHERE local_album_id IN ("
+                    f"{placeholders}) "
+                    "AND NOT EXISTS (SELECT 1 FROM local_tracks track "
+                    "WHERE track.local_album_id = library_identification_reviews.local_album_id "
+                    "AND track.availability = 'indexed')",
+                    album_ids,
+                ).rowcount
+                counts["reviews_resolved"] += removed
+                identification_changed |= bool(cancelled or removed)
                 stale_contributions = connection.execute(
                     "UPDATE library_contribution_drafts SET state = 'stale', "
                     "terminal_at = ?, updated_at = ?, seed_snapshot_json = NULL, "
@@ -15317,7 +15469,66 @@ class NativeLibraryStore(PersistenceBase):
                 for key in ("missing", "excluded", "restored", "reviews_resolved")
             ):
                 self._bump_catalog(connection)
+            if identification_changed:
+                self._bump_stream(connection, "identification")
             done = len(candidates) < limit
+            if done and allow_missing:
+                # Per-batch cleanup above only sees subjects whose availability
+                # changed in THIS bounded page, so a review whose track went
+                # missing during an earlier scan (or an earlier page of this
+                # scan) was never revisited and lingered forever in the review
+                # queue. Once the scope is fully reconciled, sweep every review
+                # in this root whose subject no longer has a usable file.
+                # 'needs_review' and 'failed' are the states that surface in the
+                # identification summary and demand a human decision. A subject
+                # that no longer has a file cannot be decided, so those must be
+                # cancelled too - restricting this to the runnable states left
+                # the counters advertising work that could never be completed.
+                sweep_cancelled = connection.execute(
+                    "UPDATE library_identification_jobs SET state = 'cancelled', "
+                    "last_failure_code = 'SUBJECT_MISSING', "
+                    "attention_cause = 'SUBJECT_MISSING', terminal_at = ?, "
+                    "updated_at = ?, lease_owner = NULL, lease_expires_at = NULL, "
+                    "heartbeat_at = NULL, row_revision = row_revision + 1, "
+                    "event_revision = event_revision + 1 "
+                    "WHERE state IN ('queued','running','paused','needs_review','failed') AND ("
+                    "local_track_id IN (SELECT id FROM local_tracks "
+                    "WHERE root_id = ? AND availability = 'missing') "
+                    # An album keeps its rows after every track row is gone, and
+                    # such an orphan belongs to no root at all - scoping it by
+                    # root would strand it permanently, so it is swept from any
+                    # scope once it has no track rows left.
+                    "OR (local_album_id IS NOT NULL AND NOT EXISTS ("
+                    "SELECT 1 FROM local_tracks active "
+                    "WHERE active.local_album_id = library_identification_jobs.local_album_id "
+                    "AND active.availability = 'indexed') AND (NOT EXISTS ("
+                    "SELECT 1 FROM local_tracks any_track "
+                    "WHERE any_track.local_album_id = library_identification_jobs.local_album_id"
+                    ") OR EXISTS (SELECT 1 FROM local_tracks scoped "
+                    "WHERE scoped.local_album_id = library_identification_jobs.local_album_id "
+                    "AND scoped.root_id = ?))))",
+                    (now, now, root_id, root_id),
+                ).rowcount
+                sweep_removed = connection.execute(
+                    "DELETE FROM library_identification_reviews WHERE "
+                    "local_track_id IN (SELECT id FROM local_tracks "
+                    "WHERE root_id = ? AND availability = 'missing') "
+                    "OR (local_album_id IS NOT NULL AND NOT EXISTS ("
+                    "SELECT 1 FROM local_tracks active "
+                    "WHERE active.local_album_id = library_identification_reviews.local_album_id "
+                    "AND active.availability = 'indexed') AND (NOT EXISTS ("
+                    "SELECT 1 FROM local_tracks any_track "
+                    "WHERE any_track.local_album_id = library_identification_reviews.local_album_id"
+                    ") OR EXISTS (SELECT 1 FROM local_tracks scoped "
+                    "WHERE scoped.local_album_id = library_identification_reviews.local_album_id "
+                    "AND scoped.root_id = ?)))",
+                    (root_id, root_id),
+                ).rowcount
+                if sweep_removed:
+                    counts["reviews_resolved"] += sweep_removed
+                    self._bump_catalog(connection)
+                if sweep_cancelled or sweep_removed:
+                    self._bump_stream(connection, "identification")
             cursor = (
                 str(candidates[-1]["relative_path"])
                 if candidates
@@ -34876,9 +35087,9 @@ class NativeLibraryStore(PersistenceBase):
 
         This is deliberately a catalog cleanup rather than a filesystem delete:
         the files remain on disk and can be discovered again if the root is
-        restored later. Tracks are marked missing so foreign-keyed history,
-        reviews, and identity evidence remain valid; the root migration
-        provenance is removed so it no longer appears as restorable.
+        restored later. Identification review rows for the removed subjects are
+        deleted because they can no longer be actionable; completed attempt
+        history is retained when other records still reference it.
         """
         cleaned = sorted({str(root_id) for root_id in root_ids if str(root_id)})
         if not cleaned:
@@ -34905,14 +35116,36 @@ class NativeLibraryStore(PersistenceBase):
                 f"WHERE root_id IN ({placeholders}) AND availability != 'missing'",
                 (now, *cleaned),
             ).rowcount
+            cancelled_jobs = connection.execute(
+                "UPDATE library_identification_jobs SET state='cancelled', "
+                "last_failure_code='SUBJECT_MISSING', attention_cause='SUBJECT_MISSING', "
+                "terminal_at=?, updated_at=?, lease_owner=NULL, lease_expires_at=NULL, "
+                "heartbeat_at=NULL, row_revision=row_revision+1, event_revision=event_revision+1 "
+                "WHERE state IN ('queued','running','paused') AND ("
+                f"local_track_id IN (SELECT id FROM local_tracks WHERE root_id IN ({placeholders})) "
+                "OR (local_album_id IS NOT NULL AND NOT EXISTS ("
+                "SELECT 1 FROM local_tracks active WHERE active.local_album_id = "
+                "library_identification_jobs.local_album_id AND active.availability='indexed')))"
+                , (now, now, *cleaned),
+            ).rowcount
+            removed_reviews = connection.execute(
+                "DELETE FROM library_identification_reviews WHERE "
+                f"local_track_id IN (SELECT id FROM local_tracks WHERE root_id IN ({placeholders})) "
+                "OR (local_album_id IS NOT NULL AND NOT EXISTS ("
+                "SELECT 1 FROM local_tracks active WHERE active.local_album_id = "
+                "library_identification_reviews.local_album_id AND active.availability='indexed'))",
+                tuple(cleaned),
+            ).rowcount
             provenance_deleted = connection.execute(
                 "DELETE FROM library_migration_provenance "
                 "WHERE source_kind='root' AND target_kind='library_root' "
                 f"AND target_id IN ({placeholders})",
                 tuple(cleaned),
             ).rowcount
-            if updated or provenance_deleted:
+            if updated or provenance_deleted or cancelled_jobs or removed_reviews:
                 self._bump_catalog(connection)
+            if cancelled_jobs or removed_reviews:
+                self._bump_stream(connection, "identification")
             return {
                 "cleaned_root_ids": cleaned,
                 "cleaned_track_count": int(updated),

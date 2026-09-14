@@ -351,6 +351,29 @@ class LocalFilesService:
         if not tracks:
             return LocalAlbumMatch(found=False, musicbrainz_id=musicbrainz_id)
 
+        # The catalog can briefly outlive a deleted file until reconciliation
+        # completes. Source resolution must require the physical file too, or a
+        # stale indexed row makes an imported playlist look locally available.
+        get_file_row = getattr(self._library_repo, "get_file_row_by_id", None)
+        if callable(get_file_row):
+            present = []
+            for track in tracks:
+                row = await get_file_row(track.id)
+                if not isinstance(row, dict):
+                    # An adapter without a usable row view cannot disprove
+                    # presence; keep the catalog row rather than silently
+                    # dropping a track that is genuinely on disk.
+                    present.append(track)
+                    continue
+                path = row.get("file_path")
+                if row.get("deleted_at") or not isinstance(path, str) or not path:
+                    continue
+                if await asyncio.to_thread(Path(path).is_file):
+                    present.append(track)
+            tracks = present
+            if not tracks:
+                return LocalAlbumMatch(found=False, musicbrainz_id=musicbrainz_id)
+
         result_tracks = [self._native_track_to_info(t) for t in tracks]
         total_size = sum(t.size_bytes for t in result_tracks)
         format_counts: dict[str, int] = {}
@@ -378,14 +401,63 @@ class LocalFilesService:
         album_title: str | None = None,
         track_number: int | None = None,
         disc_number: int | None = None,
+        recording_mbid: str | None = None,
     ) -> tuple[str, str] | None:
         """Return a local file by title and artist, ignoring album edition metadata."""
+        # The recording MBID is the same key the acquisition ownership gate uses
+        # to refuse a re-download ("already in the library").  Consulting it here
+        # first keeps both sides on one notion of ownership; without it a file
+        # whose tags drifted from the playlist entry stayed permanently missing
+        # while every request for it was rejected as already owned.
+        if recording_mbid:
+            recording_lookup = getattr(
+                self._library_repo, "get_library_files_for_recording", None
+            )
+            if callable(recording_lookup):
+                rows = await recording_lookup(recording_mbid)
+                for row in rows if isinstance(rows, list) else []:
+                    if not isinstance(row, dict):
+                        continue
+                    file_id = row.get("id")
+                    if not isinstance(file_id, str) or not file_id:
+                        continue
+                    row_title = row.get("title")
+                    return file_id, (
+                        row_title if isinstance(row_title, str) and row_title else title
+                    )
+        metadata_finder = getattr(self._library_repo, "find_track_by_metadata", None)
+        if callable(metadata_finder):
+            match = await metadata_finder(
+                title=title,
+                artist_name=artist_name,
+                album_title=album_title,
+                track_number=track_number,
+                disc_number=disc_number,
+            )
+            if isinstance(match, dict):
+                file_id = match.get("id")
+                if isinstance(file_id, str) and file_id:
+                    matched_title = match.get("track_title") or match.get("title")
+                    return file_id, (
+                        matched_title
+                        if isinstance(matched_title, str) and matched_title
+                        else title
+                    )
         finder = getattr(self._library_repo, "find_track_by_title_artist", None)
         if finder is None:
             return None
         match = await finder(title=title, artist_name=artist_name)
         if not match:
             return None
+        get_file_row = getattr(self._library_repo, "get_file_row_by_id", None)
+        if callable(get_file_row):
+            row = await get_file_row(str(match["id"]))
+            if isinstance(row, dict):
+                path = row.get("file_path")
+                if row.get("deleted_at") or not isinstance(path, str) or not path:
+                    return None
+                if not await asyncio.to_thread(Path(path).is_file):
+                    return None
         return str(match["id"]), str(match.get("track_title") or match.get("title") or title)
 
     async def get_download_track(self, file_id: str) -> tuple[Path, str, str]:

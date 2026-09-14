@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -149,7 +150,21 @@ def _playlist_track_record(row: dict[str, Any]) -> PlaylistTrackRecord:
         isinstance(item, str) for item in raw_sources
     ):
         available_sources = raw_sources
+    # Keep playlist rows after deletion so the imported entry can be requested
+    # again, but do not expose a missing local track as downloaded/owned.
     local_track_id = row.get("local_track_id")
+    local_track_path = row.get("local_track_path")
+    local_file_missing = (
+        "local_track_availability" in row
+        and (
+            row.get("local_track_availability") != "indexed"
+            or not local_track_path
+            or not Path(str(local_track_path)).is_file()
+        )
+    )
+    if local_file_missing:
+        local_track_id = None
+        available_sources = []
     return PlaylistTrackRecord(
         id=str(row["id"]),
         playlist_id=str(row["playlist_id"]),
@@ -159,7 +174,8 @@ def _playlist_track_record(row: dict[str, Any]) -> PlaylistTrackRecord:
         album_name=str(row["album_name"]),
         album_id=row.get("local_album_id") or row.get("album_id"),
         artist_id=row.get("local_artist_id") or row.get("artist_id"),
-        track_source_id=local_track_id or row.get("track_source_id"),
+        track_source_id=local_track_id
+        or (None if local_file_missing else row.get("track_source_id")),
         cover_url=row.get("cover_url"),
         source_type=str(row["source_type"]),
         available_sources=available_sources,
@@ -169,7 +185,12 @@ def _playlist_track_record(row: dict[str, Any]) -> PlaylistTrackRecord:
         duration=row.get("duration"),
         created_at=str(row["created_at"]),
         plex_rating_key=row.get("plex_rating_key"),
-        library_file_id=local_track_id or row.get("library_file_id"),
+        # ``library_file_id`` is its own column, so clearing ``local_track_id``
+        # alone still left a dangling link here. Callers treat a non-empty
+        # ``library_file_id`` as proof of ownership and refuse to re-request the
+        # track, so a deleted file must clear both.
+        library_file_id=local_track_id
+        or (None if local_file_missing else row.get("library_file_id")),
     )
 
 

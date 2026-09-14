@@ -6,6 +6,7 @@
 		deletePlaylist,
 		resolvePlaylistSources,
 		requestMissingTracks,
+		requestPlaylistTrack,
 		isRedactedPlaylist,
 		type PlaylistDetail,
 		type PlaylistDetailItem,
@@ -51,6 +52,7 @@
 	let deleting = $state(false);
 	let playlistOfflineIds = new SvelteSet<string>();
 	let offlineBusy = $state(false);
+	let sourceResolutionPending = $state(false);
 
 	let deleteModal = $state<ReturnType<typeof DeletePlaylistModal> | null>(null);
 	let trackList = $state<ReturnType<typeof PlaylistTrackList> | null>(null);
@@ -283,7 +285,15 @@
 		if (!playlist) return;
 		for (const track of playlist.tracks) {
 			const resolved = sources[track.id];
-			if (!resolved || resolved.length === 0) continue;
+			if (!resolved) continue;
+			if (
+				resolved.length === 0 &&
+				(track.source_type === 'local' || track.source_type === 'droppedneedle-local')
+			) {
+				track.library_file_id = null;
+				track.track_source_id = null;
+				track.source_type = '';
+			}
 			if (onlyMissing) {
 				// Live detailQuery values (clone) win: never let a stale cache entry
 				// overwrite a healed row that already has sources or a local link.
@@ -294,6 +304,14 @@
 			}
 			track.available_sources = resolved;
 		}
+	}
+
+	async function handleRequestTrack(track: PlaylistDetail['tracks'][number]) {
+		const result = await requestPlaylistTrack(playlist!.id, track.id);
+		toastStore.show({ message: result.message, type: 'success' });
+		// Refresh the server snapshot so a track that was already imported during
+		// the request disappears from the per-track action immediately.
+		await detailQuery.refetch();
 	}
 
 	function hasUsableSourcesForPlaylist(
@@ -324,13 +342,15 @@
 				const ids = new Set(playlist.tracks.map((t) => t.id));
 				if (hasUsableSourcesForPlaylist(sources, ids)) {
 					setSourcesCache(playlistId, sources);
-					await invalidateQueriesWithPersister({
-						queryKey: PlaylistQueryKeyFactory.detail(authStore.user?.id, playlistId)
-					});
+					// The resolver already applies the returned map to the local playlist
+					// and persists source/link updates. Refetching the detail here causes
+					// the detail effect to invoke resolve-sources again indefinitely.
 				}
 			}
 		} catch {
 			// non-critical - tracks keep their stored available_sources
+		} finally {
+			if (playlist?.id === playlistId) sourceResolutionPending = false;
 		}
 	}
 
@@ -343,11 +363,13 @@
 			trackList?.clearReorderState();
 			header?.cleanupPreview();
 			if (d && !isRedactedPlaylist(d)) {
+				sourceResolutionPending = true;
 				// Clone so optimistic child mutations never touch the query cache.
 				playlist = { ...d, tracks: d.tracks.map((t) => ({ ...t })) };
 				void resolveAndCacheSources(d.id);
 				void refreshPlaylistOfflineStatus();
 			} else {
+				sourceResolutionPending = false;
 				playlist = null;
 			}
 		});
@@ -552,7 +574,25 @@
 				</div>
 			</div>
 
-			{#if offlineEligibleTracks.length > 0}
+			{#if sourceResolutionPending}
+				<div
+					class="flex h-16 items-center gap-3 rounded-xl border border-base-300/40 bg-base-200/40 px-4"
+					aria-label="Loading playlist download options"
+					data-testid="playlist-download-skeleton"
+				>
+					<div class="skeleton h-4 w-4 shrink-0 rounded-full"></div>
+					<div class="skeleton h-4 min-w-48 flex-1 rounded"></div>
+					<div class="skeleton h-9 w-40 rounded-btn"></div>
+				</div>
+				<div
+					class="flex h-16 items-center gap-3 rounded-xl border border-base-300/40 bg-base-200/40 px-4"
+					aria-hidden="true"
+				>
+					<div class="skeleton h-4 w-4 shrink-0 rounded-full"></div>
+					<div class="skeleton h-4 w-36 flex-1 rounded"></div>
+					<div class="skeleton h-9 w-36 rounded-btn"></div>
+				</div>
+			{:else if offlineEligibleTracks.length > 0}
 				<div
 					class="flex flex-wrap items-center gap-3 rounded-xl border border-base-300/40 bg-base-200/40 px-4 py-3"
 				>
@@ -591,7 +631,7 @@
 				</div>
 			{/if}
 
-			{#if isOwner && missingTrackCount > 0}
+			{#if !sourceResolutionPending && isOwner && missingTrackCount > 0}
 				<div
 					class="flex items-center gap-3 rounded-xl border border-base-300/40 bg-base-200/40 px-4 py-3"
 				>
@@ -619,6 +659,7 @@
 				bind:this={trackList}
 				{playlist}
 				readonly={!isOwner}
+				onrequesttrack={isOwner ? handleRequestTrack : undefined}
 				playable={isLocalPlaylist}
 				ontrackchange={() => {}}
 				onsourcechange={handleSourceChange}

@@ -37,6 +37,7 @@
 		Loader2,
 		Music2,
 		Pencil,
+		Archive,
 		Search,
 		Trash2,
 		Users,
@@ -724,6 +725,18 @@
 			!track.musicbrainz_recording_id?.toLowerCase().startsWith('youtube:') &&
 			!track.musicbrainz_recording_id?.toLowerCase().startsWith('spotify:');
 		return [
+			...(authStore.isAdmin
+				? [{
+						label: 'Compress music',
+						icon: Archive,
+						onclick: () => undefined,
+						submenuLabel: `${(track.format || 'unknown').toUpperCase()} · ${formatFileSize(track.file_size_bytes)}`,
+						submenu: [
+							{ label: 'AAC 256 kbps', icon: Archive, onclick: () => void compressTrack(track, 'aac', 256) },
+							{ label: 'Opus 192 kbps', icon: Archive, onclick: () => void compressTrack(track, 'opus', 192) }
+						]
+					}]
+				: []),
 			...(!targetPlaylistId
 				? [
 						{
@@ -760,6 +773,27 @@
 				className: 'text-error'
 			}
 		];
+	}
+
+	function formatFileSize(bytes: number | null | undefined): string {
+		if (!bytes || bytes < 0) return 'size unknown';
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	}
+
+	async function compressTrack(track: NativeTrackListItem, outputFormat: 'aac' | 'opus', bitrateKbps: number) {
+		if (!authStore.isAdmin) return;
+		if (!confirm(`Compress "${track.title}" to ${outputFormat.toUpperCase()} ${bitrateKbps} kbps?`)) return;
+		try {
+			await api.global.post(API.library.compressTrack(localTrackId(track)), {
+				output_format: outputFormat,
+				bitrate_kbps: bitrateKbps
+			});
+			toastStore.show({ message: `Compressed "${track.title}" to ${outputFormat.toUpperCase()}`, type: 'success' });
+			await fetchTracks();
+		} catch (error) {
+			toastStore.show({ message: error instanceof Error ? error.message : "Couldn't compress this track", type: 'error' });
+		}
 	}
 
 	function isTrackPlaying(track: NativeTrackListItem): boolean {

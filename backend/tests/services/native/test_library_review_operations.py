@@ -678,11 +678,11 @@ async def test_reconcile_resolves_review_when_its_album_disappears(
             "SELECT availability FROM local_tracks WHERE id = 'track-1-1'"
         ).fetchone()
         review = connection.execute(
-            "SELECT state, reason_code FROM library_identification_reviews "
+            "SELECT id FROM library_identification_reviews "
             "WHERE id = 'review-1'"
         ).fetchone()
     assert track == ("missing",)
-    assert review == ("resolved", "SUBJECT_MISSING")
+    assert review is None
 
 
 @pytest.mark.asyncio
@@ -8714,3 +8714,287 @@ async def test_auto_accept_rg_filtered_to_empty_stays_exact_release_required(
     assert finding.reason_code == "EXACT_EDITION_NOT_ACCEPTED"
     assert _identity_row(db_path, "album-3")["release_mbid"] is None
     assert _undo_rows(db_path) == []
+
+
+@pytest.mark.asyncio
+async def test_reconcile_sweeps_reviews_left_by_an_earlier_scan(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    """A review whose track went missing during an EARLIER scan must still be
+    cleaned up.
+
+    The per-batch cleanup only inspects subjects whose availability changed in
+    the current bounded page, so such a review was never revisited again and
+    stayed in the queue forever.
+    """
+    await _seed_album(store, "1")
+    # Simulate the state left behind by a previous scan: the file is already
+    # recorded as missing, so this run's reconciliation will not transition it.
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE local_tracks SET availability = 'missing', missing_since = 1 "
+            "WHERE id = 'track-1-1'"
+        )
+
+    await store.request_scan_run(
+        ScanRequest(
+            kind="incremental",
+            trigger="manual",
+            policy_revision="policy-1",
+            scopes=[
+                ScanScope(
+                    root_id="root",
+                    relative_path=".",
+                    effective_policy="automatic",
+                    policy_revision="policy-1",
+                )
+            ],
+        ),
+        run_id="sweep-scan",
+        requested_at=2,
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_scan_run_scopes SET discovery_state = 'completed' "
+            "WHERE run_id = 'sweep-scan'"
+        )
+
+    result = await store.reconcile_scan_scope_batch(
+        "sweep-scan", "root", ".", now=3, limit=100
+    )
+
+    # Nothing transitioned this run, yet the stale review must be gone.
+    assert result["missing"] == 0
+    assert result["reviews_resolved"] == 1
+    with sqlite3.connect(db_path) as connection:
+        review = connection.execute(
+            "SELECT id FROM library_identification_reviews WHERE id = 'review-1'"
+        ).fetchone()
+    assert review is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_sweep_keeps_reviews_for_albums_that_still_have_files(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    """The sweep must not touch a review whose album still has an indexed file."""
+    await _seed_album(store, "1", two_tracks=True)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE local_tracks SET availability = 'missing', missing_since = 1 "
+            "WHERE id = 'track-1-1'"
+        )
+
+    await store.request_scan_run(
+        ScanRequest(
+            kind="incremental",
+            trigger="manual",
+            policy_revision="policy-1",
+            scopes=[
+                ScanScope(
+                    root_id="root",
+                    relative_path=".",
+                    effective_policy="automatic",
+                    policy_revision="policy-1",
+                )
+            ],
+        ),
+        run_id="sweep-keep-scan",
+        requested_at=2,
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_scan_run_scopes SET discovery_state = 'completed' "
+            "WHERE run_id = 'sweep-keep-scan'"
+        )
+        # The surviving file must be observed by this run, otherwise
+        # reconciliation marks it missing too and the album legitimately
+        # becomes empty.
+        connection.execute(
+            "INSERT INTO library_scan_inventory (run_id, root_id, relative_path, "
+            "scope_relative_path, discovery_generation, absolute_path, "
+            "file_size_bytes, file_mtime_ns, stat_revision, policy_revision, "
+            "effective_policy, comparison_result, local_track_id) VALUES "
+            "('sweep-keep-scan', 'root', '1/2.flac', '.', 1, '/music/1/2.flac', "
+            "100, 1, 'stat-1-2', 'policy-1', 'automatic', 'unchanged', 'track-1-2')"
+        )
+
+    await store.reconcile_scan_scope_batch(
+        "sweep-keep-scan", "root", ".", now=3, limit=100
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        review = connection.execute(
+            "SELECT id FROM library_identification_reviews WHERE id = 'review-1'"
+        ).fetchone()
+    assert review is not None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_sweep_is_skipped_when_missing_is_disallowed(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    """A probe run (allow_missing=False) must never delete review rows."""
+    await _seed_album(store, "1")
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE local_tracks SET availability = 'missing', missing_since = 1 "
+            "WHERE id = 'track-1-1'"
+        )
+
+    await store.request_scan_run(
+        ScanRequest(
+            kind="incremental",
+            trigger="manual",
+            policy_revision="policy-1",
+            scopes=[
+                ScanScope(
+                    root_id="root",
+                    relative_path=".",
+                    effective_policy="automatic",
+                    policy_revision="policy-1",
+                )
+            ],
+        ),
+        run_id="sweep-probe-scan",
+        requested_at=2,
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_scan_run_scopes SET discovery_state = 'completed' "
+            "WHERE run_id = 'sweep-probe-scan'"
+        )
+
+    await store.reconcile_scan_scope_batch(
+        "sweep-probe-scan", "root", ".", now=3, limit=100, allow_missing=False
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        review = connection.execute(
+            "SELECT id FROM library_identification_reviews WHERE id = 'review-1'"
+        ).fetchone()
+    assert review is not None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_sweep_cancels_jobs_awaiting_a_human_decision(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    """A 'needs_review' job for a vanished album must not stay in the counters.
+
+    These jobs are what the identification summary reports as "Needs decision".
+    They are not runnable states, so a sweep limited to queued/running/paused
+    left them advertising work no user could ever complete.
+    """
+    await _seed_album(store, "1")
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE local_tracks SET availability = 'missing', missing_since = 1 "
+            "WHERE id = 'track-1-1'"
+        )
+        connection.execute(
+            "INSERT INTO library_identification_jobs (id, local_album_id, kind, "
+            "state, priority, enqueue_sequence, input_revision, dedupe_key, "
+            "created_at, updated_at) VALUES ('job-nr', 'album-1', 'automatic', "
+            "'needs_review', 20, 1, 'input-1', 'dedupe-nr', 1, 1)"
+        )
+        connection.execute(
+            "INSERT INTO library_identification_jobs (id, local_album_id, kind, "
+            "state, priority, enqueue_sequence, input_revision, dedupe_key, "
+            "created_at, updated_at) VALUES ('job-failed', 'album-1', 'automatic', "
+            "'failed', 20, 2, 'input-1', 'dedupe-failed', 1, 1)"
+        )
+
+    await store.request_scan_run(
+        ScanRequest(
+            kind="incremental",
+            trigger="manual",
+            policy_revision="policy-1",
+            scopes=[
+                ScanScope(
+                    root_id="root",
+                    relative_path=".",
+                    effective_policy="automatic",
+                    policy_revision="policy-1",
+                )
+            ],
+        ),
+        run_id="sweep-decision-scan",
+        requested_at=2,
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_scan_run_scopes SET discovery_state = 'completed' "
+            "WHERE run_id = 'sweep-decision-scan'"
+        )
+
+    await store.reconcile_scan_scope_batch(
+        "sweep-decision-scan", "root", ".", now=3, limit=100
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        states = dict(
+            connection.execute(
+                "SELECT id, state FROM library_identification_jobs "
+                "WHERE id IN ('job-nr', 'job-failed')"
+            ).fetchall()
+        )
+    assert states == {"job-nr": "cancelled", "job-failed": "cancelled"}
+
+
+@pytest.mark.asyncio
+async def test_reconcile_sweep_reaches_albums_with_no_track_rows_left(
+    store: NativeLibraryStore, db_path: Path
+) -> None:
+    """An album whose track rows are all gone belongs to no root.
+
+    Scoping the sweep by root_id alone would never match such an orphan, so it
+    would keep its review and job rows forever.
+    """
+    await _seed_album(store, "1")
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO library_identification_jobs (id, local_album_id, kind, "
+            "state, priority, enqueue_sequence, input_revision, dedupe_key, "
+            "created_at, updated_at) VALUES ('job-orphan', 'album-1', 'automatic', "
+            "'needs_review', 20, 1, 'input-1', 'dedupe-orphan', 1, 1)"
+        )
+        # Drop every track row, leaving the album (and its review) orphaned.
+        connection.execute("DELETE FROM local_tracks WHERE local_album_id = 'album-1'")
+
+    await store.request_scan_run(
+        ScanRequest(
+            kind="incremental",
+            trigger="manual",
+            policy_revision="policy-1",
+            scopes=[
+                ScanScope(
+                    root_id="root",
+                    relative_path=".",
+                    effective_policy="automatic",
+                    policy_revision="policy-1",
+                )
+            ],
+        ),
+        run_id="sweep-orphan-scan",
+        requested_at=2,
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE library_scan_run_scopes SET discovery_state = 'completed' "
+            "WHERE run_id = 'sweep-orphan-scan'"
+        )
+
+    await store.reconcile_scan_scope_batch(
+        "sweep-orphan-scan", "root", ".", now=3, limit=100
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        review = connection.execute(
+            "SELECT id FROM library_identification_reviews WHERE id = 'review-1'"
+        ).fetchone()
+        job_state = connection.execute(
+            "SELECT state FROM library_identification_jobs WHERE id = 'job-orphan'"
+        ).fetchone()
+    assert review is None
+    assert job_state == ("cancelled",)

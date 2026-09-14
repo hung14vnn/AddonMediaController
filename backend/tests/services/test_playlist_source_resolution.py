@@ -173,6 +173,7 @@ class TestResolveTrackSourcesDiscovery:
             album_title="Sheet Music",
             track_number=None,
             disc_number=None,
+            recording_mbid=None,
         )
         repo.batch_link_library_files.assert_called_once_with("p-1", {"t-1": "local-file-1"})
 

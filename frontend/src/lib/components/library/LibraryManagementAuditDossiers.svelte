@@ -143,10 +143,14 @@
 	}
 	function focusSelectedTrack(event: KeyboardEvent): void {
 		if (event.key !== 'Escape' || !selectedEntry) return;
+		const inspectorElement = document.getElementById('management-inspector');
+		if (!inspectorElement?.contains(event.target as Node)) return;
 		event.stopPropagation();
 		document.getElementById(`management-track-${selectedEntry.ordinal}`)?.focus();
 	}
 </script>
+
+<svelte:window onkeydown={focusSelectedTrack} />
 
 <div class="management-audit-toolbar" aria-label="Audit display controls">
 	<div class="flex flex-wrap items-center gap-1">
@@ -354,11 +358,9 @@
 										id="management-inspector"
 										class="management-audit-inline-inspector"
 										role="region"
-										tabindex="0"
 										aria-label={`${detailLabel}: ${entry.title}`}
 										aria-live="polite"
 										data-testid="management-audit-inspector"
-										onkeydown={focusSelectedTrack}
 									>
 										{@render inspector(entry.ordinal)}
 									</div>
@@ -374,11 +376,9 @@
 			<aside
 				id="management-inspector"
 				class="management-audit-inspector"
-				tabindex="0"
 				aria-label={`${detailLabel}: ${selectedEntry.title}`}
 				aria-live="polite"
 				data-testid="management-audit-inspector"
-				onkeydown={focusSelectedTrack}
 			>
 				{@render inspector(selectedEntry.ordinal)}
 			</aside>

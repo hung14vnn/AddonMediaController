@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 import time
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import msgspec
 
@@ -52,6 +53,76 @@ class TargetCatalogWriterService:
         except (OSError, ValueError) as error:
             raise ValidationError("Could not read the audio file.") from error
         return tag
+
+    async def compress_track(
+        self,
+        track_id: str,
+        *,
+        output_format: str,
+        bitrate_kbps: int,
+    ) -> dict[str, int | str]:
+        """Transcode one indexed library file and update its catalog row."""
+        output_format = output_format.strip().casefold()
+        if output_format not in {"aac", "opus"}:
+            raise ValidationError("Output format must be aac or opus.")
+        if bitrate_kbps < 64 or bitrate_kbps > 320:
+            raise ValidationError("Bitrate must be between 64 and 320 kbps.")
+
+        row = await self._store.get_target_track(track_id, indexed_only=True)
+        if row is None:
+            raise ResourceNotFoundError("Library track not found.")
+        source = await self._validated_path(track_id)
+        if not source.is_file():
+            raise ResourceNotFoundError("The audio file is not available.")
+        output_suffix = ".m4a" if output_format == "aac" else ".opus"
+        destination = source.with_suffix(output_suffix)
+        if destination != source and destination.exists():
+            raise ValidationError("A compressed file already exists beside this track.")
+        temp = source.with_name(f".{source.stem}.compressing.{output_format}")
+        codec = "aac" if output_format == "aac" else "libopus"
+        container = "ipod" if output_format == "aac" else "ogg"
+        command = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-i", str(source), "-map", "0:a:0", "-map_metadata", "0", "-vn",
+            "-c:a", codec, "-b:a", f"{bitrate_kbps}k", "-f", container, str(temp),
+        ]
+        if shutil.which("ffmpeg") is None:
+            raise ValidationError("ffmpeg is not installed on the server.")
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
+            )
+            _, _stderr = await process.communicate()
+            if process.returncode != 0:
+                raise ExternalServiceError("Could not compress the audio file.")
+            os.replace(temp, destination)
+            _tag, info = await asyncio.to_thread(self._tagger.read_tags, destination)
+            stat = await asyncio.to_thread(destination.stat)
+            relative_path = PurePosixPath(str(row["relative_path"])).with_suffix(
+                destination.suffix
+            ).as_posix()
+            await self._store.update_target_track_audio_facts(
+                track_id,
+                file_path=str(destination), relative_path=relative_path,
+                file_size_bytes=stat.st_size, file_mtime_ns=stat.st_mtime_ns,
+                stat_revision=f"{stat.st_mtime_ns}:{stat.st_size}",
+                file_format=info.file_format or output_format, bit_rate=info.bitrate,
+                sample_rate=info.sample_rate, bit_depth=info.bit_depth,
+                channels=info.channels, duration_seconds=info.duration_seconds,
+            )
+            if destination != source:
+                await asyncio.to_thread(source.unlink)
+            return {"id": track_id, "output_format": output_format,
+                    "bitrate_kbps": bitrate_kbps, "file_size_bytes": stat.st_size}
+        except FileNotFoundError as error:
+            raise ValidationError("ffmpeg is not installed on the server.") from error
+        except OSError as error:
+            raise ExternalServiceError("Could not replace the audio file.") from error
+        finally:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     async def update_track_metadata(
         self,

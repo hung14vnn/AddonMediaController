@@ -5067,3 +5067,168 @@ async def test_locked_rescan_with_failed_tag_read_keeps_displays_and_provenance(
         assert refreshed["title_provenance"] == "parsed"
         assert refreshed["album_title_provenance"] == "parsed"
         assert refreshed["album_artist_provenance"] == "parsed"
+
+
+def _metadata_membership(
+    suffix: str,
+    *,
+    title: str,
+    album_title: str,
+    artist_name: str,
+    track_number: int = 1,
+    disc_number: int = 1,
+    availability: str = "indexed",
+) -> CatalogMembership:
+    artist = _artist(f"artist-{suffix}", artist_name)
+    album = LocalAlbum(
+        id=f"album-{suffix}",
+        root_id="root-1",
+        grouping_key=f"group-{suffix}",
+        title=album_title,
+        album_artist_id=artist.id,
+        album_artist_name=artist.display_name,
+        created_at=1,
+        updated_at=1,
+    )
+    track = LocalTrack(
+        id=f"track-{suffix}",
+        local_album_id=album.id,
+        root_id="root-1",
+        file_path=f"/music/{suffix}.flac",
+        relative_path=f"{suffix}.flac",
+        path_hash=f"hash-{suffix}",
+        file_size_bytes=100,
+        file_mtime_ns=200,
+        stat_revision=f"stat-{suffix}",
+        title=title,
+        artist_name=artist.display_name,
+        album_title=album_title,
+        album_artist_name=artist.display_name,
+        track_number=track_number,
+        disc_number=disc_number,
+        availability=availability,
+        file_format="flac",
+        imported_at=1,
+    )
+    return CatalogMembership(
+        album=album,
+        artists=[artist],
+        tracks=[track],
+        track_credits={track.id: [LocalArtistCredit(local_artist_id=artist.id, position=0)]},
+    )
+
+
+@pytest.mark.asyncio
+async def test_find_target_track_by_metadata_tolerates_edition_and_position_drift(
+    store: NativeLibraryStore,
+) -> None:
+    """A downloaded file rarely matches the imported playlist entry exactly.
+
+    The acquisition gate already refuses to re-download it, so the resolver must
+    be able to find it despite a deluxe-edition album title and a shifted track
+    number; otherwise the entry is stuck as missing forever.
+    """
+    await store.create_catalog_membership(
+        _metadata_membership(
+            "drift",
+            title="Wall Street Shuffle",
+            album_title="Sheet Music (Deluxe Edition)",
+            artist_name="10cc",
+            track_number=7,
+        )
+    )
+
+    match = await store.find_target_track_by_metadata(
+        title="Wall Street Shuffle",
+        artist_name="10cc",
+        album_title="Sheet Music",
+        track_number=2,
+        disc_number=1,
+    )
+
+    assert match is not None
+    assert match["id"] == "track-drift"
+
+
+@pytest.mark.asyncio
+async def test_find_target_track_by_metadata_prefers_exact_album_over_drifted(
+    store: NativeLibraryStore,
+) -> None:
+    await store.create_catalog_membership(
+        _metadata_membership(
+            "other",
+            title="Shared Title",
+            album_title="Some Compilation",
+            artist_name="Other Artist",
+            track_number=9,
+        )
+    )
+    await store.create_catalog_membership(
+        _metadata_membership(
+            "exact",
+            title="Shared Title",
+            album_title="Real Album",
+            artist_name="Real Artist",
+            track_number=3,
+        )
+    )
+
+    match = await store.find_target_track_by_metadata(
+        title="Shared Title",
+        artist_name="Real Artist",
+        album_title="Real Album",
+        track_number=3,
+        disc_number=1,
+    )
+
+    assert match is not None
+    assert match["id"] == "track-exact"
+
+
+@pytest.mark.asyncio
+async def test_find_target_track_by_metadata_rejects_title_only_match(
+    store: NativeLibraryStore,
+) -> None:
+    """Title alone is too weak: common titles recur across unrelated releases."""
+    await store.create_catalog_membership(
+        _metadata_membership(
+            "weak",
+            title="Intro",
+            album_title="Unrelated Album",
+            artist_name="Unrelated Artist",
+            track_number=1,
+        )
+    )
+
+    match = await store.find_target_track_by_metadata(
+        title="Intro",
+        artist_name="Someone Else",
+        album_title="A Different Album",
+        track_number=5,
+        disc_number=2,
+    )
+
+    assert match is None
+
+
+@pytest.mark.asyncio
+async def test_find_target_track_by_metadata_ignores_missing_files(
+    store: NativeLibraryStore,
+) -> None:
+    await store.create_catalog_membership(
+        _metadata_membership(
+            "gone",
+            title="Deleted Song",
+            album_title="Some Album",
+            artist_name="Some Artist",
+            availability="missing",
+        )
+    )
+
+    match = await store.find_target_track_by_metadata(
+        title="Deleted Song",
+        artist_name="Some Artist",
+        album_title="Some Album",
+    )
+
+    assert match is None

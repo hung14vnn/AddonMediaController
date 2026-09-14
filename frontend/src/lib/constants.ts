@@ -310,6 +310,8 @@ export const API = {
 			return `/api/v1/library/albums/${encodeURIComponent(albumId)}/reidentification/releases?${query.toString()}`;
 		},
 		trackTags: (fileId: string) => `/api/v1/library/tracks/${fileId}/tags`,
+		compressTrack: (trackId: string) =>
+			`/api/v1/library/tracks/${encodeURIComponent(trackId)}/compress`,
 		updateTrackMetadata: (trackId: string) =>
 			`/api/v1/library/tracks/${encodeURIComponent(trackId)}/metadata`,
 		removeTrack: (fileId: string) => `/api/v1/library/tracks/${fileId}`,
@@ -759,7 +761,9 @@ export const API = {
 		checkTracks: () => '/api/v1/playlists/check-tracks',
 		resolveSources: (id: string) => `/api/v1/playlists/${id}/resolve-sources`,
 		share: (id: string) => `/api/v1/playlists/${id}/share`,
-		requestMissing: (id: string) => `/api/v1/playlists/${id}/request-missing`
+		requestMissing: (id: string) => `/api/v1/playlists/${id}/request-missing`,
+		requestTrack: (id: string, trackId: string) =>
+			`/api/v1/playlists/${id}/tracks/${trackId}/request`
 	},
 	stream: {
 		jellyfin: (itemId: string) => `/api/v1/stream/jellyfin/${itemId}`,

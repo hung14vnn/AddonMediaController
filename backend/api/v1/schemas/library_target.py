@@ -111,6 +111,18 @@ class TrackMetadataUpdateRequest(AppStruct):
     cover_url: str | None = None
 
 
+class TrackCompressionRequest(AppStruct):
+    output_format: str = "opus"
+    bitrate_kbps: int = 192
+
+
+class TrackCompressionResponse(AppStruct):
+    id: str
+    output_format: str
+    bitrate_kbps: int
+    file_size_bytes: int
+
+
 class ReleaseEditionResult(AppStruct):
     release_mbid: str
     release_group_mbid: str

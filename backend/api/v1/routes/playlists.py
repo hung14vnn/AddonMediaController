@@ -518,11 +518,30 @@ async def request_missing_tracks(
     playlist_id: str,
     service: PlaylistServiceDep,
     current_user: CurrentUserDep,
+    navidrome_folder_ids: UserNavidromeFolderIdsDep,
+    jf_service: JellyfinLibraryServiceDep,
+    local_service: LocalFilesServiceDep,
+    nd_service: NavidromeLibraryServiceDep,
+    plex_service: PlexLibraryServiceDep,
+    target_local_service=Depends(get_target_local_files_service),
     acquisition=Depends(get_acquisition_dispatcher),
     quota=Depends(get_quota_service),
     musicbrainz=Depends(get_musicbrainz_repository),
     spotify=Depends(get_spotify_import_service),
 ) -> BatchRequestResponse:
+    # The detail page resolves sources asynchronously.  Re-resolve immediately
+    # before constructing the batch so a click cannot queue against stale
+    # playlist links left behind by a deleted local file or a stale page cache.
+    await service.resolve_track_sources(
+        playlist_id,
+        requesting=current_user,
+        jf_service=jf_service,
+        local_service=local_service,
+        additional_local_service=target_local_service,
+        nd_service=nd_service,
+        plex_service=plex_service,
+        navidrome_folder_ids=navidrome_folder_ids,
+    )
     result = await service.get_playlist_with_tracks(playlist_id, current_user)
     if isinstance(result, RedactedDetailView):
         raise HTTPException(status_code=403, detail="Access denied")
@@ -590,6 +609,82 @@ async def request_missing_tracks(
             "are being queued"
         ),
         requested=len(candidates),
+    )
+
+
+@router.post(
+    "/{playlist_id}/tracks/{track_id}/request",
+    response_model=BatchRequestResponse,
+    status_code=202,
+)
+async def request_playlist_track(
+    playlist_id: str,
+    track_id: str,
+    service: PlaylistServiceDep,
+    current_user: CurrentUserDep,
+    navidrome_folder_ids: UserNavidromeFolderIdsDep,
+    jf_service: JellyfinLibraryServiceDep,
+    local_service: LocalFilesServiceDep,
+    nd_service: NavidromeLibraryServiceDep,
+    plex_service: PlexLibraryServiceDep,
+    target_local_service=Depends(get_target_local_files_service),
+    acquisition=Depends(get_acquisition_dispatcher),
+    quota=Depends(get_quota_service),
+    musicbrainz=Depends(get_musicbrainz_repository),
+    spotify=Depends(get_spotify_import_service),
+) -> BatchRequestResponse:
+    """Request exactly one unresolved playlist entry."""
+    await service.resolve_track_sources(
+        playlist_id,
+        requesting=current_user,
+        jf_service=jf_service,
+        local_service=local_service,
+        additional_local_service=target_local_service,
+        nd_service=nd_service,
+        plex_service=plex_service,
+        navidrome_folder_ids=navidrome_folder_ids,
+    )
+    result = await service.get_playlist_with_tracks(playlist_id, current_user)
+    if isinstance(result, RedactedDetailView):
+        raise HTTPException(status_code=403, detail="Access denied")
+    track = next((item for item in result.tracks if item.id == track_id), None)
+    if track is None:
+        raise HTTPException(status_code=404, detail="Playlist track not found")
+    if track.library_file_id or track.available_sources:
+        return BatchRequestResponse(
+            success=True,
+            message="Track is already available in your library",
+            requested=0,
+        )
+
+    await quota.check_request_quota(current_user.id, current_user.role, 1)
+    source_ref = result.record.source_ref or ""
+    spotify_playlist_id = (
+        source_ref.removeprefix("spotify:") if source_ref.startswith("spotify:") else None
+    )
+    task_name = f"playlist-track-request:{current_user.id}:{playlist_id}:{track_id}"
+    task = asyncio.create_task(
+        _queue_playlist_tracks(
+            [(track, track.album_id or "")],
+            current_user.id,
+            acquisition,
+            musicbrainz,
+            spotify,
+            spotify_playlist_id,
+        )
+    )
+    try:
+        TaskRegistry.get_instance().register(task_name, task)
+    except RuntimeError:
+        task.cancel()
+        raise HTTPException(
+            status_code=409,
+            detail="This track is already being queued",
+        )
+    return BatchRequestResponse(
+        success=True,
+        message="1 track is being queued",
+        requested=1,
     )
 
 

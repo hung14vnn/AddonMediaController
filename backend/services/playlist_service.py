@@ -724,6 +724,11 @@ class PlaylistService:
                         album_title=track.album_name,
                         track_number=track.track_number,
                         disc_number=track.disc_number,
+                        recording_mbid=(
+                            track.track_source_id
+                            if track.source_type in {"local", "droppedneedle-local"}
+                            else None
+                        ),
                     )
                     if (
                         isinstance(match, tuple)
@@ -747,7 +752,9 @@ class PlaylistService:
         ) in zip(grouped, resolved_maps):
             for t in album_tracks:
                 sources = set()
-                if t.source_type and not (
+                # Never trust a persisted local source by itself: the local
+                # resolver below must revalidate the catalog row and file path.
+                if t.source_type and t.source_type not in {"local", "droppedneedle-local"} and not (
                     t.source_type == "navidrome" and navidrome_folder_ids is not None
                 ):
                     sources.add(t.source_type)
@@ -781,7 +788,7 @@ class PlaylistService:
 
         for t in no_album_tracks:
             sources = set()
-            if t.source_type and not (
+            if t.source_type and t.source_type not in {"local", "droppedneedle-local"} and not (
                 t.source_type == "navidrome" and navidrome_folder_ids is not None
             ):
                 sources.add(t.source_type)
@@ -795,15 +802,33 @@ class PlaylistService:
         persist_updates: dict[str, list[str]] = {}
         for t in tracks:
             resolved = result.get(t.id)
-            if not resolved:
-                continue
             existing = set(t.available_sources) if t.available_sources else set()
-            if set(resolved) >= existing and set(resolved) != existing:
-                persist_updates[t.id] = resolved
+            # Persist empty results too: this clears stale "local" values after
+            # a file was deleted. Previously empty results were skipped forever,
+            # so the playlist kept reporting deleted tracks as available.
+            if set(resolved or []) != existing:
+                persist_updates[t.id] = resolved or []
         if persist_updates and navidrome_folder_ids is None:
             await self._repo.batch_update_available_sources(
                 playlist_id, persist_updates
             )
+        # A local link is no longer usable when resolution returns no local
+        # source. Clear the playlist reference as well; otherwise the offline
+        # UI still counts the stale library_file_id in its denominator.
+        for track in tracks:
+            # Any entry still carrying a local link that resolution could not
+            # confirm must be cleared, whatever its recorded source_type: the
+            # request endpoints treat a surviving library_file_id as proof the
+            # track is owned and refuse to re-download it.
+            if track.library_file_id and not (result.get(track.id) or []):
+                await self._repo.update_track_source(
+                    playlist_id,
+                    track.id,
+                    source_type="",
+                    available_sources=[],
+                    track_source_id=None,
+                    library_file_id=None,
+                )
         if file_links:
             await self._repo.batch_link_library_files(playlist_id, file_links)
             # A resolver-discovered local file is immediately usable. When an
@@ -855,7 +880,13 @@ class PlaylistService:
             f"{SOURCE_RESOLUTION_PREFIX}:user:{user_id}:"
             f"scope:{scope_segment}:{album_id}"
         )
-        if self._cache:
+        # Local catalogue rows can disappear between rescans (and a filesystem
+        # deletion is visible immediately).  Do not let the one-hour album cache
+        # claim that an old local file is still available.  The cached maps remain
+        # useful for requests that have no local resolver (for example a purely
+        # remote source switch), but a normal playlist availability check must
+        # refresh the local map from the catalogue.
+        if self._cache and local_service is None:
             cached = await self._cache.get(cache_key)
             if cached is not None:
                 if len(cached) == 2:

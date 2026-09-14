@@ -66,6 +66,9 @@ class TargetLibraryRepository:
     async def find_track_by_title_artist(self, **metadata: object) -> dict[str, Any] | None:
         return await self._store.find_target_track_by_title_artist(**metadata)
 
+    async def find_track_by_metadata(self, **metadata: object) -> dict[str, Any] | None:
+        return await self._store.find_target_track_by_metadata(**metadata)
+
     async def get_library_file_by_id(self, file_id: str) -> dict[str, Any] | None:
         return await self.get_file_row_by_id(file_id)
 

@@ -25,6 +25,8 @@
 		onclick: () => void;
 		disabled?: boolean;
 		className?: string;
+		submenu?: MenuItem[];
+		submenuLabel?: string;
 	}
 
 	interface Props {
@@ -71,6 +73,7 @@
 
 	function handleItemClick(item: MenuItem) {
 		if (item.disabled) return;
+		if (item.submenu?.length) return;
 		if (detailsEl) detailsEl.open = false;
 		item.onclick();
 	}
@@ -143,7 +146,7 @@
 		}}
 	>
 		{#each items as item, i (`item-${i}`)}
-			<li>
+			<li class:relative={!!item.submenu?.length} class:group={!!item.submenu?.length}>
 				<button
 					role="menuitem"
 					class="{item.disabled ? 'opacity-50 cursor-not-allowed' : ''} {item.className ?? ''}"
@@ -156,7 +159,35 @@
 				>
 					<item.icon class="h-4 w-4" />
 					{item.label}
+					{#if item.submenu?.length}<span class="ml-auto text-xs">›</span>{/if}
 				</button>
+				{#if item.submenu?.length}
+					<ul class="menu absolute left-full top-0 z-10 ml-1 hidden w-52 rounded-box bg-base-200/95 p-2 shadow-lg backdrop-blur-md group-hover:block group-focus-within:block">
+						{#if item.submenuLabel}
+							<li class="menu-title px-3 py-1 text-[11px] uppercase tracking-wide text-base-content/50">
+								{item.submenuLabel}
+							</li>
+						{/if}
+						{#each item.submenu as child, j (`submenu-${i}-${j}`)}
+							<li>
+								<button
+									role="menuitem"
+									class="{child.disabled ? 'opacity-50 cursor-not-allowed' : ''} {child.className ?? ''}"
+									disabled={child.disabled}
+									onclick={(e: MouseEvent) => {
+										e.stopPropagation();
+										if (!child.disabled) {
+											if (detailsEl) detailsEl.open = false;
+											child.onclick();
+										}
+									}}
+								>
+									<child.icon class="h-4 w-4" />{child.label}
+								</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
 			</li>
 		{/each}
 	</ul>

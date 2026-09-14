@@ -27,6 +27,8 @@ from api.v1.schemas.library_target import (
     ManagementReenableRequest,
     ManagementReenableResponse,
     TrackMetadataUpdateRequest,
+    TrackCompressionRequest,
+    TrackCompressionResponse,
 )
 from api.v1.schemas.edition_conversion import (
     EditionConversionCancelRequest,
@@ -843,6 +845,25 @@ async def get_target_track_tags(
     writer: TargetCatalogWriterServiceDep,
 ) -> AudioTag:
     return await writer.read_tags(track_id)
+
+
+@router.post("/tracks/{track_id}/compress", response_model=TrackCompressionResponse)
+async def compress_target_track(
+    track_id: str,
+    admin: CurrentAdminDep,
+    writer: TargetCatalogWriterServiceDep,
+    body: TrackCompressionRequest = MsgSpecBody(TrackCompressionRequest),
+) -> TrackCompressionResponse:
+    result = await writer.compress_track(
+        track_id,
+        output_format=body.output_format,
+        bitrate_kbps=body.bitrate_kbps,
+    )
+    return TrackCompressionResponse(
+        id=str(result["id"]), output_format=str(result["output_format"]),
+        bitrate_kbps=int(result["bitrate_kbps"]),
+        file_size_bytes=int(result["file_size_bytes"]),
+    )
 
 
 @router.post("/tracks/{track_id}/metadata", response_model=TargetCatalogRemovalResponse)

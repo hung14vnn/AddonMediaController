@@ -11,6 +11,7 @@
 	import { sleepTimerStore } from '$lib/stores/sleepTimer.svelte';
 	import { slide } from 'svelte/transition';
 	import { formatArtistCredit } from '$lib/utils/formatting';
+	import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 	import type { CrateTrack, LocalAlbumSummary } from '$lib/types';
 	import {
 		Play,
@@ -53,6 +54,7 @@
 	const supportsLyrics = $derived(
 		Boolean(np?.trackName?.trim() && formatArtistCredit(np?.artistName).trim())
 	);
+	const useDefaultLyrics = usesMobileLowPowerVisuals();
 	const karaokeBusy = $derived(
 		karaokeController.status === 'preparing' ||
 			karaokeController.status === 'queued' ||
@@ -366,7 +368,10 @@
 				<button
 					class="btn btn-circle btn-ghost"
 					class:text-accent={lyricsOpen}
-					onclick={() => (lyricsOpen = !lyricsOpen)}
+					onclick={() => {
+						if (useDefaultLyrics) openFullscreenLyrics();
+						else lyricsOpen = !lyricsOpen;
+					}}
 					disabled={!supportsLyrics}
 					aria-label="Toggle lyrics"
 					aria-pressed={lyricsOpen}

@@ -20,13 +20,14 @@
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import SourcePickerDropdown from '$lib/components/SourcePickerDropdown.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
-	import { Music, Trash2, ListPlus, ListStart, GripVertical, Play, Search, X } from 'lucide-svelte';
+	import { Music, Trash2, ListPlus, ListStart, GripVertical, Play, Search, X, Download, Loader2 } from 'lucide-svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 
 	interface Props {
 		playlist: PlaylistDetail;
 		ontrackchange: () => void;
 		onsourcechange?: () => void;
+		onrequesttrack?: (track: PlaylistTrack) => Promise<void>;
 		onplaytrack?: (index: number) => void;
 		readonly?: boolean;
 		playable?: boolean;
@@ -36,6 +37,7 @@
 		playlist,
 		ontrackchange,
 		onsourcechange,
+		onrequesttrack,
 		onplaytrack,
 		readonly = false,
 		playable = true
@@ -45,6 +47,7 @@
 	let dragOverIndex = $state<number | null>(null);
 	let removingTrackIds = $state<Set<string>>(new Set());
 	let liveMessage = $state('');
+	let requestingTrackIds = new SvelteSet<string>();
 
 	let reorderTimeout: ReturnType<typeof setTimeout> | null = null;
 	let pendingReorderTrackId: string | null = null;
@@ -211,6 +214,20 @@
 			return;
 		}
 		playerStore.playNext(item);
+	}
+
+	function trackHasSource(track: PlaylistTrack): boolean {
+		return Boolean(track.library_file_id || (track.available_sources && track.available_sources.length > 0));
+	}
+
+	async function requestTrack(track: PlaylistTrack) {
+		if (!onrequesttrack || trackHasSource(track) || requestingTrackIds.has(track.id)) return;
+		requestingTrackIds.add(track.id);
+		try {
+			await onrequesttrack(track);
+		} finally {
+			requestingTrackIds.delete(track.id);
+		}
 	}
 
 	async function handleSourceChange(track: PlaylistTrack, newSourceType: string) {
@@ -605,6 +622,26 @@
 								availableSources={track.available_sources ?? [track.source_type]}
 								onchange={(src) => void handleSourceChange(track, src)}
 							/>
+						{/if}
+
+						{#if !readonly && onrequesttrack && !trackHasSource(track)}
+							<button
+								type="button"
+								class="btn btn-ghost btn-xs gap-1 shrink-0"
+								disabled={requestingTrackIds.has(track.id)}
+								onclick={(e) => {
+									e.stopPropagation();
+									void requestTrack(track);
+								}}
+								aria-label="Request {track.track_name}"
+								title="Request download"
+							>
+								{#if requestingTrackIds.has(track.id)}
+									<Loader2 class="h-3.5 w-3.5 animate-spin" />
+								{:else}
+									<Download class="h-3.5 w-3.5" />
+								{/if}
+							</button>
 						{/if}
 
 						{#if playable || !readonly}

@@ -17,6 +17,7 @@
 	import type { LyricLine } from '$lib/types';
 	import { activeLyricWordIndex, parseWordTimedLyricLine } from '$lib/utils/lyrics';
 	import WordSyncedLyrics from '$lib/components/WordSyncedLyrics.svelte';
+	import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 
 	interface Props {
 		open: boolean;
@@ -104,14 +105,15 @@
 	let wordSyncedAvailable = $state<boolean | null>(null);
 	let previousTrackKey: string | null = null;
 	const pageScrollLockClass = 'lyrics-page-scroll-lock';
+	const useDefaultLyrics = usesMobileLowPowerVisuals();
 
-	const showWordSynced = $derived(wordSyncedAvailable !== false);
+	const showWordSynced = $derived(!useDefaultLyrics && wordSyncedAvailable !== false);
 	const progressDuration = $derived(Math.max(duration, currentTime, 0));
 
 	$effect(() => {
 		if (trackKey === previousTrackKey) return;
 		previousTrackKey = trackKey;
-		wordSyncedAvailable = preferWordSynced ? null : false;
+		wordSyncedAvailable = preferWordSynced && !useDefaultLyrics ? null : false;
 	});
 
 	$effect(() => {
