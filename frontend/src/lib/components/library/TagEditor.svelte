@@ -408,8 +408,7 @@
 		{#if field.cardinality === 'ordered_strings'}
 			<textarea
 				class="textarea textarea-bordered min-h-20 sm:col-span-2"
-				bind:value={drafts[field.field_name]}
-			></textarea>
+				bind:value={drafts[field.field_name]}></textarea>
 		{:else if field.cardinality === 'boolean'}
 			<select
 				class="select select-bordered select-sm sm:col-span-2"
@@ -429,3 +428,134 @@
 		{/if}
 	</label>
 {/snippet}
+
+<style>
+	.management-tag-editor {
+		width: min(100%, 64rem);
+		max-height: min(92vh, 56rem);
+		overflow: hidden;
+	}
+
+	.management-profile-editor__header,
+	.management-profile-editor__footer {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 1.25rem 1.5rem;
+	}
+
+	.management-profile-editor__header {
+		border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+	}
+
+	.management-profile-editor__footer {
+		align-items: center;
+		border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+	}
+
+	.management-tag-modes {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 0.75rem;
+	}
+
+	.management-tag-modes > button {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.625rem;
+		min-width: 0;
+		padding: 0.875rem;
+		border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+		border-radius: 0.75rem;
+		text-align: left;
+		transition:
+			border-color 120ms ease,
+			background-color 120ms ease;
+	}
+
+	.management-tag-modes > button:hover,
+	.management-tag-modes > button.active {
+		border-color: color-mix(in srgb, hsl(var(--p)) 65%, transparent);
+		background: color-mix(in srgb, hsl(var(--p)) 10%, transparent);
+	}
+
+	.management-tag-modes span {
+		display: grid;
+		gap: 0.2rem;
+		min-width: 0;
+	}
+
+	.management-tag-modes small,
+	.management-tag-field small {
+		color: color-mix(in srgb, currentColor 58%, transparent);
+		font-size: 0.75rem;
+		line-height: 1.25;
+	}
+
+	.management-tag-fields {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.75rem 1rem;
+	}
+
+	.management-tag-field {
+		display: grid;
+		grid-template-columns: minmax(7rem, 0.8fr) minmax(0, 1.2fr);
+		align-items: center;
+		gap: 0.4rem 0.75rem;
+		min-width: 0;
+		padding: 0.75rem;
+		border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+		border-radius: 0.65rem;
+	}
+
+	.management-tag-field > span:first-child {
+		display: grid;
+		gap: 0.2rem;
+		min-width: 0;
+	}
+
+	.management-tag-field > .badge {
+		grid-column: 1 / -1;
+		justify-self: start;
+	}
+
+	.management-tag-field > :is(input, select, textarea) {
+		grid-column: 2;
+		width: 100%;
+		min-width: 0;
+	}
+
+	.management-tag-field > textarea {
+		min-height: 5rem;
+		resize: vertical;
+	}
+
+	@media (max-width: 48rem) {
+		.management-tag-modes,
+		.management-tag-fields {
+			grid-template-columns: 1fr;
+		}
+
+		.management-tag-field {
+			grid-template-columns: minmax(7rem, 0.7fr) minmax(0, 1.3fr);
+		}
+	}
+
+	@media (max-width: 36rem) {
+		.management-profile-editor__header,
+		.management-profile-editor__footer {
+			padding-inline: 1rem;
+		}
+
+		.management-profile-editor__footer {
+			align-items: stretch;
+			flex-direction: column;
+		}
+
+		.management-profile-editor__footer > div {
+			justify-content: flex-end;
+		}
+	}
+</style>

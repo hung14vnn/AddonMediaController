@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Loader2, Music2, Pencil, Youtube } from 'lucide-svelte';
+	import { Loader2, Music2, Pencil } from 'lucide-svelte';
+	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 
 	import { api } from '$lib/api/client';
 	import { API } from '$lib/constants';
@@ -91,7 +92,7 @@
 
 <div class="rounded-2xl border border-base-content/10 bg-base-200/40 p-4 sm:p-6">
 	<div class="flex items-center gap-2">
-		<Youtube class="size-5 text-red-500" aria-hidden="true" />
+		<YouTubeIcon class="size-5 text-red-500" aria-hidden="true" />
 		<h2 class="font-semibold">Download from YouTube</h2>
 	</div>
 	<p class="mt-1 text-sm text-base-content/60">

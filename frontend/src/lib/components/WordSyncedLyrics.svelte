@@ -10,7 +10,7 @@
 	};
 
 	const AM_LYRICS_CDN_URL =
-		'https://cdn.jsdelivr.net/npm/@uimaxbai/am-lyrics@1.6.1/dist/src/am-lyrics.min.js';
+		'https://cdn.jsdelivr.net/npm/@uimaxbai/am-lyrics/dist/src/am-lyrics.min.js';
 	let amLyricsCdnPromise: Promise<void> | undefined;
 
 	function loadAmLyricsFromCdn(): Promise<void> {
@@ -87,17 +87,8 @@
 		}
 		if (isrc) target.setAttribute('isrc', isrc);
 		else target.removeAttribute('isrc');
-		target.setAttribute('highlight-color', '#ffffff');
-		target.setAttribute('hover-background-color', 'rgba(255, 255, 255, 0.08)');
-		// The first seek can jump from the beginning of a song to a line far down
-		// the lyrics. Keep that seek instant; normal line-to-line scrolling remains
-		// handled by am-lyrics.
 		if (initialSyncPending) target.removeAttribute('autoscroll');
 		else target.setAttribute('autoscroll', '');
-		// am-lyrics defaults interpolate=true and keeps a requestAnimationFrame
-		// loop alive for smooth syllable highlighting. That loop is the dominant
-		// CPU cost observed on mobile while lyrics are open, so use discrete word
-		// updates there while retaining synchronized lyrics and auto-scroll.
 		if (disableWordInterpolation) {
 			target.removeAttribute('interpolate');
 			target.interpolate = false;
@@ -213,7 +204,8 @@
 		if (!element) return;
 
 		const nextCurrentTime = Math.max(0, currentTimeSeconds);
-		if (Number.isFinite(lastPublishedCurrentTime) && nextCurrentTime === lastPublishedCurrentTime) return;
+		if (Number.isFinite(lastPublishedCurrentTime) && nextCurrentTime === lastPublishedCurrentTime)
+			return;
 		lastPublishedCurrentTime = nextCurrentTime;
 		element.currentTime = nextCurrentTime * 1000;
 	});

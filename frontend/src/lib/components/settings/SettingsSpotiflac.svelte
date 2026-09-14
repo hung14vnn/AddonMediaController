@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { CircleCheck, CircleX, FolderDown, Youtube } from 'lucide-svelte';
+	import { CircleCheck, CircleX, FolderDown } from 'lucide-svelte';
+	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 
 	import {
 		getSpotiflacConfigQuery,
@@ -97,7 +98,7 @@
 	<DownloadClientCard
 		title="spotbye"
 		sourceLabel="SpotiFLAC"
-		icon={Youtube}
+		icon={YouTubeIcon}
 		{connected}
 		{statusText}
 		bind:enabled
@@ -105,7 +106,7 @@
 		enableAriaLabel="Enable SpotiFLAC download client"
 	>
 		<div class="alert alert-warning items-start text-sm">
-			<Youtube class="size-5 shrink-0" aria-hidden="true" />
+		<YouTubeIcon class="size-5 shrink-0" aria-hidden="true" />
 			<p>
 				SpotiFLAC matches Spotify metadata against external audio providers. Only download material
 				you are authorised to obtain, and expect provider availability to vary.

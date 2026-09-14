@@ -5,9 +5,9 @@
 		GripVertical,
 		HardDriveDownload,
 		Puzzle,
-		Rss,
-		Youtube
+		Rss
 	} from 'lucide-svelte';
+	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 
 	import {
 		getSourcePriorityQuery,
@@ -23,7 +23,7 @@
 	const META: Record<string, { label: string; sub: string; icon: typeof Rss }> = {
 		soulseek: { label: 'Soulseek', sub: 'slskd', icon: HardDriveDownload },
 		usenet: { label: 'Usenet', sub: 'SABnzbd', icon: Rss },
-		spotiflac: { label: 'Spotify', sub: 'SpotiFLAC', icon: Youtube }
+	spotiflac: { label: 'Spotify', sub: 'SpotiFLAC', icon: YouTubeIcon }
 	};
 
 	const pluginLabels = $derived(

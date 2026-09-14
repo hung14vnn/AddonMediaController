@@ -94,7 +94,7 @@
 		{/if}
 	</div>
 
-	<div class="min-w-0 flex-1">
+	<div class="relative min-w-0 flex-1">
 		{#if isManagementHold}
 			<p class="text-xs font-bold text-warning">Organizer paused · {securedFileLabel}</p>
 			{#if managementDetail}
@@ -106,7 +106,7 @@
 			<DownloadStatusBadge {task} />
 		{/if}
 		{#if showBar}
-			<div class="mt-1.5 max-w-sm">
+			<div class="absolute right-0 top-0 max-w-sm">
 				<DownloadProgressBar
 					percent={livePct}
 					bytesDownloaded={progress?.bytes_downloaded ?? task.downloaded_bytes}

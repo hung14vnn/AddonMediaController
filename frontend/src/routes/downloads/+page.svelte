@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 
-	import { Download, PackageOpen, Youtube } from 'lucide-svelte';
+	import { Download, PackageOpen } from 'lucide-svelte';
 
 	import DownloadQueue from '$lib/components/downloads/DownloadQueue.svelte';
 	import FreeMusicQueue from '$lib/components/downloads/FreeMusicQueue.svelte';
 	import YouTubeDownload from '$lib/components/downloads/YouTubeDownload.svelte';
+	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 	import DiscoveryBatchList from '$lib/components/discover/DiscoveryBatchList.svelte';
 	import DropImportJobList from '$lib/components/import/DropImportJobList.svelte';
 	import DropImportZone from '$lib/components/import/DropImportZone.svelte';
@@ -73,7 +74,7 @@
 				aria-selected={activeTab === 'youtube'}
 				onclick={() => (activeTab = 'youtube')}
 			>
-				<Youtube class="h-4 w-4" aria-hidden="true" /> YouTube
+				<YouTubeIcon class="h-4 w-4" aria-hidden="true" /> YouTube
 			</button>
 		</div>
 	{/if}

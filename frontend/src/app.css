@@ -1655,6 +1655,161 @@ dialog.whats-new-modal::backdrop {
 	overflow-x: auto;
 	margin: 0.5em 0;
 }
+
+/* Library Management modal primitives. Keep these global because the
+ * management editor, runner, tag editor, and review dialogs are separate
+ * components but intentionally share the same layout vocabulary. */
+.management-profile-editor,
+.management-runner,
+.management-tag-editor {
+	max-height: min(92dvh, 60rem);
+	overflow: hidden;
+}
+
+.management-profile-editor__header,
+.management-profile-editor__footer {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 1.25rem 1.5rem;
+}
+
+.management-profile-editor__header {
+	border-bottom: 1px solid oklch(from var(--color-base-content) l c h / 0.12);
+}
+
+.management-profile-editor__footer {
+	align-items: center;
+	border-top: 1px solid oklch(from var(--color-base-content) l c h / 0.12);
+}
+
+.management-editor-section {
+	min-width: 0;
+	padding: 1rem;
+	border: 1px solid oklch(from var(--color-base-content) l c h / 0.12);
+	border-radius: 0.75rem;
+}
+
+.management-editor-summary {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	min-width: 0;
+	cursor: pointer;
+	list-style: none;
+}
+
+.management-editor-summary::-webkit-details-marker {
+	display: none;
+}
+
+.management-editor-summary__copy,
+.management-editor-overview {
+	display: grid;
+	min-width: 0;
+	gap: 0.2rem;
+}
+
+.management-editor-overview {
+	margin-left: auto;
+	justify-items: end;
+}
+
+.management-editor-chevron {
+	margin-left: 0.25rem;
+	transition: transform 150ms ease;
+}
+
+.management-editor-section[open] > .management-editor-summary .management-editor-chevron {
+	transform: rotate(90deg);
+}
+
+.management-field-table,
+.management-review-grid {
+	display: grid;
+	gap: 0.625rem;
+}
+
+.management-field-row {
+	display: grid;
+	grid-template-columns: minmax(9rem, 0.8fr) minmax(0, 1.2fr);
+	align-items: center;
+	gap: 0.75rem;
+	min-width: 0;
+	padding: 0.7rem 0;
+	border-bottom: 1px solid oklch(from var(--color-base-content) l c h / 0.08);
+}
+
+.management-field-row > :is(input, select, textarea) {
+	width: 100%;
+	min-width: 0;
+}
+
+.management-choice-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 0.625rem;
+}
+
+.management-choice-grid > label,
+.management-selection-card {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.625rem;
+	min-width: 0;
+	padding: 0.75rem;
+	border: 1px solid oklch(from var(--color-base-content) l c h / 0.12);
+	border-radius: 0.625rem;
+}
+
+.management-choice-grid > label > :last-child,
+.management-selection-card > :last-child {
+	min-width: 0;
+}
+
+.management-editor-advanced {
+	margin-top: 0.75rem;
+	padding: 0.75rem;
+	border: 1px solid oklch(from var(--color-base-content) l c h / 0.1);
+	border-radius: 0.625rem;
+}
+
+.management-editor-advanced > summary {
+	cursor: pointer;
+	font-weight: 600;
+}
+
+.management-runner .management-review-grid {
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 48rem) {
+	.management-profile-editor__header,
+	.management-profile-editor__footer {
+		padding-inline: 1rem;
+	}
+
+	.management-field-row,
+	.management-choice-grid,
+	.management-runner .management-review-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.management-overview,
+	.management-editor-overview {
+		margin-left: 0;
+		justify-items: start;
+	}
+}
+
+@media (max-width: 36rem) {
+	.management-profile-editor__header,
+	.management-profile-editor__footer {
+		flex-direction: column;
+		align-items: stretch;
+	}
+}
 .release-notes-prose hr {
 	border-color: oklch(from var(--color-base-content) l c h / 0.1);
 	margin: 1em 0;

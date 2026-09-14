@@ -15,7 +15,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.routing import APIRoute
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -212,6 +211,7 @@ from core.tasks import (
     start_memory_maintenance_task,
 )
 from infrastructure.msgspec_fastapi import MsgSpecJSONResponse
+from infrastructure.http.compression import CompressibleGZipMiddleware
 from middleware import (
     AuthMiddleware,
     DegradationMiddleware,
@@ -456,9 +456,9 @@ def _include_complete_target_routes(app: FastAPI) -> None:
         system.router,
         spotify.router,
         now_playing.router,
-		lyrics.router,
-		karaoke.router,
-		events.router,
+        lyrics.router,
+        karaoke.router,
+        events.router,
         profile.router,
         playlists.router,
         version.router,
@@ -861,7 +861,7 @@ def create_production_target_application() -> FastAPI:
     app.add_middleware(HSTSMiddleware)
     app.add_middleware(DegradationMiddleware)
     app.add_middleware(PerformanceMiddleware)
-	app.add_middleware(CompressibleGZipMiddleware, minimum_size=1000, compresslevel=6)
+    app.add_middleware(CompressibleGZipMiddleware, minimum_size=1000, compresslevel=6)
     # Per-user buckets run after auth (last-added executes first): the global
     # limiter below stays as the pre-auth backstop against unauthenticated
     # floods and caps aggregate traffic, while authenticated users additionally
