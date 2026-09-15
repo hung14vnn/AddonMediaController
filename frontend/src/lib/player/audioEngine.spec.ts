@@ -41,6 +41,7 @@ function createMockContext(
 		createBiquadFilter: vi.fn(mockFilterFactory),
 		createAnalyser: vi.fn(() => mockAnalyser),
 		resume: vi.fn(() => Promise.resolve()),
+		suspend: vi.fn(() => Promise.resolve()),
 		close: vi.fn(() => Promise.resolve()),
 		addEventListener: vi.fn(),
 		removeEventListener: vi.fn()
@@ -136,7 +137,11 @@ describe('AudioEngine', () => {
 					throw new Error('source already connected');
 				})
 			};
-			vi.mocked(AudioContext).mockImplementation(() => failedContext as unknown as AudioContext);
+			// Must be a `function`: an arrow cannot be used with `new`, and its
+			// return value would be discarded by the constructor protocol anyway.
+			vi.mocked(AudioContext).mockImplementation(function () {
+				return failedContext as unknown as AudioContext;
+			});
 
 			expect(() => engine.connect(mockAudio)).toThrow('source already connected');
 			expect(failedContext.close).toHaveBeenCalled();
@@ -202,6 +207,26 @@ describe('AudioEngine', () => {
 
 			expect(mockFilters[0].gain.value).toBe(3);
 			expect(mockFilters[9].gain.value).toBe(6);
+		});
+	});
+
+	describe('suspend', () => {
+		it('releases the render thread while running', async () => {
+			engine.connect(mockAudio);
+			mockCtx.state = 'running';
+
+			await engine.suspend();
+
+			expect(mockCtx.suspend).toHaveBeenCalled();
+		});
+
+		it('is a no-op when the context is already suspended', async () => {
+			engine.connect(mockAudio);
+			mockCtx.state = 'suspended';
+
+			await engine.suspend();
+
+			expect(mockCtx.suspend).not.toHaveBeenCalled();
 		});
 	});
 

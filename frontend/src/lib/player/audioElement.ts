@@ -73,6 +73,23 @@ export async function resumeAudioEngine(): Promise<void> {
 	}
 }
 
+/**
+ * Put the graph to sleep while nothing is playing.
+ *
+ * A running AudioContext keeps a real-time render thread alive even when the
+ * element feeding it is paused, so leaving it running across a long pause is a
+ * steady, invisible battery and thermal cost on mobile. `resumeAudioEngine()`
+ * brings it back, and playback paths already call that before `play()`.
+ */
+export async function suspendAudioEngine(): Promise<void> {
+	try {
+		await engine?.suspend();
+	} catch {
+		// Suspension is an optimisation: a browser that refuses it just keeps
+		// the context running, which is the previous behaviour.
+	}
+}
+
 export function _resetAudioElement(): void {
 	engine?.destroy();
 	engine = null;

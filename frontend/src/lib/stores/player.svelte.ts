@@ -86,10 +86,6 @@ const PREVIOUS_TRACK_RESTART_THRESHOLD_S = 3;
 const ERROR_SKIP_DELAY_MS = 2000;
 const MAX_HISTORY_LENGTH = 3;
 const SESSION_PERSIST_INTERVAL_MS = 30_000;
-// Mobile keeps the lower-frequency UI updates to avoid extra playback/visual
-// work. On the web, publish every available `timeupdate` so word-synced lyrics
-// can stay smooth; the raw playback clock remains high precision everywhere.
-const PROGRESS_UI_INTERVAL_MS = usesMobileLowPowerVisuals() ? 1_000 : 0;
 const JELLYFIN_REPORT_INTERVAL_MS = 10_000;
 const MAX_JELLYFIN_REPORT_FAILURES = 3;
 
@@ -101,7 +97,6 @@ function createPlayerStore() {
 	let volume = $state(getStoredVolume());
 	let progress = 0;
 	let visibleProgress = $state(0);
-	let lastProgressPublishTime = -Infinity;
 	let progressLifecycleRegistered = false;
 	let duration = $state(0);
 	let playbackOrigin = $state<PlaybackOrigin>('https');
@@ -193,18 +188,10 @@ function createPlayerStore() {
 		lastPersistTime = Date.now();
 	}
 
-	function setProgress(value: number, force = true): void {
+	function setProgress(value: number): void {
 		progress = value;
 		if (typeof document !== 'undefined' && document.hidden) return;
-		const now = Date.now();
-		if (
-			force ||
-			PROGRESS_UI_INTERVAL_MS === 0 ||
-			now - lastProgressPublishTime >= PROGRESS_UI_INTERVAL_MS
-		) {
-			visibleProgress = value;
-			lastProgressPublishTime = now;
-		}
+		visibleProgress = value;
 	}
 
 	function checkpointProgress(): void {
@@ -608,7 +595,6 @@ function createPlayerStore() {
 
 	function subscribeToSource(source: PlaybackSource, gen: number): void {
 		registerProgressLifecycle();
-		lastProgressPublishTime = -Infinity;
 		source.onStateChange((state) => {
 			if (gen !== loadGeneration) return;
 			playbackState = state;
@@ -667,7 +653,7 @@ function createPlayerStore() {
 		});
 		source.onProgress((t, d) => {
 			if (gen !== loadGeneration) return;
-			setProgress(t, false);
+			setProgress(t);
 			duration = d;
 			// Do not publish MediaSession position on every native `timeupdate`.
 			// iOS fires this event several times per second, and each

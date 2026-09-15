@@ -4,7 +4,8 @@ const mockEngine = vi.hoisted(() => ({
 	connect: vi.fn(),
 	destroy: vi.fn(),
 	isConnected: vi.fn(() => true),
-	resume: vi.fn(async () => undefined)
+	resume: vi.fn(async () => undefined),
+	suspend: vi.fn(async () => undefined)
 }));
 
 vi.mock('./audioEngine', () => {
@@ -17,6 +18,7 @@ import {
 	getAudioElement,
 	getAudioEngine,
 	resumeAudioEngine,
+	suspendAudioEngine,
 	tryGetAudioEngine,
 	setAudioElement,
 	usesNativeBackgroundPlayback
@@ -27,6 +29,7 @@ describe('audioElement registry', () => {
 		_resetAudioElement();
 		vi.clearAllMocks();
 		mockEngine.resume.mockResolvedValue(undefined);
+		mockEngine.suspend.mockResolvedValue(undefined);
 	});
 
 	afterEach(() => {
@@ -185,5 +188,28 @@ describe('audioElement registry', () => {
 		expect(mockEngine.connect).not.toHaveBeenCalled();
 		getAudioEngine();
 		expect(mockEngine.connect).toHaveBeenCalledWith(audio);
+	});
+	it('suspends the engine when one exists', async () => {
+		const audio = { src: '' } as HTMLAudioElement;
+		setAudioElement(audio);
+		getAudioEngine();
+
+		await suspendAudioEngine();
+
+		expect(mockEngine.suspend).toHaveBeenCalled();
+	});
+
+	it('suspending without an engine is a no-op', async () => {
+		await expect(suspendAudioEngine()).resolves.toBeUndefined();
+		expect(mockEngine.suspend).not.toHaveBeenCalled();
+	});
+
+	it('swallows a rejected suspend', async () => {
+		const audio = { src: '' } as HTMLAudioElement;
+		setAudioElement(audio);
+		getAudioEngine();
+		mockEngine.suspend.mockRejectedValueOnce(new Error('nope'));
+
+		await expect(suspendAudioEngine()).resolves.toBeUndefined();
 	});
 });

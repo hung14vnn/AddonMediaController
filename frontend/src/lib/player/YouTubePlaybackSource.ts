@@ -107,7 +107,6 @@ export class YouTubePlaybackSource implements PlaybackSource {
 
 	private player: YT.Player | null = null;
 	private elementId: string;
-	private progressInterval: ReturnType<typeof setInterval> | null = null;
 	private stateCallbacks: ((state: PlaybackState) => void)[] = [];
 	private readyCallbacks: (() => void)[] = [];
 	private errorCallbacks: ((error: { code: string; message: string }) => void)[] = [];
@@ -202,7 +201,6 @@ export class YouTubePlaybackSource implements PlaybackSource {
 							if (this.isPageHidden()) this.pausedForVisibility = true;
 							this.player?.setVolume(this.pendingVolume);
 							this.readyCallbacks.forEach((cb) => cb());
-							this.startProgressPolling();
 							resolve();
 						},
 						onStateChange: (event) => {
@@ -257,7 +255,6 @@ export class YouTubePlaybackSource implements PlaybackSource {
 	destroy(): void {
 		this.destroyed = true;
 		this.detachVisibilityGuard();
-		this.stopProgressPolling();
 		this.player?.destroy();
 		this.player = null;
 		this.stateCallbacks = [];
@@ -280,24 +277,6 @@ export class YouTubePlaybackSource implements PlaybackSource {
 
 	onProgress(callback: (currentTime: number, duration: number) => void): void {
 		this.progressCallbacks.push(callback);
-	}
-
-	private startProgressPolling(): void {
-		this.stopProgressPolling();
-		this.progressInterval = setInterval(() => {
-			if (this.player && !this.destroyed) {
-				const time = this.getCurrentTime();
-				const duration = this.getDuration();
-				this.progressCallbacks.forEach((cb) => cb(time, duration));
-			}
-		}, 500);
-	}
-
-	private stopProgressPolling(): void {
-		if (this.progressInterval) {
-			clearInterval(this.progressInterval);
-			this.progressInterval = null;
-		}
 	}
 
 	private mapPlayerState(ytState: number): PlaybackState {

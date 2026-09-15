@@ -188,6 +188,7 @@
 							album={np.albumName ?? ''}
 							durationSeconds={np.duration ?? playerStore.duration}
 							currentTimeSeconds={playerStore.progress}
+							isPlaying={playerStore.isPlaying}
 							onseek={(seconds) => playerStore.seekTo(seconds)}
 						/>
 					{/key}

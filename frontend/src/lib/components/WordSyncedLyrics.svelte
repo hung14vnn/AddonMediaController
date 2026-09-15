@@ -50,6 +50,7 @@
 		album?: string;
 		durationSeconds?: number;
 		currentTimeSeconds?: number;
+		isPlaying?: boolean;
 		isrc?: string;
 		onseek?: (seconds: number) => void;
 		onavailability?: (available: boolean) => void;
@@ -61,6 +62,7 @@
 		album = '',
 		durationSeconds = 0,
 		currentTimeSeconds = 0,
+		isPlaying = false,
 		isrc = '',
 		onseek = () => {},
 		onavailability = () => {}
@@ -72,8 +74,41 @@
 	let lyricsObserver: MutationObserver | undefined;
 	let initialSyncPending = true;
 	let initialSyncFrame: number | undefined;
-	let lastPublishedCurrentTime = Number.NaN;
 	const disableWordInterpolation = usesMobileLowPowerVisuals();
+
+	let clockFrame: number | undefined;
+	let anchorMediaTimeMs = 0;
+	let anchorWallClockMs = 0;
+
+	function publishCurrentTime(valueMs: number): void {
+		if (!element) return;
+		element.currentTime = valueMs;
+	}
+
+	function stopClock(): void {
+		if (clockFrame !== undefined) cancelAnimationFrame(clockFrame);
+		clockFrame = undefined;
+	}
+
+	function runClock(): void {
+		clockFrame = requestAnimationFrame(() => {
+			clockFrame = undefined;
+			if (!element || !isPlaying) return;
+			const elapsed = performance.now() - anchorWallClockMs;
+			const projected = anchorMediaTimeMs + elapsed;
+			const ceiling = durationSeconds > 0 ? durationSeconds * 1000 : Number.POSITIVE_INFINITY;
+			publishCurrentTime(Math.min(projected, ceiling));
+			runClock();
+		});
+	}
+
+	function anchorClock(mediaTimeMs: number): void {
+		anchorMediaTimeMs = mediaTimeMs;
+		anchorWallClockMs = performance.now();
+		publishCurrentTime(mediaTimeMs);
+		stopClock();
+		if (isPlaying) runClock();
+	}
 
 	function applyAttributes(target: AmLyricsElement) {
 		target.setAttribute('song-title', title);
@@ -160,7 +195,7 @@
 				if (!target) return;
 				applyAttributes(target);
 				(target as AmLyricsElement & { fetchLyrics?: () => void }).fetchLyrics?.();
-				target.currentTime = Math.max(0, currentTimeSeconds * 1000);
+				anchorClock(Math.max(0, currentTimeSeconds * 1000));
 				target.addEventListener('line-click', handleLineClick);
 				const root = target.shadowRoot;
 				if (root) {
@@ -191,6 +226,7 @@
 			lyricsObserver = undefined;
 			if (initialSyncFrame !== undefined) cancelAnimationFrame(initialSyncFrame);
 			initialSyncFrame = undefined;
+			stopClock();
 			element?.removeEventListener('line-click', handleLineClick);
 		};
 	});
@@ -201,13 +237,14 @@
 	});
 
 	$effect(() => {
+		// Read both dependencies before the guard so the effect re-runs when
+		// playback starts or stops, not only when a new sample arrives: pausing
+		// must halt the extrapolation, and resuming must restart it.
+		const nextTimeMs = Math.max(0, currentTimeSeconds) * 1000;
+		const playing = isPlaying;
 		if (!element) return;
-
-		const nextCurrentTime = Math.max(0, currentTimeSeconds);
-		if (Number.isFinite(lastPublishedCurrentTime) && nextCurrentTime === lastPublishedCurrentTime)
-			return;
-		lastPublishedCurrentTime = nextCurrentTime;
-		element.currentTime = nextCurrentTime * 1000;
+		if (!playing) stopClock();
+		anchorClock(nextTimeMs);
 	});
 </script>
 
@@ -217,7 +254,6 @@
 			bind:this={element}
 			translation-language="vi"
 			class="word-synced-element"
-			hide-source-footer="true"
 		></am-lyrics>
 	</div>
 	{#if loading}

@@ -196,6 +196,16 @@ export class AudioEngine {
 		}
 	}
 
+	/**
+	 * Release the audio render thread while playback is stopped. The graph and
+	 * every node stay intact, so `resume()` picks up exactly where this left off.
+	 */
+	async suspend(): Promise<void> {
+		if (this.context && this.context.state === 'running') {
+			await this.context.suspend();
+		}
+	}
+
 	destroy(): void {
 		if (this.context && this.contextStateHandler) {
 			this.context.removeEventListener?.('statechange', this.contextStateHandler);

@@ -357,6 +357,7 @@
 						album={albumName}
 						durationSeconds={duration}
 						currentTimeSeconds={currentTime}
+						{isPlaying}
 						{isrc}
 						onseek={seekFromLyrics}
 						onavailability={(available) => {

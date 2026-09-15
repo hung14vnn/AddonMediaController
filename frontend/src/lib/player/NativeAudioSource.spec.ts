@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const hoisted = vi.hoisted(() => {
 	const listeners = new Map<string, Set<EventListener>>();
 	const resumeAudioEngine = vi.fn(async () => undefined);
+	const suspendAudioEngine = vi.fn(async () => undefined);
 	const audio = {
 		src: '',
 		crossOrigin: '',
@@ -51,6 +52,8 @@ const hoisted = vi.hoisted(() => {
 		audio.removeEventListener.mockClear();
 		resumeAudioEngine.mockReset();
 		resumeAudioEngine.mockResolvedValue(undefined);
+		suspendAudioEngine.mockReset();
+		suspendAudioEngine.mockResolvedValue(undefined);
 	};
 
 	return {
@@ -58,13 +61,15 @@ const hoisted = vi.hoisted(() => {
 		dispatch,
 		reset,
 		getAudioElement: vi.fn(() => audio as unknown as HTMLAudioElement),
-		resumeAudioEngine
+		resumeAudioEngine,
+		suspendAudioEngine
 	};
 });
 
 vi.mock('./audioElement', () => ({
 	getAudioElement: hoisted.getAudioElement,
-	resumeAudioEngine: hoisted.resumeAudioEngine
+	resumeAudioEngine: hoisted.resumeAudioEngine,
+	suspendAudioEngine: hoisted.suspendAudioEngine
 }));
 
 import { NativeAudioSource } from './NativeAudioSource';
@@ -111,7 +116,7 @@ describe('NativeAudioSource', () => {
 		expect(onProgress).toHaveBeenCalledWith(0, 178);
 	});
 
-	it('detaches ready listeners on first ready event so onReady is single-shot', async () => {
+	it('fires onReady only once even if every ready event arrives', async () => {
 		const source = new NativeAudioSource('local', { url: '/single-shot.mp3', seekable: true });
 		const onReady = vi.fn();
 		source.onReady(onReady);
@@ -121,10 +126,9 @@ describe('NativeAudioSource', () => {
 		await loadPromise;
 
 		expect(onReady).toHaveBeenCalledTimes(1);
-		for (const event of ['canplay', 'loadedmetadata', 'loadeddata']) {
-			expect(hoisted.audio.removeEventListener).toHaveBeenCalledWith(event, expect.any(Function));
-		}
 
+		// The later ready events must not re-enter onReady, however the
+		// listeners happen to be detached.
 		hoisted.dispatch('loadedmetadata');
 		hoisted.dispatch('loadeddata');
 		expect(onReady).toHaveBeenCalledTimes(1);
@@ -233,16 +237,21 @@ describe('NativeAudioSource', () => {
 		expect(hoisted.audio.currentTime).toBe(5);
 	});
 
-	it('destroy clears src and removes listeners', async () => {
+	it('destroy clears src and stops delivering events', async () => {
 		const source = new NativeAudioSource('local', { url: '/destroy.mp3', seekable: true });
 		const loadPromise = source.load();
 		hoisted.dispatch('canplay');
 		await loadPromise;
 
+		const onState = vi.fn();
+		source.onStateChange(onState);
 		source.destroy();
 
 		expect(hoisted.audio.src).toBe('');
-		expect(hoisted.audio.removeEventListener).toHaveBeenCalled();
+		// Detached listeners must no longer reach this instance.
+		hoisted.dispatch('play');
+		hoisted.dispatch('timeupdate');
+		expect(onState).not.toHaveBeenCalled();
 	});
 
 	it('throws when audio element is unavailable', () => {
@@ -338,5 +347,115 @@ describe('NativeAudioSource', () => {
 		hoisted.dispatch('timeupdate');
 
 		expect(states.filter((s) => s === 'playing').length).toBe(countAfterPlay);
+	});
+	it('a superseded source does not clear the element the new source loaded into', async () => {
+		const first = new NativeAudioSource('local', { url: '/first.mp3', seekable: true });
+		const firstLoad = first.load();
+		hoisted.dispatch('canplay');
+		await firstLoad;
+
+		const second = new NativeAudioSource('local', { url: '/second.mp3', seekable: true });
+		const secondLoad = second.load();
+		hoisted.dispatch('canplay');
+		await secondLoad;
+
+		// The store can destroy the previous source after the new one loaded.
+		// Doing so must not stop the track that is now playing.
+		first.destroy();
+
+		expect(hoisted.audio.src).toBe('/second.mp3');
+		expect(hoisted.audio.pause).not.toHaveBeenCalled();
+	});
+
+	it('stops the element when a load times out', async () => {
+		vi.useFakeTimers();
+		try {
+			const source = new NativeAudioSource('local', { url: '/slow.mp3', seekable: true });
+			const loadPromise = source.load();
+			const assertion = expect(loadPromise).rejects.toThrow('timed out');
+			await vi.advanceTimersByTimeAsync(15_000);
+			await assertion;
+
+			// A element still trying to load keeps the request alive.
+			expect(hoisted.audio.pause).toHaveBeenCalled();
+			expect(hoisted.audio.src).toBe('');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('stops the element when playback stalls', async () => {
+		vi.useFakeTimers();
+		try {
+			const source = new NativeAudioSource('local', { url: '/stall.mp3', seekable: true });
+			const loadPromise = source.load();
+			hoisted.dispatch('canplay');
+			await loadPromise;
+
+			hoisted.dispatch('waiting');
+			await vi.advanceTimersByTimeAsync(15_000);
+
+			expect(hoisted.audio.pause).toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('does not emit a state it is already in', async () => {
+		const source = new NativeAudioSource('local', { url: '/dedupe.mp3', seekable: true });
+		const states: string[] = [];
+		source.onStateChange((state) => states.push(state));
+		const loadPromise = source.load();
+		hoisted.dispatch('canplay');
+		await loadPromise;
+
+		hoisted.dispatch('play');
+		hoisted.dispatch('playing');
+		hoisted.dispatch('play');
+
+		expect(states.filter((state) => state === 'playing')).toHaveLength(1);
+	});
+
+	it('ignores seekTo after destroy', async () => {
+		const source = new NativeAudioSource('local', { url: '/seek.mp3', seekable: true });
+		const loadPromise = source.load();
+		hoisted.dispatch('canplay');
+		await loadPromise;
+		source.destroy();
+
+		hoisted.audio.currentTime = 5;
+		source.seekTo(120);
+
+		expect(hoisted.audio.currentTime).toBe(5);
+	});
+	it('suspends the audio graph on pause and on destroy', async () => {
+		const source = new NativeAudioSource('local', { url: '/suspend.mp3', seekable: true });
+		const loadPromise = source.load();
+		hoisted.dispatch('canplay');
+		await loadPromise;
+
+		source.pause();
+		expect(hoisted.suspendAudioEngine).toHaveBeenCalledTimes(1);
+
+		source.destroy();
+		expect(hoisted.suspendAudioEngine).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not suspend the graph when a superseded source is destroyed', async () => {
+		const first = new NativeAudioSource('local', { url: '/a.mp3', seekable: true });
+		const firstLoad = first.load();
+		hoisted.dispatch('canplay');
+		await firstLoad;
+
+		const second = new NativeAudioSource('local', { url: '/b.mp3', seekable: true });
+		const secondLoad = second.load();
+		hoisted.dispatch('canplay');
+		await secondLoad;
+
+		hoisted.suspendAudioEngine.mockClear();
+		first.destroy();
+
+		// The graph belongs to the track that is still playing.
+		expect(hoisted.suspendAudioEngine).not.toHaveBeenCalled();
 	});
 });
