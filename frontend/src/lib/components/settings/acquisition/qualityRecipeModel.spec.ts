@@ -7,6 +7,8 @@ import {
 	PRESETS,
 	customFlacError,
 	customMp3Error,
+	deriveDefaultOrder,
+	healPreferenceOrder,
 	legacyRangeFromRecipe,
 	moveRecipeEntry,
 	recipeEntryLabel,
@@ -205,5 +207,49 @@ describe('quality recipe model', () => {
 				}
 			])
 		).toEqual({ quality_min: 'mp3_320', quality_max: 'mp3_320' });
+	});
+
+	it('derives default tier order from quality_max to quality_min', () => {
+		expect(deriveDefaultOrder('mp3_192', 'lossless')).toEqual([
+			'lossless',
+			'mp3_320',
+			'mp3_256',
+			'mp3_192'
+		]);
+		expect(deriveDefaultOrder('low', 'mp3_320')).toEqual([
+			'mp3_320',
+			'mp3_256',
+			'mp3_192',
+			'low'
+		]);
+		expect(deriveDefaultOrder('lossless', 'lossless')).toEqual(['lossless']);
+	});
+
+	it('heals stale preference order and preserves valid permutations', () => {
+		// Preserves valid permutation
+		expect(healPreferenceOrder(['mp3_320', 'lossless'], 'mp3_320', 'lossless')).toEqual([
+			'mp3_320',
+			'lossless'
+		]);
+		// Heals when stale order has fewer tiers (widened range)
+		expect(
+			healPreferenceOrder(['lossless', 'mp3_320', 'mp3_256'], 'mp3_192', 'lossless')
+		).toEqual(['lossless', 'mp3_320', 'mp3_256', 'mp3_192']);
+		// Heals when stale order has extra tiers (narrowed range)
+		expect(
+			healPreferenceOrder(
+				['lossless', 'mp3_320', 'mp3_256', 'mp3_192', 'low'],
+				'low',
+				'mp3_320'
+			)
+		).toEqual(['mp3_320', 'mp3_256', 'mp3_192', 'low']);
+		// Heals empty or null order
+		expect(healPreferenceOrder([], 'mp3_192', 'lossless')).toEqual([
+			'lossless',
+			'mp3_320',
+			'mp3_256',
+			'mp3_192'
+		]);
+		expect(healPreferenceOrder(null, 'mp3_320', 'lossless')).toEqual(['lossless', 'mp3_320']);
 	});
 });

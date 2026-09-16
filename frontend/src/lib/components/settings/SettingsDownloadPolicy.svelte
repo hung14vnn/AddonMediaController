@@ -9,6 +9,7 @@
 	import AdvancedBehaviorSection from './acquisition/AdvancedBehaviorSection.svelte';
 	import QualityOrderSection from './acquisition/QualityOrderSection.svelte';
 	import {
+		healPreferenceOrder,
 		legacyRangeFromRecipe,
 		recipeFingerprint,
 		recipeFromPolicy,
@@ -158,7 +159,11 @@
 			auto_retry_max_attempts: autoRetryMax,
 			usenet_min_release_age_minutes: usenetMinAge,
 			quality_recipe: stripRecipeIds(qualityRecipe),
-			quality_preference_order: d.quality_preference_order ?? [],
+			quality_preference_order: healPreferenceOrder(
+				d.quality_preference_order,
+				nextQualityMin,
+				nextQualityMax
+			),
 			preferred_lossy_bitrate_kbps: d.preferred_lossy_bitrate_kbps ?? null,
 			lossy_min_bitrate_kbps: lossyMinBitrateKbps,
 			lossy_max_bitrate_kbps: lossyMaxBitrateKbps,

@@ -687,3 +687,37 @@ export function legacyRecipeKey(entry: QualityRecipeEntry): string | null {
 	if (entry.quality === '320_plus') return 'mp3_320';
 	return null;
 }
+
+export const LEGACY_TIERS_BEST_FIRST = [
+	'lossless',
+	'mp3_320',
+	'mp3_256',
+	'mp3_192',
+	'low'
+] as const;
+
+export function deriveDefaultOrder(qualityMin: string, qualityMax: string): string[] {
+	const lo = LEGACY_TIERS_BEST_FIRST.indexOf(qualityMax as (typeof LEGACY_TIERS_BEST_FIRST)[number]);
+	const hi = LEGACY_TIERS_BEST_FIRST.indexOf(qualityMin as (typeof LEGACY_TIERS_BEST_FIRST)[number]);
+	if (lo < 0 || hi < 0) return ['lossless', 'mp3_320'];
+	const start = Math.min(lo, hi);
+	const end = Math.max(lo, hi);
+	return [...LEGACY_TIERS_BEST_FIRST.slice(start, end + 1)];
+}
+
+export function healPreferenceOrder(
+	storedOrder: readonly string[] | undefined | null,
+	qualityMin: string,
+	qualityMax: string
+): string[] {
+	const expected = deriveDefaultOrder(qualityMin, qualityMax);
+	if (
+		storedOrder &&
+		storedOrder.length === expected.length &&
+		new Set(storedOrder).size === expected.length &&
+		storedOrder.every((tier) => expected.includes(tier as (typeof LEGACY_TIERS_BEST_FIRST)[number]))
+	) {
+		return [...storedOrder];
+	}
+	return expected;
+}

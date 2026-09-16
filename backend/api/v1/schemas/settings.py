@@ -421,11 +421,6 @@ def validate_new_quality_fields(payload: Mapping[str, Any]) -> None:
     raise ValueError; the route maps that to a 400."""
     from services.native.acquisition.quality import normalize_order
 
-    quality_min = payload.get("quality_min", "mp3_320")
-    quality_max = payload.get("quality_max", "lossless")
-    submitted_order = payload.get("quality_preference_order")
-    if submitted_order:  # [] / missing = derive (same contract as GET→PUT round-trip)
-        normalize_order(list(submitted_order), quality_min, quality_max)
     submitted_recipe = payload.get("quality_recipe")
     if submitted_recipe is not None:
         if not isinstance(submitted_recipe, list):
@@ -444,6 +439,11 @@ def validate_new_quality_fields(payload: Mapping[str, Any]) -> None:
                 validate_quality_recipe(entries)
             except (msgspec.ValidationError, TypeError, ValueError) as exc:
                 raise ValueError(str(exc)) from exc
+    quality_min = payload.get("quality_min", "mp3_320")
+    quality_max = payload.get("quality_max", "lossless")
+    submitted_order = payload.get("quality_preference_order")
+    if submitted_order and not submitted_recipe:  # [] / missing = derive (same contract as GET→PUT round-trip)
+        normalize_order(list(submitted_order), quality_min, quality_max)
     _lossless_prefs = {"cd", "24_48", "24_96", "24_192", "highest"}
     _unknown_rules = {"reject", "review", "allow_as_fallback"}
     _source_modes = {"source_first", "quality_first"}

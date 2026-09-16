@@ -404,6 +404,37 @@ def test_put_policy_recipe_returns_v2_status_and_recipe(monkeypatch):
     prefs.save_download_policy.assert_called_once()
 
 
+def test_put_policy_recipe_accepts_stale_preference_order(monkeypatch):
+    prefs = _prefs()
+    returned = DownloadPolicySettings(
+        quality_recipe=[
+            QualityRecipeEntry(format="flac", quality="cd"),
+            QualityRecipeEntry(format="mp3", quality="192_255"),
+        ],
+        quality_recipe_status="v2",
+    )
+    prefs.get_download_policy.return_value = returned
+    monkeypatch.setattr(download_clients, "_clear_download_client_cache", lambda: None)
+    app = _app(prefs)
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    response = build_test_client(app).put(
+        "/download-clients/policy",
+        json={
+            "flac_mp3_only": True,
+            "quality_min": "mp3_192",
+            "quality_max": "lossless",
+            "quality_preference_order": ["lossless", "mp3_320", "mp3_256"],
+            "quality_recipe": [
+                {"format": "flac", "quality": "cd"},
+                {"format": "mp3", "quality": "192_255"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    prefs.save_download_policy.assert_called_once()
+
+
 def test_put_policy_recipe_rejects_invalid_entry_before_save(monkeypatch):
     prefs = _prefs()
     monkeypatch.setattr(download_clients, "_clear_download_client_cache", lambda: None)
