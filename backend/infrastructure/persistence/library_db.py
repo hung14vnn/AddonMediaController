@@ -1411,8 +1411,9 @@ class LibraryDB(PersistenceBase):
         return await self._read(operation)
 
     async def get_files_by_genre(
-        self, genre: str, *, limit: int = 50, offset: int = 0
+        self, genre: str, *, limit: int = 50, offset: int = 0, user_id: str | None = None
     ) -> list[dict[str, Any]]:
+        del user_id
         """Active files matching a genre (case-insensitive), album/disc/track order."""
 
         def operation(conn: sqlite3.Connection) -> list[dict[str, Any]]:
@@ -1429,8 +1430,9 @@ class LibraryDB(PersistenceBase):
         return await self._read(operation)
 
     async def get_files_by_artist_name(
-        self, artist_name: str, *, limit: int = 200
+        self, artist_name: str, *, limit: int = 200, user_id: str | None = None
     ) -> list[dict[str, Any]]:
+        del user_id
         """Active files by an artist (track OR album artist), newest first. The
         discovery service ranks these by play count from play_history (Q12)."""
 
@@ -1447,8 +1449,9 @@ class LibraryDB(PersistenceBase):
         return await self._read(operation)
 
     async def get_files_by_artist_mbids(
-        self, mbids: list[str], *, limit: int = 50, order: str = "random"
+        self, mbids: list[str], *, limit: int = 50, order: str = "random", user_id: str | None = None
     ) -> list[dict[str, Any]]:
+        del user_id
         """Active files whose track OR album artist is one of the given MBIDs
         (Q12 same-artist + related pools; Q23 union semantics). Random order by
         default; ``order=\"recent\"`` returns newest imports first for callers
@@ -1535,7 +1538,9 @@ class LibraryDB(PersistenceBase):
         genre: str | None = None,
         from_year: int | None = None,
         to_year: int | None = None,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
+        del user_id
         """Random active files, optionally filtered by genre / year range (Q12)."""
         filters = ["deleted_at IS NULL", "release_group_mbid IS NOT NULL"]
         params: list[object] = []

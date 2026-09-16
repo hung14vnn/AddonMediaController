@@ -1,5 +1,12 @@
 <script lang="ts">
-	let { class: className = 'h-6 w-6', style }: { class?: string; style?: string } = $props();
+	import type { SVGAttributes } from 'svelte/elements';
+
+	interface Props extends SVGAttributes<SVGSVGElement> {
+		class?: string;
+		style?: string;
+	}
+
+	let { class: className = 'h-6 w-6', style, ...restProps }: Props = $props();
 </script>
 
 <svg
@@ -9,6 +16,7 @@
 	class={className}
 	{style}
 	aria-hidden="true"
+	{...restProps}
 >
 	<polygon points="5.25,4 19.75,12 5.25,20" fill="currentColor" />
 </svg>

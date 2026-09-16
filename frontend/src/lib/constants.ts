@@ -673,6 +673,9 @@ export const API = {
 		`/api/v1/discover/track-preview?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}`,
 	discoverAlbumPreview: (artist: string, album: string) =>
 		`/api/v1/discover/album-preview?artist=${encodeURIComponent(artist)}&album=${encodeURIComponent(album)}`,
+	discoverActivity: () => '/api/v1/discover/activity',
+	discoverQueuePreview: (mbid: string) =>
+		`/api/v1/discover/queue/preview/${encodeURIComponent(mbid)}`,
 	discoverPlaylistSuggestions: () => '/api/v1/discover/playlist-suggestions',
 	discoverGenreDetail: (tag: string) => `/api/v1/discover/genres/${encodeURIComponent(tag)}`,
 	youtube: {
@@ -738,7 +741,10 @@ export const API = {
 		spotifyTrackRequest: () => '/api/v1/me/spotify/tracks/request',
 		spotifyTrackSearch: (query: string) =>
 			`/api/v1/me/spotify/tracks/search?q=${encodeURIComponent(query.trim())}`,
-		spotifyImport: () => '/api/v1/me/spotify/playlists/import',
+		spotifyImport: (playlistId?: string) =>
+			playlistId
+				? `/api/v1/me/spotify/playlists/${encodeURIComponent(playlistId)}/import`
+				: '/api/v1/me/spotify/playlists/import',
 		personalMixRefresh: () => '/api/v1/me/personal-mix/refresh'
 	},
 	scrobble: {
@@ -902,6 +908,8 @@ export const API = {
 		heldManagementRetry: (taskId: string) => `/api/v1/downloads/held/management/${taskId}/retry`,
 		heldManagementDiscard: (taskId: string) =>
 			`/api/v1/downloads/held/management/${taskId}/discard`,
+		heldVerdictDiscard: (taskId: string) =>
+			`/api/v1/downloads/held/verdict/${taskId}/discard`,
 		heldAudio: (id: number) => `/api/v1/downloads/held/${id}/audio`,
 		reimport: (taskId: string) => `/api/v1/downloads/${taskId}/reimport`,
 		cutoffUnmet: () => '/api/v1/downloads/cutoff-unmet',

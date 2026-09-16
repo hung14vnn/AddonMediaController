@@ -27,7 +27,7 @@ import { playerStore } from '$lib/stores/player.svelte';
 async function renderDrawer(open: boolean, onclose: () => void) {
 	return await render(QueueDrawer, {
 		props: { open, onclose }
-	} as Parameters<typeof render<typeof QueueDrawer>>[1]);
+	} as unknown as Parameters<typeof render<typeof QueueDrawer>>[1]);
 }
 
 describe('QueueDrawer.svelte', () => {
@@ -89,7 +89,7 @@ describe('QueueDrawer.svelte', () => {
 			}
 		]);
 		const onclose = vi.fn();
-		const view = renderDrawer(true, onclose);
+		const view = await renderDrawer(true, onclose);
 
 		await expect.element(page.getByText('Local Track')).toBeVisible();
 		expect(view.container.querySelector('img')?.getAttribute('src')).toBe(
@@ -105,9 +105,9 @@ describe('QueueDrawer.svelte', () => {
 
 	it('allows the pinned queue to resize up to 2.5 times its default width', async () => {
 		const onclose = vi.fn();
-		const view = render(QueueDrawer, {
+		const view = await render(QueueDrawer, {
 			props: { open: true, pinned: true, onclose }
-		} as Parameters<typeof render<typeof QueueDrawer>>[1]);
+		} as unknown as Parameters<typeof render<typeof QueueDrawer>>[1]);
 
 		const resizeHandle = view.container.querySelector('[aria-label="Resize pinned queue"]');
 		expect(resizeHandle).toHaveAttribute('aria-valuemin', '240');

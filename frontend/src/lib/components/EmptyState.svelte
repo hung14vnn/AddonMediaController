@@ -1,16 +1,18 @@
 <script lang="ts">
-	import type { ComponentType } from 'svelte';
+	import type { ComponentType, Component } from 'svelte';
+	import { Inbox } from 'lucide-svelte';
 
 	import { withBasePath } from '$lib/utils/basePath';
 	interface Props {
-		icon: ComponentType;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		icon?: ComponentType | Component<any>;
 		title: string;
 		description?: string;
 		ctaLabel?: string;
 		ctaHref?: string;
 	}
 
-	let { icon, title, description, ctaLabel, ctaHref }: Props = $props();
+	let { icon = Inbox, title, description, ctaLabel, ctaHref }: Props = $props();
 
 	const SvelteComponent = $derived(icon);
 </script>

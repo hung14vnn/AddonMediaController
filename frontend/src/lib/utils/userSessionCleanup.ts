@@ -46,7 +46,12 @@ export async function clearUserSessionState(options: SessionCleanupOptions = {})
 	if (clearAuth) runCleanupLeg(failures, () => authStore.clear());
 
 	try {
-		await clearPersistedQueryCache();
+		await Promise.race([
+			clearPersistedQueryCache(),
+			new Promise((_, reject) =>
+				setTimeout(() => reject(new Error('clearPersistedQueryCache timeout')), 2000)
+			)
+		]);
 	} catch (error) {
 		failures.push(error);
 	}

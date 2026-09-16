@@ -15,15 +15,46 @@
 	import { onMount, tick } from 'svelte';
 
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import LibraryScanningPanel from '$lib/components/library/LibraryScanningPanel.svelte';
-	import LibraryManagementControlRoom from '$lib/components/library/LibraryManagementControlRoom.svelte';
-	import LibraryKaraokePanel from '$lib/components/library/LibraryKaraokePanel.svelte';
-	import LibraryOverviewPanel from '$lib/components/library/LibraryOverviewPanel.svelte';
-	import SettingsLibraryManagement from '$lib/components/settings/SettingsLibraryManagement.svelte';
 	import { getLibraryActivityQuery } from '$lib/queries/library/LibraryActivityQueries.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+
+	let overviewModule:
+		| Promise<typeof import('$lib/components/library/LibraryOverviewPanel.svelte')>
+		| undefined;
+	let scanningModule:
+		| Promise<typeof import('$lib/components/library/LibraryScanningPanel.svelte')>
+		| undefined;
+	let karaokeModule:
+		| Promise<typeof import('$lib/components/library/LibraryKaraokePanel.svelte')>
+		| undefined;
+	let organizeModule:
+		| Promise<typeof import('$lib/components/library/LibraryManagementControlRoom.svelte')>
+		| undefined;
+	let automationModule:
+		| Promise<typeof import('$lib/components/settings/SettingsLibraryManagement.svelte')>
+		| undefined;
+
+	function loadOverview() {
+		return (overviewModule ??= import('$lib/components/library/LibraryOverviewPanel.svelte'));
+	}
+	function loadScanning() {
+		return (scanningModule ??= import('$lib/components/library/LibraryScanningPanel.svelte'));
+	}
+	function loadKaraoke() {
+		return (karaokeModule ??= import('$lib/components/library/LibraryKaraokePanel.svelte'));
+	}
+	function loadOrganize() {
+		return (organizeModule ??= import(
+			'$lib/components/library/LibraryManagementControlRoom.svelte'
+		));
+	}
+	function loadAutomation() {
+		return (automationModule ??= import(
+			'$lib/components/settings/SettingsLibraryManagement.svelte'
+		));
+	}
 
 	const settingsQuery = getTargetLibrarySettingsQuery(() => authStore.isAdmin);
 	const activityQuery = getLibraryActivityQuery(() => authStore.user?.id);
@@ -212,15 +243,36 @@
 
 		{#if activeTab === 'overview'}
 			<div role="tabpanel" id="management-panel-overview" aria-labelledby="management-tab-overview">
-				<LibraryOverviewPanel />
+				{#await loadOverview()}
+					<div class="space-y-3">
+						<div class="skeleton h-32 rounded-box"></div>
+						<div class="skeleton h-64 rounded-box"></div>
+					</div>
+				{:then { default: Panel }}
+					<Panel />
+				{/await}
 			</div>
 		{:else if activeTab === 'scanning'}
 			<div role="tabpanel" id="management-panel-scanning" aria-labelledby="management-tab-scanning">
-				<LibraryScanningPanel />
+				{#await loadScanning()}
+					<div class="space-y-3">
+						<div class="skeleton h-32 rounded-box"></div>
+						<div class="skeleton h-64 rounded-box"></div>
+					</div>
+				{:then { default: Panel }}
+					<Panel />
+				{/await}
 			</div>
 		{:else if activeTab === 'karaoke'}
 			<div role="tabpanel" id="management-panel-karaoke" aria-labelledby="management-tab-karaoke">
-				<LibraryKaraokePanel />
+				{#await loadKaraoke()}
+					<div class="space-y-3">
+						<div class="skeleton h-32 rounded-box"></div>
+						<div class="skeleton h-64 rounded-box"></div>
+					</div>
+				{:then { default: Panel }}
+					<Panel />
+				{/await}
 			</div>
 		{:else if activeTab === 'organize'}
 			<div role="tabpanel" id="management-panel-organize" aria-labelledby="management-tab-organize">
@@ -239,7 +291,14 @@
 						</div>
 					</div>
 				{:else}
-					<LibraryManagementControlRoom />
+					{#await loadOrganize()}
+						<div class="space-y-3">
+							<div class="skeleton h-32 rounded-box"></div>
+							<div class="skeleton h-64 rounded-box"></div>
+						</div>
+					{:then { default: Panel }}
+						<Panel />
+					{/await}
 				{/if}
 			</div>
 		{:else}
@@ -269,7 +328,14 @@
 						</div>
 					</div>
 				{:else}
-					<SettingsLibraryManagement {roots} {policyRevision} />
+					{#await loadAutomation()}
+						<div class="space-y-3">
+							<div class="skeleton h-32 rounded-box"></div>
+							<div class="skeleton h-64 rounded-box"></div>
+						</div>
+					{:then { default: Panel }}
+						<Panel {roots} {policyRevision} />
+					{/await}
 				{/if}
 			</div>
 		{/if}

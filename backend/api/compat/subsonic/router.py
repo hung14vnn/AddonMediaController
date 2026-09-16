@@ -706,7 +706,7 @@ async def _get_cover_art(c: Ctx) -> Response:
             internal, size, is_disconnected=disc
         )
     elif kind == "track":
-        track = await c.services.view.get_track(internal)
+        track = await c.services.view.get_track(internal, user=c.user)
         if track is None:
             raise SubsonicError(70, "Song not found")
         if track.rg_mbid:
@@ -845,6 +845,12 @@ async def _stream(c: Ctx) -> Response:
     max_bitrate = c.pint("maxBitRate", minimum=0, maximum=1_000_000)
     time_offset = c.pfloat("timeOffset", 0.0, minimum=0, maximum=604_800) or 0.0
     estimate = c.pbool("estimateContentLength", False)
+    track = await c.services.view.get_track(fid, user=c.user)
+    if track is None:
+        plugin_resp = await _plugin_stream_fallback(c, fid, requested_format=fmt if fmt != "raw" else None, max_bitrate=max_bitrate, start_seconds=time_offset if fmt != "raw" else 0.0, force_original=fmt == "raw", estimate=estimate)
+        if plugin_resp is not None:
+            return plugin_resp
+        raise SubsonicError(70, "Song not found")
     if fmt == "raw":
         try:
             return await _serve_file(c, fid)
@@ -853,12 +859,6 @@ async def _stream(c: Ctx) -> Response:
             if plugin_resp is not None:
                 return plugin_resp
             raise
-    track = await c.services.view.get_track(fid)
-    if track is None:
-        plugin_resp = await _plugin_stream_fallback(c, fid, requested_format=fmt, max_bitrate=max_bitrate, start_seconds=time_offset, force_original=False, estimate=estimate)
-        if plugin_resp is not None:
-            return plugin_resp
-        raise SubsonicError(70, "Song not found")
     settings = c.services.preferences.get_connect_apps_settings()
     plan = decide(track, requested_format=fmt, max_bitrate_kbps=max_bitrate, force_original=False, start_seconds=time_offset, settings=settings, ffmpeg_available=ffmpeg_available())
     if not plan.transcode:
@@ -1135,6 +1135,8 @@ async def _create_playlist(c: Ctx) -> Response:
         record = await c.services.playlists.create_playlist(name, user_id=c.user.id)
         pid = record.id
     for fid in song_file_ids:
+        if await c.services.view.get_track(fid, user=c.user) is None:
+            raise SubsonicError(70, "Song not found")
         await c.services.playlists.add_file_id_entry(pid, fid, requesting=c.user)
     return c.render("playlist", await _build_playlist_detail(c, pid))
 
@@ -1162,6 +1164,8 @@ async def _update_playlist(c: Ctx) -> Response:
         if ids:
             await c.services.playlists.remove_tracks(pid, c.user, ids)
     for fid in add_file_ids:
+        if await c.services.view.get_track(fid, user=c.user) is None:
+            raise SubsonicError(70, "Song not found")
         await c.services.playlists.add_file_id_entry(pid, fid, requesting=c.user)
     return c.render(None, None)
 
@@ -1190,12 +1194,23 @@ def _collect_star_targets(c: Ctx) -> list[tuple[str, str]]:
     return list(dict.fromkeys(targets))
 
 
+async def _target_exists_for_user(c: Ctx, kind: str, internal: str) -> bool:
+    if kind == "track":
+        return await c.services.view.get_track(internal, user=c.user) is not None
+    if kind == "album":
+        return await c.services.view.get_album(internal, user=c.user) is not None
+    if kind == "artist":
+        return await c.services.view.get_artist_with_albums(internal, user=c.user) is not None
+    return False
+
+
 async def _validated_star_targets(c: Ctx) -> list[tuple[str, str]]:
     targets = _collect_star_targets(c)
     if not targets:
         raise SubsonicError(10, "At least one favorite target is required")
-    if await c.services.view.missing_targets(targets):
-        raise SubsonicError(70, "Favorite target not found")
+    for kind, internal in targets:
+        if not await _target_exists_for_user(c, kind, internal):
+            raise SubsonicError(70, "Favorite target not found")
     return targets
 
 
@@ -1266,9 +1281,7 @@ async def _set_rating(c: Ctx) -> Response:
     if rating is None:
         raise SubsonicError(10, "Required parameter 'rating' is missing")
     kind, internal = decode(c.p("id") or "")
-    if kind not in _FAV_KINDS or await c.services.view.missing_targets(
-        [(kind, internal)]
-    ):
+    if kind not in _FAV_KINDS or not await _target_exists_for_user(c, kind, internal):
         raise SubsonicError(70, "Rating target not found")
     # D11: validate target/range, then deliberately do not persist a rating.
     return c.render(None, None)
@@ -1370,10 +1383,9 @@ async def _validated_queue_ids(c: Ctx) -> tuple[str, ...]:
     if len(ids) > _MAX_QUEUE_ITEMS:
         raise SubsonicError(10, "Play queue exceeds the 500 item limit")
     file_ids = tuple(_decode_expect(item, "track") for item in ids)
-    missing = await c.services.view.missing_targets(
-        [("track", file_id) for file_id in dict.fromkeys(file_ids)]
-    )
-    if missing:
+    unique_ids = list(dict.fromkeys(file_ids))
+    mapped = await c.services.view.get_tracks_by_file_ids(unique_ids, user=c.user)
+    if len(mapped) != len(unique_ids):
         raise SubsonicError(70, "Play queue song not found")
     return file_ids
 
@@ -1508,7 +1520,7 @@ async def _create_bookmark(c: Ctx) -> Response:
     if position is None:
         raise SubsonicError(10, "Required parameter 'position' is missing")
     comment = c.decoded.string("comment", "", max_length=4096) or ""
-    if await c.services.view.missing_targets([("track", file_id)]):
+    if await c.services.view.get_track(file_id, user=c.user) is None:
         raise SubsonicError(70, "Bookmark song not found")
     await c.services.bookmarks.upsert(c.user.id, file_id, position, comment)
     return c.render(None, None)
@@ -1517,7 +1529,7 @@ async def _create_bookmark(c: Ctx) -> Response:
 @endpoint("deleteBookmark")
 async def _delete_bookmark(c: Ctx) -> Response:
     file_id = _decode_expect(c.p("id") or "", "track")
-    if await c.services.view.missing_targets([("track", file_id)]):
+    if await c.services.view.get_track(file_id, user=c.user) is None:
         raise SubsonicError(70, "Bookmark song not found")
     await c.services.bookmarks.delete(c.user.id, file_id)
     return c.render(None, None)
@@ -1649,7 +1661,7 @@ async def _get_lyrics(c: Ctx) -> Response:
 
 @endpoint("getGenres")
 async def _get_genres(c: Ctx) -> Response:
-    genres = await c.services.view.get_genres()
+    genres = await c.services.view.get_genres(user=c.user)
     return c.render("genres", {"genre": [m.to_genre(g) for g in genres]})
 
 

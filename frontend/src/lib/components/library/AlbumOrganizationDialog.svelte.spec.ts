@@ -23,6 +23,7 @@ const album: LibraryAlbumDetail = {
 	date_added: 1,
 	sort_name: null,
 	original_release_date: null,
+	release_type: null,
 	row_revision: 5,
 	input_revision: 'input-5',
 	identification_status: 'identified',

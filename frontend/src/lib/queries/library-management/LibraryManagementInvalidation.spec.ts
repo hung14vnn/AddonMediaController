@@ -32,6 +32,6 @@ describe('invalidateLibraryManagementSurfaces', () => {
 		expect(keys).toContainEqual(['downloads']);
 		expect(keys).toContainEqual(['drop-import']);
 		expect(keys).toContainEqual(['free-music']);
-		expect(keys).toContainEqual(['lyrics']);
+		expect(keys).toContainEqual(['lyrics', 'v2']);
 	});
 });

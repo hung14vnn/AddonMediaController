@@ -37,7 +37,6 @@
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
-	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 
 	const integration = fromStore(integrationStore);

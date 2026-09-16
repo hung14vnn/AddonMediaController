@@ -233,6 +233,7 @@ export interface ReviewListItem {
 	release_group_mbid: string | null;
 	edition_uncertain?: boolean | null;
 	ranked_edition_keys?: string[] | null;
+	candidate_count?: number | null;
 	identity_source: string | null;
 	evidence_summary: Record<string, number>;
 	active_job_state: string | null;

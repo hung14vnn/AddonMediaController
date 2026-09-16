@@ -13,7 +13,6 @@
 		ListPlus,
 		GripVertical,
 		RefreshCw,
-		Disc3,
 		ArrowDownToLine
 	} from 'lucide-svelte';
 

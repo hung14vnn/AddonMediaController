@@ -292,8 +292,8 @@
 				</div>
 				<p class="mt-4 font-semibold">No indexers yet</p>
 				<p class="mx-auto mt-1 max-w-md text-sm text-base-content/70">
-					Add a Newznab indexer (its URL + your API key) to search Usenet. DroppedNeedle bundles
-					none - bring your own. Run Prowlarr instead? Select it above and configure it below.
+					Add a Newznab indexer (its URL + your API key) to search Usenet. hify bundles none - bring
+					your own. Run Prowlarr instead? Select it above and configure it below.
 				</p>
 				<button type="button" class="btn btn-primary btn-sm mt-5" onclick={startAdd}>
 					<Plus class="size-4" aria-hidden="true" /> Add indexer

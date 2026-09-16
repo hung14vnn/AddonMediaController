@@ -28,6 +28,6 @@ describe('invalidateLibraryCatalog', () => {
 		expect(keys).toContainEqual(['home']);
 		expect(keys).toContainEqual(['discover']);
 		expect(keys).toContainEqual(['library', 'artist-reconciliation']);
-		expect(keys).toContainEqual(['lyrics']);
+		expect(keys).toContainEqual(['lyrics', 'v2']);
 	});
 });

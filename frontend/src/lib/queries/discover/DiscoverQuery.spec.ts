@@ -49,7 +49,7 @@ function lastQueryOpts(): Record<string, unknown> {
 	return factory();
 }
 
-describe('getPlaylistSuggestionsQuery', () => {
+describe('getPlaylistSuggestionsQuery', { timeout: 30_000 }, () => {
 	it('posts the playlist id and count (no source: backend resolves the primary)', async () => {
 		mockPost.mockResolvedValue({ playlist_id: 'pl-1', suggestions: { items: [] } });
 

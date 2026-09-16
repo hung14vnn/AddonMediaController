@@ -227,8 +227,8 @@
 			<div>
 				<h2 class="font-semibold">Acquisition quality</h2>
 				<p class="text-sm text-base-content/70">
-					Set which complete-album format and quality DroppedNeedle tries first, then arrange the
-					fallbacks. New work uses saved changes; active tasks keep the recipe they started with.
+					Set which complete-album format and quality hify tries first, then arrange the fallbacks.
+					New work uses saved changes; active tasks keep the recipe they started with.
 				</p>
 			</div>
 
@@ -256,7 +256,8 @@
 					<span class="label-text">Saving storage mode</span>
 				</label>
 				<p class="mt-2 text-xs text-base-content/60">
-					Convert verified Soulseek FLAC downloads to AAC 256 kbps M4A files to reduce library storage.
+					Convert verified Soulseek FLAC downloads to AAC 256 kbps M4A files to reduce library
+					storage.
 				</p>
 			</div>
 

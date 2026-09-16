@@ -9,7 +9,6 @@
 	import SettingsOnboardingChecklist from './SettingsOnboardingChecklist.svelte';
 	import SettingsSabnzbd from './SettingsSabnzbd.svelte';
 	import SettingsSpotiflac from './SettingsSpotiflac.svelte';
-	import SettingsSourcePriority from './SettingsSourcePriority.svelte';
 	import SettingsWanted from './SettingsWanted.svelte';
 
 	const sourcesQuery = getPluginSourcesQuery();

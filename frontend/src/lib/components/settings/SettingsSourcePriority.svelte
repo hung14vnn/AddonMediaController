@@ -15,15 +15,17 @@
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import { getPluginSourcesQuery } from '$lib/queries/plugins/PluginSourceQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
+	import type { ComponentType, Component } from 'svelte';
 
 	const priorityQuery = getSourcePriorityQuery();
 	const reorder = saveSourcePriority();
 	const sourcesQuery = getPluginSourcesQuery();
 
-	const META: Record<string, { label: string; sub: string; icon: typeof Rss }> = {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const META: Record<string, { label: string; sub: string; icon: ComponentType | Component<any> | typeof Rss }> = {
 		soulseek: { label: 'Soulseek', sub: 'slskd', icon: HardDriveDownload },
 		usenet: { label: 'Usenet', sub: 'SABnzbd', icon: Rss },
-	spotiflac: { label: 'Spotify', sub: 'SpotiFLAC', icon: YouTubeIcon }
+		spotiflac: { label: 'Spotify', sub: 'SpotiFLAC', icon: YouTubeIcon }
 	};
 
 	const pluginLabels = $derived(

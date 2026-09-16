@@ -199,12 +199,15 @@ export const applyLibraryManagementPreviewMutation = () =>
 
 export const reissueLibraryManagementPreviewMutation = () =>
 	createMutation(() => ({
-		mutationFn: (input: { jobId: string; silent?: boolean }) =>
-			api.global.post<LibraryManagementPreviewReissueResponse>(
-				API.libraryManagement.reissuePreview(input.jobId)
-			),
-		onError: (error: Error, input: { jobId: string; silent?: boolean }) => {
-			if (!input.silent) showActionError('Could not resume this management preview')(error);
+		mutationFn: (input: string | { jobId: string; silent?: boolean }) => {
+			const jobId = typeof input === 'string' ? input : input.jobId;
+			return api.global.post<LibraryManagementPreviewReissueResponse>(
+				API.libraryManagement.reissuePreview(jobId)
+			);
+		},
+		onError: (error: Error, input: string | { jobId: string; silent?: boolean }) => {
+			const silent = typeof input === 'string' ? false : input.silent;
+			if (!silent) showActionError('Could not resume this management preview')(error);
 		}
 	}));
 

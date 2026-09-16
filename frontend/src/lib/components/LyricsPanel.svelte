@@ -46,13 +46,7 @@
 		onaddtoplaylist?: () => void;
 		onopenqueue?: () => void;
 		karaokeStatus?:
-			| 'idle'
-			| 'not_generated'
-			| 'preparing'
-			| 'queued'
-			| 'processing'
-			| 'ready'
-			| 'failed';
+			'idle' | 'not_generated' | 'preparing' | 'queued' | 'processing' | 'ready' | 'failed';
 		karaokeAvailable?: boolean;
 		karaokeActive?: boolean;
 		karaokeError?: string;
@@ -188,7 +182,7 @@
 	class:hidden={!open}
 	class:pointer-events-none={!open}
 	style:pointer-events={open ? 'auto' : 'none'}
-	class="lyrics-stage fixed inset-0 z-[60] flex flex-col overflow-hidden bg-base-100 text-white"
+	class="lyrics-stage fixed inset-0 z-[60] flex flex-col overflow-hidden text-white backdrop-blur-2xl"
 	role="dialog"
 	aria-label="Lyrics"
 	aria-modal="true"
@@ -327,7 +321,7 @@
 				{:else}
 					<Mic class="h-5 w-5" />
 				{/if}
-				</button>
+			</button>
 		{/if}
 
 		<div class="lyrics-stage-content relative z-0 min-h-0 flex-1">
@@ -457,31 +451,6 @@
 		overflow: hidden;
 	}
 
-	.lyrics-artwork {
-		position: absolute;
-		inset: -15%;
-		height: 130%;
-		width: 130%;
-		object-fit: cover;
-		filter: blur(48px) saturate(1.15);
-		opacity: 0.2;
-		transform: scale(1.08);
-		transform-origin: center;
-		animation: lyrics-artwork-rotate 30s linear infinite;
-	}
-
-	@keyframes lyrics-artwork-rotate {
-		to {
-			transform: scale(1.08) rotate(360deg);
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.lyrics-artwork {
-			animation: none;
-		}
-	}
-
 	/* Keep the artwork backdrop on mobile, but leave its rotation disabled so it
 	   does not reintroduce a continuous compositor workload. */
 	:global(html.mobile-low-power-playback) .lyrics-artwork {
@@ -498,16 +467,22 @@
 		padding-bottom: 1rem;
 	}
 
+	.lyrics-stage {
+		background: rgba(9, 12, 16, 0.72);
+		backdrop-filter: blur(24px);
+		-webkit-backdrop-filter: blur(24px);
+	}
+
 	.lyrics-wash {
 		position: absolute;
 		inset: 0;
 		pointer-events: none;
-		background: linear-gradient(180deg, rgba(5, 5, 5, 0.45), rgba(5, 5, 5, 0.86));
+		background: linear-gradient(180deg, rgba(5, 5, 5, 0.25), rgba(5, 5, 5, 0.5));
 	}
 
 	@media (min-width: 768px) {
 		.lyrics-stage {
-			background: #090c10;
+			background: rgba(9, 12, 16, 0.72);
 		}
 
 		.lyrics-stage-inner {
@@ -640,7 +615,7 @@
 		}
 
 		.lyrics-wash {
-			background: linear-gradient(90deg, rgba(5, 5, 5, 0.7), rgba(5, 5, 5, 0.84));
+			background: linear-gradient(90deg, rgba(5, 5, 5, 0.25), rgba(5, 5, 5, 0.45));
 		}
 	}
 

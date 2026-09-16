@@ -13,7 +13,11 @@
 		onenrichmentrequest?: (() => void) | undefined;
 	}
 
-	let { artist, enrichmentSource = 'none', onenrichmentrequest = undefined }: Props = $props();
+	let {
+		artist,
+		enrichmentSource = 'none',
+		onenrichmentrequest: _onenrichmentrequest = undefined
+	}: Props = $props();
 
 	let listenTitle = $derived(getListenTitle(enrichmentSource, 'artist'));
 </script>

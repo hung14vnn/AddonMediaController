@@ -8,6 +8,25 @@ const envPublicStub = fileURLToPath(new URL('./src/lib/test/env-public-stub.ts',
 
 export default defineConfig({
 	plugins: [sveltekit()],
+	build: {
+		rollupOptions: {
+			output: {
+				manualChunks(id) {
+					if (id.includes('node_modules')) {
+						if (id.includes('lucide-svelte')) {
+							return 'vendor-icons';
+						}
+						if (id.includes('@tanstack/svelte-query')) {
+							return 'vendor-query';
+						}
+						if (id.includes('dompurify') || id.includes('marked')) {
+							return 'vendor-markdown';
+						}
+					}
+				}
+			}
+		}
+	},
 	test: {
 		expect: { requireAssertions: true },
 		projects: [

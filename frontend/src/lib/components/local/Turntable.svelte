@@ -206,16 +206,16 @@
 				class:is-paused={!isPlaying}
 			>
 				<div
-					class="pointer-events-none absolute inset-[9%] rounded-full border border-base-content/[0.06]"
+					class="pointer-events-none absolute inset-[6%] rounded-full border border-base-content/[0.06]"
 				></div>
 				<div
-					class="pointer-events-none absolute inset-[18%] rounded-full border border-base-content/[0.07]"
+					class="pointer-events-none absolute inset-[12%] rounded-full border border-base-content/[0.07]"
 				></div>
 				<div
-					class="pointer-events-none absolute inset-[27%] rounded-full border border-base-content/[0.08]"
+					class="pointer-events-none absolute inset-[18%] rounded-full border border-base-content/[0.08]"
 				></div>
 				<div
-					class="absolute inset-[33.5%] overflow-hidden rounded-full ring-1 ring-base-content/25 shadow-[0_0_0_2px_oklch(from_var(--color-base-100)_l_c_h_/_0.55),0_2px_8px_oklch(from_var(--color-base-100)_l_c_h_/_0.6)]"
+					class="absolute inset-[25%] overflow-hidden rounded-full ring-1 ring-base-content/25 shadow-[0_0_0_2px_oklch(from_var(--color-base-100)_l_c_h_/_0.55),0_2px_8px_oklch(from_var(--color-base-100)_l_c_h_/_0.6)]"
 				>
 					{#if np}
 						<AlbumImage

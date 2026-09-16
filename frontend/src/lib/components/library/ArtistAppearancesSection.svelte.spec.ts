@@ -65,6 +65,7 @@ const album: LibraryAlbumSummary = {
 	date_added: 1,
 	sort_name: null,
 	original_release_date: '2024-01-01',
+	release_type: null,
 	contribution_id: null,
 	contribution_state: null
 };

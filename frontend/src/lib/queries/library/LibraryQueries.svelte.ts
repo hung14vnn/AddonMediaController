@@ -47,6 +47,7 @@ type NativeAlbumWire = {
 	date_added?: number | null;
 	sort_name?: string | null;
 	original_release_date?: string | null;
+	release_type?: string | null;
 
 	// Legacy native response aliases.
 	release_group_mbid?: string | null;
@@ -106,6 +107,7 @@ function normaliseAlbums(response: { items?: NativeAlbumWire[]; total?: number }
 				date_added: album.date_added ?? album.last_imported_at ?? null,
 				sort_name: album.sort_name ?? album.album_sort_name ?? null,
 				original_release_date: album.original_release_date ?? null,
+				release_type: album.release_type ?? null,
 				contribution_id: null,
 				contribution_state: null
 			};

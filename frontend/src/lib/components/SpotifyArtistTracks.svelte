@@ -70,8 +70,7 @@
 	}
 
 	$effect(() => {
-		artistId;
-		artistName;
+		void [artistId, artistName];
 		void loadInitial();
 	});
 </script>

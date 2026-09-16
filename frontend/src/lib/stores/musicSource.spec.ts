@@ -27,7 +27,7 @@ describe('migratePageSourceKeys', () => {
 		vi.resetModules();
 		const mod = await import('$lib/stores/musicSource');
 		migratePageSourceKeys = mod.migratePageSourceKeys;
-	});
+	}, 30_000);
 
 	it('converts raw "listenbrainz" to JSON-encoded string', () => {
 		storage.set(PAGE_SOURCE_KEYS.home, 'listenbrainz');

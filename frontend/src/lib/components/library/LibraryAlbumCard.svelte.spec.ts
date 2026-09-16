@@ -23,6 +23,7 @@ const baseAlbum: LibraryAlbumSummary = {
 	date_added: null,
 	sort_name: null,
 	original_release_date: null,
+	release_type: null,
 	contribution_id: null,
 	contribution_state: null
 };
@@ -30,7 +31,7 @@ const baseAlbum: LibraryAlbumSummary = {
 async function renderComponent(overrides: Partial<LibraryAlbumSummary> = {}) {
 	return await render(LibraryAlbumCard, {
 		props: { album: { ...baseAlbum, ...overrides } }
-	} as Parameters<typeof render<typeof LibraryAlbumCard>>[1]);
+	} as unknown as Parameters<typeof render<typeof LibraryAlbumCard>>[1]);
 }
 
 describe('LibraryAlbumCard.svelte', () => {

@@ -35,6 +35,7 @@
 		ListPlus,
 		ListStart,
 		LoaderCircle,
+		LoaderCircle as Loader2,
 		Music2,
 		Pencil,
 		Archive,
@@ -1252,7 +1253,7 @@
 					</label>
 					{#if spotifySearchResults.length}
 						<div class="mt-3 grid gap-2" aria-label="Spotify results">
-							{#each spotifySearchResults as result}
+							{#each spotifySearchResults as result (result.id ?? `${result.title}-${result.artist}`)}
 								<button class="flex items-center gap-3 rounded-lg p-2 text-left hover:bg-base-200" onclick={() => applySpotifyTrack(result)}>
 									{#if result.cover_url}<img class="h-10 w-10 rounded object-cover" src={result.cover_url} alt="" />{:else}<div class="h-10 w-10 rounded bg-base-300"></div>{/if}
 									<span class="min-w-0"><strong class="block truncate">{result.title}</strong><small class="block truncate text-base-content/60">{result.artist} · {result.album}</small></span>

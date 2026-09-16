@@ -7,7 +7,6 @@
 	import type { DownloadTask } from '$lib/types';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 
-	import DownloadProgressBar from './DownloadProgressBar.svelte';
 	import DownloadSourceStatus from './DownloadSourceStatus.svelte';
 	import DownloadStatusBadge from './DownloadStatusBadge.svelte';
 	import VinylProgress from './VinylProgress.svelte';
@@ -28,10 +27,8 @@
 	const isSearchingState = $derived(derivedStatus === 'searching');
 	const progress = $derived(stream.state.progress);
 	const livePct = $derived(progress?.progress_percent ?? task.progress_percent);
-	const isIndeterminate = $derived(
-		task.source === 'spotiflac' && (progress?.bytes_total ?? task.total_size_bytes ?? 0) <= 0
-	);
-	const showBar = $derived(task.status === 'downloading' || task.status === 'processing');
+	const filesCompleted = $derived(progress?.files_completed ?? task.files_completed);
+	const filesTotal = $derived(progress?.files_total ?? task.files_total);
 	const hasAlbumLink = $derived(Boolean(task.release_group_mbid));
 </script>
 
@@ -67,19 +64,14 @@
 				{/if}
 				{#if task.year}<span class="text-base-content/30"> · </span>{task.year}{/if}
 			</p>
-			<div class="mt-2"><DownloadStatusBadge {task} /></div>
-			{#if showBar}
-				<div class="mt-3 max-w-md">
-					<DownloadProgressBar
-						percent={livePct}
-						bytesDownloaded={progress?.bytes_downloaded ?? task.downloaded_bytes}
-						bytesTotal={progress?.bytes_total ?? task.total_size_bytes ?? 0}
-						filesCompleted={progress?.files_completed ?? task.files_completed}
-						filesTotal={progress?.files_total ?? task.files_total}
-						indeterminate={isIndeterminate}
-					/>
-				</div>
-			{/if}
+			<div class="mt-2 flex flex-wrap items-center gap-2">
+				<DownloadStatusBadge {task} />
+				{#if (task.status === 'downloading' || task.status === 'processing') && filesTotal > 0}
+					<span class="text-xs text-base-content/60 tabular-nums">
+						{filesCompleted}/{filesTotal} {filesTotal === 1 ? 'file' : 'files'}
+					</span>
+				{/if}
+			</div>
 			<DownloadSourceStatus
 				{task}
 				live={stream.state.source}

@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { ChevronDown } from 'lucide-svelte';
-	import type { Snippet } from 'svelte';
+	import type { ComponentType, Component, Snippet } from 'svelte';
 
 	interface Props {
 		title: string;
 		sourceLabel: string;
-		icon: typeof ChevronDown;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		icon: ComponentType | Component<any> | typeof ChevronDown;
 		connected: boolean;
 		statusText: string;
 		enabled: boolean;

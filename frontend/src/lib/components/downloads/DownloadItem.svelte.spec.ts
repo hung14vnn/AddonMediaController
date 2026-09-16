@@ -117,8 +117,8 @@ describe('DownloadItem.svelte', () => {
 	});
 
 	it('shows the SpotiFLAC source badge only once', async () => {
-		renderItem(task({ source: 'spotiflac', status: 'completed' }));
-		await expect.element(page.getByText('SpotiFLAC', { exact: true })).toHaveCount(1);
+		await renderItem(task({ source: 'spotiflac', status: 'completed' }));
+		expect((await page.getByText('SpotiFLAC', { exact: true }).all()).length).toBe(1);
 	});
 
 	it('shows the track title first for a track download', async () => {

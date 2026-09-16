@@ -1,3 +1,4 @@
+import { SvelteSet } from 'svelte/reactivity';
 import { createMutation } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
@@ -263,7 +264,7 @@ export function requestSpotifyTrack() {
 export function requestSpotifyTracks() {
 	return createMutation(() => ({
 		mutationFn: async (spotifyIds: string[]) => {
-			const uniqueIds = [...new Set(spotifyIds.filter(Boolean))];
+			const uniqueIds = [...new SvelteSet(spotifyIds.filter(Boolean))];
 			const results = await Promise.all(
 				uniqueIds.map((spotify_id) =>
 					api.global.post<{ status: string; task_id?: string | null }>(

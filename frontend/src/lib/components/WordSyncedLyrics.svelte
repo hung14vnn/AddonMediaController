@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { AlertCircle, Loader2 } from 'lucide-svelte';
 	import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 
@@ -163,8 +163,10 @@
 		const root = target.shadowRoot;
 		if (!root) return;
 		if (root.querySelector('.lyrics-line')) {
+			loading = false;
 			onavailability(true);
 		} else if (root.querySelector('.no-lyrics')) {
+			loading = false;
 			onavailability(false);
 		}
 	}
@@ -175,7 +177,8 @@
 
 		const style = document.createElement('style');
 		style.dataset.hideSourceFooter = 'true';
-		style.textContent = '.lyrics-footer .footer-content { display: none !important; }';
+		style.textContent =
+			'.lyrics-footer .footer-content, .download-controls { display: none !important; }';
 		root.appendChild(style);
 	}
 
@@ -191,8 +194,18 @@
 				if (disposed) return;
 				await customElements.whenDefined('am-lyrics');
 				if (disposed) return;
-				const target = element;
-				if (!target) return;
+				let target = element;
+				if (!target) {
+					await tick();
+					target = element;
+				}
+				if (!target) {
+					target = document.querySelector('am-lyrics') as AmLyricsElement | null;
+				}
+				if (!target) {
+					loading = false;
+					return;
+				}
 				applyAttributes(target);
 				(target as AmLyricsElement & { fetchLyrics?: () => void }).fetchLyrics?.();
 				anchorClock(Math.max(0, currentTimeSeconds * 1000));

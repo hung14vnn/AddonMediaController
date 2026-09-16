@@ -30,7 +30,6 @@
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 	import { EMPTY_STATE_COPY, classifyEmptyState } from '$lib/utils/acquisitionLabels';
 
-	import DownloadProgressBar from './DownloadProgressBar.svelte';
 	import DownloadSourceStatus from './DownloadSourceStatus.svelte';
 	import DownloadStatusBadge from './DownloadStatusBadge.svelte';
 	import ReviewCandidates from './ReviewCandidates.svelte';
@@ -54,7 +53,6 @@
 	const isProcessing = $derived(task.status === 'processing');
 	const isDownloading = $derived(task.status === 'downloading');
 	const isLive = $derived(isSearchingState || isDownloading || isProcessing);
-	const showBar = $derived(isDownloading || isProcessing);
 	const isCompleted = $derived(task.status === 'completed' || task.status === 'partial');
 	const cleanupState = $derived(task.acquisition_cleanup_state);
 	const hasAlbumLink = $derived(Boolean(task.release_group_mbid));
@@ -73,11 +71,8 @@
 
 	const progress = $derived(stream.state.progress);
 	const livePct = $derived(progress?.progress_percent ?? task.progress_percent);
-	const isIndeterminate = $derived(
-		task.source === 'spotiflac' &&
-			livePct > 0 &&
-			(progress?.bytes_total ?? task.total_size_bytes ?? 0) <= 0
-	);
+	const filesCompleted = $derived(progress?.files_completed ?? task.files_completed);
+	const filesTotal = $derived(progress?.files_total ?? task.files_total);
 	const isOwnedByOther = $derived(authStore.isAdmin && task.user_id !== authStore.user?.id);
 	const primaryTitle = $derived(
 		task.download_type === 'track' && task.track_title ? task.track_title : task.album_title
@@ -141,6 +136,11 @@
 			</p>
 			<div class="mt-1 flex flex-wrap items-center gap-1.5">
 				<DownloadStatusBadge {task} />
+				{#if (isDownloading || isProcessing) && filesTotal > 0}
+					<span class="text-xs text-base-content/60 tabular-nums">
+						{filesCompleted}/{filesTotal} {filesTotal === 1 ? 'file' : 'files'}
+					</span>
+				{/if}
 				{#if task.source === 'spotiflac'}
 					<span class="badge badge-ghost badge-sm">SpotiFLAC</span>
 				{/if}
@@ -181,18 +181,6 @@
 					</span>
 				{/if}
 			</div>
-			{#if showBar}
-				<div class="mt-2 max-w-md">
-					<DownloadProgressBar
-						percent={livePct}
-						bytesDownloaded={progress?.bytes_downloaded ?? task.downloaded_bytes}
-						bytesTotal={progress?.bytes_total ?? task.total_size_bytes ?? 0}
-						filesCompleted={progress?.files_completed ?? task.files_completed}
-						filesTotal={progress?.files_total ?? task.files_total}
-						indeterminate={isIndeterminate}
-					/>
-				</div>
-			{/if}
 			<DownloadSourceStatus
 				{task}
 				live={stream.state.source}

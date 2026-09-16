@@ -7,6 +7,7 @@ import { queryClient, setQueryDataWithPersister } from '$lib/queries/QueryClient
 import { getScrobblePreferencesQueryOptions } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte';
 import { ScrobblePreferencesQueryKeyFactory } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQueryKeyFactory';
 import { registerUserSessionReset } from '$lib/utils/userSessionCleanup';
+import type { ScrobblePreferences } from '$lib/queries/scrobble-preferences/types';
 
 export type MusicSource = 'listenbrainz' | 'lastfm';
 export type MusicSourcePage = keyof typeof PAGE_SOURCE_KEYS;

@@ -5061,14 +5061,41 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
-    async def list_target_genres(self) -> list[dict[str, Any]]:
+    async def list_target_genres(
+        self, *, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         def operation(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+            if user_id is None:
+                rows = connection.execute(
+                    "WITH spellings AS ("
+                    "SELECT genre.folded_name AS genre_key, genre.name AS genre, "
+                    "COUNT(*) AS spelling_count FROM local_track_genres genre "
+                    "JOIN local_tracks track ON track.id = genre.local_track_id "
+                    "WHERE track.availability = 'indexed' "
+                    "GROUP BY genre.folded_name, genre.name), ranked AS ("
+                    "SELECT genre_key, genre, spelling_count, "
+                    "ROW_NUMBER() OVER (PARTITION BY genre_key "
+                    "ORDER BY spelling_count DESC, genre) AS spelling_rank "
+                    "FROM spellings), totals AS ("
+                    "SELECT genre.folded_name AS genre_key, "
+                    "COUNT(DISTINCT track.id) AS song_count, "
+                    "COUNT(DISTINCT track.local_album_id) AS album_count "
+                    "FROM local_track_genres genre "
+                    "JOIN local_tracks track ON track.id = genre.local_track_id "
+                    "WHERE track.availability = 'indexed' GROUP BY genre.folded_name) "
+                    "SELECT ranked.genre, totals.song_count, totals.album_count "
+                    "FROM totals JOIN ranked USING (genre_key) WHERE spelling_rank = 1 "
+                    "ORDER BY genre_key, ranked.genre"
+                ).fetchall()
+                return [dict(row) for row in rows]
+
+            access_clause = _user_track_access_clause("track")
             rows = connection.execute(
                 "WITH spellings AS ("
                 "SELECT genre.folded_name AS genre_key, genre.name AS genre, "
                 "COUNT(*) AS spelling_count FROM local_track_genres genre "
                 "JOIN local_tracks track ON track.id = genre.local_track_id "
-                "WHERE track.availability = 'indexed' "
+                f"WHERE track.availability = 'indexed' AND {access_clause} "
                 "GROUP BY genre.folded_name, genre.name), ranked AS ("
                 "SELECT genre_key, genre, spelling_count, "
                 "ROW_NUMBER() OVER (PARTITION BY genre_key "
@@ -5079,10 +5106,11 @@ class NativeLibraryStore(PersistenceBase):
                 "COUNT(DISTINCT track.local_album_id) AS album_count "
                 "FROM local_track_genres genre "
                 "JOIN local_tracks track ON track.id = genre.local_track_id "
-                "WHERE track.availability = 'indexed' GROUP BY genre.folded_name) "
+                f"WHERE track.availability = 'indexed' AND {access_clause} GROUP BY genre.folded_name) "
                 "SELECT ranked.genre, totals.song_count, totals.album_count "
                 "FROM totals JOIN ranked USING (genre_key) WHERE spelling_rank = 1 "
-                "ORDER BY genre_key, ranked.genre"
+                "ORDER BY genre_key, ranked.genre",
+                (user_id, user_id),
             ).fetchall()
             return [dict(row) for row in rows]
 

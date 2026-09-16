@@ -43,7 +43,6 @@
 	import PageSectionToc from '$lib/components/PageSectionToc.svelte';
 	import { page } from '$app/state';
 	import { browser } from '$app/environment';
-	import { toastStore } from '$lib/stores/toast';
 
 	const userId = authStore.user?.id ?? '';
 	const profileQuery = getProfileQuery(userId);

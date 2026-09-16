@@ -42,9 +42,7 @@
 			syncResult = {
 				success: false,
 				message:
-					error instanceof ApiError
-						? error.message
-						: 'Playlist sync failed. Check the DroppedNeedle logs.',
+					error instanceof ApiError ? error.message : 'Playlist sync failed. Check the hify logs.',
 				written: 0,
 				unchanged: 0,
 				removed: 0,
@@ -171,7 +169,7 @@
 				<div>
 					<h3 class="font-medium">Playlist Sync</h3>
 					<p class="text-xs text-base-content/50 mt-1 whitespace-normal">
-						Sync DroppedNeedle playlists to Navidrome - DroppedNeedle writes an
+						Sync hify playlists to Navidrome - hify writes an
 						<code>.m3u8</code> file per playlist into a folder Navidrome scans, and refreshes them in
 						the background as playlists change.
 					</p>
@@ -207,7 +205,7 @@
 						/>
 						<div class="label whitespace-normal">
 							<span class="label-text-alt text-base-content/50">
-								An absolute path <em>inside the DroppedNeedle container</em> that must sit
+								An absolute path <em>inside the hify container</em> that must sit
 								<strong>inside the same music library tree Navidrome scans</strong> — track paths are
 								written relative to this folder, so both apps have to see the same folder-to-track relationship.
 							</span>
@@ -246,12 +244,12 @@
 							/>
 							<div class="whitespace-normal">
 								<span class="label-text font-medium">
-									Remove exported files when a playlist is removed from DroppedNeedle, or when a
-									playlist is made private and only public playlists are exported
+									Remove exported files when a playlist is removed from hify, or when a playlist is
+									made private and only public playlists are exported
 								</span>
 								<p class="text-xs text-base-content/50">
-									Only files exported from DroppedNeedle are ever removed. Other playlists in the
-									same folder are never removed.
+									Only files exported from hify are ever removed. Other playlists in the same folder
+									are never removed.
 								</p>
 							</div>
 						</label>

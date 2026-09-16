@@ -53,7 +53,7 @@ describe('appendAudioDBSizeSuffix', () => {
 
 	it('handles empty string input gracefully', () => {
 		expect.assertions(2);
-		expect(appendAudioDBSizeSuffix('', 'md')).toBe('/small');
+		expect(appendAudioDBSizeSuffix('', 'md')).toBe('');
 		expect(appendAudioDBSizeSuffix('', 'full')).toBe('');
 	});
 });

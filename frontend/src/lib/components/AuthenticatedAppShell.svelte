@@ -853,7 +853,7 @@
 				<span>Settings</span>
 				{#if versionUpdateAvailable}
 					<span class="droppedneedle-bottom-nav__badge" aria-label="Update available">
-						<ArrowUpCircle class="h-3 w-3" />
+						<CircleArrowUp class="h-3 w-3" />
 					</span>
 				{/if}
 			</a>

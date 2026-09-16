@@ -108,15 +108,16 @@ describe('fetchLyrics', () => {
 			lines: [
 				{ text: 'Hello', start_seconds: 0 },
 				{ text: 'world', start_seconds: 5 }
-			]
+			],
+			source: ''
 		});
 		expect(mockGet).toHaveBeenCalledOnce();
-		expect(mockGet.mock.calls[0][0]).toContain('/api/v1/navidrome/lyrics/track-1');
+		expect(mockGet.mock.calls[0][0]).toContain('source=navidrome');
 	});
 
 	it('normalizes Jellyfin response correctly (lyrics_text → text)', async () => {
 		mockGet.mockResolvedValueOnce({
-			lyrics_text: 'Jellyfin lyrics here',
+			text: 'Jellyfin lyrics here',
 			is_synced: false,
 			lines: [{ text: 'line one', start_seconds: null }]
 		});
@@ -127,10 +128,11 @@ describe('fetchLyrics', () => {
 		expect(result).toEqual({
 			text: 'Jellyfin lyrics here',
 			is_synced: false,
-			lines: [{ text: 'line one', start_seconds: null }]
+			lines: [{ text: 'line one', start_seconds: null }],
+			source: ''
 		});
 		expect(mockGet).toHaveBeenCalledOnce();
-		expect(mockGet.mock.calls[0][0]).toBe('/api/v1/jellyfin/lyrics/track-1');
+		expect(mockGet.mock.calls[0][0]).toContain('source=jellyfin');
 	});
 
 	it('returns null on 404 (lyrics not available)', async () => {
@@ -165,7 +167,8 @@ describe('fetchLyrics', () => {
 		expect(result).toEqual({
 			text: '',
 			is_synced: false,
-			lines: []
+			lines: [],
+			source: ''
 		});
 	});
 
@@ -178,7 +181,8 @@ describe('fetchLyrics', () => {
 		expect(result).toEqual({
 			text: '',
 			is_synced: false,
-			lines: []
+			lines: [],
+			source: ''
 		});
 	});
 
@@ -192,7 +196,7 @@ describe('fetchLyrics', () => {
 	});
 
 	it('passes signal to api.global.get for Jellyfin', async () => {
-		mockGet.mockResolvedValueOnce({ lyrics_text: '', is_synced: false, lines: [] });
+		mockGet.mockResolvedValueOnce({ text: '', is_synced: false, lines: [] });
 
 		const np = makeNowPlaying({ sourceType: 'jellyfin' });
 		await fetchLyrics(np, signal);
@@ -212,9 +216,10 @@ describe('fetchLyrics', () => {
 		await fetchLyrics(np, signal);
 
 		const url = mockGet.mock.calls[0][0] as string;
-		expect(url).toContain('/api/v1/navidrome/lyrics/song-42');
-		expect(url).toContain('artist=The%20Band');
-		expect(url).toContain('title=Cool%20Song');
+		expect(url).toContain('source=navidrome');
+		expect(url).toContain('track_id=song-42');
+		expect(url).toContain('artist=The+Band');
+		expect(url).toContain('title=Cool+Song');
 	});
 });
 
@@ -236,7 +241,9 @@ describe('LyricsQueryKeyFactory', () => {
 			'navidrome',
 			'track-1',
 			'Artist',
-			'Song'
+			'Song',
+			undefined,
+			undefined
 		]);
 	});
 
@@ -252,6 +259,8 @@ describe('LyricsQueryKeyFactory', () => {
 		expect(key).toEqual([
 			'lyrics',
 			'v2',
+			undefined,
+			undefined,
 			undefined,
 			undefined,
 			undefined,

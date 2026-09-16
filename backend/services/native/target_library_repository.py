@@ -623,18 +623,18 @@ class TargetLibraryRepository:
         return await self._store.list_target_genres()
 
     async def get_files_by_genre(
-        self, genre: str, *, limit: int, offset: int
+        self, genre: str, *, limit: int, offset: int, user_id: str | None = None
     ) -> list[dict[str, Any]]:
         rows, _ = await self._store.list_target_tracks(
-            limit=limit, offset=offset, genre=genre
+            limit=limit, offset=offset, genre=genre, user_id=user_id
         )
         return rows
 
     async def get_files_by_artist_name(
-        self, artist_name: str, *, limit: int
+        self, artist_name: str, *, limit: int, user_id: str | None = None
     ) -> list[dict[str, Any]]:
         rows, _ = await self._store.list_target_tracks(
-            limit=limit, offset=0, artist_name=artist_name
+            limit=limit, offset=0, artist_name=artist_name, user_id=user_id
         )
         return rows
 
@@ -645,6 +645,7 @@ class TargetLibraryRepository:
         genre: str | None = None,
         from_year: int | None = None,
         to_year: int | None = None,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         rows, _ = await self._store.list_target_tracks(
             limit=limit,
@@ -653,6 +654,7 @@ class TargetLibraryRepository:
             genre=genre,
             from_year=from_year,
             to_year=to_year,
+            user_id=user_id,
         )
         return rows
 
@@ -663,31 +665,32 @@ class TargetLibraryRepository:
         self._related_artist_ids[artist_id] = value
 
     async def get_files_by_artist_mbids(
-        self, artist_ids: list[str], *, limit: int
+        self, artist_ids: list[str], *, limit: int, user_id: str | None = None
     ) -> list[dict[str, Any]]:
         rows, _ = await self._store.list_target_tracks(
-            limit=limit, offset=0, artist_ids=artist_ids
+            limit=limit, offset=0, artist_ids=artist_ids, user_id=user_id
         )
         return rows
 
     async def get_files_by_release_group_mbids(
-        self, album_ids: list[str], *, limit: int
+        self, album_ids: list[str], *, limit: int, user_id: str | None = None
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for album_id in album_ids:
-            rows.extend(await self._store.get_target_album_tracks(album_id))
+            rows.extend(await self._store.get_target_album_tracks(album_id, user_id=user_id))
             if len(rows) >= limit:
                 break
         return rows[:limit]
 
     async def get_files_by_album_artist_mbids(
-        self, artist_ids: list[str], *, limit: int
+        self, artist_ids: list[str], *, limit: int, user_id: str | None = None
     ) -> list[dict[str, Any]]:
         rows, _ = await self._store.list_target_tracks(
             limit=limit,
             offset=0,
             artist_ids=artist_ids,
             album_artist_only=True,
+            user_id=user_id,
         )
         return rows
 

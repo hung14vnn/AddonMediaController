@@ -247,9 +247,9 @@
 		</section>
 
 		<p class="text-xs leading-relaxed text-base-content/60">
-			We only orchestrate your own slskd instance over its local HTTP API; it never
-			joins or distributes on the Soulseek network. You supply, run, and are responsible for slskd
-			and its shared folders.
+			We only orchestrate your own slskd instance over its local HTTP API; it never joins or
+			distributes on the Soulseek network. You supply, run, and are responsible for slskd and its
+			shared folders.
 		</p>
 
 		<div class="alert alert-warning items-start text-sm">
@@ -266,7 +266,7 @@
 			</div>
 			{#if liveEffectivePath}
 				<p class="text-xs text-base-content/60">
-					DroppedNeedle looks in
+					hify looks in
 					<code class="text-base-content/70" data-testid="effective-downloads-path"
 						>{liveEffectivePath}</code
 					>. The mount itself comes from <code>SLSKD_DOWNLOADS_PATH</code> in docker-compose. Recreate
@@ -336,9 +336,9 @@
 					<Info class="size-5 shrink-0" aria-hidden="true" />
 					<div class="space-y-1">
 						<p>
-							Your downloads and library use separate container mount boundaries. We will
-							copy each file into the library and remove the source after the copy succeeds. This is
-							slower and temporarily needs room for both copies.
+							Your downloads and library use separate container mount boundaries. We will copy each
+							file into the library and remove the source after the copy succeeds. This is slower
+							and temporarily needs room for both copies.
 						</p>
 						<p class="text-base-content/70">
 							For fast moves, expose both folders through one common-parent container mount.
@@ -350,16 +350,16 @@
 				<div class="alert alert-info items-start text-sm">
 					<Info class="size-5 shrink-0" aria-hidden="true" />
 					<p>
-						The downloads path is writable, but we couldn't determine whether a fast move
-						is available. Imports will try the move first and copy when needed.
+						The downloads path is writable, but we couldn't determine whether a fast move is
+						available. Imports will try the move first and copy when needed.
 					</p>
 				</div>
 			{:else if mount?.ok}
 				<div class="alert alert-info items-start text-sm">
 					<Info class="size-5 shrink-0" aria-hidden="true" />
 					<p>
-						The downloads path is ready. Configure a library root before we can check
-						whether fast moves are available.
+						The downloads path is ready. Configure a library root before we can check whether fast
+						moves are available.
 					</p>
 				</div>
 			{:else if mount}
@@ -367,8 +367,7 @@
 					<TriangleAlert class="size-5 shrink-0" aria-hidden="true" />
 					<div class="space-y-1">
 						<p>
-							We can't reach slskd's downloads folder, so finished downloads won't
-							import.
+							We can't reach slskd's downloads folder, so finished downloads won't import.
 							{MOUNT_REASONS[mount.reason] ?? mount.reason}
 						</p>
 						<details class="text-xs">
@@ -390,9 +389,9 @@
 				<span class="badge badge-ghost badge-xs ml-1 align-middle">absolute path</span>
 			</label>
 			<p class="text-xs text-base-content/60">
-				The absolute container path where slskd keeps unfinished downloads. When set, DroppedNeedle
-				spots stranded partial bytes there and retries the missing file instead of reporting it
-				lost. Leave empty to disable.
+				The absolute container path where slskd keeps unfinished downloads. When set, hify spots
+				stranded partial bytes there and retries the missing file instead of reporting it lost.
+				Leave empty to disable.
 			</p>
 			<div class="flex flex-wrap items-center gap-2">
 				<input

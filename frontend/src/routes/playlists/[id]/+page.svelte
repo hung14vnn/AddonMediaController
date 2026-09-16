@@ -30,7 +30,7 @@
 		listOfflineTrackMetadata
 	} from '$lib/offline/offlineAudio';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { Music, Lock, Download, LoaderCircle, Trash2, Check } from 'lucide-svelte';
+	import { Music, Lock, Download, LoaderCircle, LoaderCircle as Loader2, Trash2, Check } from 'lucide-svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import type { PageData } from './$types';

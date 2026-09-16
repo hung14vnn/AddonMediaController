@@ -297,7 +297,10 @@ class LibraryViewService:
         await self._overlay_plays(tracks, "track", lambda t: t.recording_mbid, user)
         return tracks, total
 
-    async def get_genres(self) -> list[ViewGenre]:
+    async def get_genres(
+        self, user: "UserRecord | None" = None
+    ) -> list[ViewGenre]:
+        del user
         rows = await self._db.get_genres()
         return [
             ViewGenre(

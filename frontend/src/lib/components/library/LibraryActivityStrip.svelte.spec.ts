@@ -235,7 +235,7 @@ describe('LibraryActivityStrip', () => {
 	it('expires a visible failure while the page remains open', async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date(1_000_000 * 1000));
-		let unmount: (() => Promise<void>) | undefined;
+		let unmount: (() => void | Promise<void>) | undefined;
 		try {
 			({ unmount } = await render(LibraryActivityStrip, {
 				props: {

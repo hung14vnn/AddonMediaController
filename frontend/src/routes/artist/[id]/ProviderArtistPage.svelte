@@ -50,7 +50,7 @@
 	import { mergeArtistReleasePages } from '$lib/queries/artist/artistReleasePages';
 
 	interface Props {
-		data: { artistId: string; primarySource: MusicSource; preferProvider?: boolean };
+		data: { artistId: string; primarySource: MusicSource };
 		localArtist?: LibraryArtistSummary;
 	}
 
@@ -66,12 +66,9 @@
 	);
 
 	const connectionsQuery = getConnectionsQuery();
-	const connectionsSettled = $derived(connectionsQuery.isPending !== true);
+	const connectionsSettled = $derived(!connectionsQuery.isPending);
 	const connectionsUsable = $derived(
-		connectionsSettled &&
-			connectionsQuery.data !== undefined &&
-			connectionsQuery.isError !== true &&
-			connectionsQuery.isSuccess !== false
+		connectionsSettled && connectionsQuery.isSuccess && connectionsQuery.data !== undefined
 	);
 	const linkedSources = $derived.by<MusicSource[]>(() => {
 		if (!connectionsUsable) return [];

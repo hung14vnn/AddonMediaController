@@ -175,7 +175,6 @@ export class KaraokePlaybackSource implements PlaybackSource {
 	private waitUntilReady(element: HTMLAudioElement): Promise<void> {
 		if (element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return Promise.resolve();
 		return new Promise((resolve, reject) => {
-			let timeout: ReturnType<typeof setTimeout>;
 			const ready = () => finish(resolve);
 			const error = () => finish(() => reject(new Error('Karaoke stem failed to load')));
 			const finish = (action: () => void) => {
@@ -184,7 +183,7 @@ export class KaraokePlaybackSource implements PlaybackSource {
 				element.removeEventListener('error', error);
 				action();
 			};
-			timeout = setTimeout(
+			const timeout = setTimeout(
 				() => finish(() => reject(new Error('Karaoke stem load timed out'))),
 				LOAD_TIMEOUT_MS
 			);

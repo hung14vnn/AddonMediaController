@@ -1,6 +1,5 @@
 <script lang="ts">
 	import GitHubIcon from '$lib/components/GitHubIcon.svelte';
-	import { withBasePath } from '$lib/utils/basePath';
 	import { getVersionQuery } from '$lib/queries/VersionQuery.svelte';
 
 	const GITHUB_URL = 'https://github.com/DroppedNeedle/DroppedNeedle';

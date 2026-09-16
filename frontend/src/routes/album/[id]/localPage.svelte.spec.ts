@@ -12,22 +12,22 @@ const h = vi.hoisted(() => ({
 	isTrusted: false,
 	editions: undefined as
 		| {
-				items: Array<{
-					release_mbid: string;
-					track_count: number;
-					title: string | null;
-					disambiguation: string | null;
-					date: string | null;
-					country: string | null;
-					packaging: string | null;
-					status: string | null;
-					is_owned: boolean;
-					is_pinned: boolean;
-				}>;
-				pinned_release_mbid: string | null;
-				owned_release_mbid: string | null;
-				selected_release_mbid: string | null;
-		  }
+			items: Array<{
+				release_mbid: string;
+				track_count: number;
+				title: string | null;
+				disambiguation: string | null;
+				date: string | null;
+				country: string | null;
+				packaging: string | null;
+				status: string | null;
+				is_owned: boolean;
+				is_pinned: boolean;
+			}>;
+			pinned_release_mbid: string | null;
+			owned_release_mbid: string | null;
+			selected_release_mbid: string | null;
+		}
 		| undefined,
 	localPin: { pinned_release_mbid: null as string | null },
 	setLocalPin: vi.fn(),
@@ -99,7 +99,8 @@ const album: LibraryAlbumDetail = {
 	contribution_id: null,
 	contribution_state: null,
 	display_release_mbid: null,
-	pick_basis: null
+	pick_basis: null,
+	release_type: null
 };
 
 const track: NativeTrackListItem = {
@@ -258,7 +259,7 @@ describe('local-only album page', () => {
 		await expect
 			.element(
 				page.getByText(
-					'This album is in your DroppedNeedle library, but no MusicBrainz release is linked yet.'
+					'This album is in your library, but no MusicBrainz release is linked yet.'
 				)
 			)
 			.toBeVisible();

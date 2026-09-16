@@ -726,7 +726,7 @@
 								<p class="mt-1 ml-1 text-xs text-base-content/50">
 									{#if selectedBounds.allowUnlimitedRate}Up to {selectedBounds.rateMax} req/sec on your
 										own or a chosen server. 0 = {UNLIMITED_RATE_LABEL}. Be polite with servers you
-										do not own.{:else}DroppedNeedle keeps this source at 1 request/second.{/if}
+										do not own.{:else}e keeps this source at 1 request/second.{/if}
 								</p>
 							</div>
 							<div class="form-control w-full">

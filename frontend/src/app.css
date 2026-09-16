@@ -1,15 +1,17 @@
 @import './public/fonts/sf-pro-display.css';
 @import 'tailwindcss';
 @plugin "@tailwindcss/typography";
+
 @plugin "daisyui" {
 	themes: dark --default;
 }
+
 @plugin "daisyui/theme" {
 	name: 'dark';
 	default: true;
-	--color-base-300: #1f271b;
-	--color-base-200: #161d12;
-	--color-base-100: #0d120a;
+	--color-base-100: #121212;
+	--color-base-200: #1c1c1c;
+	--color-base-300: #292929;
 	--color-primary: #aed5f2;
 	--color-primary-content: #071520;
 	--color-accent: #bbdb9b;
@@ -26,6 +28,7 @@
 		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
 		U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
+
 @font-face {
 	font-family: 'Space Mono';
 	font-style: normal;
@@ -37,6 +40,7 @@
 		U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
 		U+A720-A7FF;
 }
+
 @font-face {
 	font-family: 'Space Mono';
 	font-style: normal;
@@ -47,6 +51,7 @@
 		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
 		U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
+
 @font-face {
 	font-family: 'Space Mono';
 	font-style: normal;
@@ -101,31 +106,25 @@
 	top: var(--droppedneedle-topbar-height, 4rem);
 	z-index: 45;
 	border-block: 1px solid color-mix(in oklab, var(--color-library-index) 24%, transparent);
-	background: linear-gradient(
-		90deg,
-		color-mix(in oklab, var(--color-library-index) 8%, var(--color-base-100)),
-		color-mix(in oklab, var(--color-base-100) 96%, transparent) 48%
-	);
+	background: linear-gradient(90deg,
+			color-mix(in oklab, var(--color-library-index) 8%, var(--color-base-100)),
+			color-mix(in oklab, var(--color-base-100) 96%, transparent) 48%);
 	backdrop-filter: blur(0.75rem);
 	box-shadow: 0 14px 34px -32px color-mix(in oklab, var(--color-base-content) 60%, transparent);
 }
 
 .library-activity-shell[data-effect='file_writing'] {
 	border-color: color-mix(in oklab, var(--color-library-manage) 30%, transparent);
-	background: linear-gradient(
-		90deg,
-		color-mix(in oklab, var(--color-library-manage) 12%, var(--color-base-100)),
-		color-mix(in oklab, var(--color-base-100) 96%, transparent) 48%
-	);
+	background: linear-gradient(90deg,
+			color-mix(in oklab, var(--color-library-manage) 12%, var(--color-base-100)),
+			color-mix(in oklab, var(--color-base-100) 96%, transparent) 48%);
 }
 
 .library-activity-shell[data-effect='attention'] {
 	border-color: color-mix(in oklab, var(--color-error) 32%, transparent);
-	background: linear-gradient(
-		90deg,
-		color-mix(in oklab, var(--color-error) 11%, var(--color-base-100)),
-		color-mix(in oklab, var(--color-base-100) 96%, transparent) 48%
-	);
+	background: linear-gradient(90deg,
+			color-mix(in oklab, var(--color-error) 11%, var(--color-base-100)),
+			color-mix(in oklab, var(--color-base-100) 96%, transparent) 48%);
 }
 
 .library-activity-primary {
@@ -189,7 +188,7 @@
 	margin-bottom: 0.22rem;
 }
 
-.library-activity-primary__heading > span {
+.library-activity-primary__heading>span {
 	flex: none;
 	font-family: var(--font-mono);
 	font-size: 0.62rem;
@@ -348,24 +347,19 @@
 	inset: 0;
 	width: 38%;
 	border-radius: inherit;
-	background: linear-gradient(
-		90deg,
-		transparent,
-		color-mix(in oklab, var(--color-library-index) 72%, transparent),
-		transparent
-	);
+	background: linear-gradient(90deg,
+			transparent,
+			color-mix(in oklab, var(--color-library-index) 72%, transparent),
+			transparent);
 	animation: library-work-indeterminate 1.8s ease-in-out infinite;
 	content: '';
 }
 
-.library-live-progress[data-effect='file_writing']
-	.library-live-progress__track--indeterminate::after {
-	background: linear-gradient(
-		90deg,
-		transparent,
-		color-mix(in oklab, var(--color-library-manage) 72%, transparent),
-		transparent
-	);
+.library-live-progress[data-effect='file_writing'] .library-live-progress__track--indeterminate::after {
+	background: linear-gradient(90deg,
+			transparent,
+			color-mix(in oklab, var(--color-library-manage) 72%, transparent),
+			transparent);
 }
 
 .library-live-progress__track--paused::after {
@@ -373,7 +367,8 @@
 }
 
 @media (max-width: 640px) {
-	.library-activity-primary__heading > span,
+
+	.library-activity-primary__heading>span,
 	.library-activity-primary__heading small,
 	.library-activity-stack-toggle span,
 	.library-live-progress__copy span {
@@ -424,20 +419,16 @@
 	position: absolute;
 	inset: 0;
 	width: 42%;
-	background: repeating-linear-gradient(
-		110deg,
-		transparent 0 0.35rem,
-		color-mix(in oklab, var(--color-library-index) 52%, transparent) 0.35rem 0.7rem
-	);
+	background: repeating-linear-gradient(110deg,
+			transparent 0 0.35rem,
+			color-mix(in oklab, var(--color-library-index) 52%, transparent) 0.35rem 0.7rem);
 	animation: library-work-indeterminate 1.8s linear infinite;
 }
 
 .library-work-lane[data-kind='identification'] .library-work-lane__track--indeterminate::after {
-	background: repeating-linear-gradient(
-		110deg,
-		transparent 0 0.35rem,
-		color-mix(in oklab, var(--color-library-identify) 52%, transparent) 0.35rem 0.7rem
-	);
+	background: repeating-linear-gradient(110deg,
+			transparent 0 0.35rem,
+			color-mix(in oklab, var(--color-library-identify) 52%, transparent) 0.35rem 0.7rem);
 }
 
 .library-work-lane__track--paused::after {
@@ -452,6 +443,7 @@
 	from {
 		transform: translateX(-110%);
 	}
+
 	to {
 		transform: translateX(240%);
 	}
@@ -462,15 +454,18 @@
 		transition: none !important;
 		transform: none !important;
 	}
+
 	.library-work-lane__fill {
 		transition: none !important;
 	}
+
 	.library-live-progress__fill,
 	.library-activity-stack-toggle svg,
 	.library-activity-primary__heading strong,
 	.library-activity-stack__item strong {
 		transition: none !important;
 	}
+
 	.library-work-lane__track--indeterminate::after,
 	.library-live-progress__track--indeterminate::after {
 		animation: none !important;
@@ -483,108 +478,137 @@
 	0% {
 		background-position: -200% 0;
 	}
+
 	100% {
 		background-position: 200% 0;
 	}
 }
+
 @keyframes glow-pulse {
+
 	0%,
 	100% {
 		box-shadow: 0 0 8px oklch(from var(--color-primary) l c h / 0.15);
 	}
+
 	50% {
 		box-shadow: 0 0 20px oklch(from var(--color-primary) l c h / 0.3);
 	}
 }
+
 @keyframes float {
+
 	0%,
 	100% {
 		transform: translateY(0);
 	}
+
 	50% {
 		transform: translateY(-8px);
 	}
 }
+
 @keyframes fade-in-up {
 	0% {
 		opacity: 0;
 		transform: translateY(12px);
 	}
+
 	100% {
 		opacity: 1;
 		transform: translateY(0);
 	}
 }
+
 @keyframes note-float {
 	0% {
 		opacity: 0;
 		transform: translateY(0) rotate(0deg);
 	}
+
 	15% {
 		opacity: 0.15;
 	}
+
 	85% {
 		opacity: 0.08;
 	}
+
 	100% {
 		opacity: 0;
 		transform: translateY(-60px) rotate(15deg);
 	}
 }
+
 @keyframes slide-in-left {
 	0% {
 		opacity: 0;
 		transform: translate(-8px, -50%);
 	}
+
 	100% {
 		opacity: 1;
 		transform: translate(0, -50%);
 	}
 }
+
 @keyframes slide-in-right {
 	0% {
 		opacity: 0;
 		transform: translate(8px, -50%);
 	}
+
 	100% {
 		opacity: 1;
 		transform: translate(0, -50%);
 	}
 }
+
 @keyframes gradient-shift {
 	0% {
 		background-position: 0% 50%;
 	}
+
 	50% {
 		background-position: 100% 50%;
 	}
+
 	100% {
 		background-position: 0% 50%;
 	}
 }
+
 @keyframes equalizer-1 {
+
 	0%,
 	100% {
 		height: 4px;
 	}
+
 	50% {
 		height: 14px;
 	}
 }
+
 @keyframes equalizer-2 {
+
 	0%,
 	100% {
 		height: 10px;
 	}
+
 	50% {
 		height: 4px;
 	}
 }
+
 @keyframes equalizer-3 {
+
 	0%,
 	100% {
 		height: 6px;
 	}
+
 	50% {
 		height: 16px;
 	}
@@ -595,6 +619,7 @@
 		opacity: 0;
 		transform: translateY(16px) scale(0.98);
 	}
+
 	100% {
 		opacity: 1;
 		transform: translateY(0) scale(1);
@@ -602,12 +627,14 @@
 }
 
 @keyframes hero-glow {
+
 	0%,
 	100% {
 		box-shadow:
 			0 0 0 1px rgb(var(--hero-glow-color) / 0.08),
 			0 2px 20px rgb(var(--hero-glow-color) / 0.04);
 	}
+
 	50% {
 		box-shadow:
 			0 0 0 1px rgb(var(--hero-glow-color) / 0.18),
@@ -645,9 +672,11 @@
 @utility glow-primary {
 	box-shadow: 0 0 20px oklch(from var(--color-primary) l c h / 0.15);
 }
+
 @utility glow-primary-soft {
 	box-shadow: 0 0 24px oklch(from var(--color-primary) l c h / 0.12);
 }
+
 @utility glow-primary-strong {
 	box-shadow: 0 0 25px oklch(from var(--color-primary) l c h / 0.2);
 }
@@ -656,6 +685,7 @@
 @utility grain {
 	position: relative;
 	isolation: isolate;
+
 	&::after {
 		content: '';
 		position: absolute;
@@ -730,7 +760,7 @@ textarea {
 	padding-bottom: calc(var(--ms-bottom-nav-offset) + var(--ms-page-bottom-gap));
 }
 
-.droppedneedle-main-content > * {
+.droppedneedle-main-content>* {
 	min-width: 0;
 }
 
@@ -757,9 +787,7 @@ textarea {
 }
 
 .droppedneedle-main-content.droppedneedle-player-visible {
-	padding-bottom: calc(
-		var(--ms-bottom-nav-offset) + var(--ms-player-height) + var(--ms-page-bottom-gap)
-	);
+	padding-bottom: calc(var(--ms-bottom-nav-offset) + var(--ms-player-height) + var(--ms-page-bottom-gap));
 }
 
 /* Settings runs as a fixed two-pane app surface at desktop widths: the drawer
@@ -783,7 +811,7 @@ textarea {
 
 	/* The keyed route wrapper sits between the shell and Settings. Keep it in
 	   the constrained flex chain so Settings' own panes get a real scroll box. */
-	.droppedneedle-pane-mode .droppedneedle-main-content > div {
+	.droppedneedle-pane-mode .droppedneedle-main-content>div {
 		display: flex;
 		min-height: 0;
 		flex: 1 1 auto;
@@ -872,15 +900,15 @@ textarea {
 /* Mobile Safari and Chromium can spend more energy compositing these fixed,
    translucent surfaces than decoding the audio itself. Keep the same opaque
    hierarchy on touch-first devices without continuously blurring the page. */
-/* .mobile-low-power-playback .droppedneedle-bottom-nav,
+.mobile-low-power-playback .droppedneedle-bottom-nav,
 .mobile-low-power-playback .droppedneedle-player-bar,
 .mobile-low-power-playback .local-lyrics-wash,
 .mobile-low-power-playback .glass-surface {
 	backdrop-filter: none !important;
 	-webkit-backdrop-filter: none !important;
-} */
+}
 
-.droppedneedle-bottom-nav,
+/* .droppedneedle-bottom-nav,
 .droppedneedle-player-bar,
 .local-lyrics-wash,
 .library-activity-shell,
@@ -888,11 +916,11 @@ dialog.whats-new-modal::backdrop,
 .glass-surface {
 	backdrop-filter: none !important;
 	-webkit-backdrop-filter: none !important;
-}
+} */
 
 /* Large rotating/blurred artwork and perpetual status animations keep the GPU
    awake for the entire track. Mobile gets a static equivalent instead. */
-/* .mobile-low-power-playback .vinyl-spin,
+.mobile-low-power-playback .vinyl-spin,
 .mobile-low-power-playback .local-lyrics-artwork,
 .mobile-low-power-playback .animate-glow-pulse,
 .mobile-low-power-playback .animate-equalizer-1,
@@ -900,9 +928,9 @@ dialog.whats-new-modal::backdrop,
 .mobile-low-power-playback .animate-equalizer-3,
 .mobile-low-power-playback .now-playing-bars span {
 	animation: none !important;
-} */
+}
 
-.vinyl-spin,
+/* .vinyl-spin,
 .local-lyrics-artwork,
 .animate-glow-pulse,
 .animate-equalizer-1,
@@ -910,7 +938,7 @@ dialog.whats-new-modal::backdrop,
 .animate-equalizer-3,
 .now-playing-bars span {
 	animation: none !important;
-}
+} */
 
 /* The tiny bars beside the active track are a playback status indicator. Keep
    this animation on mobile even when larger decorative animations are paused. */
@@ -970,7 +998,7 @@ dialog.whats-new-modal::backdrop,
 
 /* YT.Player replaces the mount div with an iframe carrying its own width/height attributes.
    Force it to fill the compliant box regardless of what those attributes say. */
-.droppedneedle-yt-popout > iframe {
+.droppedneedle-yt-popout>iframe {
 	display: block;
 	width: 100%;
 	height: 100%;
@@ -981,6 +1009,7 @@ dialog.whats-new-modal::backdrop,
 		opacity: 0;
 		transform: translateY(0.5rem) scale(0.96);
 	}
+
 	to {
 		opacity: 1;
 		transform: none;
@@ -1004,6 +1033,7 @@ dialog.whats-new-modal::backdrop,
 }
 
 @media (max-width: 767px) {
+
 	/* Keep the bulk actions above the fixed mobile nav. Text labels are redundant
 	   at this width; the aria-label/title still provide the action names. */
 	.droppedneedle-selection-toolbar {
@@ -1075,6 +1105,7 @@ dialog.whats-new-modal::backdrop,
 	background-color: rgb(var(--brand-lastfm));
 	color: white;
 	border-color: rgb(var(--brand-lastfm));
+
 	&:hover {
 		background-color: rgb(var(--brand-lastfm) / 0.85);
 		border-color: rgb(var(--brand-lastfm) / 0.85);
@@ -1085,6 +1116,7 @@ dialog.whats-new-modal::backdrop,
 	background-color: rgb(var(--brand-listenbrainz));
 	color: #1a1205;
 	border-color: rgb(var(--brand-listenbrainz));
+
 	&:hover {
 		background-color: rgb(var(--brand-listenbrainz) / 0.85);
 		border-color: rgb(var(--brand-listenbrainz) / 0.85);
@@ -1099,6 +1131,7 @@ dialog.whats-new-modal::backdrop,
 		border-color 0.2s ease,
 		box-shadow 0.2s ease,
 		background 0.2s ease;
+
 	&:focus,
 	&:focus-visible {
 		outline: none;
@@ -1111,6 +1144,7 @@ dialog.whats-new-modal::backdrop,
 @utility scrollbar-hide {
 	-ms-overflow-style: none;
 	scrollbar-width: none;
+
 	&::-webkit-scrollbar {
 		display: none;
 	}
@@ -1120,16 +1154,20 @@ dialog.whats-new-modal::backdrop,
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
 	gap: 0.75rem;
+
 	@media (min-width: 640px) {
 		grid-template-columns: repeat(3, minmax(0, 1fr));
 		gap: 1rem;
 	}
+
 	@media (min-width: 768px) {
 		grid-template-columns: repeat(4, minmax(0, 1fr));
 	}
+
 	@media (min-width: 1024px) {
 		grid-template-columns: repeat(5, minmax(0, 1fr));
 	}
+
 	@media (min-width: 1280px) {
 		grid-template-columns: repeat(6, minmax(0, 1fr));
 	}
@@ -1139,15 +1177,19 @@ dialog.whats-new-modal::backdrop,
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
 	gap: 0.75rem;
+
 	@media (min-width: 640px) {
 		grid-template-columns: repeat(4, minmax(0, 1fr));
 	}
+
 	@media (min-width: 768px) {
 		grid-template-columns: repeat(6, minmax(0, 1fr));
 	}
+
 	@media (min-width: 1024px) {
 		grid-template-columns: repeat(8, minmax(0, 1fr));
 	}
+
 	@media (min-width: 1280px) {
 		grid-template-columns: repeat(10, minmax(0, 1fr));
 	}
@@ -1157,38 +1199,47 @@ dialog.whats-new-modal::backdrop,
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
 	gap: 0.75rem;
+
 	@media (min-width: 640px) {
 		grid-template-columns: repeat(3, minmax(0, 1fr));
 	}
+
 	@media (min-width: 768px) {
 		grid-template-columns: repeat(4, minmax(0, 1fr));
 	}
+
 	@media (min-width: 1024px) {
 		grid-template-columns: repeat(4, minmax(0, 1fr));
 	}
 }
 
 @utility stagger-fade-in {
-	& > * {
+	&>* {
 		opacity: 0;
 		animation: fade-in-up 0.5s ease-out forwards;
 	}
-	& > *:nth-child(1) {
+
+	&>*:nth-child(1) {
 		animation-delay: 0ms;
 	}
-	& > *:nth-child(2) {
+
+	&>*:nth-child(2) {
 		animation-delay: 100ms;
 	}
-	& > *:nth-child(3) {
+
+	&>*:nth-child(3) {
 		animation-delay: 200ms;
 	}
-	& > *:nth-child(4) {
+
+	&>*:nth-child(4) {
 		animation-delay: 300ms;
 	}
-	& > *:nth-child(5) {
+
+	&>*:nth-child(5) {
 		animation-delay: 400ms;
 	}
-	& > *:nth-child(6) {
+
+	&>*:nth-child(6) {
 		animation-delay: 500ms;
 	}
 }
@@ -1196,104 +1247,123 @@ dialog.whats-new-modal::backdrop,
 @utility skeleton-shimmer {
 	position: relative;
 	overflow: hidden;
+
 	&::after {
 		content: '';
 		position: absolute;
 		inset: 0;
-		background: linear-gradient(
-			90deg,
-			transparent 0%,
-			rgba(255, 255, 255, 0.04) 40%,
-			rgba(255, 255, 255, 0.08) 50%,
-			rgba(255, 255, 255, 0.04) 60%,
-			transparent 100%
-		);
+		background: linear-gradient(90deg,
+				transparent 0%,
+				rgba(255, 255, 255, 0.04) 40%,
+				rgba(255, 255, 255, 0.08) 50%,
+				rgba(255, 255, 255, 0.04) 60%,
+				transparent 100%);
 		background-size: 200% 100%;
 		animation: shimmer 2s ease-in-out infinite;
 	}
 }
 
 @utility discover-section-enter {
-	& > * {
+	&>* {
 		opacity: 0;
 		animation: discover-reveal 0.6s ease-out forwards;
 	}
-	& > *:nth-child(1) {
+
+	&>*:nth-child(1) {
 		animation-delay: 0ms;
 	}
-	& > *:nth-child(2) {
+
+	&>*:nth-child(2) {
 		animation-delay: 120ms;
 	}
-	& > *:nth-child(3) {
+
+	&>*:nth-child(3) {
 		animation-delay: 240ms;
 	}
-	& > *:nth-child(4) {
+
+	&>*:nth-child(4) {
 		animation-delay: 360ms;
 	}
-	& > *:nth-child(5) {
+
+	&>*:nth-child(5) {
 		animation-delay: 480ms;
 	}
-	& > *:nth-child(6) {
+
+	&>*:nth-child(6) {
 		animation-delay: 600ms;
 	}
-	& > *:nth-child(7) {
+
+	&>*:nth-child(7) {
 		animation-delay: 720ms;
 	}
-	& > *:nth-child(8) {
+
+	&>*:nth-child(8) {
 		animation-delay: 840ms;
 	}
-	& > *:nth-child(9) {
+
+	&>*:nth-child(9) {
 		animation-delay: 960ms;
 	}
-	& > *:nth-child(10) {
+
+	&>*:nth-child(10) {
 		animation-delay: 1080ms;
 	}
-	& > *:nth-child(11) {
+
+	&>*:nth-child(11) {
 		animation-delay: 1200ms;
 	}
-	& > *:nth-child(12) {
+
+	&>*:nth-child(12) {
 		animation-delay: 1320ms;
 	}
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.discover-section-enter > *,
-	.stagger-fade-in > * {
+
+	.discover-section-enter>*,
+	.stagger-fade-in>* {
 		animation: none !important;
 		opacity: 1 !important;
 		transform: none !important;
 	}
+
 	/* skeleton loaders (incl. cover art) settle to a static tint instead of a moving sheen */
 	.skeleton-shimmer::after {
 		animation: none !important;
 		opacity: 0 !important;
 	}
+
 	/* pop-out appears without animating; stop the motion, never hide it */
 	.droppedneedle-yt-popout {
 		animation: none !important;
 	}
+
 	.scroll-reveal {
 		opacity: 1 !important;
 		transform: none !important;
 	}
+
 	.banner-enter,
 	.whats-new-modal .modal-box,
 	.animate-glow-pulse {
 		animation: none !important;
 		opacity: 1 !important;
 	}
+
 	/* discovery rework: deck equalizer + hero backdrops settle instantly */
 	.animate-equalizer-1,
 	.animate-equalizer-2,
 	.animate-equalizer-3 {
 		animation: none !important;
 	}
+
 	.hero-backdrop-img,
 	.deck-cover,
 	.deck-strip-item,
 	.match-ring-arc {
 		transition: none !important;
 	}
+
 	/* background-refresh: the live dot settles to a steady faint state */
 	.is-refreshing .section-title::after {
 		animation: none !important;
@@ -1316,12 +1386,15 @@ dialog.whats-new-modal::backdrop,
 	vertical-align: middle;
 	animation: section-refresh-pulse 1.5s ease-in-out infinite;
 }
+
 @keyframes section-refresh-pulse {
+
 	0%,
 	100% {
 		opacity: 0.3;
 		transform: scale(0.75);
 	}
+
 	50% {
 		opacity: 1;
 		transform: scale(1);
@@ -1340,6 +1413,7 @@ dialog.whats-new-modal::backdrop,
 		opacity 0.6s var(--ease-spring),
 		transform 0.6s var(--ease-spring);
 }
+
 .scroll-reveal.revealed {
 	opacity: 1;
 	transform: translateY(0);
@@ -1347,12 +1421,10 @@ dialog.whats-new-modal::backdrop,
 
 @utility section-divider-glow {
 	height: 2px;
-	background: linear-gradient(
-		to right,
-		transparent,
-		oklch(from var(--color-primary) l c h / 0.15),
-		transparent
-	);
+	background: linear-gradient(to right,
+			transparent,
+			oklch(from var(--color-primary) l c h / 0.15),
+			transparent);
 	box-shadow: 0 0 8px oklch(from var(--color-primary) l c h / 0.06);
 }
 
@@ -1362,6 +1434,7 @@ dialog.whats-new-modal::backdrop,
 	gap: 2px;
 	height: 16px;
 }
+
 .now-playing-bars span {
 	display: block;
 	width: 3px;
@@ -1369,34 +1442,43 @@ dialog.whats-new-modal::backdrop,
 	background: var(--color-primary);
 	animation: now-playing-bar 1.2s ease-in-out infinite;
 }
+
 .now-playing-bars span:nth-child(1) {
 	height: 60%;
 	animation-delay: 0s;
 }
+
 .now-playing-bars span:nth-child(2) {
 	height: 100%;
 	animation-delay: 0.2s;
 }
+
 .now-playing-bars span:nth-child(3) {
 	height: 40%;
 	animation-delay: 0.4s;
 }
+
 @keyframes now-playing-bar {
+
 	0%,
 	100% {
 		transform: scaleY(0.3);
 	}
+
 	50% {
 		transform: scaleY(1);
 	}
 }
+
 .now-playing-bars--paused span {
 	animation-play-state: paused;
 	opacity: 0.4;
 }
+
 .now-playing-bars--sm {
 	height: 10px;
 }
+
 .now-playing-bars--sm span {
 	width: 2px;
 }
@@ -1406,27 +1488,25 @@ dialog.whats-new-modal::backdrop,
 		transform: rotate(360deg);
 	}
 }
+
 .vinyl-spin {
-	animation: spin-vinyl 4.2s linear infinite;
+	animation: spin-vinyl 8.4s linear infinite;
 }
+
 .vinyl-spin.is-paused {
 	animation-play-state: paused;
 }
 
 .turntable-platter {
 	background:
-		repeating-radial-gradient(
-			circle at center,
+		repeating-radial-gradient(circle at center,
 			oklch(from var(--color-base-content) l c h / 0.05) 0px,
 			oklch(from var(--color-base-content) l c h / 0.05) 1px,
 			transparent 2px,
-			transparent 4px
-		),
-		radial-gradient(
-			circle at 33% 27%,
+			transparent 4px),
+		radial-gradient(circle at 33% 27%,
 			oklch(from var(--color-base-content) l c h / 0.1),
-			transparent 58%
-		),
+			transparent 58%),
 		radial-gradient(circle at center, var(--color-base-300), var(--color-base-100) 95%);
 	box-shadow:
 		inset 0 0 0 1px oklch(from var(--color-base-content) l c h / 0.08),
@@ -1435,11 +1515,9 @@ dialog.whats-new-modal::backdrop,
 }
 
 .deck-halo {
-	background: radial-gradient(
-		circle at center,
-		oklch(from var(--color-accent) l c h / 0.16),
-		transparent 66%
-	);
+	background: radial-gradient(circle at center,
+			oklch(from var(--color-accent) l c h / 0.16),
+			transparent 66%);
 }
 
 .crate-card {
@@ -1448,10 +1526,12 @@ dialog.whats-new-modal::backdrop,
 		box-shadow 0.2s var(--ease-spring),
 		border-color 0.2s ease;
 }
+
 .crate-card:hover {
 	transform: translateY(-2px);
 	box-shadow: 0 12px 24px -14px oklch(from var(--color-base-100) l c h / 0.9);
 }
+
 .crate-card.is-dragging {
 	opacity: 0.4;
 }
@@ -1461,6 +1541,7 @@ dialog.whats-new-modal::backdrop,
 		box-shadow 0.25s ease,
 		transform 0.25s var(--ease-spring);
 }
+
 .deck-droptarget.is-over {
 	box-shadow:
 		0 0 0 3px oklch(from var(--color-accent) l c h / 0.55),
@@ -1475,6 +1556,7 @@ dialog.whats-new-modal::backdrop,
 	-webkit-mask-image: linear-gradient(to top, #000 0%, #000 42%, transparent 78%);
 	mask-image: linear-gradient(to top, #000 0%, #000 42%, transparent 78%);
 }
+
 .deck-visualiser.is-active {
 	opacity: 0.2;
 }
@@ -1520,6 +1602,7 @@ dialog.whats-new-modal::backdrop,
 		box-shadow 0.2s var(--ease-spring),
 		border-color 0.2s ease;
 }
+
 .decade-card:hover {
 	transform: translateY(-2px);
 	box-shadow: 0 14px 28px -18px oklch(from var(--color-base-100) l c h / 0.9);
@@ -1536,31 +1619,34 @@ dialog.whats-new-modal::backdrop,
 		box-shadow 0.2s var(--ease-spring),
 		border-color 0.2s ease;
 }
+
 .search-row:hover {
 	transform: translateY(-2px);
 	box-shadow: 0 12px 24px -14px oklch(from var(--color-base-100) l c h / 0.9);
 }
+
 .search-row.is-dragging {
 	opacity: 0.4;
 }
 
 .crate-sweep {
-	background: linear-gradient(
-		115deg,
-		transparent 28%,
-		oklch(from var(--color-accent) l c h / 0.18) 50%,
-		transparent 72%
-	);
+	background: linear-gradient(115deg,
+			transparent 28%,
+			oklch(from var(--color-accent) l c h / 0.18) 50%,
+			transparent 72%);
 	animation: crate-sweep 0.75s ease-out;
 }
+
 @keyframes crate-sweep {
 	0% {
 		transform: translateY(-100%);
 		opacity: 0;
 	}
+
 	25% {
 		opacity: 1;
 	}
+
 	100% {
 		transform: translateY(100%);
 		opacity: 0;
@@ -1571,9 +1657,11 @@ dialog.whats-new-modal::backdrop,
 	.vinyl-spin {
 		animation: none !important;
 	}
+
 	.local-lyrics-artwork {
 		animation: none !important;
 	}
+
 	.crate-card,
 	.search-row,
 	.countdown-ring,
@@ -1583,6 +1671,7 @@ dialog.whats-new-modal::backdrop,
 	.decade-card svg {
 		transition: none !important;
 	}
+
 	.deck-visualiser {
 		opacity: 0 !important;
 		transition: none !important;
@@ -1600,54 +1689,66 @@ dialog.whats-new-modal::backdrop {
 	margin-top: 0.5em;
 	margin-bottom: 0.5em;
 }
+
 .release-notes-prose ul {
 	list-style-type: disc;
 }
+
 .release-notes-prose ol {
 	list-style-type: decimal;
 }
+
 .release-notes-prose li {
 	margin-top: 0.35em;
 	margin-bottom: 0.35em;
 	padding-left: 0.25em;
 }
+
 .release-notes-prose li::marker {
 	color: oklch(from var(--color-accent) l c h / 0.6);
 }
+
 .release-notes-prose :is(h1, h2, h3, h4) {
 	margin-top: 1em;
 	margin-bottom: 0.5em;
 	font-weight: 600;
 }
+
 .release-notes-prose h2 {
 	font-size: 1.1em;
 	border-bottom: 1px solid oklch(from var(--color-base-content) l c h / 0.08);
 	padding-bottom: 0.3em;
 }
+
 .release-notes-prose p {
 	margin-top: 0.4em;
 	margin-bottom: 0.4em;
 }
+
 .release-notes-prose code {
 	background: oklch(from var(--color-base-content) l c h / 0.08);
 	padding: 0.15em 0.35em;
 	border-radius: 0.25em;
 	font-size: 0.875em;
 }
+
 .release-notes-prose a {
 	color: oklch(from var(--color-accent) l c h);
 	text-decoration: underline;
 	text-underline-offset: 2px;
 }
+
 .release-notes-prose a:hover {
 	opacity: 0.8;
 }
+
 .release-notes-prose blockquote {
 	border-left: 3px solid oklch(from var(--color-accent) l c h / 0.3);
 	padding-left: 1em;
 	margin: 0.5em 0;
 	color: oklch(from var(--color-base-content) l c h / 0.6);
 }
+
 .release-notes-prose pre {
 	background: oklch(from var(--color-base-content) l c h / 0.05);
 	padding: 0.75em 1em;
@@ -1721,7 +1822,7 @@ dialog.whats-new-modal::backdrop {
 	transition: transform 150ms ease;
 }
 
-.management-editor-section[open] > .management-editor-summary .management-editor-chevron {
+.management-editor-section[open]>.management-editor-summary .management-editor-chevron {
 	transform: rotate(90deg);
 }
 
@@ -1741,7 +1842,7 @@ dialog.whats-new-modal::backdrop {
 	border-bottom: 1px solid oklch(from var(--color-base-content) l c h / 0.08);
 }
 
-.management-field-row > :is(input, select, textarea) {
+.management-field-row> :is(input, select, textarea) {
 	width: 100%;
 	min-width: 0;
 }
@@ -1752,7 +1853,7 @@ dialog.whats-new-modal::backdrop {
 	gap: 0.625rem;
 }
 
-.management-choice-grid > label,
+.management-choice-grid>label,
 .management-selection-card {
 	display: flex;
 	align-items: flex-start;
@@ -1763,8 +1864,8 @@ dialog.whats-new-modal::backdrop {
 	border-radius: 0.625rem;
 }
 
-.management-choice-grid > label > :last-child,
-.management-selection-card > :last-child {
+.management-choice-grid>label> :last-child,
+.management-selection-card> :last-child {
 	min-width: 0;
 }
 
@@ -1775,7 +1876,7 @@ dialog.whats-new-modal::backdrop {
 	border-radius: 0.625rem;
 }
 
-.management-editor-advanced > summary {
+.management-editor-advanced>summary {
 	cursor: pointer;
 	font-weight: 600;
 }
@@ -1785,6 +1886,7 @@ dialog.whats-new-modal::backdrop {
 }
 
 @media (max-width: 48rem) {
+
 	.management-profile-editor__header,
 	.management-profile-editor__footer {
 		padding-inline: 1rem;
@@ -1804,12 +1906,14 @@ dialog.whats-new-modal::backdrop {
 }
 
 @media (max-width: 36rem) {
+
 	.management-profile-editor__header,
 	.management-profile-editor__footer {
 		flex-direction: column;
 		align-items: stretch;
 	}
 }
+
 .release-notes-prose hr {
 	border-color: oklch(from var(--color-base-content) l c h / 0.1);
 	margin: 1em 0;

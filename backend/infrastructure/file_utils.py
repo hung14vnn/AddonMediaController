@@ -18,9 +18,10 @@ def _fsync_file_contents(path: Path) -> None:
 
 
 def _fsync_directory_best_effort(directory: Path) -> None:
+    flags = getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_RDONLY", 0)
     try:
-        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-    except OSError:
+        descriptor = os.open(directory, flags)
+    except (OSError, AttributeError):
         return
     try:
         os.fsync(descriptor)

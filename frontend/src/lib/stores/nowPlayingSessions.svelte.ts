@@ -1,6 +1,5 @@
 import { API } from '$lib/constants';
 import { api } from '$lib/api/client';
-import { getApiUrl } from '$lib/api/api-utils';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { NowPlayingSession } from '$lib/types';
 import {
@@ -118,22 +117,10 @@ export function createNowPlayingStore(mux: MuxEventStream = muxEventStream) {
 		}
 	}
 
-	function openConnection(): void {
-		if (!running || (typeof document !== 'undefined' && document.hidden) || source) return;
-		void hydrate();
-		source = new EventSource(getApiUrl(API.nowPlaying.events()), { withCredentials: true });
-		source.addEventListener('snapshot', onSnapshot as EventListener);
-		updateTickTimer();
-	}
-
 	function handleVisibilityChange(): void {
 		if (!running) return;
-		if (document.hidden) {
-			source?.close();
-			source = null;
-			updateTickTimer();
-		} else {
-			openConnection();
+		if (!document.hidden) {
+			void hydrate();
 		}
 	}
 
@@ -151,8 +138,6 @@ export function createNowPlayingStore(mux: MuxEventStream = muxEventStream) {
 
 	function stop(): void {
 		running = false;
-		source?.close();
-		source = null;
 		unsubSnapshot?.();
 		unsubSnapshot = null;
 		if (tickTimer) {

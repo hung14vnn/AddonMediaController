@@ -45,6 +45,7 @@ function localCopy(id: string, title: string): LibraryAlbumSummary {
 		date_added: 1,
 		sort_name: null,
 		original_release_date: null,
+		release_type: null,
 		contribution_id: null,
 		contribution_state: null
 	};

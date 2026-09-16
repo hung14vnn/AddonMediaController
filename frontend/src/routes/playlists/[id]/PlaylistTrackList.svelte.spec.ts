@@ -92,7 +92,7 @@ async function renderList() {
 	};
 	return await render(PlaylistTrackList, {
 		props: { playlist, ontrackchange: vi.fn(), readonly: true }
-	} as Parameters<typeof render<typeof PlaylistTrackList>>[1]);
+	} as unknown as Parameters<typeof render<typeof PlaylistTrackList>>[1]);
 }
 
 describe('PlaylistTrackList album links', () => {

@@ -286,23 +286,27 @@ class TargetLibraryViewService:
         q: str | None = None,
         user: "UserRecord | None" = None,
     ) -> tuple[list[ViewTrack], int]:
-        del sort
         rows, total = await self._store.list_target_tracks(
             limit=limit,
             offset=offset,
+            sort=sort,
             search=q,
             user_id=_library_user_id(user),
         )
         return await self.tracks_from_rows(rows, user=user), total
 
-    async def get_genres(self) -> list[ViewGenre]:
+    async def get_genres(
+        self, user: "UserRecord | None" = None
+    ) -> list[ViewGenre]:
         return [
             ViewGenre(
                 name=row["genre"],
                 song_count=int(row["song_count"]),
                 album_count=int(row["album_count"]),
             )
-            for row in await self._store.list_target_genres()
+            for row in await self._store.list_target_genres(
+                user_id=_library_user_id(user)
+            )
         ]
 
     async def get_songs_by_genre(

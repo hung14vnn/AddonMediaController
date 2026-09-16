@@ -17,6 +17,8 @@ const recipe: QualityRecipeEntry[] = [
 ];
 
 const basePolicy: DownloadPolicySettings = {
+	preferred_quality: 'lossless',
+	saving_storage_mode: false,
 	quality_min: 'mp3_320',
 	quality_max: 'lossless',
 	flac_mp3_only: true,

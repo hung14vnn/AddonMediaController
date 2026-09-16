@@ -1,5 +1,11 @@
 <script lang="ts">
-	let { class: className = 'h-6 w-6' }: { class?: string } = $props();
+	import type { SVGAttributes } from 'svelte/elements';
+
+	interface Props extends SVGAttributes<SVGSVGElement> {
+		class?: string;
+	}
+
+	let { class: className = 'h-6 w-6', ...restProps }: Props = $props();
 </script>
 
 <svg
@@ -10,6 +16,7 @@
 	stroke-width="2"
 	class={className}
 	aria-hidden="true"
+	{...restProps}
 >
 	<path
 		stroke-linecap="round"

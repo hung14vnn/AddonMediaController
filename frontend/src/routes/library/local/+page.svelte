@@ -25,8 +25,7 @@
 		getLocalRecentQuery,
 		getLocalAlbumsQuery,
 		getLocalSuggestionsQuery,
-		getLocalDecadesQuery,
-		getLocalStatsQuery
+		getLocalDecadesQuery
 	} from '$lib/queries/local/LocalQueries.svelte';
 	import { ChevronDown, Headphones, Play, Shuffle, Clock } from 'lucide-svelte';
 
@@ -62,27 +61,16 @@
 	const rediscoverQuery = getLocalAlbumsQuery(() => ({ sort: 'rediscover', limit: 20 }));
 	const suggestionsQuery = getLocalSuggestionsQuery(() => eraDecade);
 	const decadesQuery = getLocalDecadesQuery();
-	const statsQuery = getLocalStatsQuery();
 
 	const crateTracks = $derived(suggestionsQuery.data?.items ?? []);
 	const recentAlbums = $derived(recentQuery.data ?? []);
 	const rediscoverAlbums = $derived(rediscoverQuery.data?.items ?? []);
 	const decades = $derived(decadesQuery.data?.items ?? []);
-	const stats = $derived(statsQuery.data ?? null);
 
 	let openDecade = $state<number | null>(null);
 	const openShelf = $derived(decades.find((d) => d.decade === openDecade) ?? null);
 
 	const isPlaying = $derived(playerStore.isPlaying);
-	const heroCover = $derived.by(() => {
-		const track = playerStore.nowPlaying;
-		if (!track) return null;
-		return (
-			track.coverUrl ??
-			track.coverRemoteUrl ??
-			(track.albumId ? getCoverUrl(null, track.albumId) : null)
-		);
-	});
 	const upcomingCount = $derived(playerStore.upcomingQueueLength);
 
 	// measured because the deck is content-sized, so a fixed rem value can't track it

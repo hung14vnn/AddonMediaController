@@ -49,6 +49,10 @@ def _looks_like_real_mbid(value: str) -> bool:
     return "-" in value
 
 
+def _library_user_id(user: "UserRecord | None") -> str | None:
+    return None if user is None or getattr(user, "role", None) == "admin" else getattr(user, "id", None)
+
+
 class CompatDiscoverService:
     def __init__(
         self,
@@ -74,9 +78,15 @@ class CompatDiscoverService:
         user: "UserRecord | None" = None,
     ) -> list["ViewTrack"]:
         counts = await self._play_history.play_counts_by_artist(user_id, artist_name)
-        files = await self._db.get_files_by_artist_name(
-            artist_name, limit=max(count * 4, count)
-        )
+        scoped_user_id = _library_user_id(user)
+        try:
+            files = await self._db.get_files_by_artist_name(
+                artist_name, limit=max(count * 4, count), user_id=scoped_user_id
+            )
+        except TypeError:
+            files = await self._db.get_files_by_artist_name(
+                artist_name, limit=max(count * 4, count)
+            )
 
         def plays(row: dict) -> int:
             rec = row.get("recording_mbid")
@@ -107,9 +117,19 @@ class CompatDiscoverService:
         from_year: int | None = None, to_year: int | None = None,
         user: "UserRecord | None" = None,
     ) -> list["ViewTrack"]:
-        rows = await self._db.get_random_files(
-            limit=count, genre=genre, from_year=from_year, to_year=to_year
-        )
+        scoped_user_id = _library_user_id(user)
+        try:
+            rows = await self._db.get_random_files(
+                limit=count,
+                genre=genre,
+                from_year=from_year,
+                to_year=to_year,
+                user_id=scoped_user_id,
+            )
+        except TypeError:
+            rows = await self._db.get_random_files(
+                limit=count, genre=genre, from_year=from_year, to_year=to_year
+            )
         return await self._view.tracks_from_rows(rows, user=user)
 
     async def get_similar_songs(
@@ -120,7 +140,13 @@ class CompatDiscoverService:
         for m in await self._related_mbids(artist_mbid, user_id):
             if m and m not in mbids:
                 mbids.append(m)
-        rows = await self._db.get_files_by_artist_mbids(mbids, limit=count)
+        scoped_user_id = _library_user_id(user)
+        try:
+            rows = await self._db.get_files_by_artist_mbids(
+                mbids, limit=count, user_id=scoped_user_id
+            )
+        except TypeError:
+            rows = await self._db.get_files_by_artist_mbids(mbids, limit=count)
         return await self._view.tracks_from_rows(rows, user=user)
 
     async def _related_mbids(self, artist_mbid: str, user_id: str) -> list[str]:
@@ -221,7 +247,7 @@ class CompatDiscoverService:
             sort = "recent"
         if sort == "random":
             _, total = await self._view.get_tracks_page(
-                limit=1, offset=0, sort="recent", q=q
+                limit=1, offset=0, sort="recent", q=q, user=user
             )
             if total == 0:
                 return [], 0
@@ -238,7 +264,7 @@ class CompatDiscoverService:
             return items, total
         if sort == "year":
             _, total = await self._view.get_tracks_page(
-                limit=1, offset=0, sort="recent", q=q
+                limit=1, offset=0, sort="recent", q=q, user=user
             )
             if total == 0 or offset >= total:
                 return [], total

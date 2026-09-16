@@ -104,56 +104,6 @@ export function createSyncStatusStore(mux: MuxEventStream = muxEventStream) {
 			// bad frame never kills an in-flight seed without applying anything
 			return;
 		}
-		// Vite runs on :5173 while the API runs on :8688, so this is cross-origin
-		// in local development. Explicit credentials keep the httpOnly session cookie
-		// attached; otherwise the authenticated stream receives a 401 despite login.
-		eventSource = new EventSource(getApiUrl('/api/v1/cache/sync/stream'), {
-			withCredentials: true
-		});
-
-		eventSource.onopen = () => {
-			connectionMode = 'sse';
-			reconnectAttempts = 0;
-			if (pollInterval) {
-				clearInterval(pollInterval);
-				pollInterval = null;
-			}
-		};
-
-		eventSource.onmessage = (event) => {
-			try {
-				applyStatus(JSON.parse(event.data));
-			} catch {
-				// ignore malformed messages
-			}
-		};
-
-		eventSource.onerror = () => {
-			eventSource?.close();
-			eventSource = null;
-			reconnectAttempts++;
-
-			if (reconnectTimeout) {
-				clearTimeout(reconnectTimeout);
-				reconnectTimeout = null;
-			}
-
-			if (status.is_syncing && !pollInterval) {
-				startPolling();
-			}
-
-			if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-				const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-				reconnectTimeout = setTimeout(() => {
-					reconnectTimeout = null;
-					if (connected && !document.hidden) connectSSE();
-				}, delay);
-			} else {
-				connectionMode = 'polling';
-				if (!pollInterval) startPolling();
-			}
-		};
-		liveGeneration += 1;
 		liveGeneration += 1;
 	}
 

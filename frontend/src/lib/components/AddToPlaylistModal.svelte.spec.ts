@@ -118,7 +118,7 @@ describe('AddToPlaylistModal.svelte', () => {
 				source_ref: 'spotify:37i9dQZF1DX'
 			}
 		]);
-		const result = renderModal();
+		const result = await renderModal();
 		(result.component as unknown as ModalRef).open([makeTrack()]);
 
 		await expect.element(page.getByText('My Playlist')).toBeVisible();

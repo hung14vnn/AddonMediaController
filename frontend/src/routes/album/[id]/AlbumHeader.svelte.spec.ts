@@ -57,6 +57,7 @@ const localAlbum: LibraryAlbumDetail = {
 	date_added: 1,
 	sort_name: null,
 	original_release_date: '2008-08-04',
+	release_type: null,
 	contribution_id: null,
 	contribution_state: null,
 	row_revision: 4,

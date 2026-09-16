@@ -129,7 +129,7 @@
 							></td
 					><td>{#if isStillMatchingJobState(item.active_job_state)}<span
 								class="badge badge-warning badge-sm">Matching...</span
-							>{:else}{item.candidate_count ? `${item.candidate_count} available` : 'None'}{/if}</td
+							>{:else}{(item.candidate_count ?? item.ranked_edition_keys?.length) ? `${item.candidate_count ?? item.ranked_edition_keys?.length} available` : 'None'}{/if}</td
 						><td
 							>{new Date(item.updated_at * 1000).toLocaleDateString()}</td
 						><td
