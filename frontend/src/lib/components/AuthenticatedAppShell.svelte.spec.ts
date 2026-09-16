@@ -366,8 +366,8 @@ describe('AuthenticatedAppShell sidebar scroll at short desktop heights (#281)',
 		await expect.element(nav.getByRole('link', { name: 'Playlists' })).toBeInTheDocument();
 
 		const navElement = nav.element();
-		expect(navElement.querySelectorAll('.droppedneedle-bottom-nav__item')).toHaveLength(4);
-		expect(getComputedStyle(navElement).gridTemplateColumns.split(' ')).toHaveLength(4);
+		expect(navElement.querySelectorAll('.droppedneedle-bottom-nav__item')).toHaveLength(5);
+		expect(getComputedStyle(navElement).gridTemplateColumns.split(' ')).toHaveLength(5);
 	});
 });
 
@@ -420,7 +420,7 @@ describe('AuthenticatedAppShell mobile overflow menu (#182)', () => {
 		await renderLayout();
 		await expect.element(page.getByTestId('page-content')).toBeInTheDocument();
 
-		expect(barEntryNames()).toEqual(['Home', 'Discover', 'Search', 'Library', 'Settings', 'More']);
+		expect(barEntryNames()).toEqual(['Home', 'Discover', 'Library', 'Playlists', 'Settings', 'More']);
 
 		const sheet = openMoreSheet();
 		await vi.waitFor(() => expect(sheet.open).toBe(true));
@@ -429,7 +429,7 @@ describe('AuthenticatedAppShell mobile overflow menu (#182)', () => {
 		// withBasePath resolves against the mocked '/dn' base
 		expect(hrefs).toContain('/dn/downloads');
 		expect(hrefs).toContain('/dn/following');
-		expect(hrefs).toContain('/dn/playlists');
+		expect(hrefs).not.toContain('/dn/playlists');
 		expect(hrefs).toContain('/dn/requests');
 		expect(hrefs).toContain('/dn/library/management');
 		expect(hrefs).toContain('/dn/requests?tab=approvals');
@@ -442,7 +442,7 @@ describe('AuthenticatedAppShell mobile overflow menu (#182)', () => {
 		await expect.element(page.getByTestId('page-content')).toBeInTheDocument();
 
 		// No Settings tab to bounce to Home; the five-slot grid keeps even spacing.
-		expect(barEntryNames()).toEqual(['Home', 'Discover', 'Search', 'Library', 'More']);
+		expect(barEntryNames()).toEqual(['Home', 'Discover', 'Library', 'Playlists', 'More']);
 		expect(bottomNav().className).toContain('droppedneedle-bottom-nav--no-settings');
 
 		const sheet = openMoreSheet();
@@ -453,7 +453,7 @@ describe('AuthenticatedAppShell mobile overflow menu (#182)', () => {
 		expect(text).not.toContain('Library Management');
 		expect(text).not.toContain('Review Queue');
 		expect(text).toContain('Downloads');
-		expect(text).toContain('Playlists');
+		expect(text).not.toContain('Playlists');
 	});
 
 	it('fits six slots without horizontal overflow at 360px', async () => {

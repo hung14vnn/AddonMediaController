@@ -142,10 +142,17 @@ async def get_profile(
 
     async def _fetch_local_stats() -> LibraryStats | None:
         try:
-            s = await local_service.get_storage_stats()
-            if s.total_tracks == 0:
+            s = await local_service.get_storage_stats(user_id=current_user.id)
+            if not getattr(s, "disk_free_bytes", 0) and s.total_tracks == 0:
                 return None
-            return LibraryStats(source="Local Files", total_tracks=s.total_tracks, total_albums=s.total_albums, total_artists=s.total_artists, total_size_bytes=s.total_size_bytes, total_size_human=s.total_size_human)
+            return LibraryStats(
+                source="Local Files",
+                total_tracks=s.total_tracks,
+                total_albums=s.total_albums,
+                total_artists=s.total_artists,
+                total_size_bytes=s.total_size_bytes,
+                total_size_human=s.total_size_human if s.total_size_bytes > 0 else None,
+            )
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to fetch Local Files stats for profile: %s", e)
             return None

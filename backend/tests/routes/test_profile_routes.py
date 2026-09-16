@@ -66,15 +66,18 @@ class _FakePrefs:
 
 
 class _Stats:
-    total_tracks = 0
-    total_albums = 0
-    total_artists = 0
-    total_size_bytes = 0
-    total_size_human = ""
+    total_tracks = 5
+    total_albums = 3
+    total_artists = 2
+    total_size_bytes = 10485760
+    total_size_human = "10.0 MB"
 
 
 class _FakeLocal:
-    async def get_storage_stats(self):
+    last_user_id: str | None = None
+
+    async def get_storage_stats(self, *, user_id: str | None = None):
+        self.last_user_id = user_id
         return _Stats()
 
 
@@ -92,13 +95,14 @@ def _build(tmp_path):
     return store, auth, admin, owner, other
 
 
-def _app(store: AuthStore, auth: AuthService, current_user_id: str):
+def _app(store: AuthStore, auth: AuthService, current_user_id: str, local: _FakeLocal | None = None):
+    fake_local = local if local is not None else _FakeLocal()
     app = FastAPI()
     app.include_router(profile_router)
     app.dependency_overrides[get_auth_service] = lambda: auth
     app.dependency_overrides[get_preferences_service] = lambda: _FakePrefs()
     app.dependency_overrides[get_jellyfin_library_service] = lambda: None
-    app.dependency_overrides[get_local_files_service] = lambda: _FakeLocal()
+    app.dependency_overrides[get_local_files_service] = lambda: fake_local
     app.dependency_overrides[get_navidrome_library_service] = lambda: None
 
     async def _current():
@@ -112,12 +116,24 @@ def _app(store: AuthStore, auth: AuthService, current_user_id: str):
 
 def test_get_profile_returns_own_row(tmp_path):
     store, auth, _admin, owner, _other = _build(tmp_path)
-    body = _app(store, auth, owner.id).get("/profile").json()
+    fake_local = _FakeLocal()
+    body = _app(store, auth, owner.id, local=fake_local).get("/profile").json()
     assert body["display_name"] == "Owner"
     assert body["username"] == "owner"
     assert body["email"] == "owner@example.com"
     assert body["providers"] == ["local"]
     assert {s["name"] for s in body["services"]} == {"Jellyfin", "ListenBrainz", "Last.fm", "Navidrome", "Plex"}
+    assert fake_local.last_user_id == owner.id
+    assert body["library_stats"] == [
+        {
+            "source": "Local Files",
+            "total_tracks": 5,
+            "total_albums": 3,
+            "total_artists": 2,
+            "total_size_bytes": 10485760,
+            "total_size_human": "10.0 MB",
+        }
+    ]
 
 
 def test_get_profile_is_self_scoped(tmp_path):

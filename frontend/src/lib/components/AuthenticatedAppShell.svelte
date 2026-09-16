@@ -81,8 +81,7 @@
 		ShieldCheck,
 		Heart,
 		LibraryBig,
-		Cog,
-		Search
+		Cog
 	} from 'lucide-svelte';
 	import type { Component, Snippet } from 'svelte';
 	import NewReleasesNavBadge from '$lib/components/NewReleasesNavBadge.svelte';
@@ -452,7 +451,6 @@
 		return (
 			isNavActive('/downloads') ||
 			isNavActive('/following') ||
-			isNavActive('/playlists') ||
 			isNavActive('/requests') ||
 			isNavActive('/library/management') ||
 			isNavActive('/library/review')
@@ -463,9 +461,7 @@
 	const downloadClientConfigured = $derived(
 		integrations.current.download_client || !integrations.current.loaded
 	);
-	const mobileNavItemCount = $derived(
-		4 + (authStore.isAdmin ? 1 : 0) + 1
-	);
+	const mobileNavItemCount = $derived(4 + (authStore.isAdmin ? 1 : 0) + 1);
 </script>
 
 {#if showNavigationProgress}
@@ -797,6 +793,7 @@
 {#if !isDesktopViewport}
 	<nav
 		class="droppedneedle-bottom-nav md:hidden"
+		class:droppedneedle-bottom-nav--no-settings={!authStore.isAdmin}
 		style:--mobile-nav-items={mobileNavItemCount}
 		aria-label="Primary navigation"
 	>
@@ -818,16 +815,6 @@
 			<Compass />
 			<span>Discover</span>
 		</a>
-		<button
-			type="button"
-			class="droppedneedle-bottom-nav__item"
-			class:active={isNavActive('/search')}
-			onclick={() => (document.getElementById('search_modal') as HTMLDialogElement)?.showModal()}
-			aria-label="Search"
-		>
-			<Search />
-			<span>Search</span>
-		</button>
 		<a
 			href={withBasePath('/library')}
 			class="droppedneedle-bottom-nav__item"
@@ -839,6 +826,15 @@
 			{#if syncStatus.isActive}
 				<span class="droppedneedle-bottom-nav__badge" aria-label="Library sync in progress"></span>
 			{/if}
+		</a>
+		<a
+			href={withBasePath('/playlists')}
+			class="droppedneedle-bottom-nav__item"
+			class:active={isNavActive('/playlists')}
+			aria-current={isNavActive('/playlists') ? 'page' : undefined}
+		>
+			<ListMusic />
+			<span>Playlists</span>
 		</a>
 		{#if authStore.isAdmin}
 			<a
@@ -904,17 +900,6 @@
 				>
 					<Heart class="h-6 w-6" />
 					Following
-				</a>
-			</li>
-			<li>
-				<a
-					href={withBasePath('/playlists')}
-					class:menu-active={isNavActive('/playlists')}
-					aria-current={isNavActive('/playlists') ? 'page' : undefined}
-					onclick={closeMoreNav}
-				>
-					<ListMusic class="h-6 w-6" />
-					Playlists
 				</a>
 			</li>
 			<li>
