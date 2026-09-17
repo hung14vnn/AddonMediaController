@@ -91,6 +91,7 @@ from api.v1.routes import karaoke as karaoke_routes
 from api.v1.routes import library_scan as library_scan_routes
 from api.v1.routes import library_policies as library_policy_routes
 from api.v1.routes import library_management as library_management_routes
+from api.v1.routes import library_operations_target as library_operations_target_routes
 from api.v1.routes import cache as cache_routes
 from api.v1.routes import cache_status as cache_status_routes
 from api.v1.routes import youtube as youtube_routes
@@ -871,6 +872,7 @@ v1_router.include_router(following.router)
 v1_router.include_router(albums.router)
 v1_router.include_router(library_policy_routes.router)
 v1_router.include_router(library_management_routes.router)
+v1_router.include_router(library_operations_target_routes.router)
 v1_router.include_router(settings.router)
 v1_router.include_router(home.router)
 v1_router.include_router(wrapped.router)
