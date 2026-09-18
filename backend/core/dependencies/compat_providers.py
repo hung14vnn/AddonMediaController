@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 
-from backend.core.dependencies.service_providers import get_ytmusic_stream_service
 from core.config import get_settings
 
 from ._registry import singleton
@@ -256,7 +255,7 @@ def get_target_compat_services() -> "CompatServices":
     from services.compat.native_lyrics_service import NativeLyricsService
 
     from .cache_providers import get_preferences_service
-    from .service_providers import get_now_playing_service, get_version_service
+    from .service_providers import get_now_playing_service, get_version_service, get_ytmusic_stream_service
 
     target = get_target_consumer_composition()
     return CompatServices(
