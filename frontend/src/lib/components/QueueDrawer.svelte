@@ -13,6 +13,7 @@
 	import LocalFilesIcon from '$lib/components/LocalFilesIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
+	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 
 	interface Props {
@@ -448,6 +449,14 @@
 								{:else if item.sourceType === 'navidrome'}
 									<span title="Navidrome" style="color: rgb(var(--brand-navidrome));">
 										<NavidromeIcon class="h-3.5 w-3.5" />
+									</span>
+								{:else if item.sourceType === 'plex' && !pinned}
+									<span title="Plex" style="color: rgb(var(--brand-plex));">
+										<PlexIcon class="h-3.5 w-3.5" />
+									</span>
+								{:else if item.sourceType === 'ytmusic' && !pinned}
+									<span title="YouTube" class="text-red-500">
+										<YouTubeIcon class="h-3.5 w-3.5" />
 									</span>
 								{:else if item.sourceType === 'local' && !pinned}
 									<span title="Local" style="color: rgb(var(--brand-localfiles));">

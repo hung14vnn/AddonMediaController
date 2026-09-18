@@ -5,6 +5,8 @@
 	import AlbumImage from './AlbumImage.svelte';
 	import LastFmPlaceholder from './LastFmPlaceholder.svelte';
 	import SampleButton from './discover/SampleButton.svelte';
+	import StreamButton from './discover/StreamButton.svelte';
+	import TrackRequestButton from './downloads/TrackRequestButton.svelte';
 
 	interface Props {
 		song: TopSong;
@@ -12,7 +14,7 @@
 		source?: string;
 		showPreview?: boolean;
 		resolvedTrack?: ResolvedTrack | null;
-		onPlay?: () => void;
+		onPlay?: (e: MouseEvent) => void;
 	}
 
 	let {
@@ -34,7 +36,7 @@
 	<div class="flex items-center gap-3 p-2 rounded-lg hover:bg-base-200 transition-colors group">
 		{#if canPlay}
 			<button
-				onclick={onPlay}
+				onclick={(e) => onPlay?.(e)}
 				class="w-6 shrink-0 flex items-center justify-center cursor-pointer"
 				aria-label="Play {song.title}"
 			>
@@ -91,6 +93,25 @@
 				</p>
 			</div>
 		</a>
+		<div class="flex items-center gap-0.5 shrink-0">
+			<StreamButton
+				artist={song.artist_name}
+				title={song.title}
+				album={song.release_name || undefined}
+				coverUrl={song.cover_url}
+				size="xs"
+				wrapperClass="contents"
+			/>
+			{#if song.recording_mbid}
+				<TrackRequestButton
+					recordingMbid={song.recording_mbid}
+					trackTitle={song.title}
+					artistName={song.artist_name}
+					albumMbid={song.release_group_mbid || ''}
+					albumTitle={song.release_name}
+				/>
+			{/if}
+		</div>
 	</div>
 {:else}
 	<div
@@ -100,7 +121,7 @@
 	>
 		{#if canPlay}
 			<button
-				onclick={onPlay}
+				onclick={(e) => onPlay?.(e)}
 				class="w-6 shrink-0 flex items-center justify-center cursor-pointer"
 				aria-label="Play {song.title}"
 			>
@@ -138,6 +159,25 @@
 		<div class="flex-1 min-w-0 grid grid-cols-2 items-center gap-4">
 			<p class="font-medium text-sm truncate min-w-0">{song.title}</p>
 			<p class="text-xs text-base-content/40 truncate min-w-0 text-right italic"></p>
+		</div>
+		<div class="flex items-center gap-0.5 shrink-0">
+			<StreamButton
+				artist={song.artist_name}
+				title={song.title}
+				album={song.release_name || undefined}
+				coverUrl={song.cover_url}
+				size="xs"
+				wrapperClass="contents"
+			/>
+			{#if song.recording_mbid}
+				<TrackRequestButton
+					recordingMbid={song.recording_mbid}
+					trackTitle={song.title}
+					artistName={song.artist_name}
+					albumMbid={song.release_group_mbid || ''}
+					albumTitle={song.release_name}
+				/>
+			{/if}
 		</div>
 	</div>
 {/if}

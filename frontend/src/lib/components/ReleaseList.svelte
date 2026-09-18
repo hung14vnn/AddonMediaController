@@ -4,7 +4,7 @@
 	import { colors } from '$lib/colors';
 	import { libraryStore } from '$lib/stores/library';
 	import AlbumImage from './AlbumImage.svelte';
-	import SampleButton from './discover/SampleButton.svelte';
+	import StreamButton from './discover/StreamButton.svelte';
 	import LibraryBadge from './LibraryBadge.svelte';
 	import { getLibraryMembershipQuery } from '$lib/queries/library/LibraryQueries.svelte';
 
@@ -139,11 +139,11 @@
 						</a>
 						<div class="flex items-center gap-1 shrink-0 ml-auto mr-3 sm:mr-4">
 							{#if !isOwned(rg) && artistName}
-								<SampleButton
-									sampleKey={rg.id}
+								<StreamButton
 									artist={artistName}
 									title={rg.title}
-									kind="album"
+									album={rg.title}
+									coverUrl={rg.cover_url}
 									size="sm"
 								/>
 							{/if}

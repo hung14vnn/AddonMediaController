@@ -59,7 +59,7 @@
 </script>
 
 <button
-	class="btn btn-ghost btn-xs btn-circle"
+	class="btn btn-ghost btn-xs btn-circle -ml-1"
 	onclick={handleClick}
 	disabled={request.isPending || spotifyRequest.isPending || requested}
 	aria-label="Request this track"

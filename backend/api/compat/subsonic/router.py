@@ -840,7 +840,18 @@ async def _stream(c: Ctx) -> Response:
     from core.exceptions import ResourceNotFoundError
     from services.compat.stream_concurrency import StreamCapacityError
     from services.compat.transcode_service import decide, ffmpeg_available
-    fid = _decode_expect(c.p("id") or "", "track")
+    sid = c.p("id") or ""
+    try:
+        kind, fid = decode(sid)
+    except SubsonicError:
+        raise SubsonicError(70, "Song not found")
+    if kind == "ytmusic":
+        chunks, headers, status = await c.services.ytmusic_stream.proxy_stream(
+            fid, range_header=c.request.headers.get("Range")
+        )
+        return StreamingResponse(chunks, status_code=status, headers=headers)
+    if kind != "track":
+        raise SubsonicError(70, "Invalid id type")
     fmt = c.decoded.enum("format", {"raw", "mp3", "opus"})
     max_bitrate = c.pint("maxBitRate", minimum=0, maximum=1_000_000)
     time_offset = c.pfloat("timeOffset", 0.0, minimum=0, maximum=604_800) or 0.0
@@ -872,7 +883,15 @@ async def _stream(c: Ctx) -> Response:
 
 @endpoint("download")
 async def _download(c: Ctx) -> Response:
-    fid = _decode_expect(c.p("id") or "", "track")
+    sid = c.p("id") or ""
+    try:
+        kind, fid = decode(sid)
+    except SubsonicError:
+        raise SubsonicError(70, "Song not found")
+    if kind == "ytmusic":
+        return await c.services.ytmusic_stream.proxy_stream(fid, range_header=c.request.headers.get("Range"))
+    if kind != "track":
+        raise SubsonicError(70, "Invalid id type")
     track = await c.services.view.get_track(fid, user=c.user)
     if track is None:
         # Local miss: same plugin-stream fallback as _stream (original bytes),
@@ -936,7 +955,28 @@ async def _get_transcode_decision(c: Ctx) -> Response:
         raise SubsonicError(10, "Invalid transcode client information") from exc
     if c.decoded.enum("mediaType", {"song", "podcast"}) != "song":
         raise SubsonicError(10, "Only song transcoding is supported")
-    file_id = _decode_expect(c.p("mediaId") or "", "track")
+    sid = c.p("mediaId") or ""
+    try:
+        kind, file_id = decode(sid)
+    except SubsonicError:
+        raise SubsonicError(70, "Song not found")
+    if kind == "ytmusic":
+        return c.render(
+            "transcodeDecision",
+            m.STranscodeDecision(
+                canDirectPlay=True,
+                canTranscode=False,
+                transcodeReason=[],
+                errorReason=None,
+                transcodeParams=None,
+                sourceStream=m.SStreamDetails(
+                    protocol="http", container="webm", codec="opus"
+                ),
+                transcodeStream=None,
+            ),
+        )
+    if kind != "track":
+        raise SubsonicError(70, "Invalid id type")
     track = await c.services.view.get_track(file_id, user=c.user)
     if track is None:
         raise SubsonicError(70, "Song not found")
@@ -1007,7 +1047,15 @@ async def _get_transcode_stream(c: Ctx) -> Response:
 
     if c.decoded.enum("mediaType", {"song", "podcast"}) != "song":
         raise SubsonicError(10, "Only song transcoding is supported")
-    file_id = _decode_expect(c.p("mediaId") or "", "track")
+    sid = c.p("mediaId") or ""
+    try:
+        kind, file_id = decode(sid)
+    except SubsonicError:
+        raise SubsonicError(70, "Song not found")
+    if kind == "ytmusic":
+        return await c.services.ytmusic_stream.proxy_stream(file_id, range_header=c.request.headers.get("Range"))
+    if kind != "track":
+        raise SubsonicError(70, "Invalid id type")
     params = c.decoded.string("transcodeParams", max_length=8192)
     if not params:
         raise SubsonicError(10, "Required parameter 'transcodeParams' is missing")
@@ -1057,13 +1105,31 @@ async def _build_playlist_detail(c: Ctx, pid: str):
     r = detail.record
     songs, total = [], 0
     for entry in detail.tracks:
-        if not entry.library_file_id:  # legacy/outbound entry, not streamable
-            continue
-        track = await c.services.view.get_track(entry.library_file_id, user=c.user)
-        if track is None:
-            continue
-        songs.append(c.child(track))
-        total += round(track.duration_seconds)
+        if entry.library_file_id:
+            track = await c.services.view.get_track(entry.library_file_id, user=c.user)
+            if track is None:
+                continue
+            songs.append(c.child(track))
+            total += round(track.duration_seconds)
+        elif (entry.source_type == "ytmusic" or (entry.source_type == "local" and entry.album_id and entry.album_id.startswith("ytmusic-"))) and entry.track_source_id:
+            yt_id = encode("ytmusic", entry.track_source_id)
+            duration_sec = int(entry.duration or 0)
+            songs.append(
+                m.SChild(
+                    id=yt_id,
+                    isDir=False,
+                    title=entry.track_name or "YouTube Track",
+                    album=entry.album_name or "YouTube",
+                    artist=entry.artist_name or "YouTube",
+                    duration=duration_sec,
+                    type="music",
+                    mediaType="song",
+                    coverArt=_playlist_cover(r),
+                    contentType="audio/webm",
+                    suffix="webm",
+                )
+            )
+            total += duration_sec
     owner = c.user.username if detail.is_owner else detail.owner_name
     return m.SPlaylist(
         id=encode("playlist", r.id),

@@ -30,13 +30,22 @@
 		listOfflineTrackMetadata
 	} from '$lib/offline/offlineAudio';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { Music, Lock, Download, LoaderCircle, LoaderCircle as Loader2, Trash2, Check } from 'lucide-svelte';
+	import {
+		Music,
+		Lock,
+		Download,
+		LoaderCircle,
+		LoaderCircle as Loader2,
+		Trash2,
+		Check
+	} from 'lucide-svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import type { PageData } from './$types';
 	import PlaylistHeader from './PlaylistHeader.svelte';
 	import PlaylistTrackList from './PlaylistTrackList.svelte';
 	import DeletePlaylistModal from './DeletePlaylistModal.svelte';
+	import PlayActionMenu from '$lib/components/PlayActionMenu.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -217,8 +226,7 @@
 		return playlist.tracks.filter((t) => {
 			// library_file_id means owned locally (request-missing skips these too).
 			return Boolean(
-				!t.library_file_id &&
-				(!t.available_sources || t.available_sources.length === 0)
+				!t.library_file_id && (!t.available_sources || t.available_sources.length === 0)
 			);
 		}).length;
 	});
@@ -363,7 +371,7 @@
 			trackList?.clearReorderState();
 			header?.cleanupPreview();
 			if (d && !isRedactedPlaylist(d)) {
-				sourceResolutionPending = true;
+				sourceResolutionPending = Boolean(d.source_ref);
 				// Clone so optimistic child mutations never touch the query cache.
 				playlist = { ...d, tracks: d.tracks.map((t) => ({ ...t })) };
 				void resolveAndCacheSources(d.id);
@@ -399,7 +407,10 @@
 		playerStore.playQueue(items, 0, true);
 	}
 
-	function playFromTrack(index: number) {
+	let playMenuAnchorRect = $state<DOMRect | null>(null);
+	let playMenuIndex = $state<number>(-1);
+
+	function playFromTrack(index: number, e?: MouseEvent) {
 		if (!playlist || !isLocalPlaylist || playlist.tracks.length === 0) return;
 		const items = playlist.tracks
 			.map(playlistTrackToQueueItem)
@@ -408,8 +419,44 @@
 			toastStore.show({ message: 'Nothing here can be played right now', type: 'info' });
 			return;
 		}
+		// If queue is active, show action menu
+		if (playerStore.hasQueue && e) {
+			playMenuAnchorRect = (e.currentTarget as HTMLElement)?.getBoundingClientRect() ?? (e.target as HTMLElement)?.getBoundingClientRect() ?? null;
+			playMenuIndex = index;
+			playMenuItems = items;
+			return;
+		}
 		const startIndex = Math.min(index, items.length - 1);
 		playerStore.playQueue(items, startIndex, false);
+	}
+
+	let playMenuItems = $state<ReturnType<typeof playlistTrackToQueueItem>[]>([]);
+
+	function playMenuPlayNow() {
+		const validItems = playMenuItems.filter((item): item is NonNullable<typeof item> => item !== null);
+		const item = validItems[playMenuIndex];
+		if (!item || playMenuIndex < 0) return;
+		playerStore.replaceCurrentTrack(item);
+		playMenuAnchorRect = null;
+		playMenuIndex = -1;
+	}
+
+	function playMenuPlayNext() {
+		const validItems = playMenuItems.filter((item): item is NonNullable<typeof item> => item !== null);
+		const item = validItems[playMenuIndex];
+		if (!item) return;
+		playerStore.playNext(item);
+		const trackName = playlist?.tracks[playMenuIndex]?.track_name ?? 'Track';
+		toastStore.show({ message: `"${trackName}" will play next`, type: 'info' });
+	}
+
+	function playMenuAddToQueue() {
+		const validItems = playMenuItems.filter((item): item is NonNullable<typeof item> => item !== null);
+		const item = validItems[playMenuIndex];
+		if (!item) return;
+		playerStore.addToQueue(item);
+		const trackName = playlist?.tracks[playMenuIndex]?.track_name ?? 'Track';
+		toastStore.show({ message: `"${trackName}" added to queue`, type: 'info' });
 	}
 
 	function handleSourceChange() {
@@ -574,7 +621,7 @@
 				</div>
 			</div>
 
-			{#if sourceResolutionPending}
+			{#if !isLocalPlaylist && sourceResolutionPending}
 				<div
 					class="flex h-16 items-center gap-3 rounded-xl border border-base-300/40 bg-base-200/40 px-4"
 					aria-label="Loading playlist download options"
@@ -665,6 +712,16 @@
 				onsourcechange={handleSourceChange}
 				onplaytrack={playFromTrack}
 			/>
+
+			{#if playMenuAnchorRect !== null}
+				<PlayActionMenu
+					anchorRect={playMenuAnchorRect}
+					onPlayNow={playMenuPlayNow}
+					onPlayNext={playMenuPlayNext}
+					onAddToQueue={playMenuAddToQueue}
+					onClose={() => { playMenuAnchorRect = null; playMenuIndex = -1; }}
+				/>
+			{/if}
 		</div>
 
 		<DeletePlaylistModal

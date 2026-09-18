@@ -6,6 +6,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import TrackRow from './TrackRow.svelte';
+	import PlayActionMenu from '$lib/components/PlayActionMenu.svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 
 	interface Props {
@@ -108,11 +109,48 @@
 		return { items, startIndex };
 	}
 
-	function handlePlay(song: TopSong) {
+	let playMenuAnchorRect = $state<DOMRect | null>(null);
+	let playMenuSong = $state<TopSong | null>(null);
+
+	function handlePlay(song: TopSong, e?: MouseEvent) {
 		const { items, startIndex } = buildQueueItems(song);
-		if (items.length > 0) {
-			playerStore.playQueue(items, startIndex);
+		if (items.length === 0) return;
+		if (playerStore.hasQueue && e) {
+			playMenuAnchorRect = (e.currentTarget as HTMLElement)?.getBoundingClientRect() ?? (e.target as HTMLElement)?.getBoundingClientRect() ?? null;
+			playMenuSong = song;
+			return;
 		}
+		playerStore.playQueue(items, startIndex);
+	}
+
+	function playMenuPlayNow() {
+		if (!playMenuSong) return;
+		const { items, startIndex } = buildQueueItems(playMenuSong);
+		const item = items[startIndex];
+		if (!item) return;
+		playerStore.replaceCurrentTrack(item);
+		playMenuAnchorRect = null;
+		playMenuSong = null;
+	}
+
+	function playMenuPlayNext() {
+		if (!playMenuSong) return;
+		const { items, startIndex } = buildQueueItems(playMenuSong);
+		const item = items[startIndex];
+		if (!item) return;
+		playerStore.playNext(item);
+		playMenuAnchorRect = null;
+		playMenuSong = null;
+	}
+
+	function playMenuAddToQueue() {
+		if (!playMenuSong) return;
+		const { items, startIndex } = buildQueueItems(playMenuSong);
+		const item = items[startIndex];
+		if (!item) return;
+		playerStore.addToQueue(item);
+		playMenuAnchorRect = null;
+		playMenuSong = null;
 	}
 </script>
 
@@ -154,9 +192,22 @@
 					{source}
 					showPreview={true}
 					resolvedTrack={getResolvedTrack(song)}
-					onPlay={() => handlePlay(song)}
+					onPlay={(e) => handlePlay(song, e)}
 				/>
 			{/each}
 		</div>
+	{/if}
+
+	{#if playMenuAnchorRect !== null}
+		<PlayActionMenu
+			anchorRect={playMenuAnchorRect}
+			onPlayNow={playMenuPlayNow}
+			onPlayNext={playMenuPlayNext}
+			onAddToQueue={playMenuAddToQueue}
+			onClose={() => {
+				playMenuAnchorRect = null;
+				playMenuSong = null;
+			}}
+		/>
 	{/if}
 </div>

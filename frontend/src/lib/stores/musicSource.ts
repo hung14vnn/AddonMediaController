@@ -9,7 +9,7 @@ import { ScrobblePreferencesQueryKeyFactory } from '$lib/queries/scrobble-prefer
 import { registerUserSessionReset } from '$lib/utils/userSessionCleanup';
 import type { ScrobblePreferences } from '$lib/queries/scrobble-preferences/types';
 
-export type MusicSource = 'listenbrainz' | 'lastfm';
+export type MusicSource = 'listenbrainz' | 'lastfm' | 'spotify';
 export type MusicSourcePage = keyof typeof PAGE_SOURCE_KEYS;
 
 const CACHED_SOURCE_KEY = 'droppedneedle_primary_source';
@@ -21,7 +21,7 @@ interface MusicSourceState {
 }
 
 export function isMusicSource(value: unknown): value is MusicSource {
-	return value === 'listenbrainz' || value === 'lastfm';
+	return value === 'listenbrainz' || value === 'lastfm' || value === 'spotify';
 }
 
 // pre-v1.3.0 setPageSource() stored raw strings; PersistedState expects JSON, so

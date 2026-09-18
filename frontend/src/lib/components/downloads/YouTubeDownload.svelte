@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Loader2, Music2, Pencil } from 'lucide-svelte';
+	import { ListPlus, Loader2, Music2, Pencil } from 'lucide-svelte';
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 
 	import { api } from '$lib/api/client';
@@ -7,6 +7,9 @@
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 	import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
 	import { toastStore } from '$lib/stores/toast';
+	import { openGlobalPlaylistModal } from '$lib/stores/playlistModal.svelte';
+	import type { QueueItem } from '$lib/player/types';
+	import type { YTMusicStreamInfo } from '$lib/types';
 
 	type Preview = {
 		url: string;
@@ -20,6 +23,7 @@
 	let preview = $state<Preview | null>(null);
 	let loading = $state(false);
 	let queueing = $state(false);
+	let addingToPlaylist = $state(false);
 	let editingMetadata = $state(false);
 	let editedTitle = $state('');
 	let editedArtist = $state('');
@@ -41,6 +45,47 @@
 			uploader: editedArtist.trim() || preview.uploader
 		};
 		editingMetadata = false;
+	}
+
+	function extractVideoId(link: string): string | null {
+		try {
+			const u = new URL(link);
+			if (u.searchParams.has('v')) return u.searchParams.get('v');
+			if (u.hostname === 'youtu.be') return u.pathname.replace(/^\//, '');
+		} catch {
+			// ignore
+		}
+		const m = link.match(/(?:v=|\/)([0-9A-Za-z_-]{11})(?:\?|&|$)/);
+		return m ? m[1] : null;
+	}
+
+	function parseArtistAndTitle(rawTitle: string, rawArtist: string): { title: string; artist: string } {
+		const cleanTitle = rawTitle
+			.replace(/[\(\[][^\)\]]*(?:mv|video|audio|official|visualizer|remaster|hd|4k)[^\)\]]*[\)\]]/gi, '')
+			.trim();
+		const cleanArtist = rawArtist.trim();
+
+		if (cleanTitle.includes(' - ')) {
+			const parts = cleanTitle.split(' - ');
+			if (parts.length === 2) {
+				const [p1, p2] = parts.map((s) => s.trim());
+				if (cleanArtist && p1.toLowerCase() === cleanArtist.toLowerCase()) {
+					return { artist: p1, title: p2 };
+				}
+				if (cleanArtist && p2.toLowerCase() === cleanArtist.toLowerCase()) {
+					return { artist: p2, title: p1 };
+				}
+				if (!cleanArtist || cleanArtist.toLowerCase() === 'youtube' || cleanArtist.toLowerCase().includes('topic')) {
+					return { artist: p1, title: p2 };
+				}
+				return { artist: p1, title: p2 };
+			}
+		}
+
+		return {
+			title: cleanTitle || rawTitle.trim(),
+			artist: cleanArtist && cleanArtist.toLowerCase() !== 'youtube' ? cleanArtist : ''
+		};
 	}
 
 	async function getPreview() {
@@ -86,6 +131,74 @@
 			});
 		} finally {
 			queueing = false;
+		}
+	}
+
+	async function addToPlaylist() {
+		if (!preview) return;
+		finishMetadataEditing();
+
+		const currentTitle = editedTitle.trim() || preview.title;
+		const currentArtist = editedArtist.trim() || preview.uploader || '';
+		const { title, artist } = parseArtistAndTitle(currentTitle, currentArtist);
+
+		addingToPlaylist = true;
+		try {
+			let matched = false;
+			try {
+				const info = await api.global.get<YTMusicStreamInfo>(API.ytmusicStream.search(artist, title));
+				if (info?.video_id) {
+					const queueItem: QueueItem = {
+						trackSourceId: info.video_id,
+						trackName: info.title || title,
+						artistName: info.artist || artist || 'YouTube Music',
+						albumName: 'YouTube Music',
+						albumId: `ytmusic-${info.video_id}`,
+						coverUrl: info.thumbnail ?? preview.thumbnail ?? null,
+						sourceType: 'ytmusic',
+						streamUrl: API.ytmusicStream.stream(info.video_id),
+						duration: info.duration_s ?? preview.duration_seconds ?? undefined,
+						availableSources: ['ytmusic'],
+						trackNumber: 1
+					};
+					openGlobalPlaylistModal([queueItem]);
+					matched = true;
+				}
+			} catch (searchErr) {
+				console.warn('YTMusic search failed, falling back to video ID:', searchErr);
+			}
+
+			if (!matched) {
+				const videoId = extractVideoId(preview.url || url);
+				if (!videoId) {
+					toastStore.show({
+						message: 'Could not find a YouTube Music track or video ID',
+						type: 'error'
+					});
+					return;
+				}
+				const queueItem: QueueItem = {
+					trackSourceId: videoId,
+					trackName: title,
+					artistName: artist || preview.uploader || 'YouTube',
+					albumName: 'YouTube Music',
+					albumId: `ytmusic-${videoId}`,
+					coverUrl: preview.thumbnail ?? null,
+					sourceType: 'ytmusic',
+					streamUrl: API.ytmusicStream.stream(videoId),
+					duration: preview.duration_seconds ?? undefined,
+					availableSources: ['ytmusic'],
+					trackNumber: 1
+				};
+				openGlobalPlaylistModal([queueItem]);
+			}
+		} catch (err) {
+			toastStore.show({
+				message: err instanceof Error ? err.message : 'Failed to add to playlist',
+				type: 'error'
+			});
+		} finally {
+			addingToPlaylist = false;
 		}
 	}
 </script>
@@ -179,11 +292,11 @@
 						<Pencil class="size-3.5" aria-hidden="true" />
 					</button>
 				</div>
-				<div class="mt-3 flex items-center gap-2">
+				<div class="mt-3 flex flex-wrap items-center gap-2">
 					<button
 						class="btn btn-primary btn-sm inline-flex items-center justify-center gap-2"
 						onclick={queueDownload}
-						disabled={queueing}
+						disabled={queueing || addingToPlaylist}
 					>
 						{#if queueing}<Loader2
 								class="size-4 shrink-0 origin-center animate-spin"
@@ -191,15 +304,28 @@
 							/>{:else}<Music2 class="size-4 shrink-0" aria-hidden="true" />{/if}
 						Download audio
 					</button>
+					<button
+						class="btn btn-outline btn-sm inline-flex items-center justify-center gap-2"
+						type="button"
+						onclick={addToPlaylist}
+						disabled={queueing || addingToPlaylist}
+					>
+						{#if addingToPlaylist}
+							<Loader2 class="size-4 shrink-0 animate-spin" aria-hidden="true" />
+						{:else}
+							<ListPlus class="size-4 shrink-0" aria-hidden="true" />
+						{/if}
+						Add to playlist
+					</button>
 					{#if editingMetadata}
 						<button
 							class="btn btn-ghost btn-sm"
 							type="button"
 							onclick={finishMetadataEditing}
-							disabled={queueing}>Done</button
+							disabled={queueing || addingToPlaylist}>Done</button
 						>
 					{/if}
-					<button class="btn btn-ghost btn-sm" onclick={() => (preview = null)} disabled={queueing}
+					<button class="btn btn-ghost btn-sm" onclick={() => (preview = null)} disabled={queueing || addingToPlaylist}
 						>Change link</button
 					>
 				</div>

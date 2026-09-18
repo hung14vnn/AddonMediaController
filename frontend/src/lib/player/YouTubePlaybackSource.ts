@@ -115,6 +115,7 @@ export class YouTubePlaybackSource implements PlaybackSource {
 	private pendingVolume = 75;
 	private pausedForVisibility = false;
 	private visibilityHandler: (() => void) | null = null;
+	private loopFrame: number | null = null;
 
 	constructor(elementId: string) {
 		this.elementId = elementId;
@@ -206,6 +207,12 @@ export class YouTubePlaybackSource implements PlaybackSource {
 						onStateChange: (event) => {
 							const state = this.mapPlayerState(event.data);
 							this.stateCallbacks.forEach((cb) => cb(state));
+
+							if (state === 'playing') {
+								this.startLoop();
+							} else {
+								this.stopLoop();
+							}
 						},
 						onError: (event) => {
 							const error = this.mapError(event.data);
@@ -245,8 +252,35 @@ export class YouTubePlaybackSource implements PlaybackSource {
 	}
 
 	getCurrentTime(): number {
-		return this.player?.getCurrentTime() ?? 0;
+		if (this.player && typeof this.player.getCurrentTime === 'function') {
+			const current = this.player.getCurrentTime();
+			return Number.isFinite(current) ? current : 0;
+		}
+		return 0;
 	}
+
+	private startLoop(): void {
+		if (this.loopFrame !== null) return;
+
+		const tick = () => {
+			if (this.destroyed) return;
+			const ct = this.getCurrentTime();
+			const dur = this.getDuration();
+
+			this.progressCallbacks.forEach((cb) => cb(ct, dur));
+			this.loopFrame = requestAnimationFrame(tick);
+		};
+
+		this.loopFrame = requestAnimationFrame(tick);
+	}
+
+	private stopLoop(): void {
+		if (this.loopFrame !== null) {
+			cancelAnimationFrame(this.loopFrame);
+			this.loopFrame = null;
+		}
+	}
+
 
 	getDuration(): number {
 		return this.player?.getDuration() ?? 0;
@@ -254,6 +288,7 @@ export class YouTubePlaybackSource implements PlaybackSource {
 
 	destroy(): void {
 		this.destroyed = true;
+		this.stopLoop();
 		this.detachVisibilityGuard();
 		this.player?.destroy();
 		this.player = null;

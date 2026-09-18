@@ -45,7 +45,7 @@
 		title: string;
 		subtitle: string;
 		errorIcon?: ComponentType | null;
-		source?: 'listenbrainz' | 'lastfm' | null;
+		source?: 'listenbrainz' | 'lastfm' | 'spotify' | null;
 	}
 
 	let { itemType, endpoint, title, subtitle, errorIcon = null, source = null }: Props = $props();

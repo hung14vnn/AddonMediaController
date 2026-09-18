@@ -280,25 +280,45 @@ function resolveStreamUrl(sourceType: string, trackSourceId: string): string | u
 	if (sourceType === 'navidrome') return API.stream.navidrome(trackSourceId);
 	if (sourceType === 'jellyfin') return API.stream.jellyfin(trackSourceId);
 	if (sourceType === 'plex') return API.stream.plex(trackSourceId);
+	if (sourceType === 'ytmusic') return API.ytmusicStream.stream(trackSourceId);
 	return undefined;
 }
 
 export function playlistTrackToQueueItem(track: PlaylistTrack): QueueItem | null {
+	const isYtMusic =
+		track.source_type === 'ytmusic' ||
+		track.source_type === 'youtube' ||
+		(track.album_id?.startsWith('ytmusic-') ?? false);
+
 	const availableSources: SourceType[] = track.available_sources
 		? (track.available_sources as SourceType[])
-		: [track.source_type as SourceType];
+		: [isYtMusic ? 'ytmusic' : (track.source_type as SourceType)];
 
-	// Local-first, mirroring selectBestSource: a resolved local file plays from
-	// the library while sourceIds keeps the imported source for manual switch.
-	// Healed/legacy linked rows may have an empty track_source_id with
-	// library_file_id + available_sources ['local']; fall back to local there.
-	const prefersLocal = Boolean(track.library_file_id) && availableSources.includes('local');
-	if (!track.track_source_id && !(prefersLocal && track.library_file_id)) return null;
-	const sourceType = (prefersLocal ? 'local' : track.source_type) as SourceType;
-	const trackSourceId = prefersLocal ? track.library_file_id! : track.track_source_id!;
+	if (isYtMusic && !availableSources.includes('ytmusic')) {
+		availableSources.push('ytmusic');
+	}
+
+	const prefersLocal =
+		!isYtMusic &&
+		Boolean(track.library_file_id) &&
+		availableSources.includes('local');
+
+	const effectiveTrackSourceId =
+		track.track_source_id ||
+		(isYtMusic && track.album_id?.startsWith('ytmusic-')
+			? track.album_id.slice('ytmusic-'.length)
+			: null);
+
+	if (!effectiveTrackSourceId && !(prefersLocal && track.library_file_id)) return null;
+	const sourceType = (prefersLocal ? 'local' : isYtMusic ? 'ytmusic' : track.source_type) as SourceType;
+	const trackSourceId = prefersLocal ? track.library_file_id! : effectiveTrackSourceId!;
 
 	const sourceIds: Partial<Record<SourceType, string>> = {};
 	if (track.track_source_id) sourceIds[track.source_type as SourceType] = track.track_source_id;
+	if (isYtMusic && effectiveTrackSourceId) {
+		sourceIds.ytmusic = effectiveTrackSourceId;
+		sourceIds.youtube = effectiveTrackSourceId;
+	}
 	if (track.library_file_id) sourceIds.local = track.library_file_id;
 
 	return {

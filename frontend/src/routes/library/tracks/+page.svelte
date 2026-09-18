@@ -21,6 +21,7 @@
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import TrackAccessModal from '$lib/components/TrackAccessModal.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
+	import PlayActionMenu from '$lib/components/PlayActionMenu.svelte';
 	import { openGlobalPlaylistModal } from '$lib/stores/playlistModal.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import { formatArtistCredit, formatDurationSec } from '$lib/utils/formatting';
@@ -505,11 +506,42 @@
 		fetchTracks();
 	}
 
-	function playTrack(index: number) {
+	let playMenuAnchorRect = $state<DOMRect | null>(null);
+	let playMenuIndex = $state<number>(-1);
+
+	function playTrack(index: number, e?: MouseEvent) {
 		loader.abort();
 		const queue = buildDiscoveryQueueFromLocal(data.items);
 		if (queue.length === 0) return;
+		// If queue is active, show action menu
+		if (playerStore.hasQueue && e) {
+			playMenuAnchorRect = (e.currentTarget as HTMLElement)?.getBoundingClientRect() ?? (e.target as HTMLElement)?.getBoundingClientRect() ?? null;
+			playMenuIndex = index;
+			return;
+		}
 		playerStore.playQueue(queue, index, false);
+	}
+
+	function playMenuPlayNow() {
+		const items = buildDiscoveryQueueFromLocal([data.items[playMenuIndex]]);
+		if (items.length === 0 || playMenuIndex < 0) return;
+		playerStore.replaceCurrentTrack(items[0]);
+		playMenuAnchorRect = null;
+		playMenuIndex = -1;
+	}
+
+	function playMenuPlayNext() {
+		const items = buildDiscoveryQueueFromLocal([data.items[playMenuIndex]]);
+		if (items.length === 0) return;
+		playerStore.playMultipleNext(items);
+		toastStore.show({ message: `"${data.items[playMenuIndex]?.title}" will play next`, type: 'info' });
+	}
+
+	function playMenuAddToQueue() {
+		const items = buildDiscoveryQueueFromLocal([data.items[playMenuIndex]]);
+		if (items.length === 0) return;
+		playerStore.addMultipleToQueue(items);
+		toastStore.show({ message: `"${data.items[playMenuIndex]?.title}" added to queue`, type: 'info' });
 	}
 
 	function playAll() {
@@ -1021,8 +1053,8 @@
 							: playing
 								? 'cursor-pointer bg-accent/10'
 								: 'cursor-pointer hover:bg-base-200/50'}"
-					onclick={() =>
-						!alreadyInTarget && (selectionEnabled ? toggleTrackSelection(track.id) : playTrack(i))}
+					onclick={(e) =>
+						!alreadyInTarget && (selectionEnabled ? toggleTrackSelection(track.id) : playTrack(i, e))}
 					onkeydown={(e) =>
 						(e.key === 'Enter' || e.key === ' ') &&
 						!alreadyInTarget &&
@@ -1140,6 +1172,16 @@
 				</div>
 			{/each}
 		</div>
+
+		{#if playMenuAnchorRect !== null}
+			<PlayActionMenu
+				anchorRect={playMenuAnchorRect}
+				onPlayNow={playMenuPlayNow}
+				onPlayNext={playMenuPlayNext}
+				onAddToQueue={playMenuAddToQueue}
+				onClose={() => { playMenuAnchorRect = null; playMenuIndex = -1; }}
+			/>
+		{/if}
 
 		{#if selectionEnabled && selectedIds.size > 0}
 			<div

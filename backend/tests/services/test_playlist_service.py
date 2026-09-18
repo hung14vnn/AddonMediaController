@@ -521,3 +521,72 @@ class TestResolvePromotesUnknownRowsToPlex:
         assert args[4] == "/library/parts/1"
         assert args[5] == "plex-1"
         assert args[6] is _UNSET
+
+
+class TestResolveYTMusicSource:
+    @pytest.mark.asyncio
+    async def test_reuses_existing_ytmusic_source_id(self, tmp_path):
+        service, repo = _make_service(tmp_path)
+        track = _make_track_with_album(track_name="Song One", source_type="ytmusic")
+        track.track_source_id = "yt-vid-123"
+        repo.get_track = MagicMock(return_value=track)
+
+        await service.update_track_source(
+            "p-1", _OWNER, "t-1", source_type="ytmusic"
+        )
+        repo.update_track_source.assert_called_once()
+        args, _kwargs = repo.update_track_source.call_args
+        assert args[2] == "ytmusic"
+        assert args[4] == "yt-vid-123"
+
+    @pytest.mark.asyncio
+    async def test_reuses_existing_youtube_source_id(self, tmp_path):
+        service, repo = _make_service(tmp_path)
+        track = _make_track_with_album(track_name="Song One", source_type="youtube")
+        track.track_source_id = "yt-vid-456"
+        repo.get_track = MagicMock(return_value=track)
+
+        await service.update_track_source(
+            "p-1", _OWNER, "t-1", source_type="ytmusic"
+        )
+        repo.update_track_source.assert_called_once()
+        args, _kwargs = repo.update_track_source.call_args
+        assert args[2] == "ytmusic"
+        assert args[4] == "yt-vid-456"
+
+    @pytest.mark.asyncio
+    async def test_extracts_from_ytmusic_album_id(self, tmp_path):
+        service, repo = _make_service(tmp_path)
+        track = _make_track_with_album(track_name="Song One", source_type="", album_id="ytmusic-abc789")
+        track.track_source_id = None
+        repo.get_track = MagicMock(return_value=track)
+
+        await service.update_track_source(
+            "p-1", _OWNER, "t-1", source_type="ytmusic"
+        )
+        repo.update_track_source.assert_called_once()
+        args, _kwargs = repo.update_track_source.call_args
+        assert args[2] == "ytmusic"
+        assert args[4] == "abc789"
+
+    @pytest.mark.asyncio
+    async def test_searches_ytmusic_when_no_source_id(self, tmp_path):
+        service, repo = _make_service(tmp_path)
+        track = _make_track_with_album(track_name="Song One", source_type="", album_id="mbid-1")
+        track.track_source_id = None
+        repo.get_track = MagicMock(return_value=track)
+
+        mock_yt = AsyncMock()
+        mock_stream_info = SimpleNamespace(video_id="resolved-vid-999")
+        mock_yt.search.return_value = mock_stream_info
+
+        with patch("core.dependencies.get_ytmusic_stream_service", return_value=mock_yt):
+            await service.update_track_source(
+                "p-1", _OWNER, "t-1", source_type="ytmusic"
+            )
+
+        repo.update_track_source.assert_called_once()
+        args, _kwargs = repo.update_track_source.call_args
+        assert args[2] == "ytmusic"
+        assert args[4] == "resolved-vid-999"
+

@@ -46,7 +46,7 @@
 		<NavidromeIcon class={cls} />
 	{:else if source === 'local'}
 		<LocalFilesIcon class={cls} />
-	{:else if source === 'youtube'}
+	{:else if source === 'youtube' || source === 'ytmusic'}
 		<YouTubeIcon class={cls} />
 	{:else if source === 'plex'}
 		<PlexIcon class={cls} />

@@ -99,6 +99,9 @@
 	let previousTrackKey: string | null = null;
 	const pageScrollLockClass = 'lyrics-page-scroll-lock';
 
+	let isDragging = $state(false);
+	let dragProgress = $state(0);
+
 	const showWordSynced = $derived(wordSyncedAvailable !== false);
 	const progressDuration = $derived(Math.max(duration, currentTime, 0));
 
@@ -229,15 +232,21 @@
 			<div class="lyrics-stage-actions flex items-center gap-1.5 shrink-0">
 				<div class="hidden sm:flex items-center gap-1.5 w-44 lg:w-56">
 					<span class="text-[10px] text-white/55 tabular-nums w-7 text-right"
-						>{formatTime(currentTime)}</span
+						>{formatTime(isDragging ? dragProgress : currentTime)}</span
 					>
 					<input
 						type="range"
 						class="range range-xs range-accent flex-1"
 						min="0"
 						max={progressDuration || 1}
-						value={Math.min(currentTime, progressDuration || 1)}
-						oninput={(event) => onseek(Number((event.target as HTMLInputElement).value))}
+						value={Math.min(isDragging ? dragProgress : currentTime, progressDuration || 1)}
+						onmousedown={() => { isDragging = true; dragProgress = currentTime; }}
+						ontouchstart={() => { isDragging = true; dragProgress = currentTime; }}
+						oninput={(event) => { dragProgress = Number((event.target as HTMLInputElement).value); }}
+						onchange={(event) => {
+							onseek(Number((event.target as HTMLInputElement).value));
+							isDragging = false;
+						}}
 						aria-label="Lyrics playback progress"
 					/>
 					<span class="text-[10px] text-white/55 tabular-nums w-7"

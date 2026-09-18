@@ -71,7 +71,7 @@ ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_COVER_SIZE = 2 * 1024 * 1024
 _MIME_TO_EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 _SAFE_ID_RE = re.compile(r"^[a-f0-9\-]+$")
-VALID_SOURCE_TYPES = {"local", "jellyfin", "navidrome", "plex", "youtube", ""}
+VALID_SOURCE_TYPES = {"local", "jellyfin", "navidrome", "plex", "youtube", "ytmusic", ""}
 MAX_NAME_LENGTH = 100
 # Albums in a playlist are resolved against external sources concurrently. A
 # large playlist (300+ tracks) can span hundreds of albums; resolving them one
@@ -87,6 +87,7 @@ _SOURCE_TYPE_ALIASES = {
     "navidrome": "navidrome",
     "plex": "plex",
     "youtube": "youtube",
+    "ytmusic": "ytmusic",
     "droppedneedle-local": "droppedneedle-local",  # Q11: compat-created local entry
     "": "",
 }
@@ -568,12 +569,18 @@ class PlaylistService:
                 new_plex_rating_key_resolved = True
 
         repo_kwargs: dict[str, Any] = {
-            "track_source_id": new_track_source_id,
+            "track_source_id": (
+                new_track_source_id
+                if new_track_source_id is not None
+                else (current_track.track_source_id if normalized_source else None)
+            ),
         }
         if new_plex_rating_key_resolved:
             repo_kwargs["plex_rating_key"] = new_plex_rating_key
         if normalized_source == "local" and new_track_source_id is not None:
             repo_kwargs["library_file_id"] = new_track_source_id
+        elif normalized_source and normalized_source != "local":
+            repo_kwargs["library_file_id"] = None
 
         result = await self._repo.update_track_source(
             playlist_id,
@@ -758,6 +765,12 @@ class PlaylistService:
                     t.source_type == "navidrome" and navidrome_folder_ids is not None
                 ):
                     sources.add(t.source_type)
+                if (
+                    t.source_type == "ytmusic"
+                    or (t.album_id and t.album_id.startswith("ytmusic-"))
+                    or (t.available_sources and "ytmusic" in t.available_sources)
+                ):
+                    sources.add("ytmusic")
 
                 disc_key = (t.disc_number or 1, t.track_number)
                 jf_track = jf_by_num.get(disc_key)
@@ -792,6 +805,12 @@ class PlaylistService:
                 t.source_type == "navidrome" and navidrome_folder_ids is not None
             ):
                 sources.add(t.source_type)
+            if (
+                t.source_type == "ytmusic"
+                or (t.album_id and t.album_id.startswith("ytmusic-"))
+                or (t.available_sources and "ytmusic" in t.available_sources)
+            ):
+                sources.add("ytmusic")
             local_match = await resolve_local_metadata_fallback(t)
             if local_match:
                 sources.add("local")
@@ -1030,6 +1049,31 @@ class PlaylistService:
         navidrome_folder_ids: tuple[str, ...] | None = None,
     ) -> tuple[str, str | None]:
         """Return (source_id, plex_rating_key_or_none)."""
+        if new_source_type == "ytmusic":
+            if track.source_type in {"ytmusic", "youtube"} and track.track_source_id:
+                return (track.track_source_id, None)
+            if track.album_id and track.album_id.startswith("ytmusic-"):
+                vid = track.album_id[len("ytmusic-") :]
+                if vid:
+                    return (vid, None)
+            try:
+                from core.dependencies import get_ytmusic_stream_service
+
+                yt_service = get_ytmusic_stream_service()
+                res = await yt_service.search(track.artist_name, track.track_name)
+                if res and res.video_id:
+                    return (res.video_id, None)
+            except Exception as e:
+                logger.debug(
+                    "YT Music resolution search failed for %s - %s: %s",
+                    track.artist_name,
+                    track.track_name,
+                    e,
+                )
+            raise SourceResolutionError(
+                f"Track '{track.track_name}' not found in YouTube Music"
+            )
+
         if not track.album_id or track.track_number is None:
             raise SourceResolutionError(
                 f"Cannot switch source for track '{track.track_name}': missing album_id or track_number"

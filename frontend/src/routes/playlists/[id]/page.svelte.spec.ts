@@ -40,7 +40,8 @@ vi.mock('$lib/api/playlists', () => ({
 	deletePlaylistCover: (...args: unknown[]) => mockDeletePlaylistCover(...args),
 	checkTrackMembership: (...args: unknown[]) => mockCheckTrackMembership(...args),
 	resolvePlaylistSources: (...args: unknown[]) => mockResolvePlaylistSources(...args),
-	requestMissingTracks: (...args: unknown[]) => mockRequestMissingTracks(...args)
+	requestMissingTracks: (...args: unknown[]) => mockRequestMissingTracks(...args),
+	requestPlaylistTrack: vi.fn()
 }));
 
 vi.mock('$lib/offline/offlineAudio', () => ({
@@ -587,5 +588,37 @@ describe('Playlist detail page', () => {
 		await new Promise((r) => setTimeout(r, 100));
 		// Empty resolve maps are never fresh, so no per-user cache entry is stored.
 		expect(localStorage.getItem('droppedneedle_playlist_sources_anon_pl-1')).toBeNull();
+	});
+
+	it('does not show download skeleton for local playlist', async () => {
+		detailQuery.data = makePlaylist({ source_ref: null });
+		let resolveCall: (v: Record<string, string[]>) => void;
+		mockResolvePlaylistSources.mockReturnValue(
+			new Promise((res) => {
+				resolveCall = res;
+			})
+		);
+		await renderDetail('pl-1');
+
+		expect(page.getByTestId('playlist-download-skeleton').elements()).toHaveLength(0);
+		await expect.element(page.getByText(/playlist tracks available offline/)).toBeVisible();
+		resolveCall!({});
+	});
+
+	it('shows download skeleton for imported playlist while resolving sources', async () => {
+		detailQuery.data = makePlaylist({ source_ref: 'spotify:playlist:123' });
+		let resolveCall: (v: Record<string, string[]>) => void;
+		mockResolvePlaylistSources.mockReturnValue(
+			new Promise((res) => {
+				resolveCall = res;
+			})
+		);
+		await renderDetail('pl-1');
+
+		await expect.element(page.getByTestId('playlist-download-skeleton')).toBeInTheDocument();
+		resolveCall!({});
+		await vi.waitFor(() => {
+			expect(page.getByTestId('playlist-download-skeleton').elements()).toHaveLength(0);
+		});
 	});
 });

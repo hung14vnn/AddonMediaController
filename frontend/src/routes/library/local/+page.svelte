@@ -28,6 +28,7 @@
 		getLocalDecadesQuery
 	} from '$lib/queries/local/LocalQueries.svelte';
 	import { ChevronDown, Headphones, Play, Shuffle, Clock } from 'lucide-svelte';
+	import PlayActionMenu from '$lib/components/PlayActionMenu.svelte';
 
 	const MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 	const isMbid = (id?: string | null): id is string => !!id && MBID_RE.test(id);
@@ -102,8 +103,18 @@
 		if (t.year) eraDecade = Math.floor(t.year / 10) * 10;
 	}
 
-	function playCrateTrack(t: CrateTrack) {
+	let playMenuTrack = $state<CrateTrack | null>(null);
+	let playMenuAnchorRect = $state<DOMRect | null>(null);
+
+	function playCrateTrack(t: CrateTrack, e?: MouseEvent) {
 		rememberEra(t);
+		if (playerStore.hasQueue) {
+			playMenuTrack = t;
+			const el = e ? (e.currentTarget as HTMLElement | null ?? e.target as HTMLElement | null) : null;
+			// Fall back to a centered rect when no event target is available (drag-drop)
+			playMenuAnchorRect = el?.getBoundingClientRect() ?? new DOMRect(window.innerWidth / 2, window.innerHeight / 2 - 80, 0, 0);
+			return;
+		}
 		playerStore.playQueue([crateToQueueItem(t)], 0, false);
 		if (!mobileLowPower) void suggestionsQuery.refetch();
 	}
@@ -137,8 +148,14 @@
 	}
 
 	// plays/queues a single track without reshuffling the crate
-	function searchPlayTrack(t: CrateTrack) {
+	function searchPlayTrack(t: CrateTrack, e?: MouseEvent) {
 		rememberEra(t);
+		if (playerStore.hasQueue) {
+			playMenuTrack = t;
+			const el = e ? (e.currentTarget as HTMLElement | null ?? e.target as HTMLElement | null) : null;
+			playMenuAnchorRect = el?.getBoundingClientRect() ?? new DOMRect(window.innerWidth / 2, window.innerHeight / 2 - 80, 0, 0);
+			return;
+		}
 		playerStore.playQueue([crateToQueueItem(t)], 0, false);
 	}
 	function searchQueueTrack(t: CrateTrack) {
@@ -193,7 +210,26 @@
 			return;
 		}
 		const pick = pool[Math.floor(Math.random() * pool.length)];
-		playCrateTrack(pick);
+		// Surprise always plays immediately, ignoring queue state
+		rememberEra(pick);
+		playerStore.playQueue([crateToQueueItem(pick)], 0, false);
+		if (!mobileLowPower) void suggestionsQuery.refetch();
+	}
+
+	function playMenuPlayNow() {
+		if (!playMenuTrack) return;
+		playerStore.replaceCurrentTrack(crateToQueueItem(playMenuTrack));
+		playMenuTrack = null; playMenuAnchorRect = null;
+	}
+	function playMenuPlayNext() {
+		if (!playMenuTrack) return;
+		playerStore.playNext(crateToQueueItem(playMenuTrack));
+		playMenuTrack = null; playMenuAnchorRect = null;
+	}
+	function playMenuAddToQueue() {
+		if (!playMenuTrack) return;
+		playerStore.addToQueue(crateToQueueItem(playMenuTrack));
+		playMenuTrack = null; playMenuAnchorRect = null;
 	}
 
 	let turntableHostEl: HTMLElement;
@@ -476,3 +512,13 @@
 		{/if}
 	</section>
 </div>
+
+{#if playMenuAnchorRect !== null && playMenuTrack !== null}
+	<PlayActionMenu
+		anchorRect={playMenuAnchorRect}
+		onPlayNow={playMenuPlayNow}
+		onPlayNext={playMenuPlayNext}
+		onAddToQueue={playMenuAddToQueue}
+		onClose={() => { playMenuTrack = null; playMenuAnchorRect = null; }}
+	/>
+{/if}

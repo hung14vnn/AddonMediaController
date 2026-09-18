@@ -442,8 +442,8 @@ describe('playerStore queue methods', () => {
 			const expectedRemaining = Math.max(
 				0,
 				playerStore.shuffleOrder.length -
-					playerStore.shuffleOrder.indexOf(playerStore.currentIndex) -
-					1
+				playerStore.shuffleOrder.indexOf(playerStore.currentIndex) -
+				1
 			);
 			expect(playerStore.upcomingQueueLength).toBe(expectedRemaining);
 		});

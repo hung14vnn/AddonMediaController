@@ -8,6 +8,8 @@ function rawSourceUrl(item: QueueItem): string | undefined {
 	switch (item.sourceType) {
 		case 'youtube':
 			return item.streamUrl;
+		case 'ytmusic':
+			return item.streamUrl ?? API.ytmusicStream.stream(item.trackSourceId);
 		case 'local':
 			return item.streamUrl ?? API.stream.local(item.trackSourceId);
 		case 'navidrome':
@@ -23,6 +25,8 @@ function rawPrefetchUrl(item: QueueItem): string | null {
 	switch (item.sourceType) {
 		case 'youtube':
 			return null;
+		case 'ytmusic':
+			return API.ytmusicStream.stream(item.trackSourceId);
 		case 'jellyfin':
 			return API.stream.jellyfin(item.trackSourceId);
 		case 'navidrome':
@@ -53,6 +57,8 @@ function rawStreamUrlForSource(sourceType: SourceType, trackSourceId: string): s
 	switch (sourceType) {
 		case 'local':
 			return API.stream.local(trackSourceId);
+		case 'ytmusic':
+			return API.ytmusicStream.stream(trackSourceId);
 		case 'navidrome':
 			return API.stream.navidrome(trackSourceId);
 		case 'jellyfin':

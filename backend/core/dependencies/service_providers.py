@@ -3019,3 +3019,12 @@ def get_target_download_service() -> "DownloadService":
         quota_service=get_target_quota_service(),
         release_pin_store=get_target_album_release_pin_store(),
     )
+
+
+@singleton
+def get_ytmusic_stream_service() -> "YTMusicStreamService":
+    from services.ytmusic_stream_service import YTMusicStreamService
+
+    from .repo_providers import _get_configured_http_client
+
+    return YTMusicStreamService(http_client=_get_configured_http_client())

@@ -15,6 +15,7 @@ _PREFIX = {
     "track": "tr-",
     "playlist": "pl-",
     "genre": "ge-",
+    "ytmusic": "yt-",
 }
 _BY_PREFIX = {v: k for k, v in _PREFIX.items()}
 

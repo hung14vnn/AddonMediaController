@@ -9,6 +9,7 @@
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
+	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 	import QueueDrawer from '$lib/components/QueueDrawer.svelte';
 	import ContextMenu, { type MenuItem } from '$lib/components/ContextMenu.svelte';
 	import EqPanel from '$lib/components/EqPanel.svelte';
@@ -202,9 +203,18 @@
 		return `${mins}:${secs.toString().padStart(2, '0')}`;
 	}
 
-	function handleSeek(e: Event): void {
+	let isDragging = $state(false);
+	let dragProgress = $state(0);
+
+	function handleSeekInput(e: Event): void {
+		const target = e.target as HTMLInputElement;
+		dragProgress = Number(target.value);
+	}
+
+	function handleSeekChange(e: Event): void {
 		const target = e.target as HTMLInputElement;
 		playerStore.seekTo(Number(target.value));
+		isDragging = false;
 	}
 
 	function handleVolume(e: Event): void {
@@ -334,7 +344,13 @@
 
 	function addCurrentTrackToPlaylist(): void {
 		const item = playerStore.currentQueueItem;
-		if (!item || item.sourceType !== 'local') return;
+		if (
+			!item ||
+			(item.sourceType !== 'local' &&
+				item.sourceType !== 'ytmusic' &&
+				item.sourceType !== 'youtube')
+		)
+			return;
 		openGlobalPlaylistModal([item]);
 	}
 
@@ -503,14 +519,22 @@
 					{#if playerStore.hasQueue}
 						<button
 							class="btn btn-ghost btn-sm btn-circle hidden sm:inline-flex"
-							class:opacity-30={playerStore.currentQueueItem?.sourceType !== 'local'}
-							class:cursor-not-allowed={playerStore.currentQueueItem?.sourceType !== 'local'}
+							class:opacity-30={playerStore.currentQueueItem?.sourceType !== 'local' &&
+								playerStore.currentQueueItem?.sourceType !== 'ytmusic' &&
+								playerStore.currentQueueItem?.sourceType !== 'youtube'}
+							class:cursor-not-allowed={playerStore.currentQueueItem?.sourceType !== 'local' &&
+								playerStore.currentQueueItem?.sourceType !== 'ytmusic' &&
+								playerStore.currentQueueItem?.sourceType !== 'youtube'}
 							onclick={addCurrentTrackToPlaylist}
-							disabled={playerStore.currentQueueItem?.sourceType !== 'local'}
+							disabled={playerStore.currentQueueItem?.sourceType !== 'local' &&
+								playerStore.currentQueueItem?.sourceType !== 'ytmusic' &&
+								playerStore.currentQueueItem?.sourceType !== 'youtube'}
 							aria-label="Add current track to playlist"
-							title={playerStore.currentQueueItem?.sourceType === 'local'
+							title={playerStore.currentQueueItem?.sourceType === 'local' ||
+							playerStore.currentQueueItem?.sourceType === 'ytmusic' ||
+							playerStore.currentQueueItem?.sourceType === 'youtube'
 								? 'Add to playlist'
-								: 'Only downloaded local tracks can be added'}
+								: 'Only local/YouTube tracks can be added'}
 						>
 							<ListPlus class="h-4 w-4" />
 						</button>
@@ -612,9 +636,18 @@
 						class:cursor-not-allowed={!playerStore.isSeekable}
 						min="0"
 						max={playerStore.duration || 1}
-						value={playerStore.progress}
+						value={isDragging ? dragProgress : playerStore.progress}
 						disabled={!playerStore.isSeekable}
-						oninput={handleSeek}
+						onmousedown={() => {
+							isDragging = true;
+							dragProgress = playerStore.progress;
+						}}
+						ontouchstart={() => {
+							isDragging = true;
+							dragProgress = playerStore.progress;
+						}}
+						oninput={handleSeekInput}
+						onchange={handleSeekChange}
 					/>
 					<span class="time-text text-xs opacity-60">{formatTime(playerStore.duration)}</span>
 				</div>
@@ -741,6 +774,11 @@
 						<PlexIcon class="h-5 w-5" />
 						<span class="text-sm font-medium">Plex</span>
 					</div>
+				{:else if playerStore.nowPlaying.sourceType === 'ytmusic'}
+					<div class="hidden sm:flex items-center gap-2 text-red-500">
+						<YouTubeIcon class="h-5 w-5" />
+						<span class="text-sm font-medium">YT Music</span>
+					</div>
 				{:else if playerStore.nowPlaying.sourceType === 'local'}
 					<div
 						class="hidden sm:flex items-center gap-2"
@@ -770,7 +808,9 @@
 		isPlaying={playerStore.isPlaying}
 		hasPrevious={playerStore.hasPrevious}
 		hasNext={playerStore.hasNext}
-		canAddToPlaylist={playerStore.currentQueueItem?.sourceType === 'local'}
+		canAddToPlaylist={playerStore.currentQueueItem?.sourceType === 'local' ||
+			playerStore.currentQueueItem?.sourceType === 'ytmusic' ||
+			playerStore.currentQueueItem?.sourceType === 'youtube'}
 		ontoggleplay={() => playerStore.togglePlay()}
 		onprevious={() => playerStore.previousTrack()}
 		onnext={() => playerStore.nextTrack()}

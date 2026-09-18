@@ -45,7 +45,7 @@ export function buildResumeState(session: StoredSession): ResumeState | null {
 		migrateLegacyItem(item as QueueItem & { sourceType: SourceType | 'howler' })
 	);
 
-	if (migratedNowPlaying.sourceType === 'youtube') return null;
+	if (migratedNowPlaying.sourceType === 'youtube' || migratedNowPlaying.sourceType === 'ytmusic') return null;
 	if (!migratedQueue.length) return null;
 
 	const currentItem = migratedQueue[session.currentIndex];

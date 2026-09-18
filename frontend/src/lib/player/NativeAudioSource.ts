@@ -4,7 +4,7 @@ import { getAudioElement, resumeAudioEngine, suspendAudioEngine } from './audioE
 const LOAD_TIMEOUT_MS = 15_000;
 const STALL_TIMEOUT_MS = 15_000;
 
-type NativeSourceType = 'jellyfin' | 'local' | 'navidrome' | 'plex';
+type NativeSourceType = 'jellyfin' | 'local' | 'navidrome' | 'plex' | 'ytmusic';
 
 /**
  * `getAudioElement()` hands out one process-wide element, so only the most
@@ -53,6 +53,8 @@ export class NativeAudioSource implements PlaybackSource {
 		this.clearLoadTimeout();
 		this.emitStateChange('loading');
 
+		if (this.destroyed) return;
+
 		await new Promise<void>((resolve, reject) => {
 			let settled = false;
 			const abort = new AbortController();
@@ -69,8 +71,6 @@ export class NativeAudioSource implements PlaybackSource {
 				action();
 			};
 
-			// Whichever ready event fires first wins; `settled` stops the other two
-			// from re-entering, so no cross-removal bookkeeping is needed.
 			const onReady = (): void => {
 				finalize(() => {
 					this.emitProgress();
@@ -79,8 +79,8 @@ export class NativeAudioSource implements PlaybackSource {
 				});
 			};
 			on('canplay', onReady);
-			on('loadedmetadata', onReady);
 			on('loadeddata', onReady);
+			on('loadedmetadata', onReady);
 
 			on('play', () => {
 				this.clearStallTimeout();
@@ -176,6 +176,7 @@ export class NativeAudioSource implements PlaybackSource {
 		const clamped = Math.max(0, seconds);
 		const dur = this.getDuration();
 		this.audio.currentTime = dur > 0 ? Math.min(clamped, dur) : clamped;
+		this.emitProgress();
 	}
 
 	setVolume(level: number): void {
@@ -192,8 +193,7 @@ export class NativeAudioSource implements PlaybackSource {
 	}
 
 	getDuration(): number {
-		const total = this.audio.duration;
-		return Number.isFinite(total) ? total : 0;
+		return this.audio.duration && !Number.isNaN(this.audio.duration) ? this.audio.duration : 0;
 	}
 
 	destroy(): void {

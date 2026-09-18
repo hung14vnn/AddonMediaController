@@ -5,6 +5,9 @@ vi.mock('$lib/constants', () => ({
 		stream: {
 			local: (id: number | string) => `/api/v1/stream/local/${id}`,
 			jellyfin: (id: string) => `/api/v1/stream/jellyfin/${id}`
+		},
+		ytmusicStream: {
+			stream: (id: string) => `/api/v1/stream/ytmusic/${id}`
 		}
 	}
 }));
@@ -452,7 +455,7 @@ describe('playlistTrackToQueueItem', () => {
 		expect(item.format).toBe('opus');
 	});
 
-	it('maps youtube track with undefined streamUrl', () => {
+	it('maps youtube track with ytmusic streamUrl', () => {
 		expect.assertions(2);
 		const track: PlaylistTrack = {
 			...basePlaylistTrack,
@@ -460,8 +463,8 @@ describe('playlistTrackToQueueItem', () => {
 			track_source_id: 'yt-abc'
 		};
 		const item = playlistTrackToQueueItem(track)!;
-		expect(item.sourceType).toBe('youtube');
-		expect(item.streamUrl).toBeUndefined();
+		expect(item.sourceType).toBe('ytmusic');
+		expect(item.streamUrl).toBe('/api/v1/stream/ytmusic/yt-abc');
 	});
 
 	it('returns null for tracks with null track_source_id', () => {

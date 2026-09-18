@@ -28,7 +28,7 @@
 		ontrackchange: () => void;
 		onsourcechange?: () => void;
 		onrequesttrack?: (track: PlaylistTrack) => Promise<void>;
-		onplaytrack?: (index: number) => void;
+		onplaytrack?: (index: number, e: MouseEvent) => void;
 		readonly?: boolean;
 		playable?: boolean;
 	}
@@ -549,7 +549,7 @@
 								aria-label="Play {track.track_name}"
 								onclick={(e) => {
 									e.stopPropagation();
-									onplaytrack?.(i);
+									onplaytrack?.(i, e);
 								}}
 							>
 								<Play class="h-4 w-4 fill-current text-primary" />

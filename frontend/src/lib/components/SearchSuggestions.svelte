@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { getApiUrl } from '$lib/api/api-utils';
-	import { Disc3, Download, Search } from 'lucide-svelte';
+	import { Check, Disc3, Download, Search } from 'lucide-svelte';
 	import type { SpotifyTrackResult, SuggestResult } from '$lib/types';
 	import { API } from '$lib/constants';
 	import { isAbortError } from '$lib/utils/errorHandling';
 	import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 	import { api } from '$lib/api/client';
 	import { requestSpotifyTrack } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import StreamButton from '$lib/components/discover/StreamButton.svelte';
 
 	interface Props {
 		query: string;
@@ -96,12 +97,9 @@
 				const data = await api.get<{
 					results?: SuggestResult[];
 					tracks?: SpotifyTrackResult[];
-				}>(
-					API.search.suggest(query.trim(), 5),
-					{
-						signal: abortController.signal
-					}
-				);
+				}>(API.search.suggest(query.trim(), 5), {
+					signal: abortController.signal
+				});
 				if (generation !== fetchGeneration) return;
 				suggestions = [...(data.results ?? []), ...(data.tracks ?? [])];
 				// Clear stale cover-fetch errors: a cold cover now returns 202 (not a decodable
@@ -278,18 +276,17 @@
 					aria-selected={i === activeIndex}
 					class="flex items-center gap-3 p-3 transition-colors {isTrack(result)
 						? 'cursor-default'
-						: 'cursor-pointer hover:bg-base-300'} {i ===
-					activeIndex
-						? 'bg-base-300'
-						: ''}"
+						: 'cursor-pointer hover:bg-base-300'} {i === activeIndex ? 'bg-base-300' : ''}"
 					onclick={() => !isTrack(result) && handleSelect(result)}
 					onkeydown={(e) => {
 						if (e.key === 'Enter' || e.key === ' ') handleSelect(result);
 					}}
 					tabindex="-1"
 				>
-					<div class="avatar avatar-placeholder">
-						<div class="w-10 h-10 rounded bg-base-200 flex items-center justify-center">
+					<div class="flex-none">
+						<div
+							class="relative w-10 h-10 bg-base-300 rounded overflow-hidden flex items-center justify-center group-hover:shadow-sm"
+						>
 							{#if isTrack(result)}
 								{#if result.album_image_url}
 									<img
@@ -334,16 +331,19 @@
 							{/if}
 						</div>
 					</div>
-					<div class="flex gap-1">
+					<div class="flex items-center gap-2">
 						{#if isTrack(result)}
-							<div class="group/track-badge relative h-5 min-w-12">
-								<span
-									class="badge badge-sm badge-ghost absolute inset-0 transition-all duration-150 group-hover/track-badge:translate-x-1 group-hover/track-badge:opacity-0"
-								>
-									Track
-								</span>
+							<div class="flex items-center gap-0.5">
+								<StreamButton
+									artist={result.artist}
+									title={result.title}
+									album={result.album}
+									coverUrl={result.album_image_url}
+									size="xs"
+									wrapperClass="contents"
+								/>
 								<button
-									class="btn btn-ghost btn-xs absolute left-1/2 top-1/2 size-5 min-h-0 -translate-x-1/2 -translate-y-1/2 p-0 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/track-badge:opacity-100 focus-visible:opacity-100 transition-opacity duration-150"
+									class="btn btn-ghost btn-circle btn-xs h-7 w-7 min-h-0 min-w-0 -ml-1"
 									onclick={(event) => requestTrack(result, event)}
 									onmousedown={(event) => event.preventDefault()}
 									disabled={download.isPending || requestedTracks.has(result.spotify_id)}
@@ -353,16 +353,12 @@
 									{#if download.isPending}
 										<span class="loading loading-spinner loading-xs"></span>
 									{:else if requestedTracks.has(result.spotify_id)}
-										✓
+										<Check class="h-4 w-4 text-success" />
 									{:else}
-										<Download class="h-3.5 w-3.5" aria-hidden="true" />
+										<Download class="h-4 w-4" />
 									{/if}
 								</button>
 							</div>
-						{:else}
-							<span class="badge badge-sm badge-ghost">
-								{result.type === 'artist' ? 'Artist' : 'Album'}
-							</span>
 						{/if}
 						{#if !isTrack(result) && result.in_library}
 							<span class="badge badge-sm badge-success">In Library</span>
@@ -370,6 +366,9 @@
 						{#if !isTrack(result) && result.requested}
 							<span class="badge badge-sm badge-warning">Requested</span>
 						{/if}
+						<span class="badge badge-sm badge-ghost">
+							{result.type === 'artist' ? 'Artist' : result.type === 'album' ? 'Album' : 'Track'}
+						</span>
 					</div>
 				</li>
 			{/each}

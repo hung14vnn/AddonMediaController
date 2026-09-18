@@ -48,6 +48,7 @@
 
 	const np = $derived(playerStore.nowPlaying);
 	const isLocal = $derived(np?.sourceType === 'local');
+	const canAddToPlaylist = $derived(np?.sourceType === 'local' || np?.sourceType === 'youtube' || np?.sourceType === 'ytmusic');
 	const isPlaying = $derived(playerStore.isPlaying);
 	const isYouTube = $derived(np?.sourceType === 'youtube');
 	const supportsLyrics = $derived(
@@ -93,7 +94,7 @@
 
 	function addCurrentTrackToPlaylist() {
 		const item = playerStore.currentQueueItem;
-		if (!item || item.sourceType !== 'local') return;
+		if (!item || (item.sourceType !== 'local' && item.sourceType !== 'youtube' && item.sourceType !== 'ytmusic')) return;
 		openGlobalPlaylistModal([item]);
 	}
 
@@ -289,12 +290,12 @@
 		<div class="flex items-center gap-2">
 			<button
 				class="btn btn-circle btn-ghost"
-				class:opacity-30={!isLocal}
-				class:cursor-not-allowed={!isLocal}
+				class:opacity-30={!canAddToPlaylist}
+				class:cursor-not-allowed={!canAddToPlaylist}
 				onclick={addCurrentTrackToPlaylist}
-				disabled={!isLocal}
+				disabled={!canAddToPlaylist}
 				aria-label="Add current track to playlist"
-				title={isLocal ? 'Add to playlist' : 'Only downloaded local tracks can be added'}
+				title={canAddToPlaylist ? 'Add to playlist' : 'Only local/YouTube tracks can be added'}
 			>
 				<ListPlus class="h-5 w-5" />
 			</button>

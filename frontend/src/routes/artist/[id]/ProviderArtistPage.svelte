@@ -74,7 +74,7 @@
 		if (!connectionsUsable) return [];
 
 		const services = connectionsQuery.data?.connections ?? [];
-		return (['listenbrainz', 'lastfm'] as const).filter((source) =>
+		return (['listenbrainz', 'lastfm', 'spotify'] as const).filter((source) =>
 			services.some((connection) => connection.service === source)
 		);
 	});

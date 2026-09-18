@@ -33,6 +33,7 @@ from core.dependencies import (
     get_stream_concurrency_service,
     get_transcode_service,
     get_version_service,
+    get_ytmusic_stream_service,
 )
 
 if TYPE_CHECKING:
@@ -57,6 +58,7 @@ if TYPE_CHECKING:
     from services.playlist_service import PlaylistService
     from services.preferences_service import PreferencesService
     from services.version_service import VersionService
+    from services.ytmusic_stream_service import YTMusicStreamService
 
 
 @dataclass
@@ -82,6 +84,7 @@ class CompatServices:
     playback_report: "PlaybackReportService"
     scan: "TargetCompatScanService"
     advanced_transcode: "AdvancedTranscodeService"
+    ytmusic_stream: "YTMusicStreamService"
 
 
 def get_compat_services(
@@ -106,6 +109,7 @@ def get_compat_services(
     playback_report=Depends(get_playback_report_service),
     scan=Depends(get_target_compat_scan_service),
     advanced_transcode=Depends(get_advanced_transcode_service),
+    ytmusic_stream=Depends(get_ytmusic_stream_service),
 ) -> CompatServices:
     return CompatServices(
         app_passwords=app_passwords,
@@ -129,4 +133,5 @@ def get_compat_services(
         playback_report=playback_report,
         scan=scan,
         advanced_transcode=advanced_transcode,
+        ytmusic_stream=ytmusic_stream,
     )

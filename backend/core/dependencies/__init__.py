@@ -263,6 +263,7 @@ from .service_providers import (  # noqa: F401
     get_target_acquisition_dispatcher,
     get_quota_service,
     get_target_quota_service,
+    get_ytmusic_stream_service,
 )
 
 from .type_aliases import (  # noqa: F401

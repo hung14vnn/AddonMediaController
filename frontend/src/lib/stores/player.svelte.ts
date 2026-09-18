@@ -303,6 +303,14 @@ function createPlayerStore() {
 				playbackOrigin: offline?.source ?? 'https'
 			};
 		}
+		if (item.sourceType === 'ytmusic') {
+			isSeekable = true;
+			return {
+				source: createPlaybackSource('ytmusic', { url: url!, seekable: true }),
+				loadUrl: url,
+				playbackOrigin: 'https'
+			};
+		}
 		if (item.sourceType === 'navidrome') {
 			isSeekable = true;
 			void reportNavidromeNowPlaying(item.trackSourceId);
@@ -651,10 +659,11 @@ function createPlayerStore() {
 				}
 			}
 		});
-		source.onProgress((t, d) => {
+		source.onProgress((currentTime, dur) => {
 			if (gen !== loadGeneration) return;
-			setProgress(t);
-			duration = d;
+			progress = currentTime;
+			visibleProgress = currentTime;
+			duration = dur;
 			// Do not publish MediaSession position on every native `timeupdate`.
 			// iOS fires this event several times per second, and each
 			// setPositionState call crosses into WebKit's media-session bridge.
@@ -663,8 +672,8 @@ function createPlayerStore() {
 			// preview tier: DJ-style fade over the last 2s so 30s clips blend
 			// instead of stopping dead (owner-signed anti-jarring rule)
 			const item = queue[currentIndex];
-			if (item?.isPreview && d > 0) {
-				const remaining = d - t;
+			if (item?.isPreview && dur > 0) {
+				const remaining = dur - currentTime;
 				if (remaining <= PREVIEW_FADE_S && remaining >= 0) {
 					source.setVolume(volume * Math.max(0, remaining / PREVIEW_FADE_S));
 				}
@@ -1020,6 +1029,16 @@ function createPlayerStore() {
 			shuffleEnabled = false;
 			shuffleOrder = [];
 			persist();
+		},
+
+		/** Replace the currently-playing slot with a new item, keeping the rest of the queue. */
+		replaceCurrentTrack(item: QueueItem): void {
+			if (queue.length === 0) {
+				this.playQueue([item], 0, false);
+				return;
+			}
+			queue = queue.map((q, i) => (i === currentIndex ? item : q));
+			void loadQueueItem(currentIndex);
 		},
 
 		changeTrackSource(index: number, newSourceType: SourceType): void {

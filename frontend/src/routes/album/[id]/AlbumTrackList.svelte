@@ -21,7 +21,7 @@
 	import { playerStore } from '$lib/stores/player.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 	import TrackPlayButton from '$lib/components/TrackPlayButton.svelte';
-	import SampleButton from '$lib/components/discover/SampleButton.svelte';
+	import StreamButton from '$lib/components/discover/StreamButton.svelte';
 	import TrackSourceButton from '$lib/components/TrackSourceButton.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
@@ -350,15 +350,12 @@
 									{/if}
 								{/if}
 								{#if showPreview}
-									<SampleButton
-										sampleKey={`track:${album.artist_name}|${track.title}`}
+									<StreamButton
 										artist={album.artist_name}
 										title={track.title}
-										kind="track"
-										size="xs"
-										albumMbid={album.musicbrainz_id}
-										artistMbid={album.artist_id}
+										album={album.title}
 										coverUrl={album.cover_url ?? null}
+										size="xs"
 									/>
 								{/if}
 

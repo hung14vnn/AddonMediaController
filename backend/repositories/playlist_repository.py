@@ -834,6 +834,7 @@ class PlaylistRepository:
         rows = conn.execute(
             "SELECT playlist_id, COUNT(*), COALESCE(SUM(COALESCE(duration, 0)), 0) "
             "FROM playlist_tracks WHERE library_file_id IS NOT NULL "
+            "OR (source_type = 'local' AND album_id LIKE 'ytmusic-%') "
             "GROUP BY playlist_id"
         ).fetchall()
         return {row[0]: (row[1], row[2]) for row in rows}

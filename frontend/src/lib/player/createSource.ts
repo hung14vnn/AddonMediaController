@@ -27,6 +27,9 @@ export function createPlaybackSource(type: SourceType, opts?: NativeSourceOption
 		case 'plex':
 			if (!opts) throw new Error('Plex playback source requires url and seekable options');
 			return new NativeAudioSource('plex', nativeOptions!);
+		case 'ytmusic':
+			if (!opts) throw new Error('YTMusic playback source requires url and seekable options');
+			return new NativeAudioSource('ytmusic', nativeOptions!);
 		default: {
 			const _exhaustive: never = type;
 			throw new Error(`Unknown source type: ${_exhaustive}`);

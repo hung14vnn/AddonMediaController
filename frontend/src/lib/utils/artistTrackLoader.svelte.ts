@@ -94,6 +94,7 @@ async function fetchAlbumTracksForSource(
 		if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
 		return [];
 	}
+	return [];
 }
 
 export interface ArtistTrackLoaderConfig {

@@ -80,8 +80,8 @@
 	}
 
 	export function open(items: QueueItem[]) {
-		// Local playlists are playback collections for downloaded files only.
-		pendingTracks = items.filter((item) => item.sourceType === 'local');
+		// Local playlists allow local, ytmusic, and youtube tracks.
+		pendingTracks = items.filter((item) => item.sourceType === 'local' || item.sourceType === 'ytmusic' || item.sourceType === 'youtube');
 		trackCount = pendingTracks.length;
 		addedSet.clear();
 		addingSet.clear();
@@ -91,7 +91,7 @@
 		fetchError = null;
 		statusMessage =
 			items.length > 0 && pendingTracks.length === 0
-				? { text: 'Only downloaded local tracks can be added.', type: 'error' }
+				? { text: 'Only local/YouTube tracks can be added.', type: 'error' }
 				: null;
 		loading = true;
 		dialogEl?.showModal();

@@ -610,7 +610,7 @@ export type DiscoverActivity = {
 	feature: 'home' | 'discover' | 'queue' | 'artist';
 	artist_mbid?: string;
 	section?: 'similar' | 'top_songs' | 'top_albums';
-	provider?: 'lastfm' | 'listenbrainz';
+	provider?: 'lastfm' | 'listenbrainz' | 'spotify';
 };
 
 export type DiscoverQueuePreview = {
@@ -2946,6 +2946,14 @@ export interface PreviewTrackItem {
 	preview_url: string;
 	duration_s: number | null;
 	position: number | null;
+}
+
+export interface YTMusicStreamInfo {
+	video_id: string;
+	title: string;
+	artist: string;
+	duration_s: number | null;
+	thumbnail: string | null;
 }
 
 export interface TrackPreviewResponse {

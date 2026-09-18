@@ -692,6 +692,11 @@ export const API = {
 			`/api/v1/youtube/track-link/${albumId}/${discNumber}/${trackNumber}`,
 		quota: () => '/api/v1/youtube/quota'
 	},
+	ytmusicStream: {
+		search: (artist: string, track: string) =>
+			`/api/v1/stream/ytmusic/search?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}`,
+		stream: (videoId: string) => `/api/v1/stream/ytmusic/${videoId}`
+	},
 	settings: () => '/api/v1/settings',
 	settingsPrimarySource: () => '/api/v1/settings/primary-source',
 	settingsNavidrome: () => '/api/v1/settings/navidrome',

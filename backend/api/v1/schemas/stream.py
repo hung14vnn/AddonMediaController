@@ -19,3 +19,12 @@ class ProgressReportRequest(AppStruct):
 class StopReportRequest(AppStruct):
     play_session_id: str
     position_seconds: float
+
+
+class YTMusicStreamSearchResponse(AppStruct):
+    video_id: str
+    title: str
+    artist: str
+    duration_s: float | None = None
+    thumbnail: str | None = None
+

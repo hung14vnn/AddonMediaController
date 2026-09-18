@@ -7,7 +7,7 @@ export type PlaybackState =
 	| 'buffering'
 	| 'error';
 
-export type SourceType = 'youtube' | 'local' | 'jellyfin' | 'navidrome' | 'plex';
+export type SourceType = 'youtube' | 'local' | 'jellyfin' | 'navidrome' | 'plex' | 'ytmusic';
 
 /** Where the currently playing media bytes came from. */
 export type PlaybackOrigin = 'download' | 'cache' | 'https';

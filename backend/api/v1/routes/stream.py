@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
 from api.v1.schemas.stream import (
@@ -8,12 +8,14 @@ from api.v1.schemas.stream import (
     ProgressReportRequest,
     StartPlaybackRequest,
     StopReportRequest,
+    YTMusicStreamSearchResponse,
 )
 from core.dependencies import (
     get_jellyfin_playback_service,
     get_local_files_service,
     get_navidrome_playback_service,
     get_plex_playback_service,
+    get_ytmusic_stream_service,
 )
 from core.exceptions import ExternalServiceError, PlaybackNotAllowedError, ResourceNotFoundError
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
@@ -309,3 +311,78 @@ async def plex_stopped(
 ) -> dict[str, str]:
     ok = await playback_service.report_stopped(rating_key, user_id=current_user.id)
     return {"status": "ok" if ok else "error"}
+
+
+# ---------------------------------------------------------------------------
+# YouTube Music streaming (yt-dlp search + audio proxy)
+# ---------------------------------------------------------------------------
+
+from services.ytmusic_stream_service import YTMusicStreamService
+
+
+@router.get("/ytmusic/search", response_model=YTMusicStreamSearchResponse)
+async def ytmusic_search(
+    current_user: CurrentUserDep,
+    artist: str = Query("", description="Artist name"),
+    track: str = Query(..., min_length=1, description="Track name"),
+    stream_service: YTMusicStreamService = Depends(get_ytmusic_stream_service),
+) -> YTMusicStreamSearchResponse:
+    """Search YouTube Music for a track and return stream metadata."""
+    try:
+        info = await stream_service.search(artist[:200], track[:200])
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.error("YTMusic search failed: %s", e)
+        raise HTTPException(status_code=502, detail="YouTube Music search failed")
+    return YTMusicStreamSearchResponse(
+        video_id=info.video_id,
+        title=info.title,
+        artist=info.artist,
+        duration_s=info.duration_s,
+        thumbnail=info.thumbnail,
+    )
+
+
+@router.head("/ytmusic/{video_id}")
+async def head_ytmusic_audio(
+    video_id: str,
+    stream_service: YTMusicStreamService = Depends(get_ytmusic_stream_service),
+) -> Response:
+    """Return Content-Type / Content-Length for a YouTube Music audio stream."""
+    try:
+        headers = await stream_service.proxy_head(video_id)
+        return Response(status_code=200, headers=headers)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Track not found")
+    except Exception as e:  # noqa: BLE001
+        logger.error("YTMusic head failed for %s: %s", video_id, e)
+        raise HTTPException(status_code=502, detail="Failed to resolve YouTube Music stream")
+
+
+@router.get("/ytmusic/{video_id}")
+async def stream_ytmusic_audio(
+    video_id: str,
+    request: Request,
+    stream_service: YTMusicStreamService = Depends(get_ytmusic_stream_service),
+) -> StreamingResponse:
+    """Proxy audio bytes from YouTube Music, supporting Range requests for seeking."""
+    try:
+        range_header = request.headers.get("Range")
+        chunks, headers, status_code = await stream_service.proxy_stream(
+            video_id, range_header=range_header
+        )
+        return StreamingResponse(
+            content=chunks,
+            status_code=status_code,
+            headers=headers,
+            media_type=headers.get("Content-Type", "audio/webm"),
+        )
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Track not found")
+    except Exception as e:  # noqa: BLE001
+        detail = str(e)
+        if "416" in detail or "Range not satisfiable" in detail:
+            raise HTTPException(status_code=416, detail="Range not satisfiable")
+        logger.error("YTMusic stream failed for %s: %s", video_id, e)
+        raise HTTPException(status_code=502, detail="Failed to stream from YouTube Music")

@@ -18,7 +18,7 @@ let hydrating = new Set<string>();
 
 export function needsHydration(item: QueueItem): boolean {
 	if (!item.playlistTrackId?.startsWith('radio:')) return false;
-	return item.sourceType === 'youtube' && !item.trackSourceId;
+	return (item.sourceType === 'youtube' || item.sourceType === 'ytmusic') && !item.trackSourceId;
 }
 
 export async function resolveRadioPatch(item: QueueItem): Promise<Partial<QueueItem> | null> {
