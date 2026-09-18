@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 
+from backend.core.dependencies.service_providers import get_ytmusic_stream_service
 from core.config import get_settings
 
 from ._registry import singleton
@@ -280,4 +281,5 @@ def get_target_compat_services() -> "CompatServices":
         playback_report=target.playback_report,
         scan=get_target_compat_scan_service(),
         advanced_transcode=get_advanced_transcode_service(),
+        ytmusic_stream=get_ytmusic_stream_service(),
     )
