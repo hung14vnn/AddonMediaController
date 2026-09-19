@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 from datetime import datetime, timedelta
 from time import time, monotonic
 from typing import TYPE_CHECKING, Optional
@@ -819,6 +820,12 @@ def start_management_hold_auto_retry_task(get_download_service) -> asyncio.Task:
     return task
 
 
+def _jittered_sleep(base: float, jitter: float = 0.2) -> float:
+    """Tick duration with +/- jitter so same-second ticks across instances
+    desynchronize. Mean-preserving: uniform over base*(1-j)..base*(1+j)."""
+    return random.uniform(base * (1 - jitter), base * (1 + jitter))
+
+
 _WANTED_WATCHER_INTERVAL = 900
 _WANTED_WATCHER_INITIAL_DELAY = 240
 
@@ -838,7 +845,7 @@ async def run_wanted_watcher_periodically(
             break
         except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Wanted watcher sweep failed: %s", e, exc_info=True)
-        await asyncio.sleep(interval)
+        await asyncio.sleep(_jittered_sleep(interval))
 
 
 def start_wanted_watcher_task(get_wanted_watcher) -> asyncio.Task:
@@ -871,7 +878,7 @@ async def poll_followed_artists_new_releases(
         except Exception as e:  # noqa: BLE001 - loop-cycle boundary logs and continues per the loop contract
             logger.error("Follow new-release poll failed: %s", e, exc_info=True)
 
-        await asyncio.sleep(interval)
+        await asyncio.sleep(_jittered_sleep(interval))
 
 
 def start_poll_new_releases_task(

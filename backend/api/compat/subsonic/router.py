@@ -39,6 +39,7 @@ from core.exceptions import (
     SubsonicError,
 )
 from infrastructure.msgspec_fastapi import MsgSpecRoute
+from infrastructure.observability.provider_counters import route_scope
 from infrastructure.validators import validate_provider_cover_url
 
 logger = logging.getLogger(__name__)
@@ -269,7 +270,10 @@ async def _dispatch(
             services=services,
             transcode_hint=_transcode_hint(settings),
         )
-        return await handler(ctx)
+        # Override the MsgSpecRoute stamp with the normalized endpoint name
+        # (casefolded, single .view suffix stripped).
+        with route_scope(f"subsonic:{name}"):
+            return await handler(ctx)
     except Exception as exc:  # noqa: BLE001 - boundary: nothing reaches global handlers
         if not isinstance(exc, DroppedNeedleException):
             logger.exception("Unhandled error in Subsonic endpoint %s", name)
