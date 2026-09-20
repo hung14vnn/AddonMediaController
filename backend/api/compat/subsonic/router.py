@@ -1107,11 +1107,16 @@ async def _build_playlist_detail(c: Ctx, pid: str):
     for entry in detail.tracks:
         if entry.library_file_id:
             track = await c.services.view.get_track(entry.library_file_id, user=c.user)
-            if track is None:
+            if track is not None:
+                child = c.child(track)
+                if entry.cover_url and not child.coverArt:
+                    child = msgspec.structs.replace(child, coverArt=entry.cover_url)
+                songs.append(child)
+                total += round(track.duration_seconds)
                 continue
-            songs.append(c.child(track))
-            total += round(track.duration_seconds)
-        elif (entry.source_type == "ytmusic" or (entry.source_type == "local" and entry.album_id and entry.album_id.startswith("ytmusic-"))) and entry.track_source_id:
+        # A stale/missing local link must not hide an otherwise streamable
+        # YouTube Music playlist entry.
+        if (entry.source_type == "ytmusic" or (entry.source_type == "local" and entry.album_id and entry.album_id.startswith("ytmusic-"))) and entry.track_source_id:
             yt_id = encode("ytmusic", entry.track_source_id)
             duration_sec = int(entry.duration or 0)
             songs.append(
@@ -1124,7 +1129,7 @@ async def _build_playlist_detail(c: Ctx, pid: str):
                     duration=duration_sec,
                     type="music",
                     mediaType="song",
-                    coverArt=_playlist_cover(r),
+                    coverArt=entry.cover_url or _playlist_cover(r),
                     contentType="audio/webm",
                     suffix="webm",
                 )
