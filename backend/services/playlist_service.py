@@ -598,6 +598,16 @@ class PlaylistService:
     async def get_tracks(self, playlist_id: str) -> list[PlaylistTrackRecord]:
         return await self._repo.get_tracks(playlist_id)
 
+    async def get_library_track_cover_url(self, library_file_id: str, user: UserRecord) -> str | None:
+        """Return provider artwork attached to an accessible playlist entry."""
+        for view in await self.get_all_playlists(user):
+            if not isinstance(view, PlaylistSummaryView):
+                continue
+            for entry in await self._repo.get_tracks(view.record.id):
+                if entry.library_file_id == library_file_id and entry.cover_url:
+                    return entry.cover_url
+        return None
+
     async def get_streamable_counts(self) -> dict[str, tuple[int, int]]:
         """Per-playlist (count, duration) over entries the compat shims can stream."""
         return await self._repo.get_streamable_counts()

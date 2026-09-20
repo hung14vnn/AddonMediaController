@@ -720,6 +720,14 @@ async def _get_cover_art(c: Ctx) -> Response:
             result = await c.services.coverart.get_external_cover(
                 track.cover_url, is_disconnected=disc
             )
+        if result is None:
+            entry_cover = await c.services.playlists.get_library_track_cover_url(
+                internal, c.user
+            )
+            if entry_cover:
+                result = await c.services.coverart.get_external_cover(
+                    entry_cover, is_disconnected=disc
+                )
     elif kind == "artist":
         if await c.services.view.get_artist_with_albums(internal, user=c.user) is None:
             raise SubsonicError(70, "Artist not found")
@@ -1110,14 +1118,32 @@ async def _build_playlist_detail(c: Ctx, pid: str):
             if track is not None:
                 child = c.child(track)
                 if entry.cover_url and not child.coverArt:
-                    child = msgspec.structs.replace(child, coverArt=entry.cover_url)
+                    child = msgspec.structs.replace(
+                        child, coverArt=encode("track", track.file_id)
+                    )
                 songs.append(child)
                 total += round(track.duration_seconds)
                 continue
         # A stale/missing local link must not hide an otherwise streamable
         # YouTube Music playlist entry.
-        if (entry.source_type == "ytmusic" or (entry.source_type == "local" and entry.album_id and entry.album_id.startswith("ytmusic-"))) and entry.track_source_id:
-            yt_id = encode("ytmusic", entry.track_source_id)
+        ytmusic_source_id = entry.track_source_id
+        if (
+            not ytmusic_source_id
+            and entry.album_id
+            and entry.album_id.startswith("ytmusic-")
+        ):
+            # Older/imported playlist rows stored the YouTube video id in the
+            # synthetic album id and left track_source_id empty.
+            ytmusic_source_id = entry.album_id.removeprefix("ytmusic-")
+        if (
+            entry.source_type in {"ytmusic", "local"}
+            and ytmusic_source_id
+            and (
+                entry.source_type == "ytmusic"
+                or (entry.album_id and entry.album_id.startswith("ytmusic-"))
+            )
+        ):
+            yt_id = encode("ytmusic", ytmusic_source_id)
             duration_sec = int(entry.duration or 0)
             songs.append(
                 m.SChild(
