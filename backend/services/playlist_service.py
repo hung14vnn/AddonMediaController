@@ -608,6 +608,19 @@ class PlaylistService:
                     return entry.cover_url
         return None
 
+    async def get_source_cover_url(self, source_id: str, user: UserRecord) -> str | None:
+        """Find artwork for an accessible YouTube Music playlist entry."""
+        for view in await self.get_all_playlists(user):
+            if not isinstance(view, PlaylistSummaryView):
+                continue
+            for entry in await self._repo.get_tracks(view.record.id):
+                entry_source_id = entry.track_source_id
+                if not entry_source_id and entry.album_id and entry.album_id.startswith("ytmusic-"):
+                    entry_source_id = entry.album_id.removeprefix("ytmusic-")
+                if entry_source_id == source_id and entry.cover_url:
+                    return entry.cover_url
+        return None
+
     async def get_streamable_counts(self) -> dict[str, tuple[int, int]]:
         """Per-playlist (count, duration) over entries the compat shims can stream."""
         return await self._repo.get_streamable_counts()

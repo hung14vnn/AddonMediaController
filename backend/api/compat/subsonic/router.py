@@ -728,6 +728,12 @@ async def _get_cover_art(c: Ctx) -> Response:
                 result = await c.services.coverart.get_external_cover(
                     entry_cover, is_disconnected=disc
                 )
+    elif kind == "ytmusic":
+        cover_url = await c.services.playlists.get_source_cover_url(internal, c.user)
+        if cover_url:
+            result = await c.services.coverart.get_external_cover(
+                cover_url, is_disconnected=disc
+            )
     elif kind == "artist":
         if await c.services.view.get_artist_with_albums(internal, user=c.user) is None:
             raise SubsonicError(70, "Artist not found")
@@ -1113,8 +1119,13 @@ async def _build_playlist_detail(c: Ctx, pid: str):
     r = detail.record
     songs, total = [], 0
     for entry in detail.tracks:
-        if entry.library_file_id:
-            track = await c.services.view.get_track(entry.library_file_id, user=c.user)
+        # Older downloader entries may have the library file in
+        # track_source_id while library_file_id was never backfilled.
+        local_file_id = entry.library_file_id
+        if not local_file_id and entry.source_type in {"local", "ytdlp"}:
+            local_file_id = entry.track_source_id
+        if local_file_id:
+            track = await c.services.view.get_track(local_file_id, user=c.user)
             if track is not None:
                 child = c.child(track)
                 if entry.cover_url and not child.coverArt:
@@ -1155,7 +1166,7 @@ async def _build_playlist_detail(c: Ctx, pid: str):
                     duration=duration_sec,
                     type="music",
                     mediaType="song",
-                    coverArt=entry.cover_url or _playlist_cover(r),
+                    coverArt=yt_id if entry.cover_url else _playlist_cover(r),
                     contentType="audio/webm",
                     suffix="webm",
                 )
