@@ -29,7 +29,7 @@ from infrastructure.validators import validate_mbid, validate_provider_cover_url
 from infrastructure.audio.tagger import AudioTagger
 from infrastructure.queue.priority_queue import RequestPriority, get_priority_queue
 from infrastructure.http.deduplication import RequestDeduplicator
-from infrastructure.http.disconnect import DisconnectCallable
+from infrastructure.http.disconnect import DisconnectCallable, check_disconnected
 from repositories.coverart_artist import ArtistImageFetcher, TransientImageFetchError
 from repositories.coverart_album import AlbumCoverFetcher
 from repositories.coverart_disk_cache import CoverDiskCache
