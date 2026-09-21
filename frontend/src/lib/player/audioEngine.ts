@@ -120,6 +120,8 @@ export class AudioEngine {
 		}
 	}
 
+	private auxiliaryGains: Set<GainNode> = new Set();
+
 	/**
 	 * Route the graph for the current EQ state: source -> filters -> destination
 	 * while enabled, source -> destination while bypassed. Disconnecting the
@@ -130,6 +132,17 @@ export class AudioEngine {
 
 		this.source.disconnect();
 		this.filterChainTail.disconnect();
+
+		const targetNode: AudioNode = this.eqActive && this.filters[0] ? this.filters[0] : this.context.destination;
+
+		for (const gain of this.auxiliaryGains) {
+			try {
+				gain.disconnect();
+				gain.connect(targetNode);
+			} catch {
+				// Node may already be disconnected or in transition
+			}
+		}
 
 		if (this.eqActive) {
 			let prev: AudioNode = this.source;
@@ -176,7 +189,9 @@ export class AudioEngine {
 		const source = this.context.createMediaElementSource(audio);
 		const gain = this.context.createGain();
 		source.connect(gain);
-		gain.connect(this.filters[0] ?? this.context.destination);
+		const target = (this.eqActive && this.filters[0]) ? this.filters[0] : this.context.destination;
+		gain.connect(target);
+		this.auxiliaryGains.add(gain);
 		return {
 			setGain: (level: number) => {
 				const value = Math.max(0, Math.min(1, level));
@@ -184,6 +199,7 @@ export class AudioEngine {
 				gain.gain.setTargetAtTime(value, this.context!.currentTime, 0.03);
 			},
 			destroy: () => {
+				this.auxiliaryGains.delete(gain);
 				source.disconnect();
 				gain.disconnect();
 			}
@@ -218,6 +234,14 @@ export class AudioEngine {
 		if (this.context && this.context.state !== 'closed') {
 			void this.context.close();
 		}
+		for (const gain of this.auxiliaryGains) {
+			try {
+				gain.disconnect();
+			} catch {
+				// Ignore if already disconnected
+			}
+		}
+		this.auxiliaryGains.clear();
 		this.filters = [];
 		this.analyser = null;
 		this.analyserTap = null;

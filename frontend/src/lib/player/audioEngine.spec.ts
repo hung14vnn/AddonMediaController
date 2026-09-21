@@ -333,4 +333,51 @@ describe('AudioEngine', () => {
 			expect(engine.getFrequencyData()).toBeNull();
 		});
 	});
+
+	describe('connectAuxiliary', () => {
+		function createMockGain() {
+			return {
+				gain: {
+					cancelScheduledValues: vi.fn(),
+					setTargetAtTime: vi.fn()
+				},
+				connect: vi.fn(),
+				disconnect: vi.fn()
+			};
+		}
+
+		it('routes auxiliary to destination when EQ is disabled', () => {
+			const mockGain = createMockGain();
+			(mockCtx as any).createGain = vi.fn(() => mockGain);
+			engine.connect(mockAudio);
+
+			const auxAudio = { src: 'vocals.m4a' } as unknown as HTMLAudioElement;
+			const connection = engine.connectAuxiliary(auxAudio);
+
+			expect(mockCtx.createGain).toHaveBeenCalled();
+			expect(mockGain.connect).toHaveBeenCalledWith(mockCtx.destination);
+			connection?.destroy();
+			expect(mockGain.disconnect).toHaveBeenCalled();
+		});
+
+		it('routes auxiliary to filter chain when EQ is enabled and reroutes when toggled', () => {
+			const mockGain = createMockGain();
+			(mockCtx as any).createGain = vi.fn(() => mockGain);
+			engine.connect(mockAudio);
+
+			const auxAudio = { src: 'vocals.m4a' } as unknown as HTMLAudioElement;
+			engine.connectAuxiliary(auxAudio);
+			expect(mockGain.connect).toHaveBeenLastCalledWith(mockCtx.destination);
+
+			// Enable EQ -> auxiliary reroutes to filters[0]
+			engine.setEnabled(true, new Array(10).fill(0));
+			expect(mockGain.disconnect).toHaveBeenCalled();
+			expect(mockGain.connect).toHaveBeenLastCalledWith(mockFilters[0]);
+
+			// Disable EQ -> auxiliary reroutes back to destination
+			engine.setEnabled(false, new Array(10).fill(0));
+			expect(mockGain.connect).toHaveBeenLastCalledWith(mockCtx.destination);
+		});
+	});
 });
+
