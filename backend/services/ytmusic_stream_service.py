@@ -69,7 +69,8 @@ _YDL_AUDIO_OPTIONS: dict[str, object] = {
     **_YDL_BASE_OPTIONS,
     "extract_flat": False,
     "skip_download": True,
-    "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio",
+    "format": "bestaudio/best",
+    "format_sort": ["abr", "acodec:opus", "ext"],
 }
 
 
