@@ -167,3 +167,13 @@ class TargetCoverArtService:
             if provider_id:
                 artist_id = provider_id
         return await self._provider.debug_artist_image(artist_id, debug_info)
+
+    async def get_external_cover(
+        self,
+        url: str,
+        *,
+        is_disconnected=None,
+    ) -> tuple[bytes, str, str] | None:
+        return await self._provider.get_external_cover(
+            url, is_disconnected=is_disconnected
+        )

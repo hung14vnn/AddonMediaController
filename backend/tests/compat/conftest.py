@@ -275,6 +275,9 @@ class _JpegCoverArt:
     async def get_artist_image(self, artist_id, size=None, **kw):
         return (self.JPEG, "image/jpeg", "fake")
 
+    async def get_external_cover(self, url, **kw):
+        return (self.JPEG, "image/jpeg", "spotify")
+
 
 def subsonic_query(secret, username, *, fmt="json", scheme="apikey", client="pytest"):
     """Query params a Subsonic client would send. scheme: apikey | token | enc."""

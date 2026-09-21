@@ -138,3 +138,16 @@ async def test_get_cover_art_unknown_prefix_404_under_base(compat_env):
     q = {"v": "1.16.1", "c": "pytest", "f": "json", "apiKey": compat_env.secret}
     r = client.get("/subsonic/rest/getCoverArt", params={**q, "id": "zz-bogus"})
     assert r.status_code == 404
+
+
+async def test_get_cover_art_direct_provider_url_returns_image(compat_env):
+    spotify_url = "https://i.scdn.co/image/ab67616d00001e02d1f68eb7862f17842aafd26b"
+    r = _get(compat_env, "getCoverArt", id=spotify_url)
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("image/")
+
+
+async def test_get_cover_art_unsupported_external_url_404(compat_env):
+    evil_url = "https://evil.com/image.jpg"
+    r = _get(compat_env, "getCoverArt", id=evil_url)
+    assert r.status_code == 404

@@ -39,6 +39,7 @@ from core.exceptions import (
     SubsonicError,
 )
 from infrastructure.msgspec_fastapi import MsgSpecRoute
+from infrastructure.validators import validate_provider_cover_url
 
 logger = logging.getLogger(__name__)
 
@@ -695,9 +696,23 @@ def _placeholder() -> Response:
 
 @endpoint("getCoverArt")
 async def _get_cover_art(c: Ctx) -> Response:
-    kind, internal = decode(c.p("id") or "")  # unknown prefix -> 70 -> 404 (binary)
-    size = _cover_size(c.pint("size", minimum=1, maximum=2_000))
+    raw_id = (c.p("id") or "").strip()
     disc = c.request.is_disconnected
+    if validate_provider_cover_url(raw_id):
+        result = await c.services.coverart.get_external_cover(
+            raw_id, is_disconnected=disc
+        )
+        if result:
+            data, content_type, _ = result
+            return Response(
+                content=data,
+                media_type=content_type,
+                headers={"Cache-Control": "public, max-age=31536000, immutable"},
+            )
+        return _placeholder()
+
+    kind, internal = decode(raw_id)  # unknown prefix -> 70 -> 404 (binary)
+    size = _cover_size(c.pint("size", minimum=1, maximum=2_000))
     result = None
     if kind == "album":
         if await c.services.view.get_album(internal, user=c.user) is None:
