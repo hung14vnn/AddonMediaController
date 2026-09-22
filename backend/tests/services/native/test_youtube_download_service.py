@@ -39,8 +39,15 @@ class FakeYoutubeDL:
         self.downloads.extend(urls)
         hook = self.options["progress_hooks"][0]
         hook({"status": "downloading", "downloaded_bytes": 25, "total_bytes": 100})
-        output = Path(self.options["outtmpl"].replace("%(ext)s", "m4a"))
-        output.write_bytes(b"native m4a")
+        for url in urls:
+            vid = url.split("v=")[-1].split("&")[0] if "v=" in url else url.rsplit("/", 1)[-1]
+            output = Path(
+                self.options["outtmpl"]
+                .replace("%(title).200B", f"title-{vid}")
+                .replace("[%(id)s]", f"[{vid}]")
+                .replace("%(ext)s", "opus")
+            )
+            output.write_bytes(b"native opus")
 
 
 @pytest.fixture(autouse=True)
@@ -149,15 +156,16 @@ def test_download_keeps_native_m4a_names_and_reports_progress(monkeypatch, tmp_p
     service._download_audio("https://example.invalid", tmp_path, "task-1", object())
 
     assert FakeYoutubeDL.downloads == [
-        "https://youtu.be/first",
-        "https://youtu.be/second",
+        "https://music.youtube.com/watch?v=first",
+        "https://music.youtube.com/watch?v=second",
     ]
-    assert [path.name for path in sorted(tmp_path.glob("*.m4a"))] == [
-        "youtube-1.m4a",
-        "youtube-2.m4a",
+    assert [path.name for path in sorted(tmp_path.glob("*.opus"))] == [
+        "title-first [first].opus",
+        "title-second [second].opus",
     ]
     assert all(
-        instance.options["format"] == "bestaudio[ext=m4a]"
+        instance.options["format"] == "bestaudio/best"
+        and instance.options["format_sort"] == ["abr", "acodec:opus", "ext"]
         for instance in FakeYoutubeDL.instances
     )
     assert scheduled[0][0] == "task-1"

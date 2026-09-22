@@ -14,11 +14,19 @@ from core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 
-_YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+_YOUTUBE_HOSTS = {
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+}
 _AUDIO_SUFFIXES = {".flac", ".wav", ".m4a", ".mp3", ".aac", ".ogg", ".opus"}
 _METADATA_TIMEOUT_SECONDS = 30
-_M4A_FORMAT = "bestaudio[ext=m4a]"
+_AUDIO_FORMAT = "bestaudio/best"
+_AUDIO_FORMAT_SORT = ["abr", "acodec:opus", "ext"]
 _YOUTUBE_WATCH_URL = "https://www.youtube.com/watch?v={}"
+_YTMUSIC_WATCH_URL = "https://music.youtube.com/watch?v={}"
 
 
 def _validate_url(value: str) -> str:
@@ -136,7 +144,7 @@ class YouTubeDownloadService:
                 if path.is_file() and path.suffix.lower() in _AUDIO_SUFFIXES
             ]
             if not files:
-                raise RuntimeError("YouTube did not provide an M4A audio stream")
+                raise RuntimeError("YouTube did not provide a supported audio stream")
             task = await self._store.get_task(task_id)
             await self._drop_import.create_job(
                 user_id=user_id,
@@ -177,8 +185,15 @@ class YouTubeDownloadService:
         for index, video_url in enumerate(_video_urls(url), start=1):
             options = _ydl_options(
                 noplaylist=True,
-                format=_M4A_FORMAT,
+                format=_AUDIO_FORMAT,
+                format_sort=_AUDIO_FORMAT_SORT,
                 outtmpl=str(staging / "%(title).200B [%(id)s].%(ext)s"),
+                postprocessors=[
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "opus",
+                    }
+                ],
                 progress_hooks=[
                     lambda progress: _schedule_progress(
                         loop,
@@ -188,15 +203,31 @@ class YouTubeDownloadService:
                     )
                 ],
             )
-            try:
-                with YoutubeDL(options) as ydl:
-                    ydl.download([video_url])
-            except DownloadError as exc:
-                if "Requested format is not available" in str(exc):
+            # Try downloading via YouTube Music first if a video_id is present
+            ytmusic_url = _to_ytmusic_url(video_url)
+            urls_to_try = [ytmusic_url, video_url] if ytmusic_url and ytmusic_url != video_url else [video_url]
+
+            success = False
+            last_exc = None
+            for target_url in urls_to_try:
+                try:
+                    with YoutubeDL(options) as ydl:
+                        ydl.download([target_url])
+                    success = True
+                    break
+                except DownloadError as exc:
+                    last_exc = exc
+                    logger.info("yt-dlp download failed for %s: %s", target_url, exc)
+                    continue
+
+            if not success:
+                if last_exc and "Requested format is not available" in str(last_exc):
                     raise RuntimeError(
-                        "YouTube did not provide an M4A audio stream"
-                    ) from exc
-                raise
+                        "YouTube did not provide a supported audio stream"
+                    ) from last_exc
+                if last_exc:
+                    raise last_exc
+                raise RuntimeError("YouTube download failed")
 
     async def _publish_progress(
         self, task_id: str, total_bytes: int | None, bytes_remaining: int
@@ -257,8 +288,25 @@ def _entry_url(entry) -> str | None:  # noqa: ANN001
     )
 
 
+def _extract_video_id(url: str) -> str | None:
+    parsed = urlparse(url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    video_id = query.get("v")
+    if not video_id and parsed.hostname == "youtu.be":
+        video_id = parsed.path.strip("/").split("/", 1)[0]
+    return video_id or None
+
+
+def _to_ytmusic_url(url: str) -> str | None:
+    video_id = _extract_video_id(url)
+    if video_id:
+        return _YTMUSIC_WATCH_URL.format(video_id)
+    return None
+
+
 def _youtube_local_ids(url: str) -> tuple[str, str]:
     """Build stable library-only IDs without pretending they are MusicBrainz IDs."""
+    video_id = _extract_video_id(url)
     parsed = urlparse(url)
     query = dict(parse_qsl(parsed.query, keep_blank_values=True))
     video_id = query.get("v")

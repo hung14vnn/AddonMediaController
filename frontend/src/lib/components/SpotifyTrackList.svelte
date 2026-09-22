@@ -52,7 +52,9 @@
 							{:else}<div class="h-full w-full bg-base-300"></div>{/if}
 						</a>
 						
-						<div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/0 transition-colors duration-200 group-hover:bg-black/40 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-within:opacity-100">
+						<div
+							class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/0 transition-colors duration-200 group-hover:bg-black/65 group-focus-within:bg-black/65 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-within:opacity-100"
+						>
 							<div class="pointer-events-auto flex items-center justify-center">
 								<StreamButton
 									artist={track.artist}

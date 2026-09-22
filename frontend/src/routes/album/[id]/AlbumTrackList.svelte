@@ -169,6 +169,10 @@
 			});
 		}
 	}
+
+	const allAlbumTracks = $derived(
+		renderedTrackSections.flatMap((section) => section.items.map((item) => item.track))
+	);
 </script>
 
 <div class="bg-base-200 rounded-box overflow-visible">
@@ -354,6 +358,9 @@
 										artist={album.artist_name}
 										title={track.title}
 										album={album.title}
+										albumId={album.musicbrainz_id}
+										tracks={allAlbumTracks}
+										trackIndex={row.globalIndex}
 										coverUrl={album.cover_url ?? null}
 										size="xs"
 									/>

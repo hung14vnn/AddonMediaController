@@ -13,10 +13,12 @@
 	import type { SourceCallbacks } from './albumPageState.svelte';
 	import AlbumYouTubeBar from '$lib/components/AlbumYouTubeBar.svelte';
 	import AlbumSourceBar from '$lib/components/AlbumSourceBar.svelte';
+	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import LocalFilesIcon from '$lib/components/LocalFilesIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
+	import { ytMusicStreamer } from '$lib/stores/ytMusicStreamer.svelte';
 
 	interface Props {
 		album: AlbumBasicInfo;
@@ -92,6 +94,70 @@
 		{onAlbumLinkUpdate}
 		{onQuotaUpdate}
 	/>
+{/if}
+
+{#if (!youtubeEnabled || trackLinks.length === 0) && tracksInfo.tracks.length > 0}
+	<AlbumSourceBar
+		sourceLabel="YouTube Music"
+		sourceColor="var(--color-youtube)"
+		trackCount={tracksInfo.tracks.length}
+		totalTracks={tracksInfo.tracks.length}
+		onPlayAll={() =>
+			ytMusicStreamer.streamAlbum({
+				artist: album.artist_name,
+				albumTitle: album.title,
+				albumId: album.musicbrainz_id,
+				coverUrl: album.cover_url ?? null,
+				tracks: tracksInfo.tracks,
+				startIndex: 0,
+				artistId: album.artist_id
+			})}
+		onShuffle={() =>
+			ytMusicStreamer.streamAlbum({
+				artist: album.artist_name,
+				albumTitle: album.title,
+				albumId: album.musicbrainz_id,
+				coverUrl: album.cover_url ?? null,
+				tracks: tracksInfo.tracks,
+				startIndex: 0,
+				shuffle: true,
+				artistId: album.artist_id
+			})}
+		onAddAllToQueue={() =>
+			ytMusicStreamer.streamAlbum({
+				artist: album.artist_name,
+				albumTitle: album.title,
+				albumId: album.musicbrainz_id,
+				coverUrl: album.cover_url ?? null,
+				tracks: tracksInfo.tracks,
+				action: 'addToQueue',
+				artistId: album.artist_id
+			})}
+		onPlayAllNext={() =>
+			ytMusicStreamer.streamAlbum({
+				artist: album.artist_name,
+				albumTitle: album.title,
+				albumId: album.musicbrainz_id,
+				coverUrl: album.cover_url ?? null,
+				tracks: tracksInfo.tracks,
+				action: 'playNext',
+				artistId: album.artist_id
+			})}
+		onAddAllToPlaylist={() =>
+			ytMusicStreamer.streamAlbum({
+				artist: album.artist_name,
+				albumTitle: album.title,
+				albumId: album.musicbrainz_id,
+				coverUrl: album.cover_url ?? null,
+				tracks: tracksInfo.tracks,
+				action: 'addToPlaylist',
+				artistId: album.artist_id
+			})}
+	>
+		{#snippet icon()}
+			<YouTubeIcon class="h-5 w-5 text-red-500" />
+		{/snippet}
+	</AlbumSourceBar>
 {/if}
 
 {#if jellyfinEnabled}

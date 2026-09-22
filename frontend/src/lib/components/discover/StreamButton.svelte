@@ -7,14 +7,35 @@
 		artist: string;
 		title: string;
 		album?: string;
+		albumId?: string;
+		isAlbum?: boolean;
+		tracks?: Array<{ title: string; position: number; disc_number?: number | null; length?: number | null }>;
+		trackIndex?: number;
 		size?: 'xs' | 'sm' | 'md';
 		coverUrl?: string | null;
 		wrapperClass?: string;
 	}
 
-	let { artist, title, album, size = 'sm', coverUrl = null, wrapperClass = '' }: Props = $props();
+	let {
+		artist,
+		title,
+		album,
+		albumId,
+		isAlbum = false,
+		tracks,
+		trackIndex = 0,
+		size = 'sm',
+		coverUrl = null,
+		wrapperClass = ''
+	}: Props = $props();
 
-	const searchKey = $derived(`${artist}|${title}`);
+	const searchKey = $derived(
+		isAlbum
+			? `album|${artist}|${albumId ?? (album ?? title)}`
+			: tracks && tracks.length > 1
+				? `album|${artist}|${albumId ?? (album ?? title)}`
+				: `${artist}|${title}`
+	);
 	const active = $derived(
 		ytMusicStreamer.activeKey === searchKey && ytMusicStreamer.status !== 'idle'
 	);
@@ -31,6 +52,15 @@
 
 	const MENU_WIDTH = 192;
 	const VIEWPORT_MARGIN = 8;
+
+	function portal(node: HTMLElement) {
+		document.body.appendChild(node);
+		return {
+			destroy() {
+				node.remove();
+			}
+		};
+	}
 
 	function computePosition(el: HTMLElement, estimatedHeight: number) {
 		const rect = el.getBoundingClientRect();
@@ -49,6 +79,23 @@
 		menuLeft = left;
 	}
 
+	function executeStream(
+		action: 'playNow' | 'replaceCurrent' | 'playNext' | 'addToQueue' | 'addToPlaylist'
+	) {
+		if (isAlbum || (tracks && tracks.length > 0)) {
+			return ytMusicStreamer.streamAlbum({
+				artist,
+				albumTitle: album ?? title,
+				albumId,
+				coverUrl,
+				tracks,
+				startIndex: trackIndex,
+				action
+			});
+		}
+		return ytMusicStreamer.streamTrack(artist, title, action, album, coverUrl);
+	}
+
 	function handlePlay(e: MouseEvent) {
 		e.stopPropagation();
 		e.preventDefault();
@@ -56,7 +103,7 @@
 
 		if (!playerStore.hasQueue) {
 			// No queue → play immediately
-			ytMusicStreamer.streamTrack(artist, title, 'playNow', album, coverUrl);
+			executeStream('playNow');
 			return;
 		}
 
@@ -83,27 +130,26 @@
 
 	function playNow(e: MouseEvent) {
 		e.stopPropagation();
-		// Replace the current track slot, keeping the rest of the queue
-		ytMusicStreamer.streamTrack(artist, title, 'replaceCurrent', album, coverUrl);
+		executeStream('replaceCurrent');
 		closeMenu();
 	}
 
 	function playNext(e: MouseEvent) {
 		e.stopPropagation();
-		ytMusicStreamer.streamTrack(artist, title, 'playNext', album, coverUrl);
+		executeStream('playNext');
 		closeMenu();
 	}
 
 	function addToQueue(e: MouseEvent) {
 		e.stopPropagation();
-		ytMusicStreamer.streamTrack(artist, title, 'addToQueue', album, coverUrl);
+		executeStream('addToQueue');
 		closeMenu();
 	}
 
 	async function addToPlaylist(e: MouseEvent) {
 		e.stopPropagation();
 		closeMenu();
-		await ytMusicStreamer.streamTrack(artist, title, 'addToPlaylist', album, coverUrl);
+		await executeStream('addToPlaylist');
 	}
 
 	function handleClickOutside(e: MouseEvent) {
@@ -131,16 +177,16 @@
 		type="button"
 		class="relative {size === 'xs'
 			? 'btn btn-ghost btn-circle btn-xs h-7 w-7 min-h-0 min-w-0'
-			: `btn btn-circle btn-sm ${size === 'sm' ? 'min-h-[36px] min-w-[36px]' : 'min-h-[44px] min-w-[44px]'} border-none bg-base-content/20 shadow-sm hover:bg-base-content/30`} active:scale-[0.95]"
-		title="Stream via YouTube Music"
-		aria-label="Stream {title}"
+			: `btn btn-circle btn-sm ${size === 'sm' ? 'min-h-[36px] min-w-[36px]' : 'min-h-[44px] min-w-[44px]'} border-none bg-black/60 text-white shadow-lg backdrop-blur-sm hover:bg-black/80 hover:scale-105`} active:scale-[0.95]"
+		title={isAlbum ? `Stream album ${title} via YouTube Music` : `Stream ${title} via YouTube Music`}
+		aria-label={isAlbum ? `Stream album ${title}` : `Stream ${title}`}
 		onclick={handlePlay}
 		disabled={loading}
 	>
 		{#if loading}
 			<LoaderCircle class="{size === 'xs' ? 'h-4 w-4' : 'h-4 w-4'} animate-spin" />
 		{:else}
-			<Play class={size === 'xs' ? 'h-4 w-4 ml-0.5' : 'h-4 w-4'} fill="currentColor" />
+			<Play class={size === 'xs' ? 'h-4 w-4 ml-0.5' : 'h-5 w-5 ml-0.5'} fill="currentColor" />
 		{/if}
 	</button>
 
@@ -165,6 +211,7 @@
 	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<div
 		bind:this={menuEl}
+		use:portal
 		role="menu"
 		tabindex="-1"
 		style="position: fixed; top: {menuTop}px; left: {menuLeft}px; z-index: 9999; width: {MENU_WIDTH}px;"

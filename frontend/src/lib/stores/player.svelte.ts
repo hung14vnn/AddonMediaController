@@ -8,6 +8,8 @@ import type {
 } from '$lib/player/types';
 import { createPlaybackSource } from '$lib/player/createSource';
 import { API } from '$lib/constants';
+import { api } from '$lib/api/client';
+import type { YTMusicStreamInfo } from '$lib/types';
 import {
 	reportProgress as reportJellyfinProgress,
 	reportStop as reportJellyfinStop,
@@ -304,10 +306,30 @@ function createPlayerStore() {
 			};
 		}
 		if (item.sourceType === 'ytmusic') {
+			if (!item.trackSourceId) {
+				const info = await api.global.get<YTMusicStreamInfo>(
+					API.ytmusicStream.search(item.artistName, item.trackName)
+				);
+				item.trackSourceId = info.video_id;
+				item.streamUrl = API.ytmusicStream.stream(info.video_id);
+				if (!item.duration && info.duration_s) {
+					item.duration = info.duration_s;
+				}
+				if (!item.coverUrl && info.thumbnail) {
+					item.coverUrl = info.thumbnail;
+				}
+				const uq = [...queue];
+				const matchIdx = uq.findIndex((q) => q === item);
+				if (matchIdx !== -1) {
+					uq[matchIdx] = { ...item };
+					queue = uq;
+				}
+			}
+			const resolvedUrl = resolveSourceUrl(item);
 			isSeekable = true;
 			return {
-				source: createPlaybackSource('ytmusic', { url: url!, seekable: true }),
-				loadUrl: url,
+				source: createPlaybackSource('ytmusic', { url: resolvedUrl!, seekable: true }),
+				loadUrl: resolvedUrl,
 				playbackOrigin: 'https'
 			};
 		}
@@ -442,6 +464,32 @@ function createPlayerStore() {
 			await loadPromise;
 			if (gen === loadGeneration && activeItem.sourceType === 'youtube') {
 				source.play();
+			}
+			if (gen === loadGeneration) {
+				const nextIdx = index + 1;
+				const nextItem = queue[nextIdx];
+				if (nextItem && nextItem.sourceType === 'ytmusic' && !nextItem.trackSourceId) {
+					void (async () => {
+						try {
+							const info = await api.global.get<YTMusicStreamInfo>(
+								API.ytmusicStream.search(nextItem.artistName, nextItem.trackName)
+							);
+							if (queue[nextIdx] === nextItem) {
+								const uq = [...queue];
+								uq[nextIdx] = {
+									...nextItem,
+									trackSourceId: info.video_id,
+									streamUrl: API.ytmusicStream.stream(info.video_id),
+									duration: nextItem.duration ?? (info.duration_s ?? undefined),
+									coverUrl: nextItem.coverUrl ?? info.thumbnail ?? null
+								};
+								queue = uq;
+							}
+						} catch {
+							// Ignored; resolveSourceForItem will resolve it on demand
+						}
+					})();
+				}
 			}
 		} catch (e) {
 			if (gen === loadGeneration)
@@ -1031,14 +1079,17 @@ function createPlayerStore() {
 			persist();
 		},
 
-		/** Replace the currently-playing slot with a new item, keeping the rest of the queue. */
 		replaceCurrentTrack(item: QueueItem): void {
 			if (queue.length === 0) {
 				this.playQueue([item], 0, false);
 				return;
 			}
-			queue = queue.map((q, i) => (i === currentIndex ? item : q));
-			void loadQueueItem(currentIndex);
+			const r = insertPlayNext(queue, item, currentIndex, shuffleEnabled, shuffleOrder);
+			queue = r.newQueue;
+			shuffleOrder = r.newShuffleOrder;
+			const targetIndex = currentIndex + 1;
+			currentIndex = targetIndex;
+			void loadQueueItem(targetIndex);
 		},
 
 		changeTrackSource(index: number, newSourceType: SourceType): void {

@@ -106,16 +106,13 @@
 	let playMenuTrack = $state<CrateTrack | null>(null);
 	let playMenuAnchorRect = $state<DOMRect | null>(null);
 
-	function playCrateTrack(t: CrateTrack, e?: MouseEvent) {
+	function playCrateTrack(t: CrateTrack) {
 		rememberEra(t);
 		if (playerStore.hasQueue) {
-			playMenuTrack = t;
-			const el = e ? (e.currentTarget as HTMLElement | null ?? e.target as HTMLElement | null) : null;
-			// Fall back to a centered rect when no event target is available (drag-drop)
-			playMenuAnchorRect = el?.getBoundingClientRect() ?? new DOMRect(window.innerWidth / 2, window.innerHeight / 2 - 80, 0, 0);
-			return;
+			playerStore.replaceCurrentTrack(crateToQueueItem(t));
+		} else {
+			playerStore.playQueue([crateToQueueItem(t)], 0, false);
 		}
-		playerStore.playQueue([crateToQueueItem(t)], 0, false);
 		if (!mobileLowPower) void suggestionsQuery.refetch();
 	}
 

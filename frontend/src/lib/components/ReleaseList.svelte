@@ -143,6 +143,8 @@
 									artist={artistName}
 									title={rg.title}
 									album={rg.title}
+									albumId={rg.id}
+									isAlbum={true}
 									coverUrl={rg.cover_url}
 									size="sm"
 								/>
