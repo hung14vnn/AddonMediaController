@@ -150,6 +150,55 @@ describe('audioElement registry', () => {
 		expect(mockEngine.connect).toHaveBeenCalledWith(audio);
 	});
 
+	it('does not create the engine from the playback path on iOS', async () => {
+		// Regression: the play path must leave iOS on the native media element.
+		// Creating a context here put every track on a real-time render thread.
+		vi.stubGlobal('navigator', {
+			userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+			platform: 'iPhone',
+			maxTouchPoints: 5
+		});
+		const audio = { src: '' } as HTMLAudioElement;
+		setAudioElement(audio);
+
+		await resumeAudioEngine();
+
+		expect(tryGetAudioEngine()).toBeNull();
+		expect(mockEngine.connect).not.toHaveBeenCalled();
+		expect(mockEngine.resume).not.toHaveBeenCalled();
+	});
+
+	it('still resumes an EQ-created engine from the playback path on iOS', async () => {
+		vi.stubGlobal('navigator', {
+			userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+			platform: 'iPhone',
+			maxTouchPoints: 5
+		});
+		const audio = { src: '' } as HTMLAudioElement;
+		setAudioElement(audio);
+		getAudioEngine(); // the EQ store opting in
+
+		await resumeAudioEngine();
+
+		expect(mockEngine.connect).toHaveBeenCalledTimes(1);
+		expect(mockEngine.resume).toHaveBeenCalledTimes(1);
+	});
+
+	it('creates the engine from the playback path off iOS', async () => {
+		vi.stubGlobal('navigator', {
+			userAgent: 'Mozilla/5.0 (Linux; Android 15)',
+			platform: 'Linux armv8l',
+			maxTouchPoints: 5
+		});
+		const audio = { src: '' } as HTMLAudioElement;
+		setAudioElement(audio);
+
+		await resumeAudioEngine();
+
+		expect(mockEngine.connect).toHaveBeenCalledWith(audio);
+		expect(mockEngine.resume).toHaveBeenCalledTimes(1);
+	});
+
 	it('keeps iPhone playback native even when standalone detection is unavailable', () => {
 		vi.stubGlobal('navigator', {
 			userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',

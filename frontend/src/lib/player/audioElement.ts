@@ -65,7 +65,12 @@ export function tryGetAudioEngine(): AudioEngine | null {
 
 export async function resumeAudioEngine(): Promise<void> {
 	try {
-		ensureAudioEngine();
+		// Playback paths call this before every play(). On iOS, creating the
+		// graph here would pull every track off WebKit's native media pipeline
+		// and onto a real-time render thread for its whole duration, a steady
+		// thermal cost even with a pass-through graph. Only resume an engine the
+		// EQ store already created via ensureAudioEngine(); never create one.
+		if (!usesNativeBackgroundPlayback()) ensureAudioEngine();
 		await engine?.resume();
 	} catch {
 		// Browsers can reject resume() outside a user activation. Native audio

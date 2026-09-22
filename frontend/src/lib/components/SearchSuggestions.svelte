@@ -127,18 +127,30 @@
 		}
 	}
 
-	function handleSubmit(e: SubmitEvent) {
-		e.preventDefault();
+	// Close the dropdown and cancel any pending lookup. The component lives in the
+	// persistent app shell, so its destroy cleanup never runs on navigation: an
+	// armed debounce would otherwise fire after we leave and reopen the dropdown
+	// over the search page. Bumping the generation retires an in-flight response too.
+	function dismiss() {
+		clearTimeout(debounceTimeout);
+		abortController?.abort();
+		abortController = null;
+		fetchGeneration++;
+		loading = false;
 		showDropdown = false;
 		suggestions = [];
+		activeIndex = -1;
+	}
+
+	function handleSubmit(e: SubmitEvent) {
+		e.preventDefault();
+		dismiss();
 		onSearch();
 	}
 
 	function handleSelect(result: Suggestion) {
 		if (isTrack(result)) return;
-		showDropdown = false;
-		suggestions = [];
-		activeIndex = -1;
+		dismiss();
 		onSelect(result);
 	}
 
@@ -155,9 +167,7 @@
 	}
 
 	function handleViewAll() {
-		showDropdown = false;
-		suggestions = [];
-		activeIndex = -1;
+		dismiss();
 		onSearch();
 	}
 
@@ -166,9 +176,7 @@
 			if (showDropdown) {
 				e.preventDefault();
 				e.stopPropagation();
-				showDropdown = false;
-				suggestions = [];
-				activeIndex = -1;
+				dismiss();
 			}
 			return;
 		}
