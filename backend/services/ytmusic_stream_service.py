@@ -65,12 +65,19 @@ _YDL_BASE_OPTIONS: dict[str, object] = {
     "js_runtimes": {"node": {}},
 }
 _YDL_FLAT_OPTIONS: dict[str, object] = {**_YDL_BASE_OPTIONS, "extract_flat": True}
-_YDL_AUDIO_OPTIONS: dict[str, object] = {
+_YDL_OPUS_OPTIONS: dict[str, object] = {
     **_YDL_BASE_OPTIONS,
     "extract_flat": False,
     "skip_download": True,
     "format": "bestaudio/best",
     "format_sort": ["abr", "acodec:opus", "ext"],
+}
+_YDL_M4A_OPTIONS: dict[str, object] = {
+    **_YDL_BASE_OPTIONS,
+    "extract_flat": False,
+    "skip_download": True,
+    "format": "bestaudio/best",
+    "format_sort": ["abr", "acodec:m4a", "ext"],
 }
 
 
@@ -185,10 +192,11 @@ class _YtDlp:
         )
 
     @staticmethod
-    def extract_video(video_id: str) -> StreamInfo | None:
+    def extract_video(video_id: str, fmt: str = "opus") -> StreamInfo | None:
         """Extract the audio URL for a known YouTube Music video."""
         url = f"https://music.youtube.com/watch?v={video_id}"
-        with YoutubeDL(_YDL_AUDIO_OPTIONS) as ydl:
+        options = _YDL_M4A_OPTIONS if fmt == "m4a" else _YDL_OPUS_OPTIONS
+        with YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=False)
         return _YtDlp._to_stream_info(info, video_id) if isinstance(info, dict) else None
 
@@ -215,7 +223,7 @@ class _YtDlp:
         return candidates
 
     @staticmethod
-    def search(query: str) -> StreamInfo | None:
+    def search(query: str, fmt: str = "opus") -> StreamInfo | None:
         """Find the best audio match for *query*.
 
         1. YouTube Music search, preferring titles without music-video keywords
@@ -226,12 +234,13 @@ class _YtDlp:
         if candidates:
             preferred = next((vid for vid, title in candidates if not _MV_REGEX.search(title)), None)
             video_id = preferred or candidates[0][0]
-            result = _YtDlp.extract_video(video_id)
+            result = _YtDlp.extract_video(video_id, fmt)
             if result is not None:
                 return result
 
         fallback_query = f"{query} audio"
-        with YoutubeDL({**_YDL_AUDIO_OPTIONS, "default_search": "ytsearch1"}) as ydl:
+        options = {**(_YDL_M4A_OPTIONS if fmt == "m4a" else _YDL_OPUS_OPTIONS), "default_search": "ytsearch1"}
+        with YoutubeDL(options) as ydl:
             try:
                 info = ydl.extract_info(fallback_query, download=False)
             except Exception as exc:  # noqa: BLE001
@@ -271,7 +280,7 @@ class YTMusicStreamService:
     # Public API
     # ------------------------------------------------------------------
 
-    async def search(self, artist: str, track: str) -> StreamInfo:
+    async def search(self, artist: str, track: str, fmt: str = "opus") -> StreamInfo:
         """Find *track* by *artist* on YouTube Music and return stream info.
 
         The returned ``title``/``artist`` are exactly *track*/*artist* as
@@ -279,13 +288,13 @@ class YTMusicStreamService:
 
         Raises ``ValueError`` when no match is found.
         """
-        key = _StreamCache.search_key(artist, track)
+        key = _StreamCache.search_key(artist, track) + f":{fmt}"
         cached = self._cache.get_by_search(key)
         if cached is not None:
             return cached
 
         query = f"{artist} {track}".strip()
-        result = await self._run_blocking(_YtDlp.search, query, what="search")
+        result = await self._run_blocking(_YtDlp.search, query, fmt, what="search")
         if result is None:
             label = f"'{artist} - {track}'" if artist else f"'{track}'"
             raise ValueError(f"No result found for {label}")
@@ -296,7 +305,8 @@ class YTMusicStreamService:
 
     def evict_by_video_id(self, video_id: str) -> None:
         """Drop every cached entry for *video_id*."""
-        self._cache.evict(video_id)
+        self._cache.evict(f"{video_id}:opus")
+        self._cache.evict(f"{video_id}:m4a")
 
     async def proxy_stream(
         self,
@@ -305,6 +315,7 @@ class YTMusicStreamService:
         *,
         title: str | None = None,
         artist: str | None = None,
+        fmt: str = "opus",
     ) -> tuple[AsyncIterator[bytes], dict[str, str], int]:
         """Proxy the audio bytes for *video_id*.
 
@@ -312,8 +323,8 @@ class YTMusicStreamService:
         caller wraps these in a ``StreamingResponse``.  Pass *title*/*artist*
         so the caller's metadata survives a cache miss (e.g. server restart).
         """
-        info = await self._resolve(video_id, title, artist)
-        upstream = await self._open_upstream("GET", info, range_header)
+        info = await self._resolve(video_id, title, artist, fmt)
+        upstream = await self._open_upstream("GET", info, range_header, fmt)
 
         resp_headers = _pick_headers(upstream.headers, _STREAM_RESPONSE_HEADERS)
 
@@ -332,10 +343,11 @@ class YTMusicStreamService:
         *,
         title: str | None = None,
         artist: str | None = None,
+        fmt: str = "opus",
     ) -> dict[str, str]:
         """Return metadata headers for *video_id* without a body."""
-        info = await self._resolve(video_id, title, artist)
-        upstream = await self._open_upstream("HEAD", info)
+        info = await self._resolve(video_id, title, artist, fmt)
+        upstream = await self._open_upstream("HEAD", info, None, fmt)
         try:
             return _pick_headers(upstream.headers, _HEAD_RESPONSE_HEADERS)
         finally:
@@ -345,20 +357,23 @@ class YTMusicStreamService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _resolve(self, video_id: str, title: str | None, artist: str | None) -> StreamInfo:
+    async def _resolve(self, video_id: str, title: str | None, artist: str | None, fmt: str) -> StreamInfo:
         """Return cached info for *video_id*, extracting on a miss."""
-        info = self._cache.get_by_video_id(video_id)
+        cache_key = f"{video_id}:{fmt}"
+        info = self._cache.get_by_video_id(cache_key)
         if info is None:
-            info = (await self._extract_by_video_id(video_id)).with_metadata(title, artist)
+            info = (await self._extract_by_video_id(video_id, fmt)).with_metadata(title, artist)
+            info = replace(info, video_id=cache_key) # Hack to store in cache correctly
             self._cache.put(info)
-            return info
-        return info.with_metadata(title, artist)
+            return replace(info, video_id=video_id)
+        return replace(info.with_metadata(title, artist), video_id=video_id)
 
     async def _open_upstream(
         self,
         method: str,
         info: StreamInfo,
         range_header: str | None = None,
+        fmt: str = "opus",
     ) -> httpx.Response:
         """Open the upstream audio URL.
 
@@ -380,15 +395,16 @@ class YTMusicStreamService:
                     upstream.status_code,
                     info.video_id,
                 )
-                self._cache.evict(info.video_id)
-                fresh = await self._extract_by_video_id(info.video_id)
-                info = fresh.with_metadata(info.title, info.artist)
-                self._cache.put(info)
+                self._cache.evict(f"{info.video_id}:{fmt}")
+                fresh = await self._extract_by_video_id(info.video_id, fmt)
+                fresh_info = fresh.with_metadata(info.title, info.artist)
+                self._cache.put(replace(fresh_info, video_id=f"{info.video_id}:{fmt}"))
+                info = fresh_info
                 continue
 
             if upstream.status_code >= 400:
                 await upstream.aclose()
-                self._cache.evict(info.video_id)
+                self._cache.evict(f"{info.video_id}:{fmt}")
                 raise httpx.HTTPStatusError(
                     f"Upstream returned {upstream.status_code}",
                     request=req,
@@ -398,17 +414,17 @@ class YTMusicStreamService:
 
         raise AssertionError("unreachable")  # pragma: no cover
 
-    async def _extract_by_video_id(self, video_id: str) -> StreamInfo:
+    async def _extract_by_video_id(self, video_id: str, fmt: str) -> StreamInfo:
         """Extract the audio URL for *video_id*, upgrading MV videos to studio audio."""
-        result = await self._run_blocking(_YtDlp.extract_video, video_id, what="extraction")
+        result = await self._run_blocking(_YtDlp.extract_video, video_id, fmt, what="extraction")
         if result is None:
             raise ValueError(f"Could not extract audio for video {video_id}")
 
         if _MV_REGEX.search(result.source_title):
-            result = await self._upgrade_mv_to_audio(result)
+            result = await self._upgrade_mv_to_audio(result, fmt)
         return result
 
-    async def _upgrade_mv_to_audio(self, mv: StreamInfo) -> StreamInfo:
+    async def _upgrade_mv_to_audio(self, mv: StreamInfo, fmt: str) -> StreamInfo:
         """Try to swap an MV's audio URL for the matching studio track's."""
         clean_title = _clean_mv_title(mv.source_title)
         if mv.source_artist and mv.source_artist.lower() not in clean_title.lower():
@@ -417,7 +433,7 @@ class YTMusicStreamService:
             query = clean_title
 
         try:
-            clean = await self._run_blocking(_YtDlp.search, query, what="search")
+            clean = await self._run_blocking(_YtDlp.search, query, fmt, what="search")
         except Exception as exc:  # noqa: BLE001
             logger.debug("Failed to upgrade MV %s to clean audio: %s", mv.video_id, exc)
             return mv

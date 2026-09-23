@@ -878,14 +878,20 @@ async def _stream(c: Ctx) -> Response:
         kind, fid = decode(sid)
     except SubsonicError:
         raise SubsonicError(70, "Song not found")
+    fmt = c.decoded.enum("format", {"raw", "mp3", "opus", "m4a", "aac"})
     if kind == "ytmusic":
+        stream_fmt = "m4a" if fmt in ("m4a", "mp3", "aac", None) else ("opus" if fmt == "opus" else "m4a")
         chunks, headers, status = await c.services.ytmusic_stream.proxy_stream(
-            fid, range_header=c.request.headers.get("Range")
+            fid, range_header=c.request.headers.get("Range"), fmt=stream_fmt
         )
-        return StreamingResponse(chunks, status_code=status, headers=headers)
+        return StreamingResponse(
+            chunks,
+            status_code=status,
+            headers=headers,
+            media_type=headers.get("Content-Type", "application/octet-stream"),
+        )
     if kind != "track":
         raise SubsonicError(70, "Invalid id type")
-    fmt = c.decoded.enum("format", {"raw", "mp3", "opus"})
     max_bitrate = c.pint("maxBitRate", minimum=0, maximum=1_000_000)
     time_offset = c.pfloat("timeOffset", 0.0, minimum=0, maximum=604_800) or 0.0
     estimate = c.pbool("estimateContentLength", False)
@@ -922,7 +928,10 @@ async def _download(c: Ctx) -> Response:
     except SubsonicError:
         raise SubsonicError(70, "Song not found")
     if kind == "ytmusic":
-        return await c.services.ytmusic_stream.proxy_stream(fid, range_header=c.request.headers.get("Range"))
+        chunks, headers, status = await c.services.ytmusic_stream.proxy_stream(
+            fid, range_header=c.request.headers.get("Range")
+        )
+        return StreamingResponse(chunks, status_code=status, headers=headers)
     if kind != "track":
         raise SubsonicError(70, "Invalid id type")
     track = await c.services.view.get_track(fid, user=c.user)
@@ -1086,7 +1095,10 @@ async def _get_transcode_stream(c: Ctx) -> Response:
     except SubsonicError:
         raise SubsonicError(70, "Song not found")
     if kind == "ytmusic":
-        return await c.services.ytmusic_stream.proxy_stream(file_id, range_header=c.request.headers.get("Range"))
+        chunks, headers, status = await c.services.ytmusic_stream.proxy_stream(
+            file_id, range_header=c.request.headers.get("Range")
+        )
+        return StreamingResponse(chunks, status_code=status, headers=headers)
     if kind != "track":
         raise SubsonicError(70, "Invalid id type")
     params = c.decoded.string("transcodeParams", max_length=8192)

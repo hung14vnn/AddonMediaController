@@ -24,7 +24,7 @@ _YOUTUBE_HOSTS = {
 _AUDIO_SUFFIXES = {".flac", ".wav", ".m4a", ".mp3", ".aac", ".ogg", ".opus"}
 _METADATA_TIMEOUT_SECONDS = 30
 _AUDIO_FORMAT = "bestaudio/best"
-_AUDIO_FORMAT_SORT = ["abr", "acodec:opus", "ext"]
+_AUDIO_FORMAT_SORT = ["abr", "acodec:m4a", "ext"]
 _YOUTUBE_WATCH_URL = "https://www.youtube.com/watch?v={}"
 _YTMUSIC_WATCH_URL = "https://music.youtube.com/watch?v={}"
 
@@ -191,7 +191,7 @@ class YouTubeDownloadService:
                 postprocessors=[
                     {
                         "key": "FFmpegExtractAudio",
-                        "preferredcodec": "opus",
+                        "preferredcodec": "m4a",
                     }
                 ],
                 progress_hooks=[
