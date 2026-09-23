@@ -70,7 +70,6 @@ export async function resumeAudioEngine(): Promise<void> {
 		// and onto a real-time render thread for its whole duration, a steady
 		// thermal cost even with a pass-through graph. Only resume an engine the
 		// EQ store already created via ensureAudioEngine(); never create one.
-		if (!usesNativeBackgroundPlayback()) ensureAudioEngine();
 		await engine?.resume();
 	} catch {
 		// Browsers can reject resume() outside a user activation. Native audio
