@@ -853,7 +853,7 @@ class DiscoverHomepageService:
             tasks["jf_most_played"] = self._jf_repo.get_most_played_artists(limit=50)
 
         if library_configured:
-            tasks["library_albums"] = self._library_repo.get_home_albums(limit=500)
+            tasks["library_albums"] = self._library_repo.get_home_albums(limit=500, user_id=user_id)
 
         results = await self._execute_tasks(tasks)
         await self._wait_for_background_window()
@@ -1531,6 +1531,8 @@ class DiscoverHomepageService:
             for album in library_albums:
                 if isinstance(album, dict):
                     mbid = album.get("release_group_mbid") or album.get("mbid")
+                    if not mbid or mbid not in library_mbids:
+                        continue
                     local_id = album.get("local_id")
                     familiar_items.append(
                         HomeAlbum(

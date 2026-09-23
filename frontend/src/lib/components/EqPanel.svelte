@@ -12,6 +12,15 @@
 	import { X, RotateCcw } from 'lucide-svelte';
 	import { fly } from 'svelte/transition';
 
+	function portal(node: HTMLElement) {
+		document.body.appendChild(node);
+		return {
+			destroy() {
+				node.remove();
+			}
+		};
+	}
+
 	let { open = $bindable(), onclose }: { open: boolean; onclose: () => void } = $props();
 
 	const isYouTube = $derived(playerStore.nowPlaying?.sourceType === 'youtube');
@@ -87,8 +96,9 @@
 </script>
 
 {#if open}
-	<button
-		class="fixed inset-0 z-60 bg-transparent"
+	<div use:portal style="display: contents;">
+		<button
+			class="fixed inset-0 z-60 bg-transparent"
 		onclick={handleClose}
 		aria-label="Close equalizer"
 		tabindex="-1"
@@ -234,5 +244,6 @@
 				</div>
 			</div>
 		</div>
+	</div>
 	</div>
 {/if}
