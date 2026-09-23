@@ -305,51 +305,37 @@ class YTMusicStreamService:
         return info
 
     async def _get_radio_for_video_cached(self, video_id: str, limit: int = 25) -> list[dict]:
-        """Fetch Up Next/Radio tracks for a video_id, using a short-lived cache."""
-        # Using the same cache but with a specific prefix so it doesn't collide
-        cache_key = f"radio:{video_id}"
-        cached = self._cache.get_by_video_id(cache_key)
-        if cached is not None:
-            # We stored the raw list in the thumbnail field of a dummy StreamInfo to reuse the cache
-            # Let's not abuse the cache for complex objects if it only expects StreamInfo.
-            # Wait, `_cache.put` strictly takes `StreamInfo`. Let's just create a quick local dict cache
-            # or just rely on the fact that this is a smart discover feature. Since we don't have a generic
-            # cache in this service, let's just use `get_watch_playlist` directly. The user can spam it,
-            # but usually they don't.
-            pass
-
-        # Since `_StreamCache` expects `StreamInfo` objects, we will just fetch it directly.
-        # Alternatively, we could store it in an LRU dict on `self`.
+        """Fetch Radio (mix) tracks for a video_id, using a short-lived in-memory cache."""
         if not hasattr(self, "_radio_cache"):
             self._radio_cache = OrderedDict()
 
-        if video_id in getattr(self, "_radio_cache"):
+        if video_id in self._radio_cache:
             entry, timestamp = self._radio_cache[video_id]
             if time.monotonic() - timestamp < 3600:
                 self._radio_cache.move_to_end(video_id)
                 return entry
 
         def _fetch():
-            yt = YTMusic()
-            return yt.get_watch_playlist(videoId=video_id, limit=limit)
-        
+            yt = getattr(self, "_yt_client", None) or YTMusic()
+            return yt.get_watch_playlist(videoId=video_id, radio=True, limit=limit)
+
         try:
             wl = await self._run_blocking(_fetch, what="smart discover radio")
             if not isinstance(wl, dict) or not wl.get("tracks"):
                 return []
-            
-            # Save to simple cache
-            self._radio_cache[video_id] = (wl["tracks"], time.monotonic())
+
+            tracks = wl["tracks"]
+            self._radio_cache[video_id] = (tracks, time.monotonic())
             while len(self._radio_cache) > 100:
                 self._radio_cache.popitem(last=False)
-                
-            return wl["tracks"]
+
+            return tracks
         except Exception as e:
             logger.warning("YTMusic radio failed for video_id %r: %s", video_id, e)
             return []
 
     async def get_smart_discover(self, video_ids: list[str], limit: int = 15) -> list[dict]:
-        """Fetch Up Next/Radio tracks for multiple seeds and interleave them for diversity."""
+        """Fetch Radio tracks for multiple seeds and interleave them for diversity."""
         from collections import Counter
 
         seen = set(video_ids)
@@ -359,9 +345,9 @@ class YTMusicStreamService:
 
         results = await asyncio.gather(*(self._get_radio_for_video_cached(vid, limit=25) for vid in seeds))
 
-        score = Counter()
-        info = {}
-        per_seed_lists: list[list[str]] = [] 
+        score: Counter = Counter()
+        info: dict[str, dict] = {}
+        per_seed_lists: list[list[str]] = []
 
         for tracks in results:
             seed_vids = []
@@ -374,9 +360,11 @@ class YTMusicStreamService:
                 seed_vids.append(vid)
             per_seed_lists.append(seed_vids)
 
+        # Within each seed's list, put higher-overlap tracks first
         for seed_vids in per_seed_lists:
             seed_vids.sort(key=lambda v: score[v], reverse=True)
 
+        # Round-robin across seeds so no single seed dominates the result
         merged: list[dict] = []
         used: set[str] = set()
         idx = 0
