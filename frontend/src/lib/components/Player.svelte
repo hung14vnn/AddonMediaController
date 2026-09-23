@@ -658,7 +658,7 @@
 				{/if}
 			</div>
 
-			<div class="hidden md:flex items-center gap-3 lg:gap-7 lg:w-1/4 justify-end">
+			<div class="hidden md:flex items-center gap-3 lg:gap-7 lg:w-[30%] justify-end">
 				{#if playerStore.currentQueueItem?.sourceType === 'local'}
 					<div class="tooltip tooltip-left" data-tip={karaokeTip()}>
 						<button
