@@ -349,30 +349,49 @@ class YTMusicStreamService:
             return []
 
     async def get_smart_discover(self, video_ids: list[str], limit: int = 15) -> list[dict]:
-        """Fetch Up Next/Radio tracks for multiple seeds and score them."""
+        """Fetch Up Next/Radio tracks for multiple seeds and interleave them for diversity."""
         from collections import Counter
-        
+
         seen = set(video_ids)
-        score = Counter()
-        info = {}
-        
-        # Take up to 5 most recent seeds
         seeds = video_ids[-5:]
         if not seeds:
             return []
 
         results = await asyncio.gather(*(self._get_radio_for_video_cached(vid, limit=25) for vid in seeds))
-        
+
+        score = Counter()
+        info = {}
+        per_seed_lists: list[list[str]] = [] 
+
         for tracks in results:
+            seed_vids = []
             for t in tracks:
                 vid = t.get("videoId")
                 if not vid or vid in seen:
                     continue
                 score[vid] += 1
                 info[vid] = t
+                seed_vids.append(vid)
+            per_seed_lists.append(seed_vids)
 
-        # Return the top scored tracks
-        return [info[vid] for vid, _ in score.most_common(limit)]
+        for seed_vids in per_seed_lists:
+            seed_vids.sort(key=lambda v: score[v], reverse=True)
+
+        merged: list[dict] = []
+        used: set[str] = set()
+        idx = 0
+        while len(merged) < limit and any(idx < len(lst) for lst in per_seed_lists):
+            for seed_vids in per_seed_lists:
+                if idx < len(seed_vids):
+                    vid = seed_vids[idx]
+                    if vid not in used:
+                        used.add(vid)
+                        merged.append(info[vid])
+                        if len(merged) >= limit:
+                            break
+            idx += 1
+
+        return merged
 
     def evict_by_video_id(self, video_id: str) -> None:
         """Drop every cached entry for *video_id*."""
