@@ -663,6 +663,7 @@ export const API = {
 		`/api/v1/discover/queue/youtube-track-search?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}`,
 	discoverQueueYoutubeQuota: () => '/api/v1/discover/queue/youtube-quota',
 	discoverQueueYoutubeCacheCheck: () => '/api/v1/discover/queue/youtube-cache-check',
+	discoverQueueSmartDiscover: () => '/api/v1/discover/queue/smart-discover',
 	discoverRadio: () => '/api/v1/discover/radio',
 	discoverRadioPlan: () => '/api/v1/discover/radio/plan',
 	discoverBatches: () => '/api/v1/discover/batches',

@@ -24,3 +24,4 @@ nodriver==0.50.3
 unidecode>=1.4.0,<2
 uvicorn[standard]==0.37.0
 yt-dlp==2026.8.19
+ytmusicapi==1.12.3

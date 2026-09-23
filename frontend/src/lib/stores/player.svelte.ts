@@ -81,6 +81,7 @@ import {
 	changeItemSource,
 	updateItemByPlaylistTrackId
 } from './playerPlaybackMethods';
+import { interleaveEvenly } from '$lib/player/queueHelpers';
 
 const MAX_CONSECUTIVE_ERRORS = 3;
 const PREVIEW_FADE_S = 2;
@@ -973,6 +974,53 @@ function createPlayerStore() {
 			const r = addMultipleItems(queue, items, shuffleEnabled, shuffleOrder);
 			queue = r.newQueue;
 			shuffleOrder = r.newShuffleOrder;
+			persist();
+			showQueueMutationToast('queue', items.length);
+		},
+
+		addRandomiseToTheRestOfTheQueue(items: QueueItem[], indexToStart: number = 0): void {
+			if (items.length === 0) return;
+			const stamped = stampOrigin(items, 'manual');
+
+			if (queue.length === 0) {
+				this.playQueue(stamped, 0, false);
+				showQueueMutationToast('queue', items.length);
+				return;
+			}
+
+			const start = Math.max(0, Math.min(indexToStart + 1, queue.length));
+
+			type Slot = { item: QueueItem; oldIndex: number | null };
+			const unplayed: Slot[] = queue
+				.slice(start)
+				.map((item, i) => ({ item, oldIndex: start + i }));
+			const incoming: Slot[] = stamped.map((item) => ({ item, oldIndex: null }));
+			const tail = interleaveEvenly(unplayed, incoming);
+
+			const newQueue = [...queue.slice(0, start), ...tail.map((s: Slot) => s.item)];
+
+			const indexMap = new Map<number, number>();
+			for (let i = 0; i < start; i++) indexMap.set(i, i);
+			const addedIndices: number[] = [];
+			tail.forEach((s: Slot, i: number) => {
+				const newIndex = start + i;
+				if (s.oldIndex === null) addedIndices.push(newIndex);
+				else indexMap.set(s.oldIndex, newIndex);
+			});
+
+			if (shuffleEnabled && shuffleOrder.length > 0) {
+				const remapped = shuffleOrder.map((i) => indexMap.get(i) ?? i);
+				const currentPos = shuffleOrder.indexOf(currentIndex);
+				const splitAt = currentPos >= 0 ? currentPos + 1 : 0;
+				shuffleOrder = [
+					...remapped.slice(0, splitAt),
+					...interleaveEvenly(remapped.slice(splitAt), addedIndices),
+				];
+			}
+
+			currentIndex = indexMap.get(currentIndex) ?? currentIndex;
+
+			queue = newQueue;
 			persist();
 			showQueueMutationToast('queue', items.length);
 		},

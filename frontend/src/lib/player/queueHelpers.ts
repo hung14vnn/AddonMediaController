@@ -64,6 +64,27 @@ export function compareDiscTrack(
 	return Number(a.track_number ?? a.position ?? 0) - Number(b.track_number ?? b.position ?? 0);
 }
 
+export function interleaveEvenly<T>(a: T[], b: T[], jitter = 0.8): T[] {
+	const out: T[] = [];
+	let i = 0;
+	let j = 0;
+	while (i < a.length || j < b.length) {
+		if (j >= b.length) {
+			out.push(a[i++]);
+			continue;
+		}
+		if (i >= a.length) {
+			out.push(b[j++]);
+			continue;
+		}
+		const progressA = (i + 0.5) / a.length;
+		const progressB = (j + 0.5 + (Math.random() - 0.5) * jitter) / b.length;
+		if (progressA <= progressB) out.push(a[i++]);
+		else out.push(b[j++]);
+	}
+	return out;
+}
+
 export function selectBestSource(
 	data: TrackSourceData
 ): { sourceType: SourceType; trackSourceId: string; streamUrl: string; format?: string } | null {

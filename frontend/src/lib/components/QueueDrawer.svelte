@@ -8,13 +8,27 @@
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import type { QueueItem } from '$lib/player/types';
-	import { X, GripVertical, ListMusic, Disc3, Shuffle, Trash2, Pin } from 'lucide-svelte';
+	import {
+		X,
+		GripVertical,
+		ListMusic,
+		Disc3,
+		Shuffle,
+		Trash2,
+		Pin,
+		Sparkles,
+		LoaderCircle
+	} from 'lucide-svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import LocalFilesIcon from '$lib/components/LocalFilesIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
+	import { API } from '$lib/constants';
+	import { api } from '$lib/api/client';
+	import { fromStore } from 'svelte/store';
+	import { integrationStore } from '$lib/stores/integration';
 
 	interface Props {
 		open: boolean;
@@ -247,6 +261,105 @@
 		}
 		return currentIndex;
 	});
+
+	// Smart Discover
+	const integrations = fromStore(integrationStore);
+	const ytConfigured = $derived(!!integrations.current.youtube_api);
+	let discovering = $state(false);
+
+	async function handleSmartDiscover() {
+		if (discovering || queue.length === 0) return;
+		discovering = true;
+
+		try {
+			const pool = [...queue];
+			const count = Math.min(5, pool.length);
+			for (let i = 0; i < count; i++) {
+				const j = i + Math.floor(Math.random() * (pool.length - i));
+				[pool[i], pool[j]] = [pool[j], pool[i]];
+			}
+			const seedTracks = pool.slice(0, count);
+			const seeds = seedTracks.map((item) => {
+				let video_id = undefined;
+				if (['youtube', 'ytmusic'].includes(item.sourceType) && item.trackSourceId) {
+					video_id = item.trackSourceId;
+				}
+				return {
+					video_id,
+					artist: item.artistName,
+					track: item.trackName
+				};
+			});
+
+			type SmartDiscoverResponse = {
+				tracks: Array<{
+					video_id: string;
+					title: string;
+					artist_name: string;
+					length?: string;
+					thumbnail?: string;
+				}>;
+			};
+
+			const plan = await api.global.post<SmartDiscoverResponse>(API.discoverQueueSmartDiscover(), {
+				seeds
+			});
+
+			if (!plan.tracks || plan.tracks.length === 0) {
+				playbackToast.show('No suggestions found — try a different track', 'warning');
+				return;
+			}
+
+			// Build a set of existing queue track keys to dedup
+			const existingKeys = new Set(
+				queue.map((item) => `${item.artistName.toLowerCase()}|${item.trackName.toLowerCase()}`)
+			);
+
+			const newItems = plan.tracks
+				.filter((t) => {
+					const key = `${t.artist_name.toLowerCase()}|${t.title.toLowerCase()}`;
+					return !existingKeys.has(key);
+				})
+				.map((t) => {
+					// Parse length 'M:SS' or 'H:MM:SS' into seconds
+					let duration_s = undefined;
+					if (t.length) {
+						const parts = t.length.split(':').map(Number);
+						if (parts.length === 2) duration_s = parts[0] * 60 + parts[1];
+						else if (parts.length === 3) duration_s = parts[0] * 3600 + parts[1] * 60 + parts[2];
+					}
+
+					return {
+						trackSourceId: t.video_id,
+						trackName: t.title,
+						artistName: t.artist_name,
+						trackNumber: 0,
+						albumId: `ytmusic-${t.video_id}`,
+						albumName: 'hify Discovery Radio',
+						coverUrl: t.thumbnail ?? null,
+						sourceType: 'ytmusic' as const,
+						streamUrl: API.ytmusicStream.stream(t.video_id),
+						duration: duration_s,
+						availableSources: ['ytmusic' as const]
+					} as QueueItem;
+				});
+
+			if (newItems.length === 0) {
+				playbackToast.show('All suggestions are already in queue', 'info');
+				return;
+			}
+
+			playerStore.addRandomiseToTheRestOfTheQueue(newItems, currentIndex);
+			playbackToast.show(
+				`Discovered ${newItems.length} new track${newItems.length === 1 ? '' : 's'}`
+			);
+		} catch (e) {
+			console.error('Smart Discover failed:', e);
+			playbackToast.show('Smart Discover failed — please try again', 'error');
+		} finally {
+			discovering = false;
+		}
+	}
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -491,12 +604,21 @@
 		</div>
 
 		{#if queue.length > 0}
-			<div
-				class="p-3 border-t border-base-content/10 {pinned
-					? 'text-[0.65rem]'
-					: 'text-xs'} opacity-50 text-center"
-			>
-				{upcomingCount} track{upcomingCount === 1 ? '' : 's'} upcoming
+			<div class="absolute bottom-6 w-full flex justify-center pointer-events-none z-10 pb-4">
+				<button
+					class="smart-discover-btn pointer-events-auto"
+					class:discovering
+					onclick={handleSmartDiscover}
+					disabled={discovering}
+					aria-label="Smart Discover — add related tracks to queue"
+				>
+					{#if discovering}
+						<LoaderCircle class="h-4 w-4 animate-spin" />
+						<span>Discovering…</span>
+					{:else}
+						<span>Smart Discover</span>
+					{/if}
+				</button>
 			</div>
 		{/if}
 	</div>
@@ -505,5 +627,53 @@
 <style>
 	.queue-drawer-header {
 		padding-top: calc(1rem + env(safe-area-inset-top, 0px));
+	}
+
+	.smart-discover-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.4rem;
+		padding: 0.5rem 1.2rem;
+		border-radius: 9999px;
+		border: 1px solid oklch(var(--b3));
+		font-size: 0.85rem;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+		background: oklch(var(--b2) / 0.95);
+		backdrop-filter: blur(8px);
+		color: oklch(var(--bc));
+		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+	}
+
+	.smart-discover-btn:hover:not(:disabled) {
+		transform: scale(1.03);
+		background: oklch(var(--b3));
+	}
+
+	.smart-discover-btn:active:not(:disabled) {
+		transform: scale(0.97);
+	}
+
+	.smart-discover-btn:disabled {
+		opacity: 0.7;
+		cursor: not-allowed;
+	}
+
+	.smart-discover-btn.discovering {
+		animation: discover-pulse 1.5s ease-in-out infinite;
+	}
+
+	@keyframes discover-pulse {
+		0%,
+		100% {
+			transform: scale(1);
+			opacity: 1;
+		}
+		50% {
+			transform: scale(0.97);
+			opacity: 0.8;
+		}
 	}
 </style>

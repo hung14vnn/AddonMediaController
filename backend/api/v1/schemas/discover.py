@@ -284,3 +284,25 @@ class DiscoverResponse(AppStruct):
     section_status: dict[str, str] = {}
     refreshing: bool = False
     service_status: dict[str, str] | None = None
+
+
+class SmartDiscoverSeed(AppStruct):
+    video_id: str | None = None
+    artist: str | None = None
+    track: str | None = None
+
+
+class SmartDiscoverRequest(AppStruct):
+    seeds: list[SmartDiscoverSeed]
+
+
+class SmartDiscoverTrack(AppStruct):
+    video_id: str
+    title: str
+    artist_name: str
+    length: str | None = None
+    thumbnail: str | None = None
+
+
+class SmartDiscoverResponse(AppStruct):
+    tracks: list[SmartDiscoverTrack]

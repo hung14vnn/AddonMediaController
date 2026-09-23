@@ -20,32 +20,19 @@
 	import { deckSampler } from '$lib/stores/deckSampler.svelte';
 	import { audioFocus } from '$lib/stores/audioFocus.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
+	import { ytMusicStreamer } from '$lib/stores/ytMusicStreamer.svelte';
 	import { integrationStore } from '$lib/stores/integration';
 	import { libraryStore } from '$lib/stores/library';
 	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
-	import { getQueuePreviewMutation } from '$lib/queries/discover/DiscoverDemand.svelte';
-
-	interface Props {
-		youtubeEnabled: boolean;
-	}
-
-	let { youtubeEnabled }: Props = $props();
 
 	const deck = discoverQueueDeck;
 
 	let requesting = $state(false);
 	let bioExpanded = $state(false);
-	let videoOpen = $state(false);
 	let ytSearching = $state(false);
-	let ytEmbedUrl = $state<string | null>(null);
-	let ytError = $state<string | null>(null);
-	let ytSearchUrl = $state<string | null>(null);
-	let previewController: AbortController | null = null;
-	let previewGeneration = 0;
-	const previewMutation = getQueuePreviewMutation();
 
 	const current = $derived(deck.current);
 	const cardIdentity = $derived(`${deck.requestKey}:${current?.release_group_mbid ?? ''}`);
@@ -66,31 +53,18 @@
 			deckSampler.activeKey === current.release_group_mbid &&
 			deckSampler.status !== 'idle'
 	);
-	const externalSearchUrl = $derived(
-		ytSearchUrl ||
-			enrichment?.youtube_search_url ||
-			`https://www.youtube.com/results?search_query=${encodeURIComponent(`${current?.artist_name ?? ''} ${current?.album_name ?? ''} music video`)}`
-	);
 
-	// one-sound rule (other direction): global playback starting kills deck audio
+
 	$effect(() => {
 		if (playerStore.isPlaying) {
 			audioFocus.interrupt();
-			videoOpen = false;
 		}
 	});
 
 	// leaving the current item resets its transient panes
 	$effect(() => {
 		void cardIdentity;
-		previewGeneration++;
-		previewController?.abort();
-		audioFocus.release('deck-video');
-		ytSearchUrl = null;
 		bioExpanded = false;
-		videoOpen = false;
-		ytEmbedUrl = null;
-		ytError = null;
 		ytSearching = false;
 	});
 
@@ -121,60 +95,25 @@
 	});
 
 	onDestroy(() => {
-		previewGeneration++;
-		previewController?.abort();
-		audioFocus.release('deck-video');
 		// Leave the preview playing: it's the app-wide sampler singleton that the
 		// floating PreviewWidget picks up so a sample follows you off the Discover
 		// page, like every other page that starts one.
 		deck.destroy();
 	});
 
-	async function openVideo() {
-		if (!current || ytSearching) return;
-		const mbid = current.release_group_mbid;
-		const scope = deck.requestKey;
-		const generation = ++previewGeneration;
-		const isCurrent = () =>
-			generation === previewGeneration &&
-			current?.release_group_mbid === mbid &&
-			deck.requestKey === scope;
-		deckSampler.stop();
-		audioFocus.claim('deck-video', () => {
-			previewGeneration++;
-			previewController?.abort();
-			ytSearching = false;
-			videoOpen = false;
-		});
-		if (enrichment?.youtube_url) {
-			ytEmbedUrl = enrichment.youtube_url;
-			videoOpen = true;
-			return;
-		}
-		previewController?.abort();
-		previewController = new AbortController();
+	async function streamYtMusic() {
+		if (!current) return;
 		ytSearching = true;
-		ytError = null;
 		try {
-			const data = await previewMutation.mutateAsync({ mbid, signal: previewController.signal });
-			if (!isCurrent()) return;
-			ytSearchUrl = data.youtube_search_url;
-			if (data.status === 'available' && data.youtube_url) {
-				ytEmbedUrl = data.youtube_url;
-				videoOpen = true;
-			} else {
-				ytError = data.status;
-			}
-		} catch {
-			if (isCurrent()) ytError = 'request_failed';
+			await ytMusicStreamer.streamAlbum({
+				artist: current.artist_name,
+				albumTitle: current.album_name,
+				albumId: current.release_group_mbid,
+				action: 'playNow'
+			});
 		} finally {
-			if (isCurrent()) ytSearching = false;
+			ytSearching = false;
 		}
-	}
-
-	function closeVideo() {
-		videoOpen = false;
-		audioFocus.release('deck-video');
 	}
 
 	function toggleSample() {
@@ -183,7 +122,6 @@
 			deckSampler.stop();
 			return;
 		}
-		videoOpen = false;
 		void deckSampler.start(current.release_group_mbid, current.artist_name, current.album_name);
 	}
 
@@ -356,28 +294,6 @@
 				<div class="grid gap-6 p-6 pt-3 sm:p-8 sm:pt-3 lg:grid-cols-[280px_1fr]">
 					<!-- cover / video pane -->
 					<div class="relative mx-auto w-full max-w-70 lg:mx-0">
-						{#if videoOpen && ytEmbedUrl}
-							<div
-								class="relative w-full overflow-hidden rounded-2xl bg-base-300 shadow-xl"
-								style="padding-bottom: 56.25%"
-							>
-								<iframe
-									src={ytEmbedUrl}
-									title="Album video"
-									frameborder="0"
-									allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-									allowfullscreen
-									class="absolute inset-0 h-full w-full"
-								></iframe>
-							</div>
-							<button
-								class="btn btn-circle btn-xs absolute -right-2 -top-2 border-none bg-base-100 shadow"
-								onclick={closeVideo}
-								aria-label="Close video"
-							>
-								<X class="h-3.5 w-3.5" />
-							</button>
-						{:else}
 							<div class="deck-cover relative overflow-hidden rounded-2xl shadow-xl">
 								<a
 									href={`/album/${current.release_group_mbid}`}
@@ -395,29 +311,6 @@
 										className="aspect-square w-full object-cover"
 									/>
 								</a>
-
-								{#if !sampling}
-									<button
-										class="deck-yt-overlay absolute inset-0 flex items-center justify-center"
-										onclick={openVideo}
-										disabled={ytSearching}
-										aria-label="Play music video"
-										title="Play video"
-									>
-										<span
-											class="flex h-16 w-16 items-center justify-center rounded-full bg-base-100/85 shadow-lg backdrop-blur-sm transition-transform duration-300"
-										>
-											{#if ytSearching}
-												<LoaderCircle
-													class="h-7 w-7 animate-spin"
-													style="color: var(--color-youtube);"
-												/>
-											{:else}
-												<YouTubeIcon class="h-8 w-8" />
-											{/if}
-										</span>
-									</button>
-								{/if}
 
 								{#if sampling}
 									<div
@@ -470,7 +363,6 @@
 									</div>
 								{/if}
 							</div>
-						{/if}
 					</div>
 
 					<!-- info pane -->
@@ -548,39 +440,20 @@
 								</p>
 							{/if}
 						{/if}
-						{#if ytError}
-							<p class="mt-2 text-xs text-base-content/60" role="status">
-								{ytError === 'request_failed'
-									? 'Video lookup failed. Try again.'
-									: ytError === 'unavailable'
-										? 'Video search is unavailable. You can still search YouTube.'
-										: 'No video found for this album.'}
-							</p>
-						{/if}
 
 						<div class="mt-5 flex flex-col gap-2 pt-1">
 							<div class="flex flex-wrap items-center gap-2">
 								<button
 									class="btn btn-ghost btn-sm gap-2"
-									onclick={openVideo}
+									onclick={streamYtMusic}
 									disabled={ytSearching}
-									title={youtubeEnabled
-										? 'Find a music video'
-										: 'Look for an existing music video link'}
+									title="Stream via YouTube"
 								>
 									{#if ytSearching}<LoaderCircle
 											class="h-4 w-4 animate-spin motion-reduce:animate-none"
 										/>{:else}<YouTubeIcon class="h-4 w-4" />{/if}
-									{ytSearching ? 'Finding video…' : ytError ? 'Retry video' : 'Find video'}
+									{ytSearching ? 'Loading...' : 'Stream via Youtube Music'}
 								</button>
-								<a
-									class="btn btn-ghost btn-sm gap-2"
-									href={externalSearchUrl}
-									target="_blank"
-									rel="noopener noreferrer"
-								>
-									Search YouTube <ExternalLink class="h-3.5 w-3.5" />
-								</a>
 								<div class="flex flex-col gap-1">
 									<button
 										class="btn btn-sm gap-2 border-none bg-base-content/10 hover:bg-base-content/20"
@@ -598,19 +471,6 @@
 										{/if}
 										{sampling ? 'Stop sample' : 'Sample album'}
 									</button>
-									<label class="flex items-center gap-1.5 px-1" title="Preview volume">
-										<Volume2 class="h-3 w-3 shrink-0 text-base-content/40" />
-										<input
-											type="range"
-											min="0"
-											max="1"
-											step="0.05"
-											value={deckSampler.volume}
-											oninput={(e) => deckSampler.setVolume(Number(e.currentTarget.value))}
-											class="range range-primary range-xs w-24"
-											aria-label="Preview volume"
-										/>
-									</label>
 								</div>
 
 								{#if $integrationStore.download_client && !current.in_library}
@@ -708,20 +568,6 @@
 </section>
 
 <style>
-	.deck-cover:hover .deck-yt-overlay span {
-		transform: scale(1.08);
-	}
-
-	.deck-yt-overlay {
-		background: transparent;
-		border: none;
-		cursor: pointer;
-	}
-
-	.deck-yt-overlay span :global(svg) {
-		color: var(--color-youtube);
-	}
-
 	.deck-strip-item:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;

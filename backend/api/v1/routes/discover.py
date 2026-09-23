@@ -26,6 +26,10 @@ from api.v1.schemas.discover import (
     TrackCacheCheckRequest,
     TrackCacheCheckResponse,
     TrackCacheCheckResponseItem,
+    SmartDiscoverTrack,
+    SmartDiscoverResponse,
+    SmartDiscoverSeed,
+    SmartDiscoverRequest,
 )
 from api.v1.schemas.common import StatusMessageResponse
 from api.v1.schemas.home import HomeSection
@@ -35,6 +39,7 @@ from core.dependencies import (
     get_preview_repository,
     get_user_section_prefs_store,
     get_youtube_repo,
+    get_ytmusic_stream_service,
 )
 from core.dependencies.type_aliases import CurrentUserDep
 from infrastructure.degradation import try_get_degradation_context
@@ -241,6 +246,58 @@ async def youtube_quota(
     if not yt_repo or not yt_repo.is_configured:
         raise HTTPException(status_code=404, detail="YouTube not configured")
     return yt_repo.get_quota_status()
+
+
+@router.post("/queue/smart-discover", response_model=SmartDiscoverResponse)
+async def smart_discover(
+    body: SmartDiscoverRequest = MsgSpecBody(SmartDiscoverRequest),
+    yt_stream_service: "YTMusicStreamService" = Depends(get_ytmusic_stream_service),
+):
+    if not body.seeds:
+        raise HTTPException(status_code=400, detail="Must provide at least one seed")
+    
+    video_ids = []
+    # Process up to 5 seeds from the end to keep it fast
+    seeds_to_process = body.seeds[-5:]
+    
+    for seed in seeds_to_process:
+        if seed.video_id:
+            video_ids.append(seed.video_id)
+        elif seed.artist and seed.track:
+            try:
+                info = await yt_stream_service.search(seed.artist, seed.track)
+                video_ids.append(info.video_id)
+            except Exception:
+                pass
+                
+    if not video_ids:
+        raise HTTPException(status_code=404, detail="Could not resolve any video IDs from seeds")
+    
+    tracks_data = await yt_stream_service.get_smart_discover(video_ids, limit=15)
+    tracks = []
+    for t in tracks_data:
+        vid = t.get("videoId")
+        if not vid:
+            continue
+        
+        artists = t.get("artists", [])
+        artist_name = ", ".join(a.get("name", "") for a in artists) if artists else "Unknown"
+        
+        thumbnail = t.get("thumbnail")
+        thumb_url = None
+        if thumbnail and isinstance(thumbnail, list) and len(thumbnail) > 0:
+            thumb_url = thumbnail[-1].get("url")  # use highest res usually at the end
+            
+        tracks.append(
+            SmartDiscoverTrack(
+                video_id=vid,
+                title=t.get("title") or "Unknown",
+                artist_name=artist_name,
+                length=t.get("length"),
+                thumbnail=thumb_url,
+            )
+        )
+    return SmartDiscoverResponse(tracks=tracks)
 
 
 CACHE_CHECK_MAX_ITEMS = 100

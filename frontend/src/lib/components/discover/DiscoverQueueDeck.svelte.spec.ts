@@ -137,7 +137,7 @@ describe('DiscoverQueueDeck', () => {
 	});
 
 	it('renders the current item with reason, links, meta and tags', async () => {
-		await render(DiscoverQueueDeck, { youtubeEnabled: true });
+		await render(DiscoverQueueDeck, {  });
 
 		await expect.element(page.getByText('Similar to Radiohead')).toBeVisible();
 		const albumLink = page.getByRole('link', { name: 'The Bends', exact: true });
@@ -156,21 +156,21 @@ describe('DiscoverQueueDeck', () => {
 	});
 
 	it('Next advances the deck', async () => {
-		await render(DiscoverQueueDeck, { youtubeEnabled: true });
+		await render(DiscoverQueueDeck, {  });
 
 		await page.getByRole('button', { name: /^Next$/ }).click();
 		expect(deckMock.next).toHaveBeenCalledTimes(1);
 	});
 
 	it('Not for me ignores the current item', async () => {
-		await render(DiscoverQueueDeck, { youtubeEnabled: true });
+		await render(DiscoverQueueDeck, {  });
 
 		await page.getByRole('button', { name: /Not for me/ }).click();
 		expect(deckMock.ignoreCurrent).toHaveBeenCalledTimes(1);
 	});
 
 	it('Request files an album request and marks it', async () => {
-		await render(DiscoverQueueDeck, { youtubeEnabled: true });
+		await render(DiscoverQueueDeck, {  });
 
 		await page.getByRole('button', { name: /^Request$/ }).click();
 		await vi.waitFor(() => {
@@ -185,14 +185,14 @@ describe('DiscoverQueueDeck', () => {
 	});
 
 	it('Sample album starts the sampler for the current item', async () => {
-		await render(DiscoverQueueDeck, { youtubeEnabled: true });
+		await render(DiscoverQueueDeck, {  });
 
 		await page.getByRole('button', { name: /Sample album/ }).click();
 		expect(samplerStart).toHaveBeenCalledWith('rg-1', 'The Verve', 'The Bends');
 	});
 
 	it('filmstrip jump navigates to the clicked item', async () => {
-		await render(DiscoverQueueDeck, { youtubeEnabled: true });
+		await render(DiscoverQueueDeck, {  });
 
 		await page.getByRole('tab', { name: /Urban Hymns/ }).click();
 		expect(deckMock.jumpTo).toHaveBeenCalledWith(1);
@@ -200,7 +200,7 @@ describe('DiscoverQueueDeck', () => {
 
 	it('building phase shows the equalizer state', async () => {
 		deckMock.phase = 'building';
-		await render(DiscoverQueueDeck, { youtubeEnabled: true });
+		await render(DiscoverQueueDeck, {  });
 
 		await expect.element(page.getByText('Building your personalised queue…')).toBeVisible();
 		await expect.element(page.getByRole('button', { name: /Build now instead/ })).toBeVisible();
@@ -208,74 +208,10 @@ describe('DiscoverQueueDeck', () => {
 
 	it('error phase offers retry', async () => {
 		deckMock.phase = 'error';
-		await render(DiscoverQueueDeck, { youtubeEnabled: true });
+		await render(DiscoverQueueDeck, {  });
 
 		await page.getByRole('button', { name: /Retry/ }).click();
 		expect(deckMock.retryBuild).toHaveBeenCalled();
 	});
 
-	it('keeps unresolved video and external search reachable without automatic lookup', async () => {
-		await render(DiscoverQueueDeck, { youtubeEnabled: false });
-		await expect.element(page.getByRole('button', { name: 'Play music video' })).toBeVisible();
-		await expect
-			.element(page.getByRole('link', { name: 'Search YouTube' }))
-			.toHaveAttribute('href', 'https://youtube.example/search');
-		expect(previewAction).not.toHaveBeenCalled();
-		expect(apiGet).not.toHaveBeenCalled();
-	});
-	it('keeps an enriched direct video available when the integration is disabled', async () => {
-		const enrichment = deckMock.queue[0].enrichment as { youtube_url: string | null };
-		enrichment.youtube_url = 'https://www.youtube-nocookie.com/embed/direct-video';
-
-		try {
-			await render(DiscoverQueueDeck, { youtubeEnabled: false });
-
-			await expect.element(page.getByRole('button', { name: 'Play music video' })).toBeVisible();
-			await page.getByRole('button', { name: 'Play music video' }).click();
-			await expect.element(page.getByRole('button', { name: 'Close video' })).toBeVisible();
-			expect(previewAction).not.toHaveBeenCalled();
-			expect(apiGet).not.toHaveBeenCalled();
-		} finally {
-			enrichment.youtube_url = null;
-		}
-	});
-
-	it('shows inline failure and retries the explicit preview action', async () => {
-		previewAction.mockRejectedValueOnce(new Error('provider failed')).mockResolvedValueOnce({
-			status: 'not_found',
-			youtube_url: null,
-			youtube_search_url: 'https://youtube.example/manual'
-		});
-		await render(DiscoverQueueDeck, { youtubeEnabled: true });
-		await page.getByRole('button', { name: 'Play music video' }).click();
-		await expect.element(page.getByRole('status')).toHaveTextContent('Video lookup failed');
-		await page.getByRole('button', { name: 'Retry video' }).click();
-		await expect.element(page.getByRole('status')).toHaveTextContent('No video found');
-		await expect
-			.element(page.getByRole('link', { name: 'Search YouTube' }))
-			.toHaveAttribute('href', 'https://youtube.example/manual');
-	});
-
-	it('does not publish a preview after its source changes', async () => {
-		const pending = Promise.withResolvers<{
-			status: string;
-			youtube_url: string | null;
-			youtube_search_url: string | null;
-		}>();
-		previewAction.mockReturnValue(pending.promise);
-		await render(DiscoverQueueDeck, { youtubeEnabled: true });
-		await page.getByRole('button', { name: 'Play music video' }).click();
-		await expect.element(page.getByRole('button', { name: 'Finding video…' })).toBeDisabled();
-		deckMock.requestKey = 'source-b:2';
-		pending.resolve({
-			status: 'not_found',
-			youtube_url: null,
-			youtube_search_url: 'https://stale.example'
-		});
-		await pending.promise;
-		await expect
-			.element(page.getByRole('link', { name: 'Search YouTube' }))
-			.toHaveAttribute('href', 'https://youtube.example/search');
-		expect(previewAction).toHaveBeenCalledWith({ mbid: 'rg-1', signal: expect.any(AbortSignal) });
-	});
 });
