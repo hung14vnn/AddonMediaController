@@ -241,9 +241,22 @@ def _playlist_tracks(content: Mapping[str, Any]) -> list[dict[str, Any]]:
 # every call on a shared instance is serialised behind its own lock.
 _shared_song: Any = None
 _shared_artist: Any = None
+_shared_album_base: Any = None
 _song_lock = threading.Lock()
 _artist_lock = threading.Lock()
+_album_lock = threading.Lock()
 _init_lock = threading.Lock()
+
+
+def _album_base() -> Any:
+    """Warm BaseClient shared by every PublicAlbum lookup (guard: _album_lock)."""
+    global _shared_album_base
+    with _init_lock:
+        if _shared_album_base is None:
+            from spotapi import PublicAlbum
+
+            _shared_album_base = PublicAlbum("0").base
+        return _shared_album_base
 
 
 def _shared(kind: str) -> tuple[Any, threading.Lock]:
@@ -427,7 +440,8 @@ class SpotApiClient:
         return playlist.pop("_tracks", [])
 
     async def get_artist(self, artist_id: str) -> dict[str, Any]:
-        raw = await self._run(self._artist().get_artist, artist_id)
+        artist_client, lock = _shared("artist")
+        raw = await self._run(artist_client.get_artist, artist_id, lock=lock)
         item = _mapping(_mapping(raw.get("data")).get("artistUnion"))
         artist = {
             "id": _spotify_id(item, "artist"),
@@ -449,12 +463,14 @@ class SpotApiClient:
         offset: int = 0,
         market: str = "VN",
     ) -> tuple[list[dict[str, Any]], bool, int | None]:
+        artist_client, lock = _shared("artist")
         raw = await self._run(
-            self._artist().get_artist_discography,
+            artist_client.get_artist_discography,
             artist_id,
             section="all",
             offset=offset,
             limit=min(limit, 50),
+            lock=lock,
         )
         discography = _mapping(
             _mapping(
@@ -477,6 +493,8 @@ class SpotApiClient:
 
         def fetch() -> dict[str, Any]:
             album = PublicAlbum(album_id)
+            # Reuse the warm session instead of bootstrapping a new one (5-10s).
+            album.base = _album_base()
             first = _mapping(album.get_album_info(limit=343))
             union = _mapping(_mapping(first.get("data")).get("albumUnion"))
             tracks_data = _mapping(union.get("tracksV2"))
@@ -493,4 +511,4 @@ class SpotApiClient:
                 offset += len(page_tracks)
             return _album_item(union, tracks)
 
-        return await self._run(fetch)
+        return await self._run(fetch, lock=_album_lock)

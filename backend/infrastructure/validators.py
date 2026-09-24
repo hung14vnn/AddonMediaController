@@ -80,7 +80,17 @@ def validate_audiodb_image_url(url: str) -> bool:
 
 
 SPOTIFY_CDN_SUFFIX = ".scdn.co"
-YOUTUBE_COVER_HOSTS = frozenset({"i.ytimg.com", "img.youtube.com"})
+# Exact hostnames only (no suffix match), so this cannot become an SSRF proxy.
+# lh3/yt3.googleusercontent.com serve YouTube Music's square album artwork;
+# i.ytimg.com only has 16:9 video frames.
+YOUTUBE_COVER_HOSTS = frozenset(
+    {
+        "i.ytimg.com",
+        "img.youtube.com",
+        "lh3.googleusercontent.com",
+        "yt3.googleusercontent.com",
+    }
+)
 
 
 def validate_spotify_cover_url(url: str) -> bool:

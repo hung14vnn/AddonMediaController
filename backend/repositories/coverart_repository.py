@@ -328,7 +328,11 @@ class CoverArtRepository:
             content_type = response.headers.get("content-type", "")
             if not self._is_successful_image_payload(response.content, content_type):
                 return None
-            source = "youtube" if "ytimg.com" in url else "spotify"
+            source = (
+                "youtube"
+                if "ytimg.com" in url or "googleusercontent.com" in url
+                else "spotify"
+            )
             return response.content, content_type.split(";", 1)[0].strip(), source
         except ClientDisconnectedError:
             raise

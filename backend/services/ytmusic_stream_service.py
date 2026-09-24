@@ -73,11 +73,14 @@ _YDL_OPUS_OPTIONS: dict[str, object] = {
     "format": "bestaudio/best",
     "format_sort": ["abr", "acodec:opus", "ext"],
 }
+# Callers ask for m4a because they advertise audio/mp4 (Subsonic song Child) or
+# play on AVPlayer, which cannot decode WebM/Opus. Sorting by abr first let the
+# higher-bitrate Opus stream win, so filter to m4a before ranking by bitrate.
 _YDL_M4A_OPTIONS: dict[str, object] = {
     **_YDL_BASE_OPTIONS,
     "extract_flat": False,
     "skip_download": True,
-    "format": "bestaudio/best",
+    "format": "bestaudio[ext=m4a]/bestaudio/best",
     "format_sort": ["abr", "acodec:m4a", "ext"],
 }
 
@@ -489,7 +492,11 @@ class YTMusicStreamService:
             req = self._http.build_request(
                 method, info.audio_url, headers=_upstream_headers(info, range_header)
             )
-            upstream = await self._http.send(req, stream=True)
+            # googlevideo answers 302 to hand the request to another edge node.
+            # httpx does not follow redirects by default, and a 3xx passes the
+            # >= 400 check below, so the client would receive the redirect's
+            # empty HTML body as "audio".
+            upstream = await self._http.send(req, stream=True, follow_redirects=True)
 
             if upstream.status_code in _UPSTREAM_RETRY_STATUSES and attempt == 1:
                 await upstream.aclose()

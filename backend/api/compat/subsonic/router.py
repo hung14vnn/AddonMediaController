@@ -387,6 +387,178 @@ def _index_letter(name: str) -> str:
     return ch if ch.isalpha() else "#"
 
 
+# Spotify track id -> (artist, title). Players stream with many Range requests
+# per track; without this each one would repeat the Spotify lookup before the
+# (already cached) YouTube Music search. Bounded; oldest entries go first.
+_SPOTIFY_TRACK_META: dict[str, tuple[str, str]] = {}
+_SPOTIFY_TRACK_META_MAX = 2048
+
+
+async def _spotify_track_meta(track_id: str) -> tuple[str, str]:
+    cached = _SPOTIFY_TRACK_META.get(track_id)
+    if cached is not None:
+        return cached
+    from services.spotapi_client import SpotApiClient
+
+    st = await SpotApiClient().get_track(track_id)
+    title = str(st.get("name") or "").strip()
+    if not title:
+        raise SubsonicError(70, "Song not found")
+    artist = ", ".join(
+        str(a.get("name")) for a in (st.get("artists") or [])[:2] if a.get("name")
+    )
+    if len(_SPOTIFY_TRACK_META) >= _SPOTIFY_TRACK_META_MAX:
+        _SPOTIFY_TRACK_META.pop(next(iter(_SPOTIFY_TRACK_META)))
+    _SPOTIFY_TRACK_META[track_id] = (artist, title)
+    return artist, title
+
+
+async def _stream_spotify_track(c: Ctx, track_id: str, stream_fmt: str) -> Response:
+    """Serve a Spotify search hit (``st-``) by resolving it on YouTube Music.
+
+    Spotify audio is not streamable here, so the track is matched by artist and
+    title and proxied through the same YouTube Music path as ``yt-`` ids.
+    """
+    try:
+        artist, title = await _spotify_track_meta(track_id)
+        info = await c.services.ytmusic_stream.search(artist, title, fmt=stream_fmt)
+    except SubsonicError:
+        raise
+    except Exception as e:
+        logger.warning("No stream for Spotify track %s: %s", track_id, e)
+        raise SubsonicError(70, "Song not found")
+    chunks, headers, status = await c.services.ytmusic_stream.proxy_stream(
+        info.video_id,
+        range_header=c.request.headers.get("Range"),
+        title=title,
+        artist=artist,
+        fmt=stream_fmt,
+    )
+    return StreamingResponse(
+        chunks,
+        status_code=status,
+        headers=headers,
+        media_type=headers.get("Content-Type", "application/octet-stream"),
+    )
+
+
+# "<kind>:<provider id>" -> artwork URL ("" when the provider has none).
+# Search, album and radio responses already carry artwork URLs; the mappers
+# record them here so getCoverArt can serve every row a client renders without
+# a per-image provider lookup. Lookups only happen for ids seen before a
+# restart. Bounded; oldest entries go first.
+_PROVIDER_COVER_URLS: dict[str, str] = {}
+_PROVIDER_COVER_URLS_MAX = 8192
+
+
+def _largest_image_url(images: object) -> str:
+    best, best_w = "", -1
+    for img in images if isinstance(images, list) else []:
+        url = img.get("url") if isinstance(img, dict) else None
+        width = int(img.get("width") or 0) if isinstance(img, dict) else 0
+        if url and width > best_w:
+            best, best_w = url, width
+    return best
+
+
+def _remember_cover(kind: str, provider_id: str | None, url: str) -> None:
+    if not provider_id or not url:
+        return
+    key = f"{kind}:{provider_id}"
+    if key not in _PROVIDER_COVER_URLS and len(_PROVIDER_COVER_URLS) >= _PROVIDER_COVER_URLS_MAX:
+        _PROVIDER_COVER_URLS.pop(next(iter(_PROVIDER_COVER_URLS)))
+    _PROVIDER_COVER_URLS[key] = url
+
+
+async def _spotify_cover_url(kind: str, spotify_id: str) -> str:
+    key = f"{kind}:{spotify_id}"
+    if key in _PROVIDER_COVER_URLS:
+        return _PROVIDER_COVER_URLS[key]
+    from services.spotapi_client import SpotApiClient
+
+    client = SpotApiClient()
+    if kind == "spotify_artist":
+        url = _largest_image_url((await client.get_artist(spotify_id)).get("images"))
+    elif kind == "spotify_album":
+        url = _largest_image_url((await client.get_album(spotify_id)).get("images"))
+    else:
+        st = await client.get_track(spotify_id)
+        url = _largest_image_url((st.get("album") or {}).get("images"))
+    # Cache misses too ("" = no artwork) so a missing image is not re-queried
+    # for every row that shows it.
+    if key not in _PROVIDER_COVER_URLS and len(_PROVIDER_COVER_URLS) >= _PROVIDER_COVER_URLS_MAX:
+        _PROVIDER_COVER_URLS.pop(next(iter(_PROVIDER_COVER_URLS)))
+    _PROVIDER_COVER_URLS[key] = url
+    return url
+
+
+def _ytmusic_thumbnail_url(thumbnails: object, size: int = 544) -> str:
+    """Largest YouTube Music thumbnail, upscaled to *size* when resizable.
+
+    googleusercontent artwork URLs end in a ``=w120-h120-…`` sizing suffix;
+    rewriting it returns a sharp square cover instead of a 120px one.
+    """
+    url = _largest_image_url(thumbnails)
+    if "googleusercontent.com" in url:
+        url = re.sub(r"=w\d+-h\d+", f"=w{size}-h{size}", url)
+    return url
+
+
+def _kind_of(sid: str) -> str | None:
+    """Prefix kind of *sid*, or None when it is not a recognised id."""
+    try:
+        return decode(sid)[0]
+    except SubsonicError:
+        return None
+
+
+async def _get_spotify_artist(c: Ctx, artist_id: str) -> Response:
+    """getArtist for a Spotify search hit (``sa-``): profile + discography."""
+    from services.spotapi_client import SpotApiClient
+
+    client = SpotApiClient()
+    try:
+        artist, (albums, _more, _total) = await asyncio.gather(
+            client.get_artist(artist_id),
+            client.get_artist_albums(artist_id, limit=50),
+        )
+    except Exception as e:
+        logger.warning("Spotapi artist lookup failed for %s: %s", artist_id, e)
+        raise SubsonicError(70, "Artist not found")
+    if not artist.get("id"):
+        raise SubsonicError(70, "Artist not found")
+    s = _spotapi_to_artist_id3(artist)
+    s.album = [_spotapi_to_album_id3(al) for al in albums if al.get("id")]
+    s.albumCount = len(s.album)
+    return c.render("artist", s)
+
+
+async def _get_spotify_album(c: Ctx, album_id: str) -> Response:
+    """getAlbum for a Spotify search hit (``sl-``): album + its tracklist."""
+    from services.spotapi_client import SpotApiClient
+
+    try:
+        al = await SpotApiClient().get_album(album_id)
+    except Exception as e:
+        logger.warning("Spotapi album lookup failed for %s: %s", album_id, e)
+        raise SubsonicError(70, "Album not found")
+    if not al.get("id"):
+        raise SubsonicError(70, "Album not found")
+    songs = []
+    for st in (al.get("tracks") or {}).get("items") or []:
+        if not st.get("id"):
+            continue
+        # Album tracklist entries carry an empty album stub (no id); attach this
+        # album so each song keeps its parent/albumId/coverArt linkage.
+        own = st.get("album") or {}
+        songs.append(_spotapi_to_child({**st, "album": own if own.get("id") else al}))
+    s = _spotapi_to_album_id3(al)
+    s.song = songs
+    s.songCount = len(songs)
+    s.duration = sum(song.duration or 0 for song in songs)
+    return c.render("album", s)
+
+
 def _decode_expect(sid: str, kind: str) -> str:
     k, internal = decode(sid)
     if k != kind:
@@ -448,7 +620,10 @@ async def _get_indexes(c: Ctx) -> Response:
 
 @endpoint("getArtist")
 async def _get_artist(c: Ctx) -> Response:
-    artist_mbid = _decode_expect(c.p("id") or "", "artist")
+    sid = c.p("id") or ""
+    if _kind_of(sid) == "spotify_artist":
+        return await _get_spotify_artist(c, decode(sid)[1])
+    artist_mbid = _decode_expect(sid, "artist")
     result = await c.services.view.get_artist_with_albums(artist_mbid, user=c.user)
     if result is None:
         raise SubsonicError(70, "Artist not found")
@@ -460,7 +635,10 @@ async def _get_artist(c: Ctx) -> Response:
 
 @endpoint("getAlbum")
 async def _get_album(c: Ctx) -> Response:
-    rg = _decode_expect(c.p("id") or "", "album")
+    sid = c.p("id") or ""
+    if _kind_of(sid) == "spotify_album":
+        return await _get_spotify_album(c, decode(sid)[1])
+    rg = _decode_expect(sid, "album")
     album = await c.services.view.get_album(rg, user=c.user)
     if album is None:
         raise SubsonicError(70, "Album not found")
@@ -472,7 +650,19 @@ async def _get_album(c: Ctx) -> Response:
 
 @endpoint("getSong")
 async def _get_song(c: Ctx) -> Response:
-    fid = _decode_expect(c.p("id") or "", "track")
+    sid = c.p("id") or ""
+    if _kind_of(sid) == "spotify_track":
+        from services.spotapi_client import SpotApiClient
+
+        try:
+            st = await SpotApiClient().get_track(decode(sid)[1])
+        except Exception as e:
+            logger.warning("Spotapi track lookup failed for %s: %s", sid, e)
+            raise SubsonicError(70, "Song not found")
+        if not st.get("id"):
+            raise SubsonicError(70, "Song not found")
+        return c.render("song", _spotapi_to_child(st))
+    fid = _decode_expect(sid, "track")
     track = await c.services.view.get_track(fid, user=c.user)
     if track is None:
         raise SubsonicError(70, "Song not found")
@@ -701,6 +891,7 @@ def _spotapi_created(release_date: object) -> str:
 # emit them even though Spotify search results carry no library counts.
 def _spotapi_to_artist_id3(a: dict) -> m.SArtistID3:
     aid = encode("spotify_artist", a["id"])
+    _remember_cover("spotify_artist", a["id"], _largest_image_url(a.get("images")))
     return m.SArtistID3(
         id=aid, name=a.get("name", "Unknown Artist"), coverArt=aid, albumCount=0
     )
@@ -708,11 +899,13 @@ def _spotapi_to_artist_id3(a: dict) -> m.SArtistID3:
 
 def _spotapi_to_artist_file(a: dict) -> m.SArtist:
     aid = encode("spotify_artist", a["id"])
+    _remember_cover("spotify_artist", a["id"], _largest_image_url(a.get("images")))
     return m.SArtist(id=aid, name=a.get("name", "Unknown Artist"), coverArt=aid)
 
 
 def _spotapi_to_album_id3(al: dict) -> m.SAlbumID3:
     alid = encode("spotify_album", al["id"])
+    _remember_cover("spotify_album", al["id"], _largest_image_url(al.get("images")))
     artist_name = al["artists"][0]["name"] if al.get("artists") else "Unknown"
     artist_id = encode("spotify_artist", al["artists"][0]["id"]) if al.get("artists") else None
     year = int(al["release_date"][:4]) if al.get("release_date") else None
@@ -726,6 +919,7 @@ def _spotapi_to_album_id3(al: dict) -> m.SAlbumID3:
 
 def _spotapi_to_album_child(al: dict) -> m.SChild:
     alid = encode("spotify_album", al["id"])
+    _remember_cover("spotify_album", al["id"], _largest_image_url(al.get("images")))
     artist_name = al["artists"][0]["name"] if al.get("artists") else "Unknown"
     artist_id = encode("spotify_artist", al["artists"][0]["id"]) if al.get("artists") else None
     year = int(al["release_date"][:4]) if al.get("release_date") else None
@@ -747,10 +941,14 @@ def _spotapi_to_child(st: dict) -> m.SChild:
     artist_name = st["artists"][0]["name"] if st.get("artists") else "Unknown"
     artist_id = encode("spotify_artist", st["artists"][0]["id"]) if st.get("artists") else None
     duration = int(st["duration_ms"] / 1000) if st.get("duration_ms") else 0
+    cover = _largest_image_url(album.get("images"))
+    _remember_cover("spotify_album", album.get("id"), cover)
+    _remember_cover("spotify_track", st["id"], cover)
     return m.SChild(
         id=tid, isDir=False, title=st.get("name", "Unknown Track"),
         album=album_name, artist=artist_name, parent=alid, albumId=alid,
-        artistId=artist_id, duration=duration, coverArt=alid, type="music", mediaType="song",
+        # No album id: point at the track itself; getCoverArt resolves both.
+        artistId=artist_id, duration=duration, coverArt=alid or tid, type="music", mediaType="song",
         suffix="m4a", contentType="audio/mp4", size=10_000_000, bitRate=320,
         path=tid + ".m4a", track=st.get("track_number") or 1,
         discNumber=int(st.get("disc_number") or 1), year=year,
@@ -856,8 +1054,27 @@ async def _get_cover_art(c: Ctx) -> Response:
                     entry_cover, is_disconnected=disc
                 )
     elif kind == "ytmusic":
-        cover_url = await c.services.playlists.get_source_cover_url(internal, c.user)
-        if cover_url:
+        # Saved-playlist artwork first, then the artwork recorded from a radio
+        # or search response, then YouTube's own frame for the video id, which
+        # always exists and so still covers ids seen before a restart.
+        candidates = [
+            await c.services.playlists.get_source_cover_url(internal, c.user),
+            _PROVIDER_COVER_URLS.get(f"ytmusic:{internal}"),
+            f"https://i.ytimg.com/vi/{internal}/hqdefault.jpg",
+        ]
+        for cover_url in dict.fromkeys(u for u in candidates if u):
+            result = await c.services.coverart.get_external_cover(
+                cover_url, is_disconnected=disc
+            )
+            if result:
+                break
+    elif kind in ("spotify_artist", "spotify_album", "spotify_track"):
+        try:
+            cover_url = await _spotify_cover_url(kind, internal)
+        except Exception as e:
+            logger.warning("Spotapi cover lookup failed for %s: %s", raw_id, e)
+            cover_url = ""
+        if cover_url and validate_provider_cover_url(cover_url):
             result = await c.services.coverart.get_external_cover(
                 cover_url, is_disconnected=disc
             )
@@ -987,6 +1204,9 @@ async def _stream(c: Ctx) -> Response:
     except SubsonicError:
         raise SubsonicError(70, "Song not found")
     fmt = c.decoded.enum("format", {"raw", "mp3", "opus", "m4a", "aac"})
+    if kind == "spotify_track":
+        # The song Child advertises m4a/audio/mp4, so serve exactly that.
+        return await _stream_spotify_track(c, fid, "m4a")
     if kind == "ytmusic":
         stream_fmt = "m4a" if fmt in ("m4a", "mp3", "aac", None) else ("opus" if fmt == "opus" else "m4a")
         chunks, headers, status = await c.services.ytmusic_stream.proxy_stream(
@@ -1035,6 +1255,8 @@ async def _download(c: Ctx) -> Response:
         kind, fid = decode(sid)
     except SubsonicError:
         raise SubsonicError(70, "Song not found")
+    if kind == "spotify_track":
+        return await _stream_spotify_track(c, fid, "m4a")
     if kind == "ytmusic":
         chunks, headers, status = await c.services.ytmusic_stream.proxy_stream(
             fid, range_header=c.request.headers.get("Range")
@@ -2011,6 +2233,11 @@ def _ytmusic_to_child(t: dict) -> m.SChild | None:
 
     album = t.get("album") or {}
     album_name = album.get("name") or "hify Discovery Radio"
+    # Radio tracks are not in any saved playlist, so getCoverArt has no stored
+    # artwork for them; keep the one YouTube Music sent with the track.
+    _remember_cover(
+        "ytmusic", vid, _ytmusic_thumbnail_url(t.get("thumbnails") or t.get("thumbnail"))
+    )
 
     return m.SChild(
         id=tid,
