@@ -673,9 +673,29 @@ async def _search(c: Ctx):
     return artists, albums, songs, spot_artists, spot_albums, spot_songs
 
 
+def _spotapi_created(release_date: object) -> str:
+    """ISO timestamp for the spec-required ``created`` field.
+
+    Spotify has no library-added date; the release date is the closest stable
+    value and keeps clients that require ``created`` from rejecting the item.
+    """
+    s = str(release_date or "")
+    if len(s) >= 10 and s[:4].isdigit():
+        return f"{s[:10]}T00:00:00Z"
+    if len(s) >= 4 and s[:4].isdigit():
+        return f"{s[:4]}-01-01T00:00:00Z"
+    return "1970-01-01T00:00:00Z"
+
+
+# The Subsonic schema marks ArtistID3.albumCount, AlbumID3.songCount/duration/
+# created and Child.created as required. Strict clients (Kotlin/Java models)
+# drop the whole response when one is missing, so these mappers must always
+# emit them even though Spotify search results carry no library counts.
 def _spotapi_to_artist_id3(a: dict) -> m.SArtistID3:
     aid = encode("spotify_artist", a["id"])
-    return m.SArtistID3(id=aid, name=a.get("name", "Unknown Artist"), coverArt=aid)
+    return m.SArtistID3(
+        id=aid, name=a.get("name", "Unknown Artist"), coverArt=aid, albumCount=0
+    )
 
 
 def _spotapi_to_artist_file(a: dict) -> m.SArtist:
@@ -690,7 +710,9 @@ def _spotapi_to_album_id3(al: dict) -> m.SAlbumID3:
     year = int(al["release_date"][:4]) if al.get("release_date") else None
     return m.SAlbumID3(
         id=alid, name=al.get("name", "Unknown Album"), artist=artist_name,
-        artistId=artist_id, coverArt=alid, year=year
+        artistId=artist_id, coverArt=alid, year=year,
+        songCount=int(al.get("total_tracks") or 0), duration=0,
+        created=_spotapi_created(al.get("release_date")),
     )
 
 
@@ -702,7 +724,8 @@ def _spotapi_to_album_child(al: dict) -> m.SChild:
     return m.SChild(
         id=alid, isDir=True, title=al.get("name", "Unknown Album"),
         album=al.get("name", "Unknown Album"), artist=artist_name,
-        artistId=artist_id, coverArt=alid, year=year
+        artistId=artist_id, coverArt=alid, year=year,
+        created=_spotapi_created(al.get("release_date")),
     )
 
 
@@ -715,13 +738,15 @@ def _spotapi_to_child(st: dict) -> m.SChild:
     year = int(year_str[:4]) if year_str[:4].isdigit() else None
     artist_name = st["artists"][0]["name"] if st.get("artists") else "Unknown"
     artist_id = encode("spotify_artist", st["artists"][0]["id"]) if st.get("artists") else None
-    duration = int(st["duration_ms"] / 1000) if st.get("duration_ms") else None
+    duration = int(st["duration_ms"] / 1000) if st.get("duration_ms") else 0
     return m.SChild(
         id=tid, isDir=False, title=st.get("name", "Unknown Track"),
         album=album_name, artist=artist_name, parent=alid, albumId=alid,
         artistId=artist_id, duration=duration, coverArt=alid, type="music", mediaType="song",
         suffix="m4a", contentType="audio/mp4", size=10_000_000, bitRate=320,
-        path=tid + ".m4a", track=st.get("track_number") or 1, year=year
+        path=tid + ".m4a", track=st.get("track_number") or 1,
+        discNumber=int(st.get("disc_number") or 1), year=year,
+        created=_spotapi_created(album.get("release_date")),
     )
 
 
