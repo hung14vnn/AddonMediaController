@@ -9,6 +9,7 @@ library calls off the event loop.
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Mapping
 from typing import Any, Callable
 
@@ -233,31 +234,104 @@ def _playlist_tracks(content: Mapping[str, Any]) -> list[dict[str, Any]]:
     return tracks
 
 
+# SpotAPI keeps its warm state (client token, access token, GraphQL hashes) on
+# the BaseClient inside each Song/Artist instance. A fresh instance pays a
+# 5-10s bootstrap on its first request, so the process shares one of each. The
+# underlying client mutates that state on refresh and is not thread-safe, so
+# every call on a shared instance is serialised behind its own lock.
+_shared_song: Any = None
+_shared_artist: Any = None
+_song_lock = threading.Lock()
+_artist_lock = threading.Lock()
+_init_lock = threading.Lock()
+
+
+def _shared(kind: str) -> tuple[Any, threading.Lock]:
+    global _shared_song, _shared_artist
+    with _init_lock:
+        if kind == "song":
+            if _shared_song is None:
+                from spotapi import Song
+
+                _shared_song = Song()
+            return _shared_song, _song_lock
+        if _shared_artist is None:
+            from spotapi import Artist
+
+            _shared_artist = Artist()
+        return _shared_artist, _artist_lock
+
+
 class SpotApiClient:
     """Expose the subset of the existing Spotify catalog client used by routes."""
 
-    async def _run(self, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        return await asyncio.to_thread(function, *args, **kwargs)
+    async def _run(
+        self,
+        function: Callable[..., Any],
+        *args: Any,
+        lock: threading.Lock | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        if lock is None:
+            return await asyncio.to_thread(function, *args, **kwargs)
+
+        def locked() -> Any:
+            with lock:
+                return function(*args, **kwargs)
+
+        return await asyncio.to_thread(locked)
 
     @staticmethod
     def _song() -> Any:
-        from spotapi import Song
-
-        return Song()
+        return _shared("song")[0]
 
     @staticmethod
     def _artist() -> Any:
-        from spotapi import Artist
-
-        return Artist()
+        return _shared("artist")[0]
 
     async def _search_raw(self, query: str, limit: int, offset: int) -> dict[str, Any]:
+        song, lock = _shared("song")
         return await self._run(
-            self._song().query_songs,
+            song.query_songs,
             query,
             limit=max(10, min(limit, 100)),
             offset=offset,
+            lock=lock,
         )
+
+    async def search_all(
+        self, query: str, limit: int = 5
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+        """Artists, albums and tracks for one query with two upstream requests.
+
+        The artist and song searches run concurrently, and albums are derived
+        from the song response instead of repeating it. This is the hot path
+        behind Subsonic ``search3``, where clients search on every keystroke
+        and time out on slow responses.
+        """
+        artists_task = self.search_artists(query, limit=limit)
+        raw_task = self._search_raw(query, limit, 0)
+        (artists, _has_more), raw = await asyncio.gather(artists_task, raw_task)
+        tracks = [_track_item(item) for item in _search_items(raw, "tracks")][:limit]
+        albums = self._albums_from_raw(raw)[:limit]
+        return artists, albums, tracks
+
+    @staticmethod
+    def _albums_from_raw(raw: dict[str, Any]) -> list[dict[str, Any]]:
+        direct = [_unwrap_data(item) for item in _search_items(raw, "albums")]
+        result = [_album_item(item) for item in direct]
+        if not result:
+            # Some Pathfinder revisions omit albumsV2 from searchDesktop. Track
+            # results still carry albumOfTrack, which is a useful public fallback.
+            seen: set[str] = set()
+            for item in _search_items(raw, "tracks"):
+                track = _track_item(item)
+                album = track.get("album") or {}
+                album_id = album.get("id")
+                if album_id and album_id not in seen:
+                    seen.add(album_id)
+                    result.append(album)
+        return result
 
     async def search_tracks(
         self, query: str, limit: int = 10, offset: int = 0, market: str = "VN"
@@ -271,11 +345,13 @@ class SpotApiClient:
     async def search_artists(
         self, query: str, limit: int = 10, offset: int = 0
     ) -> tuple[list[dict[str, Any]], bool]:
+        artist, lock = _shared("artist")
         raw = await self._run(
-            self._artist().query_artists,
+            artist.query_artists,
             query,
             limit=max(10, min(limit, 100)),
             offset=offset,
+            lock=lock,
         )
         items = [_unwrap_data(item) for item in _search_items(raw, "artists")]
         result = [
@@ -302,26 +378,15 @@ class SpotApiClient:
         self, query: str, limit: int = 10, offset: int = 0, market: str = "VN"
     ) -> tuple[list[dict[str, Any]], bool]:
         raw = await self._search_raw(query, limit, offset)
-        direct = [_unwrap_data(item) for item in _search_items(raw, "albums")]
-        result = [_album_item(item) for item in direct]
-        if not result:
-            # Some Pathfinder revisions omit albumsV2 from searchDesktop. Track
-            # results still carry albumOfTrack, which is a useful public fallback.
-            seen: set[str] = set()
-            for item in _search_items(raw, "tracks"):
-                track = _track_item(item)
-                album = track.get("album") or {}
-                album_id = album.get("id")
-                if album_id and album_id not in seen:
-                    seen.add(album_id)
-                    result.append(album)
+        result = self._albums_from_raw(raw)
         search = _mapping(_mapping(raw.get("data")).get("searchV2"))
         albums = _mapping(search.get("albumsV2"))
         total = int(albums.get("totalCount") or len(result))
         return result[:limit], offset + len(result) < total
 
     async def get_track(self, track_id: str) -> dict[str, Any]:
-        raw = await self._run(self._song().get_track_info, track_id)
+        song, lock = _shared("song")
+        raw = await self._run(song.get_track_info, track_id, lock=lock)
         return _track_item(_mapping(_mapping(raw.get("data")).get("trackUnion")))
 
     async def get_playlist(self, playlist_id: str) -> dict[str, Any]:

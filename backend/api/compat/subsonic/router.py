@@ -50,6 +50,10 @@ router = APIRouter(prefix="/subsonic", route_class=MsgSpecRoute)
 _PUBLIC = {"getopensubsonicextensions"}
 _BINARY = {"stream", "download", "getcoverart", "getavatar", "gettranscodestream"}
 _AUTH_CODES = {10, 40, 41, 42, 43, 44, 50}
+# Upper bound on the Spotify leg of search2/search3. Subsonic clients search
+# per keystroke and give up on slow responses, so local results must not wait
+# on a cold SpotAPI session (its first request can take 5-10s).
+_SPOTAPI_SEARCH_TIMEOUT_S = 4.0
 _PLAYBACK_REPORT_JSON_FIELDS = frozenset(
     {"mediaId", "mediaType", "positionMs", "state", "playbackRate", "ignoreScrobble"}
 )
@@ -645,30 +649,34 @@ async def _search(c: Ctx):
             limit=s_count, offset=s_offset, q=q, user=c.user
         )
         
-    spot_artists = []
-    spot_albums = []
-    spot_songs = []
-    if q:
+    spot_artists: list = []
+    spot_albums: list = []
+    spot_songs: list = []
+    if q and (a_count or al_count or s_count):
         from services.spotapi_client import SpotApiClient
-        spotapi = SpotApiClient()
-        if a_count:
-            try:
-                sa_res, _ = await spotapi.search_artists(q, limit=min(5, a_count))
-                spot_artists.extend(sa_res)
-            except Exception as e:
-                logger.warning("Spotapi artist search failed: %s", e)
-        if al_count:
-            try:
-                sl_res, _ = await spotapi.search_albums(q, limit=min(5, al_count))
-                spot_albums.extend(sl_res)
-            except Exception as e:
-                logger.warning("Spotapi album search failed: %s", e)
-        if s_count:
-            try:
-                st_res, _ = await spotapi.search_tracks(q, limit=min(5, s_count))
-                spot_songs.extend(st_res)
-            except Exception as e:
-                logger.warning("Spotapi track search failed: %s", e)
+
+        # Clients search on every keystroke and drop slow responses, so the
+        # Spotify leg is bounded: on timeout the local results still go out
+        # on time and the upstream call keeps running in its worker thread,
+        # which leaves the shared SpotAPI session warm for the next search.
+        try:
+            sa_res, sl_res, st_res = await asyncio.wait_for(
+                SpotApiClient().search_all(q, limit=5),
+                timeout=_SPOTAPI_SEARCH_TIMEOUT_S,
+            )
+            if a_count:
+                spot_artists = sa_res[: min(5, a_count)]
+            if al_count:
+                spot_albums = sl_res[: min(5, al_count)]
+            if s_count:
+                spot_songs = st_res[: min(5, s_count)]
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Spotapi search timed out after %ss; returning local results only",
+                _SPOTAPI_SEARCH_TIMEOUT_S,
+            )
+        except Exception as e:
+            logger.warning("Spotapi search failed: %s", e)
 
     return artists, albums, songs, spot_artists, spot_albums, spot_songs
 
