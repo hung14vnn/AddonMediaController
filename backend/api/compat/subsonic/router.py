@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 import time
 from dataclasses import dataclass
@@ -643,33 +644,104 @@ async def _search(c: Ctx):
         songs, _ = await c.services.view.get_tracks_page(
             limit=s_count, offset=s_offset, q=q, user=c.user
         )
-    return artists, albums, songs
+        
+    spot_artists = []
+    spot_albums = []
+    spot_songs = []
+    if q:
+        from services.spotapi_client import SpotApiClient
+        spotapi = SpotApiClient()
+        if a_count:
+            try:
+                sa_res, _ = await spotapi.search_artists(q, limit=min(5, a_count))
+                spot_artists.extend(sa_res)
+            except Exception as e:
+                logger.warning("Spotapi artist search failed: %s", e)
+        if al_count:
+            try:
+                sl_res, _ = await spotapi.search_albums(q, limit=min(5, al_count))
+                spot_albums.extend(sl_res)
+            except Exception as e:
+                logger.warning("Spotapi album search failed: %s", e)
+        if s_count:
+            try:
+                st_res, _ = await spotapi.search_tracks(q, limit=min(5, s_count))
+                spot_songs.extend(st_res)
+            except Exception as e:
+                logger.warning("Spotapi track search failed: %s", e)
+
+    return artists, albums, songs, spot_artists, spot_albums, spot_songs
+
+
+def _spotapi_to_artist_id3(a: dict) -> m.SArtistID3:
+    aid = encode("spotify_artist", a["id"])
+    return m.SArtistID3(id=aid, name=a.get("name", "Unknown Artist"), coverArt=aid)
+
+
+def _spotapi_to_artist_file(a: dict) -> m.SArtist:
+    aid = encode("spotify_artist", a["id"])
+    return m.SArtist(id=aid, name=a.get("name", "Unknown Artist"), coverArt=aid)
+
+
+def _spotapi_to_album_id3(al: dict) -> m.SAlbumID3:
+    alid = encode("spotify_album", al["id"])
+    artist_name = al["artists"][0]["name"] if al.get("artists") else "Unknown"
+    artist_id = encode("spotify_artist", al["artists"][0]["id"]) if al.get("artists") else None
+    year = int(al["release_date"][:4]) if al.get("release_date") else None
+    return m.SAlbumID3(
+        id=alid, name=al.get("name", "Unknown Album"), artist=artist_name,
+        artistId=artist_id, coverArt=alid, year=year
+    )
+
+
+def _spotapi_to_album_child(al: dict) -> m.SChild:
+    alid = encode("spotify_album", al["id"])
+    artist_name = al["artists"][0]["name"] if al.get("artists") else "Unknown"
+    artist_id = encode("spotify_artist", al["artists"][0]["id"]) if al.get("artists") else None
+    year = int(al["release_date"][:4]) if al.get("release_date") else None
+    return m.SChild(
+        id=alid, isDir=True, title=al.get("name", "Unknown Album"),
+        album=al.get("name", "Unknown Album"), artist=artist_name,
+        artistId=artist_id, coverArt=alid, year=year
+    )
+
+
+def _spotapi_to_child(st: dict) -> m.SChild:
+    tid = encode("spotify_track", st["id"])
+    album_name = st["album"]["name"] if st.get("album") else "Unknown"
+    alid = encode("spotify_album", st["album"]["id"]) if st.get("album") else None
+    artist_name = st["artists"][0]["name"] if st.get("artists") else "Unknown"
+    artist_id = encode("spotify_artist", st["artists"][0]["id"]) if st.get("artists") else None
+    duration = int(st["duration_ms"] / 1000) if st.get("duration_ms") else None
+    return m.SChild(
+        id=tid, isDir=False, title=st.get("name", "Unknown Track"),
+        album=album_name, artist=artist_name, parent=alid, albumId=alid,
+        artistId=artist_id, duration=duration, coverArt=alid, type="music", mediaType="song"
+    )
 
 
 @endpoint("search3")
 async def _search3(c: Ctx) -> Response:
-    artists, albums, songs = await _search(c)
+    artists, albums, songs, sa, sl, st = await _search(c)
+    out_artists = [m.to_artist_id3(a) for a in artists] + [_spotapi_to_artist_id3(a) for a in sa]
+    out_albums = [m.to_album_id3(a) for a in albums] + [_spotapi_to_album_id3(al) for al in sl]
+    out_songs = [c.child(t) for t in songs] + [_spotapi_to_child(t) for t in st]
     return c.render(
         "searchResult3",
-        {
-            "artist": [m.to_artist_id3(a) for a in artists],
-            "album": [m.to_album_id3(a) for a in albums],
-            "song": [c.child(t) for t in songs],
-        },
+        {"artist": out_artists, "album": out_albums, "song": out_songs},
     )
 
 
 @endpoint("search2")
 async def _search2(c: Ctx) -> Response:
-    artists, albums, songs = await _search(c)
+    artists, albums, songs, sa, sl, st = await _search(c)
+    out_artists = [m.to_artist_file(a) for a in artists] + [_spotapi_to_artist_file(a) for a in sa]
+    out_albums = [m.to_album_child(a) for a in albums] + [_spotapi_to_album_child(al) for al in sl]
+    out_songs = [c.child(t) for t in songs] + [_spotapi_to_child(t) for t in st]
     return c.render(
         "searchResult2",
-        {
-            "artist": [m.to_artist_file(a) for a in artists],
-            "album": [m.to_album_child(a) for a in albums],
-            "song": [c.child(t) for t in songs],
-        },
-    )
+        {"artist": out_artists, "album": out_albums, "song": out_songs},
+
 
 
 _PLACEHOLDER_SVG = (
@@ -1856,32 +1928,144 @@ async def _get_top_songs(c: Ctx) -> Response:
     if not artist:
         raise SubsonicError(10, "Required parameter 'artist' is missing")
     count = c.pint("count", 50, minimum=1, maximum=500) or 50
-    artists, _ = await c.services.view.get_artists(limit=10, q=artist, user=c.user)
-    if not any(item.name.casefold() == artist.casefold() for item in artists):
-        raise SubsonicError(70, "Artist not found")
+    
+    if c.services.ytmusic_stream:
+        yt_tracks = await c.services.ytmusic_stream.get_artist_top_songs(artist, limit=count)
+        if yt_tracks:
+            return c.render("topSongs", {"song": [_ytmusic_to_child(t) for t in yt_tracks]})
+            
     tracks = await c.services.discover.get_top_songs(
         artist, user_id=c.user.id, count=count, user=c.user
     )
     return c.render("topSongs", {"song": [c.child(t) for t in tracks]})
 
 
-async def _similar_songs(c: Ctx) -> list:
-    artist_mbid = _decode_expect(c.p("id") or "", "artist")
-    count = c.pint("count", 50, minimum=1, maximum=500) or 50
-    if await c.services.view.get_artist_with_albums(artist_mbid, user=c.user) is None:
-        raise SubsonicError(70, "Artist not found")
-    return await c.services.discover.get_similar_songs(
-        artist_mbid, user_id=c.user.id, count=count, user=c.user
+def _parse_length(t: dict) -> int | None:
+    if isinstance(t.get("duration_seconds"), (int, float)):
+        return int(t["duration_seconds"])
+    length = t.get("length") or t.get("duration")
+    if not length or not isinstance(length, str):
+        return None
+    try:
+        secs = 0
+        for part in length.split(":"):
+            secs = secs * 60 + int(part)
+        return secs
+    except ValueError:
+        return None
+
+
+def _ytmusic_to_child(t: dict) -> m.SChild | None:
+    vid = t.get("videoId")
+    if not vid:
+        return None
+    tid = encode("ytmusic", vid)
+
+    artists = [a.get("name") for a in (t.get("artists") or []) if a and a.get("name")]
+    artist_name = ", ".join(artists) if artists else "Unknown Artist"
+
+    album = t.get("album") or {}
+    album_name = album.get("name") or "hify Discovery Radio"
+
+    return m.SChild(
+        id=tid,
+        isDir=False,
+        isVideo=False,
+        title=t.get("title") or "Unknown",
+        album=album_name,
+        artist=artist_name,
+        coverArt=tid,
+        duration=_parse_length(t),
+        year=int(t["year"]) if str(t.get("year") or "").isdigit() else None,
+        # Must match what your stream endpoint really serves:
+        suffix="m4a",
+        contentType="audio/mp4",
+        bitRate=128,
+        type="music",
+        mediaType="song",
     )
+
+async def _similar_songs(c: Ctx) -> list[m.SChild]:
+    count = c.pint("count", 50, minimum=1, maximum=500) or 50
+
+    raw_id = c.p("id")
+    if not raw_id:
+        raise SubsonicError(10, "Required parameter is missing: id")
+    try:
+        kind, internal = decode(raw_id)
+    except Exception:
+        raise SubsonicError(70, "Media not found")
+
+    seeds: list[tuple[str, str]] = []
+    try:
+        if kind == "track":
+            track = await c.services.view.get_track(internal, user=c.user)
+            if track:
+                seeds.append((track.artist_name, track.title))
+        elif kind == "album":
+            tracks = await c.services.view.get_album_tracks(internal, user=c.user) or []
+            for t in random.sample(tracks, min(3, len(tracks))):
+                seeds.append((t.artist_name, t.title))
+        elif kind == "artist":
+            artist_tuple = await c.services.view.get_artist_with_albums(internal, user=c.user)
+            if artist_tuple:
+                artist_view, _ = artist_tuple
+                tracks = await c.services.discover.get_top_songs(
+                    artist_view.name, user_id=c.user.id, count=3, user=c.user
+                ) or []
+                for t in tracks:
+                    seeds.append((t.artist_name, t.title))
+    except Exception as e:
+        logger.warning("Seed lookup failed for %s: %s", raw_id, e)
+
+    if not seeds:
+        raise SubsonicError(70, "Media not found")
+
+    ytmusic = c.services.ytmusic_stream
+    if not ytmusic:
+        return []
+
+    async def resolve(artist_name: str, title: str) -> str | None:
+        try:
+            info = await ytmusic.search(artist_name, title)
+            return info.video_id if info and info.video_id else None
+        except Exception as e:
+            logger.warning("YTMusic search failed for seed %s - %s: %s", artist_name, title, e)
+            return None
+
+    results = await asyncio.gather(*(resolve(a, t) for a, t in seeds))
+    video_ids = list(dict.fromkeys(v for v in results if v))
+    if not video_ids:
+        return []
+
+    try:
+        radio_tracks = await ytmusic.get_smart_discover(video_ids, limit=count + len(video_ids))
+    except Exception as e:
+        logger.warning("YTMusic radio mix failed: %s", e)
+        return []
+
+    exclude = {encode("ytmusic", v) for v in video_ids}
+    children: list[m.SChild] = []
+    seen: set[str] = set()
+    for t in radio_tracks or []:
+        child = _ytmusic_to_child(t)
+        if not child or child.id in seen or child.id in exclude:
+            continue
+        seen.add(child.id)
+        children.append(child)
+        if len(children) >= count:
+            break
+
+    return children
 
 
 @endpoint("getSimilarSongs2")
 async def _get_similar_songs2(c: Ctx) -> Response:
     tracks = await _similar_songs(c)
-    return c.render("similarSongs2", {"song": [c.child(t) for t in tracks]})
+    return c.render("similarSongs2", {"song": tracks})
 
 
 @endpoint("getSimilarSongs")
 async def _get_similar_songs(c: Ctx) -> Response:
     tracks = await _similar_songs(c)
-    return c.render("similarSongs", {"song": [c.child(t) for t in tracks]})
+    return c.render("similarSongs", {"song": tracks})

@@ -16,6 +16,9 @@ _PREFIX = {
     "playlist": "pl-",
     "genre": "ge-",
     "ytmusic": "yt-",
+    "spotify_artist": "sa-",
+    "spotify_album": "sl-",
+    "spotify_track": "st-",
 }
 _BY_PREFIX = {v: k for k, v in _PREFIX.items()}
 

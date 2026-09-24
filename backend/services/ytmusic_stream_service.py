@@ -381,6 +381,32 @@ class YTMusicStreamService:
 
         return merged
 
+    async def get_artist_top_songs(self, artist_name: str, limit: int = 50) -> list[dict]:
+        """Fetch top songs for an artist from YouTube Music."""
+        def _fetch():
+            yt = getattr(self, "_yt_client", None) or YTMusic()
+            res = yt.search(artist_name, filter="artists", limit=1)
+            if not res:
+                return []
+            artist_info = yt.get_artist(res[0]["browseId"])
+            songs = artist_info.get("songs")
+            if not songs:
+                return []
+            if songs.get("browseId") and limit > len(songs.get("results", [])):
+                try:
+                    full = yt.get_playlist(songs["browseId"], limit=limit)
+                    return full.get("tracks", songs.get("results", []))
+                except Exception:
+                    return songs.get("results", [])
+            return songs.get("results", [])
+
+        try:
+            tracks = await self._run_blocking(_fetch, what="artist top songs")
+            return tracks[:limit] if tracks else []
+        except Exception as e:
+            logger.warning("YTMusic top songs failed for %r: %s", artist_name, e)
+            return []
+
     def evict_by_video_id(self, video_id: str) -> None:
         """Drop every cached entry for *video_id*."""
         self._cache.evict(f"{video_id}:opus")
