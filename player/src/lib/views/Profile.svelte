@@ -125,18 +125,14 @@
 			</div>
 			<button
 				class="btn small"
-				disabled={starting || !!scan?.scanning || (!!ui.me && !isAdmin)}
+				disabled={starting || !!scan?.scanning}
 				onclick={rescan}
-				title={ui.me && !isAdmin ? 'Only administrators can start a scan' : undefined}
 			>
 				{scan?.scanning ? 'Scanning…' : starting ? 'Starting…' : 'Rescan'}
 			</button>
 		</div>
 		{#if scan?.scanning}
 			<div class="progress" aria-hidden="true"><span></span></div>
-		{/if}
-		{#if ui.me && !isAdmin}
-			<p class="note">Only administrators can start a scan. New music still appears automatically when the server scans.</p>
 		{/if}
 	</div>
 

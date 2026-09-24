@@ -1,48 +1,12 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
-	import { AlertCircle, Loader2 } from 'lucide-svelte';
-	import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
+	import { onMount, tick, untrack } from 'svelte';
 
 	type AmLyricsElement = HTMLElement & {
 		currentTime: number;
 		duration: number;
 		interpolate: boolean;
+		fetchLyrics?: () => void;
 	};
-
-	const AM_LYRICS_CDN_URL =
-		'https://cdn.jsdelivr.net/npm/@uimaxbai/am-lyrics/dist/src/am-lyrics.min.js';
-	let amLyricsCdnPromise: Promise<void> | undefined;
-
-	function loadAmLyricsFromCdn(): Promise<void> {
-		if (customElements.get('am-lyrics')) return Promise.resolve();
-		if (amLyricsCdnPromise) return amLyricsCdnPromise;
-
-		amLyricsCdnPromise = new Promise((resolve, reject) => {
-			const existingScript = document.querySelector<HTMLScriptElement>(
-				'script[data-am-lyrics-cdn]'
-			);
-			const script = existingScript ?? document.createElement('script');
-
-			const onLoad = () => {
-				customElements.whenDefined('am-lyrics').then(() => resolve(), reject);
-			};
-			const onError = () => reject(new Error('Could not load am-lyrics from jsDelivr'));
-
-			script.addEventListener('load', onLoad, { once: true });
-			script.addEventListener('error', onError, { once: true });
-
-			if (!existingScript) {
-				script.type = 'module';
-				script.src = AM_LYRICS_CDN_URL;
-				script.async = true;
-				script.crossOrigin = 'anonymous';
-				script.dataset.amLyricsCdn = 'true';
-				document.head.appendChild(script);
-			}
-		});
-
-		return amLyricsCdnPromise;
-	}
 
 	interface Props {
 		title: string;
@@ -53,7 +17,63 @@
 		isPlaying?: boolean;
 		isrc?: string;
 		onseek?: (seconds: number) => void;
-		onavailability?: (available: boolean) => void;
+	}
+
+	const AM_LYRICS_CDN_URL =
+		'https://cdn.jsdelivr.net/npm/@uimaxbai/am-lyrics/dist/src/am-lyrics.min.js';
+
+	let cdnPromise: Promise<void> | null = null;
+
+	function loadAmLyrics(): Promise<void> {
+		if (typeof window === 'undefined') return Promise.resolve();
+		if (customElements.get('am-lyrics')) return Promise.resolve();
+		if (cdnPromise) return cdnPromise;
+
+		cdnPromise = new Promise((resolve, reject) => {
+			const existingScript =
+				document.querySelector<HTMLScriptElement>(
+					'script[data-am-lyrics-cdn]'
+				);
+
+			if (existingScript) {
+				customElements
+					.whenDefined('am-lyrics')
+					.then(resolve)
+					.catch(reject);
+
+				return;
+			}
+
+			const script = document.createElement('script');
+
+			script.type = 'module';
+			script.src = AM_LYRICS_CDN_URL;
+			script.async = true;
+			script.crossOrigin = 'anonymous';
+			script.dataset.amLyricsCdn = 'true';
+
+			script.onload = () => {
+				customElements
+					.whenDefined('am-lyrics')
+					.then(resolve)
+					.catch(reject);
+			};
+
+			script.onerror = () => {
+				cdnPromise = null;
+				script.remove();
+
+				reject(
+					new Error(
+						'Failed to load am-lyrics from jsDelivr'
+					)
+				);
+			};
+
+			document.head.appendChild(script);
+		});
+
+		return cdnPromise;
 	}
 
 	let {
@@ -64,252 +84,294 @@
 		currentTimeSeconds = 0,
 		isPlaying = false,
 		isrc = '',
-		onseek = () => {},
-		onavailability = () => {}
+		onseek = () => {}
 	}: Props = $props();
 
 	let element = $state<AmLyricsElement | null>(null);
-	let loading = $state(true);
-	let failed = $state(false);
-	let lyricsObserver: MutationObserver | undefined;
-	let initialSyncPending = true;
-	let initialSyncFrame: number | undefined;
-	const disableWordInterpolation = usesMobileLowPowerVisuals();
-
-	let clockFrame: number | undefined;
+	let clockFrame: number | null = null;
 	let anchorMediaTimeMs = 0;
 	let anchorWallClockMs = 0;
 
-	function publishCurrentTime(valueMs: number): void {
-		if (!element) return;
-		element.currentTime = valueMs;
-	}
+	let currentSongKey = $derived(
+		[title, artist, album, isrc, durationSeconds].join('|')
+	);
 
-	function stopClock(): void {
-		if (clockFrame !== undefined) cancelAnimationFrame(clockFrame);
-		clockFrame = undefined;
-	}
-
-	function runClock(): void {
-		clockFrame = requestAnimationFrame(() => {
-			clockFrame = undefined;
-			if (!element || !isPlaying) return;
-			const elapsed = performance.now() - anchorWallClockMs;
-			const projected = anchorMediaTimeMs + elapsed;
-			const ceiling = durationSeconds > 0 ? durationSeconds * 1000 : Number.POSITIVE_INFINITY;
-			publishCurrentTime(Math.min(projected, ceiling));
-			runClock();
-		});
-	}
-
-	function anchorClock(mediaTimeMs: number): void {
-		anchorMediaTimeMs = mediaTimeMs;
-		anchorWallClockMs = performance.now();
-		publishCurrentTime(mediaTimeMs);
-		stopClock();
-		if (isPlaying) runClock();
-	}
-
-	function applyAttributes(target: AmLyricsElement) {
-		target.setAttribute('song-title', title);
-		target.setAttribute('song-artist', artist);
-		target.setAttribute('query', `${title} ${artist}`.trim());
-		if (album) target.setAttribute('song-album', album);
-		else target.removeAttribute('song-album');
-		if (durationSeconds > 0) {
-			target.setAttribute('song-duration', String(Math.round(durationSeconds * 1000)));
-			target.duration = Math.round(durationSeconds * 1000);
-		}
-		if (isrc) target.setAttribute('isrc', isrc);
-		else target.removeAttribute('isrc');
-		if (initialSyncPending) target.removeAttribute('autoscroll');
-		else target.setAttribute('autoscroll', '');
-		if (disableWordInterpolation) {
-			target.removeAttribute('interpolate');
-			target.interpolate = false;
-		} else {
-			target.setAttribute('interpolate', '');
-			target.interpolate = true;
+	function stopClock() {
+		if (clockFrame !== null) {
+			cancelAnimationFrame(clockFrame);
+			clockFrame = null;
 		}
 	}
-
-	function scheduleInitialSync(target: AmLyricsElement): void {
-		if (!initialSyncPending || initialSyncFrame !== undefined) return;
-
-		initialSyncFrame = requestAnimationFrame(() => {
-			initialSyncFrame = undefined;
-			if (!initialSyncPending) return;
-
-			const root = target.shadowRoot;
-			const container = root?.querySelector<HTMLElement>('.lyrics-container');
-			const activeLine = root?.querySelector<HTMLElement>(
-				'.lyrics-line.active, .lyrics-line.pre-active'
-			);
-			if (!container || !activeLine) return;
-
-			const scrollPaddingTop = container.clientHeight * 0.12;
-			const targetScrollTop = Math.max(0, activeLine.offsetTop - scrollPaddingTop);
-			const previousScrollBehavior = container.style.scrollBehavior;
-			container.style.scrollBehavior = 'auto';
-			container.scrollTop = targetScrollTop;
-			container.style.scrollBehavior = previousScrollBehavior;
-
-			initialSyncPending = false;
-			target.setAttribute('autoscroll', '');
-		});
-	}
-
-	function reportAvailability(target: AmLyricsElement): void {
+	function hideSourceFooter(target: AmLyricsElement) {
 		const root = target.shadowRoot;
 		if (!root) return;
-		if (root.querySelector('.lyrics-line')) {
-			loading = false;
-			onavailability(true);
-		} else if (root.querySelector('.no-lyrics')) {
-			loading = false;
-			onavailability(false);
-		}
-	}
 
-	function hideSourceFooter(target: AmLyricsElement): void {
-		const root = target.shadowRoot;
-		if (!root || root.querySelector('style[data-hide-source-footer]')) return;
+		if (root.querySelector('style[data-hide-source-footer]')) {
+			return;
+		}
 
 		const style = document.createElement('style');
 		style.dataset.hideSourceFooter = 'true';
-		style.textContent =
-			'.lyrics-footer .footer-content, .download-controls { display: none !important; }';
+		style.textContent = `
+			.lyrics-footer .footer-content,
+			.download-controls {
+				display: none !important;
+			}
+		`;
+
 		root.appendChild(style);
 	}
 
+	function publishCurrentTime(valueMs: number) {
+		if (!element) return;
+		const durationMs =
+			durationSeconds > 0
+				? durationSeconds * 1000
+				: Infinity;
+		const clampedMs = Math.max(
+			0,
+			Math.min(valueMs, durationMs)
+		);
+
+		element.currentTime = clampedMs;
+		element.setAttribute(
+			'current-time',
+			String(clampedMs)
+		);
+	}
+
+	function runClock() {
+		stopClock();
+		const frame = () => {
+			if (!element || !isPlaying) {
+				clockFrame = null;
+				return;
+			}
+			const elapsed =
+				performance.now() - anchorWallClockMs;
+			publishCurrentTime(
+				anchorMediaTimeMs + elapsed
+			);
+			clockFrame = requestAnimationFrame(frame);
+		};
+		clockFrame = requestAnimationFrame(frame);
+	}
+
+	function anchorClock(
+		mediaTimeMs: number,
+		startClock = isPlaying
+	) {
+		anchorMediaTimeMs = Math.max(
+			0,
+			mediaTimeMs
+		);
+		anchorWallClockMs = performance.now();
+		publishCurrentTime(anchorMediaTimeMs);
+		stopClock();
+		if (startClock) runClock();
+	}
+
+	function applyAttributes(
+		target: AmLyricsElement
+	) {
+		target.setAttribute(
+			'song-title',
+			title
+		);
+		target.setAttribute(
+			'song-artist',
+			artist
+		);
+		target.setAttribute(
+			'query',
+			`${title} ${artist}`.trim()
+		);
+
+		if (album) {
+			target.setAttribute(
+				'song-album',
+				album
+			);
+		} else {
+			target.removeAttribute(
+				'song-album'
+			);
+		}
+
+		if (durationSeconds > 0) {
+			const durationMs = Math.round(
+				durationSeconds * 1000
+			);
+			target.setAttribute(
+				'song-duration',
+				String(durationMs)
+			);
+			target.duration = durationMs;
+		} else {
+			target.removeAttribute(
+				'song-duration'
+			);
+			target.duration = 0;
+		}
+
+		if (isrc) {
+			target.setAttribute(
+				'isrc',
+				isrc
+			);
+		} else {
+			target.removeAttribute(
+				'isrc'
+			);
+		}
+
+		target.setAttribute(
+			'autoscroll',
+			''
+		);
+		target.setAttribute(
+			'interpolate',
+			''
+		);
+		target.interpolate = true;
+		target.setAttribute(
+			'translation-language',
+			'vi'
+		);
+	}
+
 	onMount(() => {
+		const isBrowser =
+			typeof window !== 'undefined';
+		if (!isBrowser) return;
 		let disposed = false;
-		const handleLineClick = (event: Event) => {
-			const timestamp = (event as CustomEvent<{ timestamp?: number }>).detail?.timestamp;
-			if (typeof timestamp === 'number') onseek(timestamp / 1000);
+
+		const handleLineClick = (
+			event: Event
+		) => {
+			const timestamp = (
+				event as CustomEvent<{
+					timestamp?: number;
+				}>
+			).detail?.timestamp;
+			if (
+				typeof timestamp ===
+				'number'
+			) {
+				onseek(
+					timestamp / 1000
+				);
+			}
 		};
 
-		void loadAmLyricsFromCdn()
-			.then(async () => {
-				if (disposed) return;
-				await customElements.whenDefined('am-lyrics');
-				if (disposed) return;
-				let target = element;
-				if (!target) {
-					await tick();
-					target = element;
-				}
-				if (!target) {
-					target = document.querySelector('am-lyrics') as AmLyricsElement | null;
-				}
-				if (!target) {
-					loading = false;
-					return;
-				}
-				applyAttributes(target);
-				(target as AmLyricsElement & { fetchLyrics?: () => void }).fetchLyrics?.();
-				anchorClock(Math.max(0, currentTimeSeconds * 1000));
-				target.addEventListener('line-click', handleLineClick);
-				const root = target.shadowRoot;
-				if (root) {
-					hideSourceFooter(target);
-					lyricsObserver = new MutationObserver(() => {
-						hideSourceFooter(target);
-						reportAvailability(target);
-						scheduleInitialSync(target);
-					});
-					lyricsObserver.observe(root, { childList: true, subtree: true });
-				}
-				reportAvailability(target);
-				scheduleInitialSync(target);
-				loading = false;
-			})
-			.catch((error) => {
-				console.warn('Failed to load word-synced lyrics', error);
-				if (!disposed) {
-					loading = false;
-					failed = true;
-					onavailability(false);
-				}
-			});
+		loadAmLyrics().then(async () => {
+			if (disposed) return;
+			await tick();
+			if (disposed || !element)
+				return;
+
+			applyAttributes(element);
+			element.addEventListener(
+				'line-click',
+				handleLineClick
+			);
+
+			anchorClock(
+				Math.max(
+					0,
+					currentTimeSeconds
+				) * 1000,
+				isPlaying
+			);
+			element.fetchLyrics?.();
+			hideSourceFooter(element);
+		});
 
 		return () => {
 			disposed = true;
-			lyricsObserver?.disconnect();
-			lyricsObserver = undefined;
-			if (initialSyncFrame !== undefined) cancelAnimationFrame(initialSyncFrame);
-			initialSyncFrame = undefined;
 			stopClock();
-			element?.removeEventListener('line-click', handleLineClick);
+			element?.removeEventListener(
+				'line-click',
+				handleLineClick
+			);
 		};
 	});
 
 	$effect(() => {
-		if (!element) return;
+		if (!element || !currentSongKey) return;
 		applyAttributes(element);
+		element.fetchLyrics?.();
 	});
 
 	$effect(() => {
-		// Read both dependencies before the guard so the effect re-runs when
-		// playback starts or stops, not only when a new sample arrives: pausing
-		// must halt the extrapolation, and resuming must restart it.
-		const nextTimeMs = Math.max(0, currentTimeSeconds) * 1000;
 		const playing = isPlaying;
+		const timeMs =
+			Math.max(
+				0,
+				untrack(
+					() => currentTimeSeconds
+				)
+			) * 1000;
+
 		if (!element) return;
-		if (!playing) stopClock();
-		anchorClock(nextTimeMs);
+
+		if (playing) {
+			anchorClock(timeMs, true);
+		} else {
+			stopClock();
+			anchorClock(timeMs, false);
+		}
+	});
+
+	$effect(() => {
+		const timeMs =
+			Math.max(
+				0,
+				currentTimeSeconds
+			) * 1000;
+		const playing = untrack(
+			() => isPlaying
+		);
+
+		if (!element) return;
+
+		anchorClock(timeMs, playing);
 	});
 </script>
 
-<div class="word-synced-shell">
-	<div class="word-synced-host" aria-label="Word-synced lyrics">
-		<am-lyrics
-			bind:this={element}
-			translation-language="vi"
-			class="word-synced-element"
-		></am-lyrics>
+{#if typeof window !== 'undefined'}
+	<div class="word-synced-shell">
+		<div
+			class="word-synced-host"
+			aria-label="Word-synced lyrics"
+		>
+			<am-lyrics
+				bind:this={element}
+				class="word-synced-element"
+			></am-lyrics>
+		</div>
 	</div>
-	{#if loading}
-		<div class="word-synced-status">
-			<Loader2 class="h-6 w-6 animate-spin" />
-			<span>Finding word-synced lyrics…</span>
-		</div>
-	{:else if failed}
-		<div class="word-synced-status text-warning">
-			<AlertCircle class="h-6 w-6" />
-			<span>Word-synced lyrics could not be loaded.</span>
-		</div>
-	{/if}
-</div>
+{/if}
 
 <style>
 	.word-synced-shell,
 	.word-synced-host {
 		position: relative;
+		width: 100%;
 		height: 100%;
 		min-height: 0;
-		width: 100%;
 	}
 
-	.word-synced-host :global(.word-synced-element) {
+	.word-synced-host
+		:global(.word-synced-element) {
 		display: block;
-		height: 100%;
 		width: 100%;
+		height: 100%;
 		color: white;
 		font-family: inherit;
+
 		--am-lyrics-inactive-scale: 0.95;
 		--am-lyrics-highlight-color: #fff;
 		--highlight-color: #fff;
-	}
-
-	.word-synced-status {
-		position: absolute;
-		inset: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.75rem;
-		color: rgba(255, 255, 255, 0.68);
-		font-size: 0.875rem;
 	}
 </style>

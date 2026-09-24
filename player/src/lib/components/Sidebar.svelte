@@ -222,7 +222,6 @@
 		padding: 8px 8px;
 		margin-top: 6px;
 		border-radius: 9px;
-		border-top: 0.5px solid var(--hairline);
 		transition: background-color 0.18s ease;
 	}
 	.me:hover {

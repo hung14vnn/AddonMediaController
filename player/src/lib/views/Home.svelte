@@ -23,11 +23,6 @@
 
 	let data = $state(load());
 
-	const greeting = (() => {
-		const h = new Date().getHours();
-		return h < 5 ? 'Good Night' : h < 12 ? 'Good Morning' : h < 18 ? 'Good Afternoon' : 'Good Evening';
-	})();
-
 	async function shuffleAll() {
 		player.playList(await getRandomSongs(100), 0, { shuffle: true });
 	}
@@ -41,7 +36,7 @@
 			<ProfileButton />
 		</div>
 	</div>
-	<p class="greet muted">{greeting}</p>
+	<p class="greet muted"></p>
 
 	{#await data}
 		<div class="spinner"></div>

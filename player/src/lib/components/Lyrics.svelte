@@ -68,7 +68,6 @@
 				isPlaying={player.playing}
 				isrc={song.isrc?.[0] ?? ''}
 				onseek={(s) => player.seek(s)}
-				onavailability={(available) => (wordSynced = available)}
 			/>
 		</div>
 	{/key}
