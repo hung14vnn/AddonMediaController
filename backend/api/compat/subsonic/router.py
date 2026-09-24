@@ -708,8 +708,11 @@ def _spotapi_to_album_child(al: dict) -> m.SChild:
 
 def _spotapi_to_child(st: dict) -> m.SChild:
     tid = encode("spotify_track", st["id"])
-    album_name = st["album"]["name"] if st.get("album") else "Unknown"
-    alid = encode("spotify_album", st["album"]["id"]) if st.get("album") else None
+    album = st.get("album") or {}
+    album_name = album.get("name", "Unknown")
+    alid = encode("spotify_album", album["id"]) if album.get("id") else None
+    year_str = str(album.get("release_date") or "")
+    year = int(year_str[:4]) if year_str[:4].isdigit() else None
     artist_name = st["artists"][0]["name"] if st.get("artists") else "Unknown"
     artist_id = encode("spotify_artist", st["artists"][0]["id"]) if st.get("artists") else None
     duration = int(st["duration_ms"] / 1000) if st.get("duration_ms") else None
@@ -717,7 +720,8 @@ def _spotapi_to_child(st: dict) -> m.SChild:
         id=tid, isDir=False, title=st.get("name", "Unknown Track"),
         album=album_name, artist=artist_name, parent=alid, albumId=alid,
         artistId=artist_id, duration=duration, coverArt=alid, type="music", mediaType="song",
-        suffix="m4a", contentType="audio/mp4", size=10_000_000, bitRate=320
+        suffix="m4a", contentType="audio/mp4", size=10_000_000, bitRate=320,
+        path=tid + ".m4a", track=st.get("track_number") or 1, year=year
     )
 
 
