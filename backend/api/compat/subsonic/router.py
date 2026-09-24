@@ -1968,7 +1968,6 @@ def _ytmusic_to_child(t: dict) -> m.SChild | None:
     return m.SChild(
         id=tid,
         isDir=False,
-        isVideo=False,
         title=t.get("title") or "Unknown",
         album=album_name,
         artist=artist_name,
