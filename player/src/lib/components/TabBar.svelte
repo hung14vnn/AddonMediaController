@@ -13,16 +13,19 @@
 		},
 		{ path: '/search', label: 'Search', icon: 'search', match: ['search'] }
 	];
-
-	// Album/artist detail pages stay in whichever tab the user came from.
 	let lastTab = $state('/');
-	const active = $derived.by(() => {
-		const hit = tabs.find((t) => t.match.includes(router.route.name));
-		return hit?.path ?? lastTab;
-	});
+
 	$effect(() => {
-		lastTab = active;
+		const currentRoute = router.route.name;
+		const hit = tabs.find((t) => t.match.includes(currentRoute));
+		if (hit) {
+			lastTab = hit.path;
+		}
 	});
+
+	const active = $derived(
+		tabs.find((t) => t.match.includes(router.route.name))?.path ?? lastTab
+	);
 </script>
 
 <nav class="tabbar" aria-label="Tabs">
@@ -39,11 +42,24 @@
 		display: flex;
 		justify-content: space-around;
 		padding: 4px 8px max(6px, env(safe-area-inset-bottom));
-		background: var(--tabbar);
-		backdrop-filter: saturate(1.8) blur(24px);
-		-webkit-backdrop-filter: saturate(1.8) blur(24px);
+
+		/* TỐI ƯU 1: Tắt backdrop-blur trên Mobile, dùng màu đục để GPU giải phóng 100% tải khi cuộn */
+		background: var(--tabbar-strong, rgba(20, 20, 22, 0.96));
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+
 		border-top: 0.5px solid var(--hairline);
 	}
+
+	/* Chỉ bật hiệu ứng kính mờ trên Desktop */
+	@media (min-width: 769px) {
+		.tabbar {
+			background: var(--tabbar, rgba(20, 20, 22, 0.8));
+			backdrop-filter: saturate(1.8) blur(16px);
+			-webkit-backdrop-filter: saturate(1.8) blur(16px);
+		}
+	}
+
 	a {
 		flex: 1;
 		display: flex;
@@ -54,16 +70,19 @@
 		font-size: 10px;
 		font-weight: 500;
 		color: var(--text-3);
-	}
-	a {
 		transition: color 0.2s ease;
 	}
+
 	a.active {
 		color: var(--accent);
 	}
+
 	a.active :global(svg) {
 		animation: tab-bounce 0.42s cubic-bezier(0.3, 1.6, 0.5, 1);
+		/* Ép tạo riêng Compositor Layer cho Icon khi nhảy animation */
+		will-change: transform;
 	}
+
 	@keyframes tab-bounce {
 		0% {
 			transform: scale(0.8);

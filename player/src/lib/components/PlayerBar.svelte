@@ -13,8 +13,14 @@
 
 	const player = getPlayer();
 	const song = $derived(player.current);
-	let scrub = $state<number | null>(null);
+
+	let scrub: number | null = $state(null);
 	const shownTime = $derived(scrub ?? player.currentTime);
+
+	const formattedCurrentTime = $derived(time(Math.floor(shownTime)));
+	const formattedRemainingTime = $derived(
+		time(Math.max(0, Math.floor((player.duration || 0) - shownTime)))
+	);
 </script>
 
 <div class="bar">
@@ -62,7 +68,7 @@
 				</div>
 				{/key}
 				<div class="lcd-progress">
-					<span class="t">{time(shownTime)}</span>
+					<span class="t">{formattedCurrentTime}</span>
 					<Slider
 						value={player.currentTime}
 						max={player.duration}
@@ -70,7 +76,7 @@
 						onchange={(v) => player.seek(v)}
 						oninput={(v) => (scrub = v)}
 					/>
-					<span class="t">-{time(Math.max(0, player.duration - shownTime))}</span>
+					<span class="t">-{formattedRemainingTime}</span>
 				</div>
 			</div>
 		{:else}
@@ -102,11 +108,13 @@
 		align-items: center;
 		gap: 16px;
 		padding: 0 20px;
-		background: var(--chrome);
-		backdrop-filter: saturate(1.8) blur(24px);
-		-webkit-backdrop-filter: saturate(1.8) blur(24px);
+		background: var(--chrome, rgba(30, 30, 32, 0.85));
+
+		backdrop-filter: saturate(1.8) blur(14px);
+		-webkit-backdrop-filter: saturate(1.8) blur(14px);
 		border-bottom: 0.5px solid var(--hairline);
 	}
+
 	button {
 		display: grid;
 		place-items: center;
@@ -156,8 +164,6 @@
 		--art-radius: 0;
 		border-radius: 0;
 	}
-	/* The swap-animation wrapper has no intrinsic width inside the grid button;
-	   without this it collapses to 0 and the artwork disappears. */
 	.lcd-art > div {
 		width: 100%;
 	}
@@ -198,6 +204,7 @@
 		transform: translateY(-50%);
 		color: var(--text-2);
 		opacity: 0;
+		transition: opacity 0.15s ease;
 	}
 	.lcd:hover .lcd-more,
 	.lcd-more:focus-visible {
@@ -216,7 +223,7 @@
 		font-variant-numeric: tabular-nums;
 		width: 36px;
 		opacity: 0;
-		transition: opacity 0.15s;
+		transition: opacity 0.15s ease;
 	}
 	.lcd-progress .t:last-child {
 		text-align: right;

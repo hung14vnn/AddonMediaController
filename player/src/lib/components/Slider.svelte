@@ -20,7 +20,13 @@
 	let dragging = $state(false);
 	let dragValue = $state(0);
 	const shown = $derived(dragging ? dragValue : value);
-	const pct = $derived(max > 0 ? Math.min(100, (shown / max) * 100) : 0);
+
+
+	const pct = $derived.by(() => {
+		if (max <= 0) return '0';
+		const raw = Math.min(100, (shown / max) * 100);
+		return raw.toFixed(1);
+	});
 </script>
 
 <input
@@ -73,7 +79,9 @@
 			var(--slider-fill, var(--text-2)) var(--pct),
 			var(--slider-track, var(--fill-strong)) var(--pct)
 		);
-		transition: height 0.12s ease;
+		/* TỐI ƯU 2: Dùng transform thay vì transition height để không gây Reflow Layout */
+		transform-origin: center;
+		will-change: transform;
 	}
 	.slider::-moz-range-track {
 		height: var(--h);

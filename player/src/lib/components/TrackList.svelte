@@ -57,14 +57,21 @@
 				{#if variant === 'list'}
 					<span class="thumb">
 						<Artwork id={song.coverArt} size={64} seed={song.album ?? song.title} />
-						{#if current}<span class="thumb-overlay"><span class="bars" class:paused={!player.playing}><i></i><i></i><i></i></span></span>{/if}
+						{#if current}
+							<span class="thumb-overlay">
+								<span class="bars" class:paused={!player.playing}><i></i><i></i><i></i></span>
+							</span>
+						{/if}
 					</span>
 				{:else if current}
 					<span class="bars" class:paused={!player.playing}><i></i><i></i><i></i></span>
 				{:else}
-					<span class="num">{song.track ?? i + 1}</span>
+					<!-- TỐI ƯU 1: Bọc nút Play và số thứ tự vào cùng 1 wrapper tĩnh để chống Reflow -->
+					<span class="lead-stack">
+						<span class="num">{song.track ?? i + 1}</span>
+						<Icon name="play" size={14} class="hover-play" />
+					</span>
 				{/if}
-				<Icon name="play" size={14} class="hover-play" />
 			</button>
 			<button class="main" onclick={() => play(i)} tabindex="-1">
 				<span class="title">
@@ -83,7 +90,11 @@
 				{/if}
 			{/if}
 			<span class="love" class:on={loved}>
-				{#if loved}<span class="icon-swap" in:pop={{ from: 0.2, duration: 300 }}><Icon name="starFill" size={14} /></span>{/if}
+				{#if loved}
+					<span class="icon-swap" in:pop={{ from: 0.2, duration: 300 }}>
+						<Icon name="starFill" size={14} />
+					</span>
+				{/if}
 			</span>
 			<span class="duration">{time(song.duration)}</span>
 			<button class="more" aria-label="More options for {song.title}" onclick={(e) => menu(e, song, i)}>
@@ -106,14 +117,16 @@
 	}
 	.row {
 		display: grid;
-		grid-template-columns: 36px minmax(0, 1fr) 20px 52px 32px;
+		grid-template-columns: 36px minmax(0, 1.4fr) 20px 52px 32px;
 		align-items: center;
 		gap: 8px;
 		min-height: 48px;
 		padding: 0 6px 0 4px;
 		border-radius: 8px;
 		position: relative;
-		transition: background-color 0.15s ease;
+		transition: background-color 0.12s ease;
+		/* Giúp GPU render danh sách cuộn cực nhẹ */
+		contain: content;
 	}
 	.v-list .row {
 		grid-template-columns: 44px minmax(0, 1.4fr) minmax(0, 1fr) 20px 52px 32px;
@@ -133,21 +146,39 @@
 		bottom: 0;
 		border-bottom: 0.5px solid var(--hairline);
 	}
+
+	/* TỐI ƯU 2: Thay opacity/visibility thay vì display: none/block để tránh tính toán lại Layout (Reflow) */
+	.lead-stack {
+		display: grid;
+		place-items: center;
+		width: 100%;
+		height: 100%;
+	}
+	.lead-stack .num,
+	.lead-stack :global(.hover-play) {
+		grid-area: 1 / 1;
+		transition: opacity 0.1s ease;
+	}
+	.lead-stack :global(.hover-play) {
+		opacity: 0;
+		color: var(--text);
+	}
+
 	@media (hover: hover) {
 		.row:hover {
 			background: var(--hover) !important;
 		}
-		.row:hover .num,
-		.v-album .row:hover .bars {
-			display: none;
+		.row:hover .lead-stack .num {
+			opacity: 0;
 		}
-		.v-album .row:hover :global(.hover-play) {
-			display: block;
+		.row:hover .lead-stack :global(.hover-play) {
+			opacity: 1;
 		}
 		.row:hover .more {
 			opacity: 1;
 		}
 	}
+
 	.lead {
 		display: grid;
 		place-items: center;
@@ -156,10 +187,6 @@
 		color: var(--text-2);
 		font-size: 14px;
 		font-variant-numeric: tabular-nums;
-	}
-	.lead :global(.hover-play) {
-		display: none;
-		color: var(--text);
 	}
 	.thumb {
 		position: relative;
@@ -172,7 +199,7 @@
 		display: grid;
 		place-items: center;
 		border-radius: 4px;
-		background: rgb(0 0 0 / 0.45);
+		background: rgba(0, 0, 0, 0.45);
 		--bar: #fff;
 	}
 	.main {
@@ -225,7 +252,7 @@
 		border-radius: 50%;
 		color: var(--accent);
 		opacity: 0;
-		transition: opacity 0.15s ease;
+		transition: opacity 0.12s ease;
 	}
 	@media (hover: none) {
 		.more {
@@ -249,12 +276,13 @@
 		}
 	}
 
-	/* animated "now playing" equalizer */
+	/* Animated "now playing" equalizer */
 	.bars {
 		display: inline-flex;
 		align-items: flex-end;
 		gap: 2px;
 		height: 12px;
+		will-change: transform;
 	}
 	.bars i {
 		width: 3px;
@@ -263,6 +291,7 @@
 		background: var(--bar, var(--accent));
 		animation: eq 0.9s ease-in-out infinite alternate;
 		transform-origin: bottom;
+		will-change: transform;
 	}
 	.bars i:nth-child(2) {
 		animation-delay: -0.3s;

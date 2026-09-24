@@ -23,7 +23,15 @@
 	let scrub = $state<number | null>(null);
 	const shownTime = $derived(scrub ?? player.currentTime);
 
-	let tint = $state<Tint | null>(null);
+	// TỐI ƯU 1: Làm tròn giây để tránh format chuỗi thời gian liên tục ở từng millisecond
+	const formattedCurrentTime = $derived(time(Math.floor(shownTime)));
+	const formattedRemainingTime = $derived(
+		time(Math.max(0, Math.floor((player.duration || 0) - shownTime)))
+	);
+
+// SỬA THÀNH: Khai báo type trực tiếp cho biến thay vì dùng Generic trên $state
+	let tint: Tint | null = $state(null);
+
 	$effect(() => {
 		const art = song?.coverArt;
 		let cancelled = false;
@@ -53,7 +61,6 @@
 	let startY = 0;
 	let dragY = $state(0);
 
-	// dragY is deliberately not reset: the sheet's out-transition starts from it.
 	function close() {
 		ui.nowPlaying = false;
 	}
@@ -161,9 +168,9 @@
 					<div class="progress">
 						<Slider value={player.currentTime} max={player.duration} label="Seek" onchange={(v) => player.seek(v)} oninput={(v) => (scrub = v)} />
 						<div class="times">
-							<span>{time(shownTime)}</span>
+							<span>{formattedCurrentTime}</span>
 							<span class="quality">{quality}</span>
-							<span class="right">-{time(Math.max(0, player.duration - shownTime))}</span>
+							<span class="right">-{formattedRemainingTime}</span>
 						</div>
 					</div>
 
@@ -233,12 +240,13 @@
 		--slider-track: rgb(255 255 255 / 0.2);
 	}
 
-	/* ---- backdrop: tint gradient + faint moving artwork texture ---------------- */
+	/* ---- backdrop --------------------------------------------------------------- */
 	.backdrop {
 		position: absolute;
 		inset: 0;
 		z-index: -1;
 		background: #3a3a3c;
+		contain: strict;
 	}
 	.tint {
 		position: absolute;
@@ -254,15 +262,26 @@
 		width: 140%;
 		height: 140%;
 		object-fit: cover;
-		filter: blur(70px) saturate(1.5) brightness(0.75);
-		animation: drift 40s ease-in-out infinite alternate;
+		
+		filter: blur(25px) saturate(1.4) brightness(0.75);
+		
+		/* Ép tạo riêng Layer Hardware Acceleration (GPU) */
+		transform: translateZ(0);
+		will-change: transform;
 	}
-	/* With a tint the art becomes a subtle texture over the gradient, like iOS. */
+
+	/* TỐI ƯU 4: Tắt animation xoay/trôi (drift) trên điện thoại để tiết kiệm pin & hạ nhiệt CPU/GPU */
+	@media (min-width: 900px) {
+		.backdrop img {
+			animation: drift 40s ease-in-out infinite alternate;
+		}
+	}
+
 	.tinted .backdrop img {
 		z-index: 2;
-		opacity: 0.28;
+		opacity: 0.18;
 		mix-blend-mode: soft-light;
-		filter: blur(60px) saturate(1.2);
+		filter: blur(25px) saturate(1.2);
 	}
 	.backdrop::after {
 		content: '';
@@ -271,17 +290,19 @@
 		z-index: 3;
 		background: linear-gradient(to bottom, transparent 55%, rgb(0 0 0 / 0.18));
 	}
+
 	@keyframes drift {
 		0% {
-			transform: scale(1) rotate(0deg) translate(0, 0);
+			transform: scale(1) translate3d(0, 0, 0);
 		}
 		50% {
-			transform: scale(1.15) rotate(8deg) translate(3%, -2%);
+			transform: scale(1.12) translate3d(3%, -2%, 0);
 		}
 		100% {
-			transform: scale(1.08) rotate(-6deg) translate(-3%, 2%);
+			transform: scale(1.06) translate3d(-3%, 2%, 0);
 		}
 	}
+
 	@media (prefers-reduced-motion: reduce) {
 		.backdrop img {
 			animation: none;
@@ -515,7 +536,7 @@
 		font-weight: 600;
 	}
 
-	/* ---- phones: panel replaces the art; compact header keeps context ---------- */
+	/* ---- phones --------------------------------------------------------------- */
 	@media (max-width: 899px) {
 		.layout {
 			flex-direction: column;
@@ -532,7 +553,6 @@
 		.has-panel .layout {
 			padding-top: 10px;
 		}
-		/* Flatten so children interleave with the panel via `order`. */
 		.has-panel .main,
 		.has-panel .controls {
 			display: contents;

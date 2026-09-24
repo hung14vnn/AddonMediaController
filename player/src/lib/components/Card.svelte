@@ -83,6 +83,8 @@
 		transition:
 			transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
 			box-shadow 0.35s ease;
+		/* Ép Compositor Layer để animation hover trơn tru 60 FPS */
+		will-change: transform;
 	}
 	@media (hover: hover) {
 		.card:hover .cover :global(.art) {
@@ -104,10 +106,11 @@
 		justify-content: space-between;
 		padding: 10px;
 		opacity: 0;
-		background: linear-gradient(to top, rgb(0 0 0 / 0.35), transparent 55%);
+		background: linear-gradient(to top, rgb(0 0 0 / 0.38), transparent 55%);
 		transition:
 			opacity 0.18s ease,
 			transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+		will-change: opacity, transform;
 	}
 	.overlay button {
 		transform: translateY(6px);
@@ -123,6 +126,8 @@
 			opacity: 1;
 		}
 	}
+	
+	/* TỐI ƯU HỆ THỐNG: Bỏ backdrop-filter hoàn toàn cho nút trong Card */
 	.overlay button {
 		width: 32px;
 		height: 32px;
@@ -130,15 +135,18 @@
 		display: grid;
 		place-items: center;
 		color: #fff;
-		background: rgb(60 60 60 / 0.55);
-		backdrop-filter: blur(12px) saturate(1.6);
-		-webkit-backdrop-filter: blur(12px) saturate(1.6);
+		/* Sử dụng màu tối có độ trong suốt kết hợp viền hairline mỏng thay vì blur */
+		background: rgba(30, 30, 32, 0.75);
+		border: 0.5px solid rgba(255, 255, 255, 0.2);
+		box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
 		transition:
-			transform 0.12s ease,
-			background 0.12s ease;
+			transform 0.15s ease,
+			background 0.15s ease,
+			border-color 0.15s ease;
 	}
 	.overlay button:hover {
 		background: var(--accent);
+		border-color: transparent;
 		transform: scale(1.08);
 	}
 	.overlay .play :global(svg) {

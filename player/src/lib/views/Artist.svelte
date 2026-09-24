@@ -48,7 +48,7 @@
 	{@const bio = stripHtml(d.info.biography)}
 	<div class="page artist-page">
 		<header class="hero" class:has-image={!!image}>
-			{#if image}<img src={image} alt="" />{/if}
+			{#if image}<img src={image} alt="" decoding="async" />{/if}
 			<div class="hero-body">
 				<h1>{d.artist.name}</h1>
 				<div class="hero-actions">
@@ -59,13 +59,22 @@
 					>
 						<Icon name="play" size={24} />
 					</button>
-					<button class="pill" onclick={async () => player.playList(await allSongs([...d.albums, ...d.singles]), 0, { shuffle: true })}>
+					<button
+						class="pill"
+						onclick={async () => player.playList(await allSongs([...d.albums, ...d.singles]), 0, { shuffle: true })}
+					>
 						<Icon name="shuffle" size={15} />Shuffle
 					</button>
 					{#if d.top[0]}
-						<button class="pill" onclick={() => startStation(d.top[0])}><Icon name="radio" size={15} />Station</button>
+						<button class="pill" onclick={() => startStation(d.top[0])}>
+							<Icon name="radio" size={15} />Station
+						</button>
 					{/if}
-					<button class="pill icon" aria-label="Favorite" onclick={() => ui.toggleLove('artist', d.artist)}>
+					<button
+						class="pill icon"
+						aria-label="Favorite"
+						onclick={() => ui.toggleLove('artist', d.artist)}
+					>
 						<Icon name={ui.isLoved(d.artist) ? 'starFill' : 'star'} size={17} />
 					</button>
 				</div>
@@ -141,18 +150,24 @@
 		object-fit: cover;
 		object-position: center 25%;
 		animation: hero-settle 1.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+		/* Ép tạo compositor layer riêng để animation mượt mà không khựng GPU */
+		will-change: transform, opacity;
 	}
 	@keyframes hero-settle {
 		from {
 			opacity: 0;
 			transform: scale(1.12);
 		}
+		to {
+			opacity: 1;
+			transform: scale(1);
+		}
 	}
 	.hero.has-image::after {
 		content: '';
 		position: absolute;
 		inset: 0;
-		background: linear-gradient(to top, rgb(0 0 0 / 0.55), transparent 55%);
+		background: linear-gradient(to top, rgba(0, 0, 0, 0.65), transparent 60%);
 	}
 	.hero-body {
 		animation: hero-text 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) 0.15s both;
@@ -165,11 +180,16 @@
 		gap: 16px;
 		flex-wrap: wrap;
 		padding: 0 var(--gutter) 24px;
+		will-change: transform, opacity;
 	}
 	@keyframes hero-text {
 		from {
 			opacity: 0;
 			transform: translateY(16px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
 		}
 	}
 	h1 {
@@ -181,7 +201,7 @@
 	}
 	.has-image h1 {
 		color: #fff;
-		text-shadow: 0 2px 20px rgb(0 0 0 / 0.3);
+		text-shadow: 0 2px 20px rgba(0, 0, 0, 0.35);
 	}
 	.hero-actions {
 		display: flex;
@@ -196,8 +216,8 @@
 		place-items: center;
 		color: #fff;
 		background: var(--accent);
-		box-shadow: 0 6px 20px rgb(0 0 0 / 0.25);
-		transition: transform 0.12s ease;
+		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+		transition: transform 0.15s ease, background-color 0.15s ease;
 	}
 	.play:hover {
 		transform: scale(1.06);
@@ -205,6 +225,8 @@
 	.play :global(svg) {
 		margin-left: 3px;
 	}
+
+	/* TỐI ƯU HỆ THỐNG: Giảm blur ở nút Pill và tăng đục nhẹ để tránh lag trên ảnh nghệ sĩ 1200px */
 	.pill {
 		display: inline-flex;
 		align-items: center;
@@ -216,8 +238,12 @@
 		font-weight: 600;
 		color: var(--text);
 		background: var(--fill);
-		backdrop-filter: blur(20px) saturate(1.6);
-		-webkit-backdrop-filter: blur(20px) saturate(1.6);
+		backdrop-filter: blur(10px) saturate(1.4);
+		-webkit-backdrop-filter: blur(10px) saturate(1.4);
+		transition: background-color 0.15s ease, transform 0.15s ease;
+	}
+	.pill:hover {
+		transform: translateY(-1px);
 	}
 	.pill.icon {
 		width: 34px;
@@ -226,8 +252,13 @@
 	}
 	.has-image .pill {
 		color: #fff;
-		background: rgb(255 255 255 / 0.2);
+		background: rgba(255, 255, 255, 0.22);
+		border: 0.5px solid rgba(255, 255, 255, 0.2);
 	}
+	.has-image .pill:hover {
+		background: rgba(255, 255, 255, 0.32);
+	}
+
 	.top-row {
 		display: grid;
 		grid-template-columns: minmax(180px, 240px) 1fr;
@@ -275,6 +306,11 @@
 		-webkit-box-orient: vertical;
 		overflow: hidden;
 		white-space: pre-line;
+		cursor: pointer;
+		transition: color 0.15s ease;
+	}
+	.bio:hover {
+		color: var(--text);
 	}
 	.bio.open {
 		display: block;

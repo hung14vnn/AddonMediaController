@@ -5,18 +5,21 @@
 	import Artwork from './Artwork.svelte';
 	import Icon from './Icon.svelte';
 
-	let menuEl: HTMLDivElement | undefined = $state();
+	let menuEl = $state<HTMLDivElement | null>(null);
 	let pos = $state({ x: 0, y: 0 });
 	let newName = $state('');
 
+	// TỐI ƯU 1: Tính toán lại vị trí Menu an toàn khi DOM đã render
 	$effect(() => {
 		const m = ui.menu;
 		if (!m || !menuEl) return;
+
 		const { offsetWidth: w, offsetHeight: h } = menuEl;
 		pos = {
-			x: Math.max(8, Math.min(m.x, innerWidth - w - 8)),
-			y: m.y + h > innerHeight - 8 ? Math.max(8, m.y - h) : m.y
+			x: Math.max(8, Math.min(m.x, window.innerWidth - w - 8)),
+			y: m.y + h > window.innerHeight - 8 ? Math.max(8, m.y - h) : m.y
 		};
+
 		menuEl.querySelector<HTMLButtonElement>('button')?.focus();
 	});
 
@@ -37,8 +40,24 @@
 <svelte:window onkeydown={onKey} onresize={() => (ui.menu = null)} />
 
 {#if ui.menu}
-	<div class="scrim" role="presentation" onclick={() => (ui.menu = null)} oncontextmenu={(e) => { e.preventDefault(); ui.menu = null; }}></div>
-	<div class="menu" role="menu" in:pop out:fadeOnly={{ duration: 120 }} bind:this={menuEl} style:left="{pos.x}px" style:top="{pos.y}px">
+	<div
+		class="scrim"
+		role="presentation"
+		onclick={() => (ui.menu = null)}
+		oncontextmenu={(e) => {
+			e.preventDefault();
+			ui.menu = null;
+		}}
+	></div>
+	<div
+		class="menu"
+		role="menu"
+		in:pop
+		out:fadeOnly={{ duration: 120 }}
+		bind:this={menuEl}
+		style:left="{pos.x}px"
+		style:top="{pos.y}px"
+	>
 		{#each ui.menu.items as item}
 			<button
 				role="menuitem"
@@ -57,11 +76,25 @@
 
 {#if ui.playlistPicker}
 	{@const songs = ui.playlistPicker}
-	<div class="sheet-scrim" role="presentation" transition:fadeOnly onclick={() => (ui.playlistPicker = null)}></div>
-	<div class="sheet" role="dialog" in:dialog out:fadeOnly={{ duration: 150 }} aria-modal="true" aria-label="Add to Playlist">
+	<div
+		class="sheet-scrim"
+		role="presentation"
+		transition:fadeOnly
+		onclick={() => (ui.playlistPicker = null)}
+	></div>
+	<div
+		class="sheet"
+		role="dialog"
+		in:dialog
+		out:fadeOnly={{ duration: 150 }}
+		aria-modal="true"
+		aria-label="Add to Playlist"
+	>
 		<header>
 			<h3>Add to Playlist</h3>
-			<button class="x" aria-label="Close" onclick={() => (ui.playlistPicker = null)}><Icon name="close" size={18} /></button>
+			<button class="x" aria-label="Close" onclick={() => (ui.playlistPicker = null)}>
+				<Icon name="close" size={18} />
+			</button>
 		</header>
 		<form
 			class="new"
@@ -109,7 +142,7 @@
 		z-index: 90;
 	}
 	.sheet-scrim {
-		background: rgb(0 0 0 / 0.35);
+		background: rgba(0, 0, 0, 0.4);
 	}
 	.menu {
 		position: fixed;
@@ -117,16 +150,19 @@
 		min-width: 220px;
 		padding: 5px;
 		border-radius: 12px;
-		background: var(--menu);
-		backdrop-filter: saturate(1.8) blur(30px);
-		-webkit-backdrop-filter: saturate(1.8) blur(30px);
+
+		background: var(--menu, rgba(32, 32, 35, 0.88));
+		backdrop-filter: saturate(1.8) blur(14px);
+		-webkit-backdrop-filter: saturate(1.8) blur(14px);
+
 		box-shadow:
-			0 12px 40px rgb(0 0 0 / 0.22),
+			0 12px 40px rgba(0, 0, 0, 0.28),
 			0 0 0 0.5px var(--hairline);
 		transform-origin: top left;
+		will-change: transform, opacity;
 	}
 	.menu button {
-		animation: item-in 0.22s ease both;
+		animation: item-in 0.2s ease both;
 		width: 100%;
 		display: flex;
 		align-items: center;
@@ -138,9 +174,11 @@
 		font-size: 14px;
 		color: var(--text);
 		text-align: left;
+		transition: background 0.12s ease, color 0.12s ease;
 	}
 	.menu button :global(svg) {
 		color: var(--text-2);
+		transition: color 0.12s ease;
 	}
 	.menu button:hover,
 	.menu button:focus-visible {
@@ -164,12 +202,18 @@
 	.menu button:nth-child(n + 5) {
 		animation-delay: 60ms;
 	}
+
 	@keyframes item-in {
 		from {
 			opacity: 0;
 			transform: translateY(-3px);
 		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
 	}
+
 	.menu .danger {
 		color: #ff3b30;
 	}
@@ -185,8 +229,9 @@
 		flex-direction: column;
 		border-radius: 16px;
 		background: var(--bg-elevated);
-		box-shadow: 0 20px 60px rgb(0 0 0 / 0.3);
+		box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
 		overflow: hidden;
+		will-change: transform, opacity;
 	}
 	.sheet header {
 		display: flex;
@@ -252,6 +297,7 @@
 		border-radius: 8px;
 		text-align: left;
 		color: var(--text);
+		transition: background 0.12s ease;
 	}
 	.sheet li button:hover {
 		background: var(--hover);
@@ -270,6 +316,7 @@
 		color: var(--text-2);
 		font-size: 12px;
 	}
+
 	.toast {
 		position: fixed;
 		z-index: 95;
@@ -281,10 +328,9 @@
 		font-size: 14px;
 		font-weight: 500;
 		color: var(--text);
-		background: var(--menu);
-		backdrop-filter: saturate(1.8) blur(30px);
-		-webkit-backdrop-filter: saturate(1.8) blur(30px);
-		box-shadow: 0 8px 30px rgb(0 0 0 / 0.2);
+		background: var(--menu, rgba(32, 32, 35, 0.9));
+		box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
 		white-space: nowrap;
+		will-change: transform, opacity;
 	}
 </style>

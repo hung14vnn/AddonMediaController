@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { href, router } from '../router.svelte';
 	import { getSession } from '../api';
 	import { ui } from '../ui.svelte';
@@ -10,10 +11,25 @@
 	let query = $state(router.route.name === 'search' ? router.route.query : '');
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
+	// TỐI ƯU 1: Đồng bộ giá trị input khi router.route thay đổi (ví dụ: người dùng bấm Back/Forward)
+	$effect(() => {
+		if (router.route.name === 'search') {
+			query = router.route.query ?? '';
+		}
+	});
+
 	function onSearch() {
 		clearTimeout(timer);
-		timer = setTimeout(() => router.go(`/search?q=${encodeURIComponent(query)}`, router.route.name === 'search'), 220);
+		timer = setTimeout(
+			() => router.go(`/search?q=${encodeURIComponent(query)}`, router.route.name === 'search'),
+			220
+		);
 	}
+
+	// TỐI ƯU 2: Dọn dẹp timer khi component bị dỡ bỏ khỏi DOM
+	onDestroy(() => {
+		clearTimeout(timer);
+	});
 
 	const r = $derived(router.route);
 	const activeId = $derived('id' in r ? r.id : null);
@@ -106,11 +122,14 @@
 		display: flex;
 		flex-direction: column;
 		padding: 16px 10px 10px;
-		background: var(--sidebar);
+		background: var(--sidebar, rgba(28, 28, 30, 0.85));
 		border-right: 0.5px solid var(--hairline);
-		backdrop-filter: saturate(1.8) blur(30px);
-		-webkit-backdrop-filter: saturate(1.8) blur(30px);
+
+		/* TỐI ƯU 3: Giảm độ Blur từ 30px xuống 14px để giải phóng tải tính toán GPU */
+		backdrop-filter: saturate(1.8) blur(14px);
+		-webkit-backdrop-filter: saturate(1.8) blur(14px);
 	}
+
 	.brand {
 		display: flex;
 		align-items: center;
@@ -120,6 +139,7 @@
 		letter-spacing: -0.02em;
 		padding: 0 10px 14px;
 	}
+
 	.logo {
 		width: 24px;
 		height: 24px;
@@ -129,6 +149,7 @@
 		color: #fff;
 		background: linear-gradient(#fb5c74, #fa233b);
 	}
+
 	.search {
 		display: flex;
 		align-items: center;
@@ -140,10 +161,13 @@
 		background: var(--fill);
 		color: var(--text-2);
 		box-shadow: inset 0 0 0 0.5px var(--hairline);
+		transition: box-shadow 0.15s ease;
 	}
+
 	.search:focus-within {
 		box-shadow: 0 0 0 3px var(--accent-soft), inset 0 0 0 1px var(--accent);
 	}
+
 	.search input {
 		flex: 1;
 		min-width: 0;
@@ -154,16 +178,19 @@
 		font-size: 13px;
 		color: var(--text);
 	}
+
 	.scroll {
 		flex: 1;
 		overflow-y: auto;
 		scrollbar-width: thin;
 	}
+
 	ul {
 		list-style: none;
 		margin: 0 0 8px;
 		padding: 0;
 	}
+
 	h4 {
 		display: flex;
 		align-items: center;
@@ -174,13 +201,17 @@
 		color: var(--text-3);
 		text-transform: none;
 	}
+
 	h4 a {
 		color: inherit;
+		transition: color 0.15s ease;
 	}
+
 	h4 a:hover,
 	.active-h {
 		color: var(--text);
 	}
+
 	h4 button {
 		color: var(--text-3);
 		display: grid;
@@ -188,11 +219,14 @@
 		width: 22px;
 		height: 22px;
 		border-radius: 5px;
+		transition: color 0.15s ease, background-color 0.15s ease;
 	}
+
 	h4 button:hover {
 		color: var(--text);
 		background: var(--hover);
 	}
+
 	li a {
 		display: flex;
 		align-items: center;
@@ -203,33 +237,40 @@
 		font-size: 13px;
 		color: var(--text);
 		min-width: 0;
-		transition: background-color 0.18s ease;
+		transition: background-color 0.15s ease;
 	}
+
 	li a :global(svg) {
 		color: var(--accent);
 		flex-shrink: 0;
 	}
+
 	li a:hover {
 		background: var(--hover);
 	}
+
 	li a.active {
 		background: var(--selected);
 	}
+
 	.me {
 		display: flex;
 		align-items: center;
 		gap: 10px;
 		padding: 8px 8px;
 		margin-top: 6px;
-		border-radius: 9px;
-		transition: background-color 0.18s ease;
+		border-radius: 99px;
+		transition: background-color 0.15s ease;
 	}
+
 	.me:hover {
 		background: var(--hover);
 	}
+
 	.me.active {
 		background: var(--selected);
 	}
+
 	.me-text {
 		display: flex;
 		flex-direction: column;
@@ -238,6 +279,7 @@
 		font-weight: 500;
 		line-height: 1.25;
 	}
+
 	.me-text small {
 		font-size: 11px;
 		font-weight: 400;
