@@ -35,6 +35,7 @@ frontend/build/
 frontend/dist/
 frontend/.vite/
 frontend/.vitest-attachments/
+player/node_modules/
 
 # Local config
 docker-compose.yml

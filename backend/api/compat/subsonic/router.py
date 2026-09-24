@@ -1030,6 +1030,15 @@ async def _get_cover_art(c: Ctx) -> Response:
         result = await c.services.coverart.get_release_group_cover(
             internal, size, is_disconnected=disc
         )
+        if result is None:
+            tracks = await c.services.view.get_album_tracks(internal, user=c.user)
+            for track in tracks:
+                if track.cover_url:
+                    result = await c.services.coverart.get_external_cover(
+                        track.cover_url, is_disconnected=disc
+                    )
+                    if result:
+                        break
     elif kind == "track":
         track = await c.services.view.get_track(internal, user=c.user)
         if track is None:
@@ -2256,40 +2265,63 @@ def _ytmusic_to_child(t: dict) -> m.SChild | None:
         mediaType="song",
     )
 
+# Seeds per request, matching the native /discover/queue/smart-discover route.
+_MAX_SIMILAR_SEEDS = 5
+
+
 async def _similar_songs(c: Ctx) -> list[m.SChild]:
     count = c.pint("count", 50, minimum=1, maximum=500) or 50
 
-    raw_id = c.p("id")
-    if not raw_id:
-        raise SubsonicError(10, "Required parameter is missing: id")
-    try:
-        kind, internal = decode(raw_id)
-    except Exception:
-        raise SubsonicError(70, "Media not found")
-
+    video_seeds: list[str] = []
     seeds: list[tuple[str, str]] = []
-    try:
-        if kind == "track":
-            track = await c.services.view.get_track(internal, user=c.user)
-            if track:
-                seeds.append((track.artist_name, track.title))
-        elif kind == "album":
-            tracks = await c.services.view.get_album_tracks(internal, user=c.user) or []
-            for t in random.sample(tracks, min(3, len(tracks))):
-                seeds.append((t.artist_name, t.title))
-        elif kind == "artist":
-            artist_tuple = await c.services.view.get_artist_with_albums(internal, user=c.user)
-            if artist_tuple:
-                artist_view, _ = artist_tuple
-                tracks = await c.services.discover.get_top_songs(
-                    artist_view.name, user_id=c.user.id, count=3, user=c.user
-                ) or []
-                for t in tracks:
-                    seeds.append((t.artist_name, t.title))
-    except Exception as e:
-        logger.warning("Seed lookup failed for %s: %s", raw_id, e)
 
-    if not seeds:
+    # Smart Discover (Hify client): repeated artist/title pairs, like the native
+    # POST /api/v1/discover/queue/smart-discover seeds. Each pair is resolved on
+    # YouTube Music and all of them feed one blended radio mix; `id` isn't needed.
+    seed_artists = c.plist("artist")
+    seed_titles = c.plist("title")
+    if seed_artists or seed_titles:
+        if len(seed_artists) != len(seed_titles):
+            raise SubsonicError(10, "Parameters 'artist' and 'title' must be given in pairs")
+        pairs = [(a.strip(), t.strip()) for a, t in zip(seed_artists, seed_titles)]
+        seeds = list(dict.fromkeys(p for p in pairs if p[0] and p[1]))[:_MAX_SIMILAR_SEEDS]
+        if not seeds:
+            raise SubsonicError(10, "Required parameter is missing: artist/title")
+
+    raw_ids = [] if seeds else list(dict.fromkeys(c.plist("id")))[:_MAX_SIMILAR_SEEDS]
+    if not seeds and not raw_ids:
+        raise SubsonicError(10, "Required parameter is missing: id")
+
+    for raw_id in raw_ids:
+        try:
+            kind, internal = decode(raw_id)
+        except Exception:
+            continue
+        try:
+            if kind == "ytmusic":
+                # Already a YouTube Music track: seed with its video id directly.
+                video_seeds.append(internal)
+            elif kind == "track":
+                track = await c.services.view.get_track(internal, user=c.user)
+                if track:
+                    seeds.append((track.artist_name, track.title))
+            elif kind == "album":
+                tracks = await c.services.view.get_album_tracks(internal, user=c.user) or []
+                for t in random.sample(tracks, min(3, len(tracks))):
+                    seeds.append((t.artist_name, t.title))
+            elif kind == "artist":
+                artist_tuple = await c.services.view.get_artist_with_albums(internal, user=c.user)
+                if artist_tuple:
+                    artist_view, _ = artist_tuple
+                    tracks = await c.services.discover.get_top_songs(
+                        artist_view.name, user_id=c.user.id, count=3, user=c.user
+                    ) or []
+                    for t in tracks:
+                        seeds.append((t.artist_name, t.title))
+        except Exception as e:
+            logger.warning("Seed lookup failed for %s: %s", raw_id, e)
+
+    if not seeds and not video_seeds:
         raise SubsonicError(70, "Media not found")
 
     ytmusic = c.services.ytmusic_stream
@@ -2305,7 +2337,7 @@ async def _similar_songs(c: Ctx) -> list[m.SChild]:
             return None
 
     results = await asyncio.gather(*(resolve(a, t) for a, t in seeds))
-    video_ids = list(dict.fromkeys(v for v in results if v))
+    video_ids = list(dict.fromkeys([*video_seeds, *(v for v in results if v)]))
     if not video_ids:
         return []
 
