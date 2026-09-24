@@ -716,7 +716,8 @@ def _spotapi_to_child(st: dict) -> m.SChild:
     return m.SChild(
         id=tid, isDir=False, title=st.get("name", "Unknown Track"),
         album=album_name, artist=artist_name, parent=alid, albumId=alid,
-        artistId=artist_id, duration=duration, coverArt=alid, type="music", mediaType="song"
+        artistId=artist_id, duration=duration, coverArt=alid, type="music", mediaType="song",
+        suffix="m4a", contentType="audio/mp4", size=10_000_000, bitRate=320
     )
 
 

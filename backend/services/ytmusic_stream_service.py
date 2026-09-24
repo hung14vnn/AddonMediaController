@@ -38,10 +38,10 @@ T = TypeVar("T")
 _CACHE_MAX_ENTRIES = 200
 _URL_TTL_SECONDS = 2 * 3600
 _EXTRACT_TIMEOUT_SECONDS = 30
-_PROXY_CHUNK_SIZE = 512 * 1024  # 512 KiB
+_PROXY_CHUNK_SIZE = 256 * 1024  # 256 KiB
 
 _UPSTREAM_RETRY_STATUSES = frozenset({401, 403, 410})
-_STREAM_RESPONSE_HEADERS = ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges")
+_STREAM_RESPONSE_HEADERS = ("Content-Type", "Content-Range", "Accept-Ranges")
 _HEAD_RESPONSE_HEADERS = ("Content-Type", "Content-Length", "Accept-Ranges")
 
 _DEFAULT_USER_AGENT = (
