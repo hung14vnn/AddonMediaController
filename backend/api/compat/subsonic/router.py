@@ -741,9 +741,7 @@ async def _search2(c: Ctx) -> Response:
     return c.render(
         "searchResult2",
         {"artist": out_artists, "album": out_albums, "song": out_songs},
-
-
-
+    )
 _PLACEHOLDER_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">'
     '<rect fill="#374151" width="200" height="200"/>'
