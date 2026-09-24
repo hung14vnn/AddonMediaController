@@ -1927,15 +1927,24 @@ async def _get_top_songs(c: Ctx) -> Response:
         raise SubsonicError(10, "Required parameter 'artist' is missing")
     count = c.pint("count", 50, minimum=1, maximum=500) or 50
     
+    spot_songs = []
+    try:
+        from services.spotapi_client import SpotApiClient
+        spotapi = SpotApiClient()
+        st, _ = await spotapi.search_tracks(f"artist:{artist}", limit=count)
+        spot_songs = [_spotapi_to_child(t) for t in st]
+    except Exception as e:
+        logger.warning("Spotapi getTopSongs search failed: %s", e)
+        
     if c.services.ytmusic_stream:
         yt_tracks = await c.services.ytmusic_stream.get_artist_top_songs(artist, limit=count)
         if yt_tracks:
-            return c.render("topSongs", {"song": [_ytmusic_to_child(t) for t in yt_tracks]})
+            return c.render("topSongs", {"song": [_ytmusic_to_child(t) for t in yt_tracks] + spot_songs})
             
     tracks = await c.services.discover.get_top_songs(
         artist, user_id=c.user.id, count=count, user=c.user
     )
-    return c.render("topSongs", {"song": [c.child(t) for t in tracks]})
+    return c.render("topSongs", {"song": [c.child(t) for t in tracks] + spot_songs})
 
 
 def _parse_length(t: dict) -> int | None:
