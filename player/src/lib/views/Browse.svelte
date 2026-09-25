@@ -1,32 +1,40 @@
 <script lang="ts">
-	import { getAlbumList, getGenres, optional, getRandomRadioMix, getTrendingPlaylists } from '../api';
-	import PlaylistCard from '../components/PlaylistCard.svelte';
-	import RadioMixCard from '../components/RadioMixCard.svelte';
-	import AlbumCard from '../components/AlbumCard.svelte';
-	import ErrorState from '../components/ErrorState.svelte';
-	import GenreTiles from '../components/GenreTiles.svelte';
-	import Shelf from '../components/Shelf.svelte';
-	import { getPlayer } from '../player.svelte';
-	import type { Song } from '../types';
+	import {
+		getAlbumList,
+		getGenres,
+		optional,
+		getRandomRadioMix,
+		getTrendingPlaylists,
+	} from "../api";
+	import PlaylistCard from "../components/PlaylistCard.svelte";
+	import RadioMixCard from "../components/RadioMixCard.svelte";
+	import AlbumCard from "../components/AlbumCard.svelte";
+	import ErrorState from "../components/ErrorState.svelte";
+	import GenreTiles from "../components/GenreTiles.svelte";
+	import Shelf from "../components/Shelf.svelte";
+	import { getPlayer } from "../player.svelte";
 
 	const player = getPlayer();
 
 	function load() {
 		return Promise.all([
-			getAlbumList('newest', 20),
-			optional(getAlbumList('frequent', 20)),
-			optional(getAlbumList('random', 20)),
-			optional(getGenres())
-		]).then(([newest, frequent, random, genres]) => ({ newest, frequent, random, genres }));
+			getAlbumList("newest", 20),
+			optional(getAlbumList("frequent", 20)),
+			optional(getAlbumList("random", 20)),
+			optional(getGenres()),
+		]).then(([newest, frequent, random, genres]) => ({
+			newest,
+			frequent,
+			random,
+			genres,
+		}));
 	}
 	let data = $state(load());
 
 	const region = /-([A-Z]{2}) /.exec(navigator.language)?.[1];
-	const radioMix = optional(getRandomRadioMix(15));
+	const radioMix = optional(getRandomRadioMix(5));
 	const trendingPlaylists = optional(getTrendingPlaylists(region));
 </script>
-
-
 
 <div class="page">
 	<h1 class="page-title">Browse</h1>
@@ -41,20 +49,26 @@
 		{#await trendingPlaylists then list}
 			{#if list.length}
 				<Shelf title="Trending Playlists">
-					{#each list as playlist (playlist.id)}<PlaylistCard {playlist} />{/each}
+					{#each list as playlist (playlist.id)}<PlaylistCard
+							{playlist}
+						/>{/each}
 				</Shelf>
 			{/if}
 		{/await}
 		{#await radioMix then list}
 			{#if list.length}
 				<Shelf title="Radio Mix" size="lg">
-					{#each list as playlist (playlist.id)}<RadioMixCard {playlist} />{/each}
+					{#each list as playlist (playlist.id)}<RadioMixCard
+							{playlist}
+						/>{/each}
 				</Shelf>
 			{/if}
 		{/await}
 		{#if d.frequent.length}
 			<Shelf title="Most Played">
-				{#each d.frequent as album (album.id)}<AlbumCard {album} />{/each}
+				{#each d.frequent as album (album.id)}<AlbumCard
+						{album}
+					/>{/each}
 			</Shelf>
 		{/if}
 		{#if d.genres.length}

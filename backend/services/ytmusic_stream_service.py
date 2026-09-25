@@ -444,11 +444,27 @@ class YTMusicStreamService:
         """Playlists of the country's YouTube Music trending chart."""
         def _fetch():
             yt = getattr(self, "_yt_client", None) or YTMusic()
-            charts = yt.get_charts(country) or {}
-            playlists = charts.get("videos") or []
-            if not playlists and country != "VN":
-                playlists = (yt.get_charts("VN") or {}).get("videos") or []
-            return playlists[:limit]
+            def get_vids(c):
+                ch = yt.get_charts(c) or {}
+                return ch.get("videos") or []
+
+            playlists = get_vids(country)
+            if country != "ZZ":
+                playlists.extend(get_vids("ZZ"))
+            if country != "US":
+                playlists.extend(get_vids("US"))
+            if country != "VN":
+                playlists.extend(get_vids("VN"))
+
+            seen = set()
+            result = []
+            for p in playlists:
+                pid = p.get("playlistId")
+                if pid and pid not in seen:
+                    seen.add(pid)
+                    result.append(p)
+                    
+            return result[:limit]
 
         try:
             return await self._run_blocking(_fetch, what="trending playlists")
