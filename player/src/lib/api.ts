@@ -224,7 +224,7 @@ export async function getRandomSongs(size = 50, extra: Params = {}) {
 
 export async function getRandomRadioMix(count = 20) {
 	const r = await call('getRandomRadioMix', { count });
-	return (r.randomRadioMix?.song ?? []) as Song[];
+	return (r.randomRadioMix?.playlist ?? []) as Playlist[];
 }
 
 export async function getSongsByGenre(genre: string, count = 100, offset = 0) {

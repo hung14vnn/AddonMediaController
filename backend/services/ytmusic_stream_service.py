@@ -456,6 +456,19 @@ class YTMusicStreamService:
             logger.warning("YTMusic trending playlists failed for %r: %s", country, e)
             return []
 
+    async def get_radio_playlists(self, limit: int = 15) -> list[dict]:
+        """Fetch YouTube Music radio and mix playlists."""
+        def _fetch():
+            yt = getattr(self, "_yt_client", None) or YTMusic()
+            # Searching for 'mix' or 'radio' returns YouTube Music's auto-generated mixes
+            return yt.search("mix", filter="playlists", limit=limit) or []
+
+        try:
+            return await self._run_blocking(_fetch, what="radio playlists")
+        except Exception as e:
+            logger.warning("YTMusic radio playlists failed: %s", e)
+            return []
+
     def evict_by_video_id(self, video_id: str) -> None:
         """Drop every cached entry for *video_id*."""
         self._cache.evict(f"{video_id}:opus")

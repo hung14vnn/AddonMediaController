@@ -145,6 +145,13 @@
 			<button
 				class="badge badge-lg cursor-pointer transition-colors"
 				style="background-color: {colors.secondary}; color: {colors.primary};"
+				onclick={navigateToTracks}
+			>
+				Tracks
+			</button>
+			<button
+				class="badge badge-lg cursor-pointer transition-colors"
+				style="background-color: {colors.secondary}; color: {colors.primary};"
 				onclick={() => navigateToBucket('artists')}
 			>
 				Artists
@@ -155,13 +162,6 @@
 				onclick={() => navigateToBucket('albums')}
 			>
 				Albums
-			</button>
-			<button
-				class="badge badge-lg cursor-pointer transition-colors"
-				style="background-color: {colors.secondary}; color: {colors.primary};"
-				onclick={navigateToTracks}
-			>
-				Tracks
 			</button>
 		</div>
 	</div>
@@ -189,6 +189,10 @@
 				{/if}
 			</div>
 		{/if}
+
+		<div id="spotify-tracks" class="scroll-mt-20">
+			<SpotifyTrackList {tracks} title="TRACKS" variant="grid" />
+		</div>
 
 		<div>
 			<h2 class="text-xl font-bold mb-4">Artists</h2>
@@ -287,9 +291,6 @@
 		</div>
 	</section>
 
-	<section id="spotify-tracks" class="scroll-mt-20 px-8 pb-4">
-		<SpotifyTrackList {tracks} title="TRACKS" variant="grid" />
-	</section>
 {:else}
 	<p class="text-center mt-32 text-gray-400">Enter a search query to get started.</p>
 {/if}

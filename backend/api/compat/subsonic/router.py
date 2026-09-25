@@ -1631,6 +1631,34 @@ async def _get_playlist(c: Ctx) -> Response:
         )
         return c.render("playlist", detail)
 
+    if raw_id.startswith("ytmusic-radiomix-"):
+        video_id = raw_id[len("ytmusic-radiomix-"):]
+        ytmusic = c.services.ytmusic_stream
+        if not ytmusic:
+            raise SubsonicError(70, "YouTube Music is disabled")
+            
+        def _fetch_radio():
+            from ytmusicapi import YTMusic
+            yt = getattr(ytmusic, "_yt_client", None) or YTMusic()
+            return yt.get_watch_playlist(videoId=video_id, radio=True, limit=50)
+            
+        pl = await ytmusic._run_blocking(_fetch_radio, what="yt radio mix")
+        songs = [child for t in pl.get("tracks", []) if (child := _ytmusic_to_child(t))]
+        
+        detail = m.SPlaylist(
+            id=raw_id,
+            name=pl.get("title") or "Radio Mix",
+            owner="YouTube Music",
+            public=True,
+            songCount=len(songs),
+            duration=sum((s.duration or 0) for s in songs),
+            created=None,
+            changed=None,
+            coverArt=songs[0].coverArt if songs else "",
+            entry=songs
+        )
+        return c.render("playlist", detail)
+
     pid = _decode_expect(raw_id, "playlist")
     return c.render("playlist", await _build_playlist_detail(c, pid))
 
@@ -2485,27 +2513,37 @@ async def _get_todays_hits(c: Ctx) -> Response:
 
 @endpoint("getRandomRadioMix")
 async def _get_random_radio_mix(c: Ctx) -> Response:
-    count = c.pint("count", 20, minimum=1, maximum=100) or 20
+    count = c.pint("count", 15, minimum=1, maximum=100) or 15
     ytmusic = c.services.ytmusic_stream
     if not ytmusic:
-        return c.render("randomRadioMix", {"song": []})
+        return c.render("randomRadioMix", {"playlist": []})
 
-    seed_tracks = await c.services.discover.get_random_songs(count=5, user=c.user)
-    video_ids = []
+    seed_tracks = await c.services.discover.get_random_songs(count=count, user=c.user)
+    playlists = []
 
     for t in seed_tracks:
         try:
             info = await ytmusic.search(t.artist_name or "", t.title or "")
-            video_ids.append(info.video_id)
+            tid = encode("ytmusic", info.video_id)
+            if info.thumbnail:
+                _remember_cover("ytmusic", info.video_id, info.thumbnail)
+            playlists.append(
+                m.SPlaylist(
+                    id=f"ytmusic-radiomix-{info.video_id}",
+                    name=f"{t.title} Radio",
+                    owner=t.artist_name or "YouTube Music",
+                    public=True,
+                    songCount=0,
+                    duration=0,
+                    created="",
+                    changed="",
+                    coverArt=tid,
+                )
+            )
         except Exception:
             pass
 
-    if not video_ids:
-        return c.render("randomRadioMix", {"song": []})
-
-    tracks = await ytmusic.get_smart_discover(video_ids, limit=count)
-    songs = [child for t in tracks if (child := _ytmusic_to_child(t))]
-    return c.render("randomRadioMix", {"song": songs})
+    return c.render("randomRadioMix", {"playlist": playlists})
 
 
 @endpoint("getTrendingPlaylists")
