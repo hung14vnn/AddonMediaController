@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { getLyrics } from '../api';
-	import { getPlayer } from '../player.svelte';
-	import { artistName } from '../format';
-	import type { Lyrics } from '../types';
-	import WordSyncedLyrics from './WordSyncedLyrics.svelte';
+	import { getLyrics } from "../api";
+	import { getPlayer } from "../player.svelte";
+	import { artistName } from "../format";
+	import type { Lyrics } from "../types";
+	import WordSyncedLyrics from "./WordSyncedLyrics.svelte";
 
 	const player = getPlayer();
 	let lyrics = $state<Lyrics | null>(null);
@@ -52,7 +52,10 @@
 		if (Date.now() - userScrolledAt < 3000) return;
 		const el = container.querySelector<HTMLElement>(`[data-i="${active}"]`);
 		if (!el) return;
-		container.scrollTo({ top: el.offsetTop - container.clientHeight * 0.3, behavior: 'smooth' });
+		container.scrollTo({
+			top: el.offsetTop - container.clientHeight * 0.3,
+			behavior: "smooth",
+		});
 	});
 </script>
 
@@ -62,12 +65,13 @@
 			<WordSyncedLyrics
 				title={song.title}
 				artist={artistName(song)}
-				album={song.album ?? ''}
+				album={song.album ?? ""}
 				durationSeconds={player.duration || song.duration || 0}
 				currentTimeSeconds={player.currentTime}
 				isPlaying={player.playing}
-				isrc={song.isrc?.[0] ?? ''}
+				isrc={song.isrc?.[0] ?? ""}
 				onseek={(s) => player.seek(s)}
+				maxFps={30}
 			/>
 		</div>
 	{/key}
@@ -96,13 +100,13 @@
 						player.seek((line.start ?? 0) / 1000);
 					}}
 				>
-					{line.value || '♪'}
+					{line.value || "♪"}
 				</button>
 			{/each}
 			<div class="spacer"></div>
 		{:else}
 			{#each lyrics.lines as line}
-				<p class="line plain">{line.value || ' '}</p>
+				<p class="line plain">{line.value || " "}</p>
 			{/each}
 		{/if}
 	</div>
@@ -118,8 +122,20 @@
 		overflow-y: auto;
 		padding: 30vh 8px 0;
 		scrollbar-width: none;
-		mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 80%, transparent);
-		-webkit-mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 80%, transparent);
+		mask-image: linear-gradient(
+			to bottom,
+			transparent,
+			#000 12%,
+			#000 80%,
+			transparent
+		);
+		-webkit-mask-image: linear-gradient(
+			to bottom,
+			transparent,
+			#000 12%,
+			#000 80%,
+			transparent
+		);
 	}
 	.lyrics::-webkit-scrollbar {
 		display: none;
