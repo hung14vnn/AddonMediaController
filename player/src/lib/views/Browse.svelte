@@ -32,8 +32,12 @@
 	let data = $state(load());
 
 	const region = /-([A-Z]{2}) /.exec(navigator.language)?.[1];
-	const radioMix = optional(getRandomRadioMix(5));
+	let radioMix = $state(optional(getRandomRadioMix(5)));
 	const trendingPlaylists = optional(getTrendingPlaylists(region));
+
+	function reloadRadioMix() {
+		radioMix = optional(getRandomRadioMix(5, true));
+	}
 </script>
 
 <div class="page">
@@ -63,7 +67,7 @@
 			</Shelf>
 		{:then list}
 			{#if list.length}
-				<Shelf title="Radio Mix" size="lg">
+				<Shelf title="Radio Mix" size="lg" onRefresh={reloadRadioMix}>
 					{#each list as playlist (playlist.id)}<RadioMixCard
 							{playlist}
 						/>{/each}

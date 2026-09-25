@@ -7,11 +7,13 @@
 		title,
 		seeAll,
 		size = 'md',
+		onRefresh,
 		children
 	}: {
 		title: string;
 		seeAll?: string;
 		size?: 'sm' | 'md' | 'lg' | 'artist';
+		onRefresh?: () => void;
 		children: Snippet;
 	} = $props();
 
@@ -55,7 +57,14 @@
 		{#if seeAll}
 			<a class="title" href={seeAll}>{title}<Icon name="chevronRight" size={18} /></a>
 		{:else}
-			<h2 class="title">{title}</h2>
+			<h2 class="title">
+				{title}
+				{#if onRefresh}
+					<button class="refresh-btn" aria-label="Refresh" onclick={onRefresh}>
+						<Icon name="refresh" size={18} />
+					</button>
+				{/if}
+			</h2>
 		{/if}
 		<div class="nav">
 			<button aria-label="Scroll left" disabled={atStart} onclick={() => page(-1)}>
@@ -98,6 +107,24 @@
 
 	a.title :global(svg) {
 		color: var(--text-3);
+	}
+
+	.refresh-btn {
+		background: none;
+		border: none;
+		padding: 4px;
+		margin-left: 8px;
+		color: var(--text-2);
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 50%;
+		transition: background-color 0.2s, color 0.2s;
+	}
+	.refresh-btn:hover {
+		background-color: var(--fill);
+		color: var(--text);
 	}
 
 	.nav {

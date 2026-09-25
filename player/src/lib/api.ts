@@ -222,9 +222,27 @@ export async function getRandomSongs(size = 50, extra: Params = {}) {
 	return (r.randomSongs?.song ?? []) as Song[];
 }
 
-export async function getRandomRadioMix(count = 20) {
+export async function getRandomRadioMix(count = 20, force = false) {
+	const key = 'cachedRadioMix';
+	if (!force) {
+		const cached = localStorage.getItem(key);
+		if (cached) {
+			try {
+				const { timestamp, data } = JSON.parse(cached);
+				if (Date.now() - timestamp < 24 * 60 * 60 * 1000) {
+					return data as Playlist[];
+				}
+			} catch (e) {
+				// ignore
+			}
+		}
+	}
 	const r = await call('getRandomRadioMix', { count });
-	return (r.randomRadioMix?.playlist ?? []) as Playlist[];
+	const data = (r.randomRadioMix?.playlist ?? []) as Playlist[];
+	if (data.length > 0) {
+		localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), data }));
+	}
+	return data;
 }
 
 export async function getSongsByGenre(genre: string, count = 100, offset = 0) {

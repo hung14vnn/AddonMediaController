@@ -402,7 +402,7 @@
 		max-width: 100%;
 		text-align: left;
 	}
-	:global(.artist) a:hover {
+	:global(.artist a:hover) {
 		text-decoration: underline;
 	}
 	.round {

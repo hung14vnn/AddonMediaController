@@ -335,12 +335,7 @@
 			transform: translateX(290%);
 		}
 	}
-	.note {
-		margin: 0;
-		padding: 0 14px 12px 58px;
-		font-size: 12px;
-		color: var(--text-2);
-	}
+
 	dl {
 		margin: 0;
 		padding: 0 14px 6px 58px;
