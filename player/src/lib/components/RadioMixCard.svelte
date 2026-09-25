@@ -8,11 +8,12 @@
 	import Icon from "./Icon.svelte";
 	import Artwork from "./Artwork.svelte";
 
-	let { playlist }: { playlist: Playlist } = $props();
+	let { playlist = {} as Playlist, skeleton = false }: { playlist?: Playlist; skeleton?: boolean } = $props();
 	let songs: Song[] = $state([]);
 	let loading = $state(true);
 
 	$effect(() => {
+		if (skeleton || !playlist.id) return;
 		getPlaylist(playlist.id)
 			.then((p) => {
 				if (p.entry) songs = p.entry;
@@ -34,6 +35,34 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
+{#if skeleton}
+<div class="radio-card skeleton">
+	<div class="header">
+		<div class="header-cover-skeleton"></div>
+		<div class="header-info-skeleton">
+			<div class="line"></div>
+			<div class="line short"></div>
+		</div>
+	</div>
+
+	<div class="tracks">
+		{#each Array(3) as _}
+			<div class="track">
+				<div class="track-cover-skeleton"></div>
+				<div class="track-info-skeleton">
+					<div class="line"></div>
+					<div class="line short"></div>
+				</div>
+			</div>
+		{/each}
+	</div>
+
+	<div class="actions">
+		<div class="action-btn-skeleton play-btn-skeleton"></div>
+		<div class="action-btn-skeleton"></div>
+	</div>
+</div>
+{:else}
 <div
 	class="radio-card"
 	oncontextmenu={(e) => ui.openMenu(e, playlistMenu(playlist))}
@@ -58,7 +87,7 @@
 
 	<div class="tracks">
 		{#if !loading && songs.length > 0}
-			{#each songs.slice(0, 3) as song}
+			{#each songs.slice(1, 4) as song}
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
@@ -135,6 +164,7 @@
 		</button>
 	</div>
 </div>
+{/if}
 
 <style>
 	.radio-card {
@@ -281,6 +311,31 @@
 		flex-direction: column;
 		gap: 6px;
 		justify-content: center;
+	}
+	.skeleton .header-cover-skeleton {
+		width: 80px;
+		height: 80px;
+		border-radius: 8px;
+		background: var(--hairline);
+		animation: pulse 1.5s infinite;
+		flex-shrink: 0;
+	}
+	.skeleton .header-info-skeleton {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		justify-content: center;
+	}
+	.skeleton .action-btn-skeleton {
+		width: 40px;
+		height: 40px;
+		border-radius: 50%;
+		background: var(--hairline);
+		animation: pulse 1.5s infinite;
+	}
+	.skeleton .play-btn-skeleton {
+		background: rgba(255, 255, 255, 0.2);
 	}
 	.skeleton .line {
 		height: 10px;

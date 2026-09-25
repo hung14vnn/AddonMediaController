@@ -55,7 +55,13 @@
 				</Shelf>
 			{/if}
 		{/await}
-		{#await radioMix then list}
+		{#await radioMix}
+			<Shelf title="Radio Mix" size="lg">
+				{#each Array(5) as _}
+					<RadioMixCard skeleton={true} />
+				{/each}
+			</Shelf>
+		{:then list}
 			{#if list.length}
 				<Shelf title="Radio Mix" size="lg">
 					{#each list as playlist (playlist.id)}<RadioMixCard
