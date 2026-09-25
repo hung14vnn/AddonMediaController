@@ -410,18 +410,18 @@ class YTMusicStreamService:
             logger.warning("YTMusic top songs failed for %r: %s", artist_name, e)
             return []
 
-    async def get_chart_songs(self, country: str = "ZZ", limit: int = 20) -> list[dict]:
+    async def get_chart_songs(self, country: str = "VN", limit: int = 20) -> list[dict]:
         """Tracks of the country's YouTube Music trending chart.
 
         Prefers the "Trending 20 <country>" playlist (only some regions have one),
-        then the daily top music videos chart; unknown regions fall back to global.
+        then the daily top music videos chart; unknown regions fall back to VN.
         """
         def _fetch():
             yt = getattr(self, "_yt_client", None) or YTMusic()
             charts = yt.get_charts(country) or {}
             playlists = charts.get("videos") or []
-            if not playlists and country != "ZZ":
-                playlists = (yt.get_charts("ZZ") or {}).get("videos") or []
+            if not playlists and country != "VN":
+                playlists = (yt.get_charts("VN") or {}).get("videos") or []
             if not playlists:
                 return []
             pick = next(
@@ -438,6 +438,22 @@ class YTMusicStreamService:
             return tracks[:limit] if tracks else []
         except Exception as e:
             logger.warning("YTMusic trending chart failed for %r: %s", country, e)
+            return []
+
+    async def get_chart_playlists(self, country: str = "VN", limit: int = 10) -> list[dict]:
+        """Playlists of the country's YouTube Music trending chart."""
+        def _fetch():
+            yt = getattr(self, "_yt_client", None) or YTMusic()
+            charts = yt.get_charts(country) or {}
+            playlists = charts.get("videos") or []
+            if not playlists and country != "VN":
+                playlists = (yt.get_charts("VN") or {}).get("videos") or []
+            return playlists[:limit]
+
+        try:
+            return await self._run_blocking(_fetch, what="trending playlists")
+        except Exception as e:
+            logger.warning("YTMusic trending playlists failed for %r: %s", country, e)
             return []
 
     def evict_by_video_id(self, video_id: str) -> None:

@@ -1602,7 +1602,36 @@ async def _get_playlists(c: Ctx) -> Response:
 
 @endpoint("getPlaylist")
 async def _get_playlist(c: Ctx) -> Response:
-    pid = _decode_expect(c.p("id") or "", "playlist")
+    raw_id = c.p("id") or ""
+    if raw_id.startswith("ytmusic-playlist-"):
+        playlist_id = raw_id[len("ytmusic-playlist-"):]
+        ytmusic = c.services.ytmusic_stream
+        if not ytmusic:
+            raise SubsonicError(70, "YouTube Music is disabled")
+            
+        def _fetch():
+            from ytmusicapi import YTMusic
+            yt = getattr(ytmusic, "_yt_client", None) or YTMusic()
+            return yt.get_playlist(playlist_id, limit=200)
+            
+        pl = await ytmusic._run_blocking(_fetch, what="yt playlist")
+        songs = [child for t in pl.get("tracks", []) if (child := _ytmusic_to_child(t))]
+        
+        detail = m.SPlaylist(
+            id=raw_id,
+            name=pl.get("title") or "YouTube Playlist",
+            owner=pl.get("author", {}).get("name") if isinstance(pl.get("author"), dict) else "YouTube",
+            public=True,
+            songCount=len(songs),
+            duration=sum((s.duration or 0) for s in songs),
+            created=None,
+            changed=None,
+            coverArt=encode("ytmusic-thumbnail", pl.get("thumbnails", [{}])[-1].get("url") if pl.get("thumbnails") else ""),
+            entry=songs
+        )
+        return c.render("playlist", detail)
+
+    pid = _decode_expect(raw_id, "playlist")
     return c.render("playlist", await _build_playlist_detail(c, pid))
 
 
@@ -2409,11 +2438,11 @@ async def _cached_chart(
 
 @endpoint("getTrendingSongs")
 async def _get_trending_songs(c: Ctx) -> Response:
-    """Trending chart from YouTube Music for ``country`` (ISO alpha-2, default global)."""
+    """Trending chart from YouTube Music for ``country`` (ISO alpha-2, default VN)."""
     count = c.pint("count", 20, minimum=1, maximum=100) or 20
-    country = (c.p("country") or "ZZ").strip().upper()
+    country = (c.p("country") or "VN").strip().upper()
     if not re.fullmatch(r"[A-Z]{2}", country):
-        country = "ZZ"
+        country = "VN"
     ytmusic = c.services.ytmusic_stream
 
     async def fetch() -> list[m.SChild]:
@@ -2452,3 +2481,58 @@ async def _get_todays_hits(c: Ctx) -> Response:
 
     songs = await _cached_chart("todays_hits", fetch)
     return c.render("todaysHits", {"song": songs[:count]})
+
+
+@endpoint("getRandomRadioMix")
+async def _get_random_radio_mix(c: Ctx) -> Response:
+    count = c.pint("count", 20, minimum=1, maximum=100) or 20
+    ytmusic = c.services.ytmusic_stream
+    if not ytmusic:
+        return c.render("randomRadioMix", {"song": []})
+
+    seed_tracks = await c.services.discover.get_random_songs(count=5, user=c.user)
+    video_ids = []
+
+    for t in seed_tracks:
+        try:
+            info = await ytmusic.search(t.artist_name or "", t.title or "")
+            video_ids.append(info.video_id)
+        except Exception:
+            pass
+
+    if not video_ids:
+        return c.render("randomRadioMix", {"song": []})
+
+    tracks = await ytmusic.get_smart_discover(video_ids, limit=count)
+    songs = [child for t in tracks if (child := _ytmusic_to_child(t))]
+    return c.render("randomRadioMix", {"song": songs})
+
+
+@endpoint("getTrendingPlaylists")
+async def _get_trending_playlists(c: Ctx) -> Response:
+    country = (c.p("country") or "VN").strip().upper()
+    if not re.fullmatch(r"[A-Z]{2}", country):
+        country = "VN"
+    ytmusic = c.services.ytmusic_stream
+    if not ytmusic:
+        return c.render("playlists", {"playlist": []})
+        
+    charts = await ytmusic.get_chart_playlists(country)
+    playlists = []
+    for p in charts:
+        if not p.get("playlistId"):
+            continue
+        playlists.append(
+            m.SPlaylist(
+                id=f"ytmusic-playlist-{p['playlistId']}",
+                name=p.get("title") or "YouTube Chart",
+                owner="YouTube Music",
+                public=True,
+                songCount=200,
+                duration=0,
+                created=None,
+                changed=None,
+                coverArt=encode("ytmusic-thumbnail", p.get("thumbnails", [{}])[-1].get("url") if p.get("thumbnails") else ""),
+            )
+        )
+    return c.render("playlists", {"playlist": playlists})

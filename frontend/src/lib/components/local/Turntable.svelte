@@ -248,20 +248,20 @@
 
 	{#if np}
 		<div class="flex w-full max-w-md flex-col items-center gap-1 text-center">
-			<div class="flex items-center gap-2">
+			<div class="flex w-full items-center justify-center gap-2 px-2">
 				{#if isPlaying}
-					<div class="now-playing-bars now-playing-bars--sm now-playing-bars--playing">
+					<div class="now-playing-bars now-playing-bars--sm now-playing-bars--playing shrink-0">
 						<span></span><span></span><span></span>
 					</div>
 				{/if}
 				{#key np.trackSourceId}
-					<p class="track-title-change truncate text-lg font-bold text-base-content">
+					<p class="track-title-change truncate min-w-0 text-lg font-bold text-base-content">
 						{np.trackName ?? np.albumName}
 					</p>
 				{/key}
 			</div>
 			{#key np.trackSourceId}
-				<p class="track-title-change truncate text-sm text-base-content/70">
+				<p class="track-title-change w-full truncate px-2 text-sm text-base-content/70">
 					{formatArtistCredit(np.artistName)}{#if np.albumName}<span class="text-base-content/40">
 							&middot; {np.albumName}</span
 						>{/if}

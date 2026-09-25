@@ -207,6 +207,11 @@ export async function getTrendingSongs(count = 20, country?: string) {
 	return (r.trendingSongs?.song ?? []) as Song[];
 }
 
+export async function getTrendingPlaylists(country?: string) {
+	const r = await call('getTrendingPlaylists', { country });
+	return (r.playlists?.playlist ?? []) as Playlist[];
+}
+
 export async function getTodaysHits(count = 20) {
 	const r = await call('getTodaysHits', { count });
 	return (r.todaysHits?.song ?? []) as Song[];
@@ -215,6 +220,11 @@ export async function getTodaysHits(count = 20) {
 export async function getRandomSongs(size = 50, extra: Params = {}) {
 	const r = await call('getRandomSongs', { size, ...extra });
 	return (r.randomSongs?.song ?? []) as Song[];
+}
+
+export async function getRandomRadioMix(count = 20) {
+	const r = await call('getRandomRadioMix', { count });
+	return (r.randomRadioMix?.song ?? []) as Song[];
 }
 
 export async function getSongsByGenre(genre: string, count = 100, offset = 0) {
