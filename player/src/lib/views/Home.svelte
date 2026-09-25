@@ -1,25 +1,38 @@
 <script lang="ts">
-	import { getAlbumList, getRandomSongs, getTodaysHits, getTrendingSongs, optional } from '../api';
-	import AlbumCard from '../components/AlbumCard.svelte';
-	import ErrorState from '../components/ErrorState.svelte';
-	import Icon from '../components/Icon.svelte';
-	import ProfileButton from '../components/ProfileButton.svelte';
-	import Shelf from '../components/Shelf.svelte';
-	import TrackList from '../components/TrackList.svelte';
-	import { getPlayer } from '../player.svelte';
-	import type { Song } from '../types';
+	import {
+		getAlbumList,
+		getRandomSongs,
+		getTodaysHits,
+		getTrendingSongs,
+		optional,
+	} from "../api";
+	import AlbumCard from "../components/AlbumCard.svelte";
+	import ErrorState from "../components/ErrorState.svelte";
+	import Icon from "../components/Icon.svelte";
+	import ProfileButton from "../components/ProfileButton.svelte";
+	import Shelf from "../components/Shelf.svelte";
+	import TrackList from "../components/TrackList.svelte";
+	import { getPlayer } from "../player.svelte";
+	import type { Song } from "../types";
 
 	const player = getPlayer();
 
 	function load() {
 		return Promise.all([
-			optional(getAlbumList('recent', 20)),
-			getAlbumList('newest', 20),
-			optional(getAlbumList('frequent', 20)),
-			optional(getAlbumList('random', 20)),
-			optional(getAlbumList('starred', 20)),
-			optional(getRandomSongs(12))
-		]).then(([recent, newest, frequent, random, starred, picks]) => ({ recent, newest, frequent, random, starred, picks }));
+			optional(getAlbumList("recent", 20)),
+			getAlbumList("newest", 20),
+			optional(getAlbumList("frequent", 20)),
+			optional(getAlbumList("random", 20)),
+			optional(getAlbumList("starred", 20)),
+			optional(getRandomSongs(12)),
+		]).then(([recent, newest, frequent, random, starred, picks]) => ({
+			recent,
+			newest,
+			frequent,
+			random,
+			starred,
+			picks,
+		}));
 	}
 
 	let data = $state(load());
@@ -40,7 +53,11 @@
 		<section class="picks">
 			<div class="picks-head">
 				<h2 class="section-title">{title}</h2>
-				<button class="btn secondary" onclick={() => player.playList(list)}><Icon name="play" size={14} />Play</button>
+				<button
+					class="btn secondary"
+					onclick={() => player.playList(list)}
+					><Icon name="play" size={14} />Play</button
+				>
 			</div>
 			<div class="pad picks-list">
 				<TrackList songs={list} showAlbum={false} />
@@ -53,7 +70,9 @@
 	<div class="head">
 		<h1 class="page-title">Home</h1>
 		<div class="head-actions">
-			<button class="btn secondary" onclick={shuffleAll}><Icon name="shuffle" size={16} />Shuffle All</button>
+			<button class="btn secondary" onclick={shuffleAll}
+				><Icon name="shuffle" size={16} />Shuffle All</button
+			>
 			<ProfileButton />
 		</div>
 	</div>
@@ -69,34 +88,51 @@
 				<p>Add music on the server and it will show up here.</p>
 			</div>
 			{#await hits then list}{@render songs("Today's Hits", list)}{/await}
-			{#await trending then list}{@render songs('Trending Songs', list)}{/await}
+			{#await trending then list}{@render songs(
+					"Trending Songs",
+					list,
+				)}{/await}
 		{:else}
 			{#if d.recent.length}
 				<Shelf title="Recently Played" size="lg">
-					{#each d.recent as album (album.id)}<AlbumCard {album} />{/each}
+					{#each d.recent as album (album.id)}<AlbumCard
+							{album}
+						/>{/each}
 				</Shelf>
 			{/if}
+			{#await trending then list}{@render songs(
+					"Trending Songs",
+					list,
+				)}{/await}
+
 			{#if d.newest.length}
 				<Shelf title="Recently Added" seeAll="#/recent">
-					{#each d.newest as album (album.id)}<AlbumCard {album} />{/each}
+					{#each d.newest as album (album.id)}<AlbumCard
+							{album}
+						/>{/each}
 				</Shelf>
 			{/if}
-			{@render songs('Top Picks for You', d.picks)}
 			{#await hits then list}{@render songs("Today's Hits", list)}{/await}
-			{#await trending then list}{@render songs('Trending Songs', list)}{/await}
+			{@render songs("Top Picks for You", d.picks)}
 			{#if d.frequent.length}
 				<Shelf title="Heavy Rotation">
-					{#each d.frequent as album (album.id)}<AlbumCard {album} />{/each}
+					{#each d.frequent as album (album.id)}<AlbumCard
+							{album}
+						/>{/each}
 				</Shelf>
 			{/if}
 			{#if d.starred.length}
 				<Shelf title="Favorite Albums" seeAll="#/loved">
-					{#each d.starred as album (album.id)}<AlbumCard {album} />{/each}
+					{#each d.starred as album (album.id)}<AlbumCard
+							{album}
+						/>{/each}
 				</Shelf>
 			{/if}
 			{#if d.random.length}
 				<Shelf title="Rediscover" seeAll="#/albums">
-					{#each d.random as album (album.id)}<AlbumCard {album} />{/each}
+					{#each d.random as album (album.id)}<AlbumCard
+							{album}
+						/>{/each}
 				</Shelf>
 			{/if}
 		{/if}

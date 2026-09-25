@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getAlbumList, getGenres, optional, getRandomRadioMix, getTrendingPlaylists } from '../api';
 	import PlaylistCard from '../components/PlaylistCard.svelte';
+	import RadioMixCard from '../components/RadioMixCard.svelte';
 	import AlbumCard from '../components/AlbumCard.svelte';
 	import ErrorState from '../components/ErrorState.svelte';
 	import GenreTiles from '../components/GenreTiles.svelte';
@@ -46,8 +47,8 @@
 		{/await}
 		{#await radioMix then list}
 			{#if list.length}
-				<Shelf title="Radio Mix">
-					{#each list as playlist (playlist.id)}<PlaylistCard {playlist} />{/each}
+				<Shelf title="Radio Mix" size="lg">
+					{#each list as playlist (playlist.id)}<RadioMixCard {playlist} />{/each}
 				</Shelf>
 			{/if}
 		{/await}

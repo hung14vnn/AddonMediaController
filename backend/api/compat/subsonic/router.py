@@ -1617,6 +1617,11 @@ async def _get_playlist(c: Ctx) -> Response:
         pl = await ytmusic._run_blocking(_fetch, what="yt playlist")
         songs = [child for t in pl.get("tracks", []) if (child := _ytmusic_to_child(t))]
         
+        tid = encode("ytmusic", playlist_id)
+        url = pl.get("thumbnails", [{}])[-1].get("url") if pl.get("thumbnails") else ""
+        if url:
+            _remember_cover("ytmusic", playlist_id, url)
+        
         detail = m.SPlaylist(
             id=raw_id,
             name=pl.get("title") or "YouTube Playlist",
@@ -1626,7 +1631,7 @@ async def _get_playlist(c: Ctx) -> Response:
             duration=sum((s.duration or 0) for s in songs),
             created=None,
             changed=None,
-            coverArt=encode("ytmusic-thumbnail", pl.get("thumbnails", [{}])[-1].get("url") if pl.get("thumbnails") else ""),
+            coverArt=tid,
             entry=songs
         )
         return c.render("playlist", detail)
@@ -2513,7 +2518,7 @@ async def _get_todays_hits(c: Ctx) -> Response:
 
 @endpoint("getRandomRadioMix")
 async def _get_random_radio_mix(c: Ctx) -> Response:
-    count = c.pint("count", 15, minimum=1, maximum=100) or 15
+    count = c.pint("count", 5, minimum=1, maximum=100) or 5
     ytmusic = c.services.ytmusic_stream
     if not ytmusic:
         return c.render("randomRadioMix", {"playlist": []})
@@ -2560,6 +2565,11 @@ async def _get_trending_playlists(c: Ctx) -> Response:
     for p in charts:
         if not p.get("playlistId"):
             continue
+        tid = encode("ytmusic", p['playlistId'])
+        url = p.get("thumbnails", [{}])[-1].get("url") if p.get("thumbnails") else ""
+        if url:
+            _remember_cover("ytmusic", p['playlistId'], url)
+            
         playlists.append(
             m.SPlaylist(
                 id=f"ytmusic-playlist-{p['playlistId']}",
@@ -2570,7 +2580,7 @@ async def _get_trending_playlists(c: Ctx) -> Response:
                 duration=0,
                 created=None,
                 changed=None,
-                coverArt=encode("ytmusic-thumbnail", p.get("thumbnails", [{}])[-1].get("url") if p.get("thumbnails") else ""),
+                coverArt=tid,
             )
         )
     return c.render("playlists", {"playlist": playlists})
