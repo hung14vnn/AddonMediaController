@@ -15,7 +15,8 @@
 		albumArtist,
 		showAlbum = true,
 		onplay,
-		extraMenu
+		extraMenu,
+		downloadedIds = new Set<string>()
 	}: {
 		songs: Song[];
 		/** 'album' = numbered rows without art; 'list' = artwork thumbnails. */
@@ -24,6 +25,7 @@
 		showAlbum?: boolean;
 		onplay?: (index: number) => void;
 		extraMenu?: (song: Song, index: number) => MenuItem[];
+		downloadedIds?: Set<string>;
 	} = $props();
 
 	const player = getPlayer();
@@ -90,7 +92,9 @@
 				{/if}
 			{/if}
 			<span class="love" class:on={loved}>
-				{#if loved}
+				{#if downloadedIds.has(song.id)}
+					<span class="downloaded" aria-label="Downloaded"><Icon name="download" size={12} /></span>
+				{:else if loved}
 					<span class="icon-swap" in:pop={{ from: 0.2, duration: 300 }}>
 						<Icon name="starFill" size={14} />
 					</span>
@@ -219,6 +223,16 @@
 		font-size: 14px;
 		color: var(--text);
 		max-width: 100%;
+	}
+	.downloaded {
+		width: 20px;
+		height: 20px;
+		display: grid;
+		place-items: center;
+		border-radius: 50%;
+		color: var(--text-2);
+		background: var(--fill-strong);
+		flex-shrink: 0;
 	}
 	.current .title {
 		color: var(--accent);

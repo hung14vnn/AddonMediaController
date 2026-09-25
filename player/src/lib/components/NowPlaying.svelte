@@ -57,7 +57,7 @@
 		if (!(await player.pickOutput())) ui.showToast('No other playback devices found');
 	}
 
-	// Swipe-down-to-dismiss on the header area.
+	// Swipe-down-to-dismiss from anywhere in the Now Playing screen.
 	let startY = 0;
 	let dragY = $state(0);
 
@@ -84,7 +84,11 @@
 	class:tinted={!!tint}
 	style:transform={dragY ? `translateY(${dragY}px)` : undefined}
 	style:transition={dragY && ui.nowPlaying ? 'none' : undefined}
+	ontouchstart={(e) => (startY = e.touches[0].clientY)}
+	ontouchmove={(e) => (dragY = Math.max(0, e.touches[0].clientY - startY))}
+	ontouchend={() => (dragY > 110 ? close() : (dragY = 0))}
 	role="dialog"
+	tabindex="-1"
 	aria-modal="true"
 	aria-label="Now Playing"
 >
@@ -108,9 +112,6 @@
 	<div
 		class="grab"
 		role="presentation"
-		ontouchstart={(e) => (startY = e.touches[0].clientY)}
-		ontouchmove={(e) => (dragY = Math.max(0, e.touches[0].clientY - startY))}
-		ontouchend={() => (dragY > 110 ? close() : (dragY = 0))}
 	>
 		<button class="dismiss" aria-label="Close Now Playing" onclick={close}>
 			<span class="pill"></span>

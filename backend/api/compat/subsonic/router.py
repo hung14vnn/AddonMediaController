@@ -836,6 +836,7 @@ async def _search(c: Ctx):
     al_offset = c.pint("albumOffset", 0, minimum=0, maximum=2_147_483_647) or 0
     s_count = c.pint("songCount", 20, minimum=0, maximum=500) or 0
     s_offset = c.pint("songOffset", 0, minimum=0, maximum=2_147_483_647) or 0
+    local_only = str(c.p("localOnly") or "").lower() in {"1", "true", "yes"}
 
     artists = []
     if a_count:
@@ -856,7 +857,7 @@ async def _search(c: Ctx):
     spot_artists: list = []
     spot_albums: list = []
     spot_songs: list = []
-    if q and (a_count or al_count or s_count):
+    if q and not local_only and (a_count or al_count or s_count):
         from services.spotapi_client import SpotApiClient
 
         # Clients search on every keystroke and drop slow responses, so the

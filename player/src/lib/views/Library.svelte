@@ -10,6 +10,7 @@
 		{ path: '/artists', label: 'Artists', icon: 'mic' },
 		{ path: '/albums', label: 'Albums', icon: 'album' },
 		{ path: '/songs', label: 'Songs', icon: 'note' },
+		{ path: '/downloads', label: 'Downloaded', icon: 'download' },
 		{ path: '/loved', label: 'Favorites', icon: 'star' },
 		{ path: '/genres', label: 'Genres', icon: 'browse' }
 	];

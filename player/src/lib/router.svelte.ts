@@ -11,6 +11,7 @@ export type Route =
 	| { name: 'artists' }
 	| { name: 'albums' }
 	| { name: 'songs' }
+	| { name: 'downloads' }
 	| { name: 'playlists' }
 	| { name: 'loved' }
 	| { name: 'genres' }
@@ -34,6 +35,7 @@ function parse(hash: string): Route {
 		case 'artists':
 		case 'albums':
 		case 'songs':
+		case 'downloads':
 		case 'playlists':
 		case 'loved':
 		case 'genres':

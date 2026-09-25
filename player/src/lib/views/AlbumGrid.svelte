@@ -4,7 +4,9 @@
 	import { getAlbumList } from '../api';
 	import AlbumCard from '../components/AlbumCard.svelte';
 	import ErrorState from '../components/ErrorState.svelte';
+	import Icon from '../components/Icon.svelte';
 	import Sentinel from '../components/Sentinel.svelte';
+	import { router } from '../router.svelte';
 	import type { Album, AlbumListType } from '../types';
 
 	const PAGE = 60;
@@ -64,16 +66,17 @@
 
 <div class="page">
 	<div class="head">
-		<h1 class="page-title">{title}</h1>
+		<button class="back" onclick={() => router.go('/library')}><Icon name="chevronLeft" size={18} />Library</button>
 		{#if sortable}
 			<label class="sort">
-				<span class="muted">Sort by</span>
+				<span>Sort</span>
 				<select bind:value={type}>
 					{#each sorts as s}<option value={s.value}>{s.label}</option>{/each}
 				</select>
 			</label>
 		{/if}
 	</div>
+	<h1 class="page-title">{title}</h1>
 	{#if error && !albums.length}
 		<ErrorState {error} />
 	{:else if done && !albums.length}
@@ -93,6 +96,7 @@
 		justify-content: space-between;
 		gap: 12px;
 		padding-right: var(--gutter);
+		margin-bottom: 8px;
 	}
 	.sort {
 		display: flex;
@@ -101,6 +105,7 @@
 		font-size: 13px;
 		margin-bottom: 20px;
 	}
+	.back { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 14px; white-space: nowrap; }
 	select {
 		font: inherit;
 		font-size: 13px;
@@ -109,5 +114,10 @@
 		border: 0;
 		border-radius: 7px;
 		padding: 5px 8px;
+	}
+	.sort { position: relative; color: var(--accent); }
+	.sort select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
+	@media (max-width: 699px) {
+		:global(.page > .grid) { padding-left: 10px; padding-right: 10px; }
 	}
 </style>

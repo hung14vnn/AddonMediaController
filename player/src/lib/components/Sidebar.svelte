@@ -43,6 +43,7 @@
 		{ path: '/artists', name: 'artists', label: 'Artists', icon: 'mic' },
 		{ path: '/albums', name: 'albums', label: 'Albums', icon: 'album' },
 		{ path: '/songs', name: 'songs', label: 'Songs', icon: 'note' },
+		{ path: '/downloads', name: 'downloads', label: 'Downloaded', icon: 'download' },
 		{ path: '/loved', name: 'loved', label: 'Favorites', icon: 'star' },
 		{ path: '/genres', name: 'genres', label: 'Genres', icon: 'browse' }
 	];

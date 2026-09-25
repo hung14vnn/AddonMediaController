@@ -15,6 +15,7 @@
 	import Artist from './lib/views/Artist.svelte';
 	import Artists from './lib/views/Artists.svelte';
 	import Browse from './lib/views/Browse.svelte';
+	import Downloads from './lib/views/Downloads.svelte';
 	import Genre from './lib/views/Genre.svelte';
 	import Genres from './lib/views/Genres.svelte';
 	import Home from './lib/views/Home.svelte';
@@ -89,6 +90,7 @@
 				{:else if route.name === 'albums'}<AlbumGrid title="Albums" sortable />
 				{:else if route.name === 'artists'}<Artists />
 				{:else if route.name === 'songs'}<Songs />
+				{:else if route.name === 'downloads'}<Downloads />
 				{:else if route.name === 'playlists'}<Playlists />
 				{:else if route.name === 'loved'}<Loved />
 				{:else if route.name === 'genres'}<Genres />

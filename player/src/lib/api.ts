@@ -255,13 +255,14 @@ export async function getGenres() {
 	return ((r.genres?.genre ?? []) as Genre[]).sort((a, b) => (b.songCount ?? 0) - (a.songCount ?? 0));
 }
 
-export async function search(query: string, counts = { artist: 8, album: 12, song: 20 }, songOffset = 0) {
+export async function search(query: string, counts = { artist: 8, album: 12, song: 20 }, songOffset = 0, localOnly = false) {
 	const r = await call('search3', {
 		query,
 		artistCount: counts.artist,
 		albumCount: counts.album,
 		songCount: counts.song,
-		songOffset
+		songOffset,
+		localOnly
 	});
 	const res = r.searchResult3 ?? {};
 	return {

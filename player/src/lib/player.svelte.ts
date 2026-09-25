@@ -1,4 +1,5 @@
 import { coverUrl, getPlayQueue, savePlayQueue, scrobble, streamUrl } from './api';
+import { sleepTimer } from './sleepTimer.svelte';
 import type { Song } from './types';
 
 export type Repeat = 'off' | 'all' | 'one';
@@ -343,13 +344,13 @@ class Player {
 		if (this.repeat === 'one') {
 			this.scrobbled = false;
 			this.audio.currentTime = 0;
-			this.audio.play();
+			this.audio.play().catch(() => (this.playing = false));
 			return;
 		}
-		
-		import('./sleepTimer.svelte').then(({ sleepTimer }) => {
-			if (!sleepTimer.onTrackEnded()) this.next();
-		});
+
+		// Handle this synchronously. A dynamic import can be deferred while the
+		// PWA is backgrounded, leaving the audio element stopped at the end.
+		if (!sleepTimer.onTrackEnded()) this.next();
 	}
 
 	private setupRemotePlayback() {
