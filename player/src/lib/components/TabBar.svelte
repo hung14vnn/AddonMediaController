@@ -42,22 +42,9 @@
 		display: flex;
 		justify-content: space-around;
 		padding: 4px 8px max(6px, env(safe-area-inset-bottom));
-
-		/* TỐI ƯU 1: Tắt backdrop-blur trên Mobile, dùng màu đục để GPU giải phóng 100% tải khi cuộn */
 		background: var(--tabbar-strong, rgba(20, 20, 22, 0.96));
-		backdrop-filter: none;
-		-webkit-backdrop-filter: none;
 
 		border-top: 0.5px solid var(--hairline);
-	}
-
-	/* Chỉ bật hiệu ứng kính mờ trên Desktop */
-	@media (min-width: 769px) {
-		.tabbar {
-			background: var(--tabbar, rgba(20, 20, 22, 0.8));
-			backdrop-filter: saturate(1.8) blur(16px);
-			-webkit-backdrop-filter: saturate(1.8) blur(16px);
-		}
 	}
 
 	a {

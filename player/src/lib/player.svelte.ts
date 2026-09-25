@@ -267,18 +267,55 @@ class Player {
 
 	// ---- internals -----------------------------------------------------------
 
-	private load(i: number, autoplay: boolean, startAt = 0) {
+	private currentOfflineRevoke: (() => void) | null = null;
+
+	private releaseOfflineUrl() {
+		if (this.currentOfflineRevoke) {
+			this.currentOfflineRevoke();
+			this.currentOfflineRevoke = null;
+		}
+	}
+
+	private async load(i: number, autoplay: boolean, startAt = 0) {
 		const song = this.queue[i];
 		if (!song) return;
+		
+		const targetIndex = i;
 		this.index = i;
 		this.error = null;
 		this.scrobbled = false;
 		this.currentTime = startAt;
 		this.duration = song.duration ?? 0;
 		this.pendingSeek = startAt;
-		this.audio.src = streamUrl(song.id);
+		
+		if (autoplay) this.buffering = true;
+
+		let src = streamUrl(song.id);
+		
+		const { getSession } = await import('./api');
+		const session = getSession();
+		if (session?.username) {
+			try {
+				const { createOfflineTrackUrl } = await import('./offline');
+				const offline = await createOfflineTrackUrl(session.username, song.id);
+				if (offline) {
+					src = offline.url;
+					this.releaseOfflineUrl();
+					this.currentOfflineRevoke = offline.revoke;
+				}
+			} catch {
+				// Fallback to stream URL
+			}
+		}
+
+		// Bail out if the user skipped to another track while we were awaiting DB
+		if (this.index !== targetIndex) {
+			if (src.startsWith('blob:')) URL.revokeObjectURL(src);
+			return;
+		}
+
+		this.audio.src = src;
 		if (autoplay) {
-			this.buffering = true;
 			this.audio.play().catch(() => {
 				this.playing = false;
 				this.buffering = false;
@@ -309,7 +346,10 @@ class Player {
 			this.audio.play();
 			return;
 		}
-		this.next();
+		
+		import('./sleepTimer.svelte').then(({ sleepTimer }) => {
+			if (!sleepTimer.onTrackEnded()) this.next();
+		});
 	}
 
 	private setupRemotePlayback() {
@@ -456,6 +496,7 @@ class Player {
 		this.audio.pause();
 		this.audio.removeAttribute('src');
 		this.audio.load();
+		this.releaseOfflineUrl();
 		this.channel?.close();
 		this.channel = null;
 		clearTimeout(this.saveTimer);
@@ -465,6 +506,7 @@ class Player {
 	reset() {
 		this.audio.pause();
 		this.audio.removeAttribute('src');
+		this.releaseOfflineUrl();
 		this.queue = [];
 		this.index = -1;
 		this.unshuffled = null;

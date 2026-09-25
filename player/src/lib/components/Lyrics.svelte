@@ -144,24 +144,22 @@
 		color: rgb(255 255 255 / 0.32);
 		transition:
 			color 0.35s ease,
-			filter 0.35s ease,
 			transform 0.35s ease;
 		transform-origin: left center;
 	}
+	/* Dim instead of blur(): filter on every line re-rasterises text each frame. */
 	.synced {
-		filter: blur(1.2px);
+		color: rgb(255 255 255 / 0.24);
 	}
 	.synced.past {
-		filter: blur(0.6px);
+		color: rgb(255 255 255 / 0.32);
 	}
 	.synced.active {
 		color: #fff;
-		filter: none;
 		transform: scale(1.02);
 	}
 	.synced:hover {
 		background: rgb(255 255 255 / 0.08);
-		filter: none;
 	}
 	.plain {
 		font-size: clamp(20px, 2.4vw, 28px);

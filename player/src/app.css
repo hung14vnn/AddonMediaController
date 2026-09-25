@@ -37,11 +37,11 @@
 	--accent-soft: rgb(250 45 72 / 0.25);
 	--bg: #ffffff;
 	--bg-elevated: #ffffff;
-	--sidebar: rgb(246 246 246 / 0.82);
-	--chrome: rgb(250 250 250 / 0.86);
-	--chrome-strong: rgb(248 248 248 / 0.9);
-	--tabbar: rgb(250 250 250 / 0.95);
-	--menu: rgb(246 246 246 / 0.88);
+	--sidebar: rgb(246 246 246 / 0.97);
+	--chrome: rgb(250 250 250 / 0.97);
+	--chrome-strong: rgb(248 248 248 / 0.97);
+	--tabbar: rgb(250 250 250 / 0.97);
+	--menu: rgb(246 246 246 / 0.97);
 	--lcd: rgb(0 0 0 / 0.035);
 	--text: #1d1d1f;
 	--text-2: rgb(60 60 67 / 0.62);
@@ -62,17 +62,29 @@
 	--font: 'SF Pro Display', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
+/* Installed desktop PWA with its title bar hidden (Window Controls Overlay): the
+   app paints up into the title bar, so chrome that reaches the top-right corner
+   reserves this much room for the OS minimise/maximise/close buttons. */
+:root {
+	--wco-inset-right: 0px;
+}
+@media (display-mode: window-controls-overlay) {
+	:root {
+		--wco-inset-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+	}
+}
+
 @media (prefers-color-scheme: dark) {
 	:root {
 		--accent: #fa586a;
 		--accent-soft: rgb(250 88 106 / 0.3);
 		--bg: #1f1f1f;
 		--bg-elevated: #2c2c2e;
-		--sidebar: rgb(38 38 38 / 0.8);
-		--chrome: rgb(34 34 34 / 0.85);
-		--chrome-strong: rgb(44 44 46 / 0.88);
-		--tabbar: rgb(28 28 30 / 0.95);
-		--menu: rgb(44 44 46 / 0.9);
+		--sidebar: rgb(38 38 38 / 0.97);
+		--chrome: rgb(34 34 34 / 0.97);
+		--chrome-strong: rgb(44 44 46 / 0.97);
+		--tabbar: rgb(28 28 30 / 0.97);
+		--menu: rgb(44 44 46 / 0.97);
 		--lcd: rgb(255 255 255 / 0.05);
 		--text: rgb(255 255 255 / 0.92);
 		--text-2: rgb(235 235 245 / 0.6);
@@ -111,6 +123,7 @@ body {
 	-webkit-font-smoothing: antialiased;
 	-webkit-tap-highlight-color: transparent;
 	overscroll-behavior: none;
+	touch-action: manipulation;
 }
 
 #app {

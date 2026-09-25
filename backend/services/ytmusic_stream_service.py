@@ -410,6 +410,36 @@ class YTMusicStreamService:
             logger.warning("YTMusic top songs failed for %r: %s", artist_name, e)
             return []
 
+    async def get_chart_songs(self, country: str = "ZZ", limit: int = 20) -> list[dict]:
+        """Tracks of the country's YouTube Music trending chart.
+
+        Prefers the "Trending 20 <country>" playlist (only some regions have one),
+        then the daily top music videos chart; unknown regions fall back to global.
+        """
+        def _fetch():
+            yt = getattr(self, "_yt_client", None) or YTMusic()
+            charts = yt.get_charts(country) or {}
+            playlists = charts.get("videos") or []
+            if not playlists and country != "ZZ":
+                playlists = (yt.get_charts("ZZ") or {}).get("videos") or []
+            if not playlists:
+                return []
+            pick = next(
+                (p for p in playlists if str(p.get("title", "")).lower().startswith("trending")),
+                None,
+            ) or next(
+                (p for p in playlists if "daily" in str(p.get("title", "")).lower()),
+                playlists[0],
+            )
+            return yt.get_playlist(pick["playlistId"], limit=limit).get("tracks") or []
+
+        try:
+            tracks = await self._run_blocking(_fetch, what="trending chart")
+            return tracks[:limit] if tracks else []
+        except Exception as e:
+            logger.warning("YTMusic trending chart failed for %r: %s", country, e)
+            return []
+
     def evict_by_video_id(self, video_id: str) -> None:
         """Drop every cached entry for *video_id*."""
         self._cache.evict(f"{video_id}:opus")

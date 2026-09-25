@@ -82,6 +82,33 @@
 		}
 	}
 
+	import { deleteAllOfflineTracks, listOfflineTrackMetadata } from '../offline';
+	let offlineCount = $state<number | null>(null);
+	let clearingDownloads = $state(false);
+
+	$effect(() => {
+		if (session?.username) {
+			listOfflineTrackMetadata(session.username)
+				.then((tracks) => (offlineCount = tracks.length))
+				.catch(() => (offlineCount = 0));
+		}
+	});
+
+	async function clearDownloads() {
+		if (!session?.username) return;
+		if (!confirm('Remove all downloaded songs from this device?')) return;
+		clearingDownloads = true;
+		try {
+			await deleteAllOfflineTracks(session.username);
+			offlineCount = 0;
+			ui.showToast('Removed downloaded songs');
+		} catch {
+			ui.showToast('Couldn’t remove downloaded songs');
+		} finally {
+			clearingDownloads = false;
+		}
+	}
+
 	function signOut() {
 		if (confirm('Sign out of hify? Your queue on this device will be cleared.')) onsignout();
 	}
@@ -162,6 +189,16 @@
 				<span class="detail">Cover art saved for offline use on this device.</span>
 			</div>
 			<button class="btn small secondary" disabled={cacheCleared} onclick={clearArtCache}>{cacheCleared ? 'Cleared' : 'Clear'}</button>
+		</div>
+		<div class="row" style="border-top: 0.5px solid var(--hairline);">
+			<span class="icon-box" style="background: #34c759;"><Icon name="download" size={18} /></span>
+			<div class="text">
+				<span class="label">Downloaded Songs</span>
+				<span class="detail">{offlineCount !== null ? (offlineCount === 0 ? 'No songs' : plural(offlineCount, 'song')) : 'Checking…'}</span>
+			</div>
+			<button class="btn small secondary" disabled={offlineCount === null || offlineCount === 0 || clearingDownloads} onclick={clearDownloads}>
+				{clearingDownloads ? 'Clearing…' : 'Clear'}
+			</button>
 		</div>
 	</div>
 

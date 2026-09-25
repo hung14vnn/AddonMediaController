@@ -14,18 +14,44 @@ export async function startStation(song: Song) {
 	}
 }
 
-export function songMenu(song: Song, extra: MenuItem[] = []): MenuItem[] {
+import { getSession } from './api';
+import { deleteOfflineTrack, downloadOfflineTrack, getOfflineTrackMetadata } from './offline';
+
+export async function songMenu(song: Song, extra: MenuItem[] = []): Promise<MenuItem[]> {
 	const player = getPlayer();
+	const session = getSession();
+	const isDownloaded = session?.username ? !!(await getOfflineTrackMetadata(session.username, song.id)) : false;
+
 	const items: MenuItem[] = [
 		{ label: 'Play Next', icon: 'playNext', action: () => player.playNext([song]) },
 		{ label: 'Play Last', icon: 'queue', action: () => player.addToQueue([song]) },
 		{ label: 'Add to Playlist…', icon: 'playlist', action: () => (ui.playlistPicker = [song]) },
 		{
+			label: isDownloaded ? 'Remove Download' : 'Download',
+			icon: 'download',
+			action: async () => {
+				if (!session?.username) return;
+				if (isDownloaded) {
+					await deleteOfflineTrack(session.username, song.id);
+					ui.showToast('Removed from Downloads');
+				} else {
+					ui.showToast('Downloading…');
+					try {
+						await downloadOfflineTrack(song);
+						ui.showToast('Downloaded successfully');
+					} catch (e: any) {
+						ui.showToast(e.message || 'Download failed');
+					}
+				}
+			}
+		},
+		{
 			label: ui.isLoved(song) ? 'Undo Favorite' : 'Favorite',
 			icon: ui.isLoved(song) ? 'starFill' : 'star',
 			action: () => ui.toggleLove('song', song)
 		},
-		{ label: 'Create Station', icon: 'radio', action: () => startStation(song) }
+		{ label: 'Create Station', icon: 'radio', action: () => startStation(song) },
+		{ label: 'Sleep Timer', icon: 'clock', action: () => (ui.sleepTimerPicker = true) }
 	];
 	if (song.albumId) items.push({ label: 'Go to Album', icon: 'album', action: () => router.go(`/album/${song.albumId}`) });
 	if (song.artistId) items.push({ label: 'Go to Artist', icon: 'mic', action: () => router.go(`/artist/${song.artistId}`) });

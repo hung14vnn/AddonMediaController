@@ -161,9 +161,14 @@
 
 	$effect(() => {
 		if (menuOpen) {
-			document.addEventListener('click', handleClickOutside, true);
-			window.addEventListener('scroll', closeMenu, true);
+			let isActive = true;
+			setTimeout(() => {
+				if (!isActive) return;
+				document.addEventListener('click', handleClickOutside, true);
+				window.addEventListener('scroll', closeMenu, true);
+			}, 50);
 			return () => {
+				isActive = false;
 				document.removeEventListener('click', handleClickOutside, true);
 				window.removeEventListener('scroll', closeMenu, true);
 			};

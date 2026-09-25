@@ -53,20 +53,10 @@
 		padding: 0 8px 0 6px;
 		border-radius: 16px;
 		background: var(--chrome-strong, rgba(30, 30, 30, 0.95));
-		backdrop-filter: none;
-		-webkit-backdrop-filter: none;
-
 		box-shadow:
 			0 6px 24px rgb(0 0 0 / 0.16),
 			inset 0 0 0 0.5px var(--hairline);
 		overflow: hidden;
-	}
-
-	@media (min-width: 769px) {
-		.mini {
-			backdrop-filter: saturate(1.8) blur(15px);
-			-webkit-backdrop-filter: saturate(1.8) blur(15px);
-		}
 	}
 
 	.open {

@@ -4,12 +4,14 @@
 	import Artwork from './Artwork.svelte';
 	import Icon from './Icon.svelte';
 
+	import type { Snippet } from 'svelte';
 	let {
 		href,
 		coverArt,
 		title,
 		subtitle,
 		subtitleHref,
+		subtitleSlot,
 		explicit = false,
 		icon = 'note',
 		onplay,
@@ -20,6 +22,7 @@
 		title: string;
 		subtitle?: string;
 		subtitleHref?: string;
+		subtitleSlot?: Snippet;
 		explicit?: boolean;
 		icon?: string;
 		onplay?: () => void;
@@ -59,7 +62,9 @@
 			<span class="clamp">{title}</span>
 			{#if explicit}<span class="explicit" aria-label="Explicit">E</span>{/if}
 		</a>
-		{#if subtitle}
+		{#if subtitleSlot}
+			{@render subtitleSlot()}
+		{:else if subtitle}
 			{#if subtitleHref}
 				<a class="subtitle" href={subtitleHref}>{subtitle}</a>
 			{:else}

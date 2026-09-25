@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getAlbumList, getRandomSongs, optional } from '../api';
+	import { getAlbumList, getRandomSongs, getTodaysHits, getTrendingSongs, optional } from '../api';
 	import AlbumCard from '../components/AlbumCard.svelte';
 	import ErrorState from '../components/ErrorState.svelte';
 	import Icon from '../components/Icon.svelte';
@@ -7,6 +7,7 @@
 	import Shelf from '../components/Shelf.svelte';
 	import TrackList from '../components/TrackList.svelte';
 	import { getPlayer } from '../player.svelte';
+	import type { Song } from '../types';
 
 	const player = getPlayer();
 
@@ -23,10 +24,30 @@
 
 	let data = $state(load());
 
+	// Charts come from YouTube Music / Spotify and can be slow on a cold cache, so
+	// they load on their own and never hold back (or break) the library shelves.
+	const region = /-([A-Z]{2})/.exec(navigator.language)?.[1];
+	const trending = optional(getTrendingSongs(10, region));
+	const hits = optional(getTodaysHits(10));
+
 	async function shuffleAll() {
 		player.playList(await getRandomSongs(100), 0, { shuffle: true });
 	}
 </script>
+
+{#snippet songs(title: string, list: Song[])}
+	{#if list.length}
+		<section class="picks">
+			<div class="picks-head">
+				<h2 class="section-title">{title}</h2>
+				<button class="btn secondary" onclick={() => player.playList(list)}><Icon name="play" size={14} />Play</button>
+			</div>
+			<div class="pad picks-list">
+				<TrackList songs={list} showAlbum={false} />
+			</div>
+		</section>
+	{/if}
+{/snippet}
 
 <div class="page">
 	<div class="head">
@@ -47,6 +68,8 @@
 				<h3>Your library is empty</h3>
 				<p>Add music on the server and it will show up here.</p>
 			</div>
+			{#await hits then list}{@render songs("Today's Hits", list)}{/await}
+			{#await trending then list}{@render songs('Trending Songs', list)}{/await}
 		{:else}
 			{#if d.recent.length}
 				<Shelf title="Recently Played" size="lg">
@@ -58,17 +81,9 @@
 					{#each d.newest as album (album.id)}<AlbumCard {album} />{/each}
 				</Shelf>
 			{/if}
-			{#if d.picks.length}
-				<section class="picks">
-					<div class="picks-head">
-						<h2 class="section-title">Top Picks for You</h2>
-						<button class="btn secondary" onclick={() => player.playList(d.picks)}><Icon name="play" size={14} />Play</button>
-					</div>
-					<div class="pad picks-list">
-						<TrackList songs={d.picks} showAlbum={false} />
-					</div>
-				</section>
-			{/if}
+			{@render songs('Top Picks for You', d.picks)}
+			{#await hits then list}{@render songs("Today's Hits", list)}{/await}
+			{#await trending then list}{@render songs('Trending Songs', list)}{/await}
 			{#if d.frequent.length}
 				<Shelf title="Heavy Rotation">
 					{#each d.frequent as album (album.id)}<AlbumCard {album} />{/each}

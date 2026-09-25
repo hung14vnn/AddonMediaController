@@ -1,13 +1,14 @@
 <script lang="ts">
 	// Context menu, "Add to Playlist" sheet and toast; one instance at the app root.
-	import { dialog, fadeOnly, pop, toast } from '../motion';
-	import { ui } from '../ui.svelte';
-	import Artwork from './Artwork.svelte';
-	import Icon from './Icon.svelte';
+	import { dialog, fadeOnly, pop, toast } from "../motion";
+	import { ui } from "../ui.svelte";
+	import Artwork from "./Artwork.svelte";
+	import Icon from "./Icon.svelte";
+	import { sleepTimer } from "../sleepTimer.svelte";
 
 	let menuEl = $state<HTMLDivElement | null>(null);
 	let pos = $state({ x: 0, y: 0 });
-	let newName = $state('');
+	let newName = $state("");
 
 	// TỐI ƯU 1: Tính toán lại vị trí Menu an toàn khi DOM đã render
 	$effect(() => {
@@ -17,23 +18,24 @@
 		const { offsetWidth: w, offsetHeight: h } = menuEl;
 		pos = {
 			x: Math.max(8, Math.min(m.x, window.innerWidth - w - 8)),
-			y: m.y + h > window.innerHeight - 8 ? Math.max(8, m.y - h) : m.y
+			y: m.y + h > window.innerHeight - 8 ? Math.max(8, m.y - h) : m.y,
 		};
 
-		menuEl.querySelector<HTMLButtonElement>('button')?.focus();
+		menuEl.querySelector<HTMLButtonElement>("button")?.focus();
 	});
 
 	$effect(() => {
 		if (ui.playlistPicker) {
 			ui.refreshPlaylists();
-			newName = '';
+			newName = "";
 		}
 	});
 
 	function onKey(e: KeyboardEvent) {
-		if (e.key !== 'Escape') return;
+		if (e.key !== "Escape") return;
 		if (ui.menu) ui.menu = null;
 		else if (ui.playlistPicker) ui.playlistPicker = null;
+		else if (ui.sleepTimerPicker) ui.sleepTimerPicker = false;
 	}
 </script>
 
@@ -92,7 +94,11 @@
 	>
 		<header>
 			<h3>Add to Playlist</h3>
-			<button class="x" aria-label="Close" onclick={() => (ui.playlistPicker = null)}>
+			<button
+				class="x"
+				aria-label="Close"
+				onclick={() => (ui.playlistPicker = null)}
+			>
 				<Icon name="close" size={18} />
 			</button>
 		</header>
@@ -107,7 +113,9 @@
 		>
 			<span class="plus"><Icon name="plus" size={22} /></span>
 			<input placeholder="New Playlist…" bind:value={newName} />
-			{#if newName.trim()}<button class="create" type="submit">Create</button>{/if}
+			{#if newName.trim()}<button class="create" type="submit"
+					>Create</button
+				>{/if}
 		</form>
 		<ul>
 			{#each ui.playlists as pl (pl.id)}
@@ -118,7 +126,14 @@
 							ui.playlistPicker = null;
 						}}
 					>
-						<span class="art"><Artwork id={pl.coverArt} size={64} seed={pl.name} icon="playlist" /></span>
+						<span class="art"
+							><Artwork
+								id={pl.coverArt}
+								size={64}
+								seed={pl.name}
+								icon="playlist"
+							/></span
+						>
 						<span class="text">
 							<span class="ellipsis">{pl.name}</span>
 							<small>{pl.songCount ?? 0} songs</small>
@@ -132,6 +147,88 @@
 
 {#if ui.toast}
 	<div class="toast" role="status" in:toast out:fadeOnly>{ui.toast}</div>
+{/if}
+
+{#if ui.sleepTimerPicker}
+	<div
+		class="sheet-scrim"
+		role="presentation"
+		transition:fadeOnly
+		onclick={() => (ui.sleepTimerPicker = false)}
+	></div>
+	<div
+		class="sheet"
+		role="dialog"
+		in:dialog
+		out:fadeOnly={{ duration: 150 }}
+		aria-modal="true"
+		aria-label="Sleep Timer"
+	>
+		<header>
+			<div class="title-wrap">
+				<h3>Sleep Timer</h3>
+				{#if sleepTimer.isActive}
+					<p class="subtitle">
+						{#if sleepTimer.isCountdown}
+							Pauses in {sleepTimer.remainingLabel}
+						{:else}
+							Pauses after current song
+						{/if}
+					</p>
+				{/if}
+			</div>
+			<button
+				class="x"
+				aria-label="Close"
+				onclick={() => (ui.sleepTimerPicker = false)}
+			>
+				<Icon name="close" size={18} />
+			</button>
+		</header>
+		<ul class="options">
+			{#if sleepTimer.isActive}
+				<li>
+					<button
+						class="danger-btn"
+						onclick={() => {
+							sleepTimer.cancel();
+							ui.sleepTimerPicker = false;
+						}}
+					>
+						<span class="text">Stop Timer</span>
+					</button>
+				</li>
+			{/if}
+			{#each [15, 30, 45, 60, 90] as minutes}
+				<li>
+					<button
+						onclick={() => {
+							sleepTimer.setMinutes(minutes);
+							ui.sleepTimerPicker = false;
+						}}
+					>
+						<span class="text">In {minutes} Minutes</span>
+						{#if sleepTimer.isCountdown && sleepTimer.remainingLabel === `${minutes}:00`}
+							<Icon name="play" size={14} class="check" />
+						{/if}
+					</button>
+				</li>
+			{/each}
+			<li>
+				<button
+					onclick={() => {
+						sleepTimer.setEndOfTrack();
+						ui.sleepTimerPicker = false;
+					}}
+				>
+					<span class="text">When Current Song Ends</span>
+					{#if sleepTimer.isEndOfTrack}
+						<Icon name="play" size={14} class="check" />
+					{/if}
+				</button>
+			</li>
+		</ul>
+	</div>
 {/if}
 
 <style>
@@ -152,9 +249,6 @@
 		border-radius: 12px;
 
 		background: var(--menu, rgba(32, 32, 35, 0.88));
-		backdrop-filter: saturate(1.8) blur(14px);
-		-webkit-backdrop-filter: saturate(1.8) blur(14px);
-
 		box-shadow:
 			0 12px 40px rgba(0, 0, 0, 0.28),
 			0 0 0 0.5px var(--hairline);
@@ -174,7 +268,9 @@
 		font-size: 14px;
 		color: var(--text);
 		text-align: left;
-		transition: background 0.12s ease, color 0.12s ease;
+		transition:
+			background 0.12s ease,
+			color 0.12s ease;
 	}
 	.menu button :global(svg) {
 		color: var(--text-2);
@@ -239,9 +335,18 @@
 		justify-content: space-between;
 		padding: 16px 16px 8px;
 	}
+	.title-wrap {
+		display: flex;
+		flex-direction: column;
+	}
 	.sheet h3 {
 		margin: 0;
 		font-size: 17px;
+	}
+	.subtitle {
+		margin: 2px 0 0;
+		font-size: 13px;
+		color: var(--text-2);
 	}
 	.x {
 		width: 30px;
@@ -292,8 +397,9 @@
 		width: 100%;
 		display: flex;
 		align-items: center;
+		justify-content: space-between;
 		gap: 12px;
-		padding: 6px 8px;
+		padding: 10px 12px;
 		border-radius: 8px;
 		text-align: left;
 		color: var(--text);
@@ -301,6 +407,12 @@
 	}
 	.sheet li button:hover {
 		background: var(--hover);
+	}
+	.sheet li button.danger-btn {
+		color: #ff3b30;
+	}
+	.sheet li button :global(.check) {
+		color: var(--accent);
 	}
 	.art {
 		width: 48px;

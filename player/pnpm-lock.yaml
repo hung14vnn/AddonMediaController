@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      idb-keyval:
+        specifier: ^6.3.0
+        version: 6.3.0
     devDependencies:
       '@sveltejs/vite-plugin-svelte':
         specifier: ^6.2.4
@@ -440,6 +444,9 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
+  idb-keyval@6.3.0:
+    resolution: {integrity: sha512-um+2dgAWmYsu615EXpWVwSmapJhON0G43t3Ka/EVaohzPQXSMqKEqeDK/oIW3Ow+BXaF2PvSc+oBTFp793A5Ow==}
+
   is-reference@3.0.3:
     resolution: {integrity: sha512-ixkJoqQvAP88E6wLydLGGqCJsrFUnqoH6HnaczB8XmDH1oaWU+xxdptvikTgaEhtZ53Ky6YXiBuUI2WXLMCwjw==}
 
@@ -830,6 +837,8 @@ snapshots:
 
   fsevents@2.3.3:
     optional: true
+
+  idb-keyval@6.3.0: {}
 
   is-reference@3.0.3:
     dependencies:

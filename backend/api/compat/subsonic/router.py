@@ -621,9 +621,23 @@ async def _get_indexes(c: Ctx) -> Response:
 @endpoint("getArtist")
 async def _get_artist(c: Ctx) -> Response:
     sid = c.p("id") or ""
-    if _kind_of(sid) == "spotify_artist":
+    try:
+        kind = _kind_of(sid)
+    except Exception:
+        kind = None
+
+    if kind == "spotify_artist":
         return await _get_spotify_artist(c, decode(sid)[1])
-    artist_mbid = _decode_expect(sid, "artist")
+    
+    try:
+        artist_mbid = _decode_expect(sid, "artist")
+    except SubsonicError:
+        from services.spotapi_client import SpotApiClient
+        artists, _ = await SpotApiClient().search_artists(sid, limit=1)
+        if not artists:
+            raise SubsonicError(70, "Artist not found")
+        return await _get_spotify_artist(c, artists[0]["id"])
+
     result = await c.services.view.get_artist_with_albums(artist_mbid, user=c.user)
     if result is None:
         raise SubsonicError(70, "Artist not found")
@@ -2372,3 +2386,69 @@ async def _get_similar_songs2(c: Ctx) -> Response:
 async def _get_similar_songs(c: Ctx) -> Response:
     tracks = await _similar_songs(c)
     return c.render("similarSongs", {"song": tracks})
+
+
+# Home-screen charts (Hify extension). Charts move daily, so a short in-process
+# cache keeps every Home visit from re-scraping YouTube Music / Spotify.
+_CHART_TTL = 30 * 60
+_CHART_CACHE: dict[str, tuple[float, list[m.SChild]]] = {}
+_TODAYS_TOP_HITS = "37i9dQZF1DXcBWIGoYBM5M"
+
+
+async def _cached_chart(
+    key: str, fetch: Callable[[], Awaitable[list[m.SChild]]]
+) -> list[m.SChild]:
+    hit = _CHART_CACHE.get(key)
+    if hit and time.monotonic() - hit[0] < _CHART_TTL:
+        return hit[1]
+    songs = await fetch()
+    if songs:  # don't pin an upstream hiccup for the whole TTL
+        _CHART_CACHE[key] = (time.monotonic(), songs)
+    return songs
+
+
+@endpoint("getTrendingSongs")
+async def _get_trending_songs(c: Ctx) -> Response:
+    """Trending chart from YouTube Music for ``country`` (ISO alpha-2, default global)."""
+    count = c.pint("count", 20, minimum=1, maximum=100) or 20
+    country = (c.p("country") or "ZZ").strip().upper()
+    if not re.fullmatch(r"[A-Z]{2}", country):
+        country = "ZZ"
+    ytmusic = c.services.ytmusic_stream
+
+    async def fetch() -> list[m.SChild]:
+        if not ytmusic:
+            return []
+        tracks = await ytmusic.get_chart_songs(country, limit=100)
+        return [child for t in tracks if (child := _ytmusic_to_child(t))]
+
+    songs = await _cached_chart(f"trending:{country}", fetch)
+    return c.render("trendingSongs", {"song": songs[:count]})
+
+
+@endpoint("getTodaysHits")
+async def _get_todays_hits(c: Ctx) -> Response:
+    """Spotify's "Today's Top Hits"; tracks stream via the ``st-`` YouTube Music match."""
+    count = c.pint("count", 20, minimum=1, maximum=100) or 20
+
+    async def fetch() -> list[m.SChild]:
+        from services.spotapi_client import SpotApiClient
+
+        try:
+            tracks = await SpotApiClient().get_playlist_tracks(_TODAYS_TOP_HITS)
+        except Exception as e:
+            logger.warning("Spotapi Today's Top Hits failed: %s", e)
+            return []
+        songs: list[m.SChild] = []
+        for st in tracks:
+            if not st.get("id"):
+                continue
+            songs.append(_spotapi_to_child(st))
+            # Prime the stream lookup so playback skips a Spotify round trip.
+            names = [str(a["name"]) for a in (st.get("artists") or [])[:2] if a.get("name")]
+            if st.get("name") and len(_SPOTIFY_TRACK_META) < _SPOTIFY_TRACK_META_MAX:
+                _SPOTIFY_TRACK_META[st["id"]] = (", ".join(names), str(st["name"]))
+        return songs
+
+    songs = await _cached_chart("todays_hits", fetch)
+    return c.render("todaysHits", {"song": songs[:count]})

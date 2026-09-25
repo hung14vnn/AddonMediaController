@@ -201,6 +201,17 @@ export async function getSmartDiscover(seeds: { artist: string; title: string }[
 	return (r.similarSongs2?.song ?? []) as Song[];
 }
 
+// Hify extensions: YouTube Music trending chart and Spotify's "Today's Top Hits".
+export async function getTrendingSongs(count = 20, country?: string) {
+	const r = await call('getTrendingSongs', { count, country });
+	return (r.trendingSongs?.song ?? []) as Song[];
+}
+
+export async function getTodaysHits(count = 20) {
+	const r = await call('getTodaysHits', { count });
+	return (r.todaysHits?.song ?? []) as Song[];
+}
+
 export async function getRandomSongs(size = 50, extra: Params = {}) {
 	const r = await call('getRandomSongs', { size, ...extra });
 	return (r.randomSongs?.song ?? []) as Song[];

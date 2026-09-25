@@ -15,6 +15,7 @@ class UI {
 	panel = $state<'lyrics' | 'queue' | null>(null);
 	menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null);
 	toast = $state<string | null>(null);
+	sleepTimerPicker = $state(false);
 	playlistPicker = $state<Song[] | null>(null);
 	playlists = $state<Playlist[]>([]);
 	/** Optimistic love state keyed by id, layered over what the server returned. */
@@ -29,16 +30,21 @@ class UI {
 		this.toastTimer = setTimeout(() => (this.toast = null), 2200);
 	}
 
-	openMenu(event: MouseEvent, items: MenuItem[]) {
+	async openMenu(event: MouseEvent, itemsPromise: Promise<MenuItem[]> | MenuItem[]) {
 		event.preventDefault();
 		event.stopPropagation();
 		const target = event.currentTarget as HTMLElement | null;
+		const r = target?.getBoundingClientRect();
+		const clientX = event.clientX;
+		const clientY = event.clientY;
+		
+		const items = await itemsPromise;
+
 		// Keyboard/tap activations have no pointer position; anchor to the button.
-		if (event.clientX === 0 && event.clientY === 0 && target) {
-			const r = target.getBoundingClientRect();
+		if (clientX === 0 && clientY === 0 && r) {
 			this.menu = { x: r.right, y: r.bottom, items };
 		} else {
-			this.menu = { x: event.clientX, y: event.clientY, items };
+			this.menu = { x: clientX, y: clientY, items };
 		}
 	}
 

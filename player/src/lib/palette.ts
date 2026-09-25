@@ -77,3 +77,40 @@ export function artworkTint(coverArt: string | undefined): Promise<Tint | null> 
 		img.src = src;
 	});
 }
+
+/**
+ * Svelte action: paints `coverArt` into a tiny canvas that CSS stretches to fill
+ * its box. The browser's bilinear upscaling produces a soft, blur-like wash with
+ * none of the per-frame cost of `filter: blur()`. Drawing never needs pixel
+ * readback, so cross-origin art without CORS still works (canvas just taints).
+ */
+export function softArt(canvas: HTMLCanvasElement, coverArt: string | undefined) {
+	const size = 12;
+	canvas.width = canvas.height = size;
+	let token = 0;
+	const paint = (art: string | undefined) => {
+		const run = ++token;
+		const src = coverUrl(art, 64);
+		if (!src) return;
+		const img = new Image();
+		img.decoding = 'async';
+		img.onload = () => {
+			if (run !== token) return;
+			const ctx = canvas.getContext('2d');
+			if (!ctx) return;
+			ctx.imageSmoothingQuality = 'high';
+			// Colour grading is baked in once here rather than as a live CSS filter.
+			ctx.filter = 'saturate(1.4)';
+			ctx.drawImage(img, 0, 0, size, size);
+			ctx.filter = 'none';
+			ctx.fillStyle = 'rgb(0 0 0 / 0.25)';
+			ctx.fillRect(0, 0, size, size);
+		};
+		img.src = src;
+	};
+	paint(coverArt);
+	return {
+		update: paint,
+		destroy: () => void token++
+	};
+}

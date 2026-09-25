@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { smartDiscover } from '../discover.svelte';
-	import { artistName } from '../format';
-	import { getPlayer } from '../player.svelte';
-	import Artwork from './Artwork.svelte';
-	import Icon from './Icon.svelte';
+	import { smartDiscover } from "../discover.svelte";
+	import { artistName } from "../format";
+	import { getPlayer } from "../player.svelte";
+	import Artwork from "./Artwork.svelte";
+	import Icon from "./Icon.svelte";
 
 	const player = getPlayer();
 	let dragFrom = $state<number | null>(null);
@@ -14,72 +14,103 @@
 	<header>
 		<h3>Playing Next</h3>
 		<div class="toggles">
-			<button class:on={player.shuffle} aria-pressed={player.shuffle} aria-label="Shuffle" onclick={() => player.toggleShuffle()}>
+			<button
+				class:on={player.shuffle}
+				aria-pressed={player.shuffle}
+				aria-label="Shuffle"
+				onclick={() => player.toggleShuffle()}
+			>
 				<Icon name="shuffle" size={17} />
 			</button>
-			<button class:on={player.repeat !== 'off'} aria-label="Repeat {player.repeat}" onclick={() => player.cycleRepeat()}>
-				<Icon name={player.repeat === 'one' ? 'repeatOne' : 'repeat'} size={17} />
+			<button
+				class:on={player.repeat !== "off"}
+				aria-label="Repeat {player.repeat}"
+				onclick={() => player.cycleRepeat()}
+			>
+				<Icon
+					name={player.repeat === "one" ? "repeatOne" : "repeat"}
+					size={17}
+				/>
 			</button>
 			{#if player.upNext.length}
-				<button class="clear" onclick={() => player.clearUpNext()}>Clear</button>
+				<button class="clear" onclick={() => player.clearUpNext()}
+					>Clear</button
+				>
 			{/if}
 		</div>
 	</header>
 
-	{#if !player.upNext.length}
-		<p class="empty">Nothing up next. Use “Play Next” on any song to add it here.</p>
-	{:else}
-		<ol>
-			{#each player.upNext as song, j (song.id + ':' + j)}
-				{@const i = player.index + 1 + j}
-				<li
-					draggable="true"
-					class:over={dragOver === i}
-					ondragstart={() => (dragFrom = i)}
-					ondragover={(e) => {
-						e.preventDefault();
-						dragOver = i;
-					}}
-					ondragleave={() => dragOver === i && (dragOver = null)}
-					ondrop={(e) => {
-						e.preventDefault();
-						if (dragFrom !== null && dragFrom !== i) player.moveUpNext(dragFrom, i);
-						dragFrom = dragOver = null;
-					}}
-					ondragend={() => (dragFrom = dragOver = null)}
+	<div class="queue-content">
+		{#if !player.upNext.length}
+			<p class="empty">
+				Nothing up next. Use “Play Next” on any song to add it here.
+			</p>
+		{:else}
+			<ol>
+				{#each player.upNext as song, j (song.id + ":" + j)}
+					{@const i = player.index + 1 + j}
+					<li
+						draggable="true"
+						class:over={dragOver === i}
+						ondragstart={() => (dragFrom = i)}
+						ondragover={(e) => {
+							e.preventDefault();
+							dragOver = i;
+						}}
+						ondragleave={() => dragOver === i && (dragOver = null)}
+						ondrop={(e) => {
+							e.preventDefault();
+							if (dragFrom !== null && dragFrom !== i)
+								player.moveUpNext(dragFrom, i);
+							dragFrom = dragOver = null;
+						}}
+						ondragend={() => (dragFrom = dragOver = null)}
+					>
+						<button class="item" onclick={() => player.jumpTo(i)}>
+							<span class="art"
+								><Artwork
+									id={song.coverArt}
+									size={64}
+									seed={song.album ?? song.title}
+								/></span
+							>
+							<span class="text">
+								<span class="title ellipsis">{song.title}</span>
+								<span class="artist ellipsis"
+									>{artistName(song)}</span
+								>
+							</span>
+						</button>
+						<button
+							class="remove"
+							aria-label="Remove {song.title}"
+							onclick={() => player.removeAt(i)}
+						>
+							<Icon name="close" size={16} />
+						</button>
+					</li>
+				{/each}
+			</ol>
+		{/if}
+		{#if player.queue.length > 0}
+			<div class="discover-dock">
+				<button
+					class="smart-discover-btn"
+					class:discovering={smartDiscover.discovering}
+					onclick={() => smartDiscover.run()}
+					disabled={smartDiscover.discovering}
+					aria-label="Smart Discover — add related tracks to queue"
 				>
-					<button class="item" onclick={() => player.jumpTo(i)}>
-						<span class="art"><Artwork id={song.coverArt} size={64} seed={song.album ?? song.title} /></span>
-						<span class="text">
-							<span class="title ellipsis">{song.title}</span>
-							<span class="artist ellipsis">{artistName(song)}</span>
-						</span>
-					</button>
-					<button class="remove" aria-label="Remove {song.title}" onclick={() => player.removeAt(i)}>
-						<Icon name="close" size={16} />
-					</button>
-				</li>
-			{/each}
-		</ol>
-	{/if}
-	{#if player.queue.length > 0}
-		<div class="discover-dock">
-			<button
-				class="smart-discover-btn"
-				class:discovering={smartDiscover.discovering}
-				onclick={() => smartDiscover.run()}
-				disabled={smartDiscover.discovering}
-				aria-label="Smart Discover — add related tracks to queue"
-			>
-				{#if smartDiscover.discovering}
-					<span class="spin" aria-hidden="true"></span>
-					<span>Discovering…</span>
-				{:else}
-					<span>Smart Discover</span>
-				{/if}
-			</button>
-		</div>
-	{/if}
+					{#if smartDiscover.discovering}
+						<span class="spin" aria-hidden="true"></span>
+						<span>Discovering…</span>
+					{:else}
+						<span>Smart Discover</span>
+					{/if}
+				</button>
+			</div>
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -87,9 +118,15 @@
 	   even when the list is short; sticky keeps it pinned there once it scrolls. */
 	.queue {
 		height: 100%;
-		overflow-y: auto;
 		padding: 8px 4px 0;
 		color: #fff;
+		display: flex;
+		flex-direction: column;
+	}
+	.queue-content {
+		flex: 1;
+		min-height: 0;
+		overflow-y: auto;
 		display: flex;
 		flex-direction: column;
 
@@ -97,7 +134,7 @@
 		scrollbar-width: thin;
 		scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
 	}
-	.queue > :global(*) {
+	.queue-content > :global(*) {
 		flex-shrink: 0;
 	}
 	header {
@@ -105,9 +142,7 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 0 8px 8px;
-		position: sticky;
-		top: 0;
-		z-index: 1;
+		flex-shrink: 0;
 	}
 	h3 {
 		margin: 0;
@@ -168,6 +203,7 @@
 	}
 	.art {
 		width: 42px;
+		flex-shrink: 0;
 		--art-radius: 5px;
 	}
 	.text {
@@ -223,9 +259,7 @@
 		font-size: 0.85rem;
 		font-weight: 500;
 		color: #fff;
-		background: rgb(40 40 40 / 0.72);
-		backdrop-filter: blur(12px) saturate(1.6);
-		-webkit-backdrop-filter: blur(12px) saturate(1.6);
+		background: rgb(40 40 40 / 0.9);
 		box-shadow: 0 4px 14px rgb(0 0 0 / 0.4);
 		transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 	}
@@ -239,8 +273,6 @@
 	.smart-discover-btn:disabled {
 		opacity: 0.7;
 		cursor: not-allowed;
-	}
-	.smart-discover-btn.discovering {
 	}
 	.spin {
 		width: 14px;

@@ -3,15 +3,15 @@
 	// large art near the top that shrinks while paused, and a three-button footer
 	// (lyrics · output device · queue). Lyrics/queue sit beside the art on desktop
 	// and replace it on phones.
-	import { coverUrl } from '../api';
 	import { artistName, time } from '../format';
 	import { songMenu } from '../menus';
 	import { artSwap, fadeOnly, pop, sheet, textSwap } from '../motion';
-	import { artworkTint, type Tint } from '../palette';
+	import { artworkTint, softArt, type Tint } from '../palette';
 	import { getPlayer } from '../player.svelte';
 	import { router } from '../router.svelte';
 	import { ui } from '../ui.svelte';
 	import Artwork from './Artwork.svelte';
+	import ArtistLinks from './ArtistLinks.svelte';
 	import Icon from './Icon.svelte';
 	import Lyrics from './Lyrics.svelte';
 	import Queue from './Queue.svelte';
@@ -19,7 +19,7 @@
 
 	const player = getPlayer();
 	const song = $derived(player.current);
-	const backdrop = $derived(coverUrl(song?.coverArt, 600));
+	const backdrop = $derived(song?.coverArt);
 	let scrub = $state<number | null>(null);
 	const shownTime = $derived(scrub ?? player.currentTime);
 
@@ -101,7 +101,7 @@
 			{/key}
 		{/if}
 		{#if backdrop}
-			{#key backdrop}<img src={backdrop} alt="" in:fadeOnly={{ duration: 900 }} out:fadeOnly={{ duration: 900 }} />{/key}
+			{#key backdrop}<canvas use:softArt={backdrop} in:fadeOnly={{ duration: 900 }} out:fadeOnly={{ duration: 900 }}></canvas>{/key}
 		{/if}
 	</div>
 
@@ -133,7 +133,7 @@
 					<span class="c-art"><Artwork id={song.coverArt} size={150} seed={song.album ?? song.title} /></span>
 					<span class="c-text">
 						<span class="c-title ellipsis">{song.title}</span>
-						<span class="c-artist ellipsis">{artistName(song)}</span>
+						<ArtistLinks class="c-artist ellipsis" item={song} onclick={close} />
 					</span>
 					<button class="round" aria-label="Favorite" onclick={() => ui.toggleLove('song', song)}>
 						<Icon name={ui.isLoved(song) ? 'starFill' : 'star'} size={16} />
@@ -148,9 +148,7 @@
 						{#key song.id}
 							<div class="text" in:textSwap>
 								<span class="title ellipsis">{song.title}</span>
-								<button class="artist ellipsis" onclick={() => song.artistId && go(`/artist/${song.artistId}`)}>
-									{artistName(song)}
-								</button>
+								<ArtistLinks class="artist ellipsis" item={song} onclick={close} />
 							</div>
 						{/key}
 						<button class="round" class:on={ui.isLoved(song)} aria-label="Favorite" aria-pressed={ui.isLoved(song)} onclick={() => ui.toggleLove('song', song)}>
@@ -256,15 +254,14 @@
 			radial-gradient(120% 60% at 50% 0%, color-mix(in srgb, var(--top) 85%, #fff 15%), transparent 70%),
 			linear-gradient(180deg, var(--top) 0%, var(--bottom) 100%);
 	}
-	.backdrop img {
+	.backdrop canvas {
 		position: absolute;
 		inset: -20%;
 		width: 140%;
 		height: 140%;
-		object-fit: cover;
-		
-		filter: blur(25px) saturate(1.4) brightness(0.75);
-		
+		/* Tiny canvas stretched up: the browser's smoothing stands in for blur(). */
+		image-rendering: auto;
+
 		/* Ép tạo riêng Layer Hardware Acceleration (GPU) */
 		transform: translateZ(0);
 		will-change: transform;
@@ -272,16 +269,15 @@
 
 	/* TỐI ƯU 4: Tắt animation xoay/trôi (drift) trên điện thoại để tiết kiệm pin & hạ nhiệt CPU/GPU */
 	@media (min-width: 900px) {
-		.backdrop img {
+		.backdrop canvas {
 			animation: drift 40s ease-in-out infinite alternate;
 		}
 	}
 
-	.tinted .backdrop img {
+	.tinted .backdrop canvas {
 		z-index: 2;
 		opacity: 0.18;
 		mix-blend-mode: soft-light;
-		filter: blur(25px) saturate(1.2);
 	}
 	.backdrop::after {
 		content: '';
@@ -304,7 +300,7 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.backdrop img {
+		.backdrop canvas {
 			animation: none;
 		}
 	}
@@ -400,11 +396,14 @@
 		letter-spacing: -0.01em;
 		max-width: 100%;
 	}
-	.artist {
+	:global(.artist) {
 		font-size: 19px;
 		color: rgb(255 255 255 / 0.58);
 		max-width: 100%;
 		text-align: left;
+	}
+	:global(.artist) a:hover {
+		text-decoration: underline;
 	}
 	.round {
 		width: 30px;
@@ -584,7 +583,7 @@
 			font-weight: 600;
 			font-size: 16px;
 		}
-		.c-artist {
+		:global(.c-artist) {
 			color: rgb(255 255 255 / 0.58);
 			font-size: 15px;
 		}
@@ -626,6 +625,14 @@
 		}
 		.grab {
 			height: 52px;
+		}
+		@media (display-mode: window-controls-overlay) {
+			.grab {
+				-webkit-app-region: drag;
+			}
+			.dismiss {
+				-webkit-app-region: no-drag;
+			}
 		}
 		.main {
 			width: min(40vw, 440px);

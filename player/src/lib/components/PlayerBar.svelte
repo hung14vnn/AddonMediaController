@@ -7,6 +7,7 @@
 	import { href } from '../router.svelte';
 	import { artSwap, pop, textSwap } from '../motion';
 	import { ui } from '../ui.svelte';
+	import ArtistLinks from './ArtistLinks.svelte';
 	import Artwork from './Artwork.svelte';
 	import Icon from './Icon.svelte';
 	import Slider from './Slider.svelte';
@@ -57,7 +58,7 @@
 				<div class="lcd-text" in:textSwap={{ dx: 0, duration: 400 }}>
 					<span class="lcd-title ellipsis">{song.title}</span>
 					<span class="lcd-sub ellipsis">
-						{#if song.artistId}<a href={href.artist(song.artistId)}>{artistName(song)}</a>{:else}{artistName(song)}{/if}
+						<ArtistLinks item={song} />
 						{#if song.album}
 							&nbsp;—&nbsp;{#if song.albumId}<a href={href.album(song.albumId)}>{song.album}</a>{:else}{song.album}{/if}
 						{/if}
@@ -109,10 +110,17 @@
 		gap: 16px;
 		padding: 0 20px;
 		background: var(--chrome, rgba(30, 30, 32, 0.85));
-
-		backdrop-filter: saturate(1.8) blur(14px);
-		-webkit-backdrop-filter: saturate(1.8) blur(14px);
 		border-bottom: 0.5px solid var(--hairline);
+	}
+	/* Hidden title bar: empty bar space drags the window, controls stay clickable. */
+	@media (display-mode: window-controls-overlay) {
+		.bar {
+			padding-right: calc(20px + var(--wco-inset-right));
+			-webkit-app-region: drag;
+		}
+		.bar :global(:is(button, a, input, .lcd)) {
+			-webkit-app-region: no-drag;
+		}
 	}
 
 	button {

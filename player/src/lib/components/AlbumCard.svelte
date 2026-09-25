@@ -6,6 +6,7 @@
 	import { href } from '../router.svelte';
 	import type { Album } from '../types';
 	import { ui } from '../ui.svelte';
+	import ArtistLinks from './ArtistLinks.svelte';
 	import Card from './Card.svelte';
 
 	let { album, showYear = false }: { album: Album; showYear?: boolean } = $props();
@@ -16,12 +17,16 @@
 	}
 </script>
 
+{#snippet artists()}
+	<ArtistLinks class="subtitle" item={album} />
+{/snippet}
+
 <Card
 	href={href.album(album.id)}
 	coverArt={album.coverArt}
 	title={album.name}
-	subtitle={showYear ? (album.year ? String(album.year) : '') : artistName(album)}
-	subtitleHref={!showYear && album.artistId ? href.artist(album.artistId) : undefined}
+	subtitle={showYear ? (album.year ? String(album.year) : '') : undefined}
+	subtitleSlot={!showYear ? artists : undefined}
 	explicit={album.explicitStatus === 'explicit'}
 	icon="album"
 	onplay={play}

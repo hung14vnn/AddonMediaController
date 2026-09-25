@@ -71,5 +71,6 @@ export const href = {
 	album: (id: string) => `#/album/${encodeURIComponent(id)}`,
 	artist: (id: string) => `#/artist/${encodeURIComponent(id)}`,
 	playlist: (id: string) => `#/playlist/${encodeURIComponent(id)}`,
-	genre: (name: string) => `#/genre/${encodeURIComponent(name)}`
+	genre: (name: string) => `#/genre/${encodeURIComponent(name)}`,
+	search: (query: string) => `#/search?q=${encodeURIComponent(query)}`
 };

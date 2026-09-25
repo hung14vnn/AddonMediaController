@@ -34,6 +34,12 @@
 
 	let data = $derived(load(id));
 	let bioOpen = $state(false);
+	let imageErrorCount = $state(0);
+
+	$effect(() => {
+		id;
+		imageErrorCount = 0;
+	});
 
 	async function allSongs(albums: Album[]) {
 		const full = await Promise.all(albums.map((a) => getAlbum(a.id)));
@@ -44,11 +50,12 @@
 {#await data}
 	<div class="spinner"></div>
 {:then d}
-	{@const image = d.info.largeImageUrl || d.artist.artistImageUrl || coverUrl(d.artist.coverArt, 1200)}
+	{@const candidates = [d.artist.artistImageUrl, coverUrl(d.artist.coverArt, 1200), d.info.largeImageUrl, d.info.mediumImageUrl].filter(Boolean) as string[]}
+	{@const image = candidates[Math.min(imageErrorCount, candidates.length - 1)]}
 	{@const bio = stripHtml(d.info.biography)}
 	<div class="page artist-page">
-		<header class="hero" class:has-image={!!image}>
-			{#if image}<img src={image} alt="" decoding="async" />{/if}
+		<header class="hero" class:has-image={!!image && imageErrorCount < candidates.length}>
+			{#if image && imageErrorCount < candidates.length}<img src={image} alt="" decoding="async" onerror={() => imageErrorCount++} />{/if}
 			<div class="hero-body">
 				<h1>{d.artist.name}</h1>
 				<div class="hero-actions">
@@ -226,7 +233,6 @@
 		margin-left: 3px;
 	}
 
-	/* TỐI ƯU HỆ THỐNG: Giảm blur ở nút Pill và tăng đục nhẹ để tránh lag trên ảnh nghệ sĩ 1200px */
 	.pill {
 		display: inline-flex;
 		align-items: center;
@@ -237,9 +243,8 @@
 		font-size: 13px;
 		font-weight: 600;
 		color: var(--text);
-		background: var(--fill);
-		backdrop-filter: blur(10px) saturate(1.4);
-		-webkit-backdrop-filter: blur(10px) saturate(1.4);
+		/* Solid fill instead of backdrop blur over the large artist image. */
+		background: var(--chrome-strong);
 		transition: background-color 0.15s ease, transform 0.15s ease;
 	}
 	.pill:hover {

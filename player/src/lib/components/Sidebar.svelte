@@ -123,12 +123,7 @@
 		flex-direction: column;
 		padding: 16px 10px 10px;
 		background: var(--sidebar, rgba(28, 28, 30, 0.85));
-		border-right: 0.5px solid var(--hairline);
-
-		/* TỐI ƯU 3: Giảm độ Blur từ 30px xuống 14px để giải phóng tải tính toán GPU */
-		backdrop-filter: saturate(1.8) blur(14px);
-		-webkit-backdrop-filter: saturate(1.8) blur(14px);
-	}
+		border-right: 0.5px solid var(--hairline);	}
 
 	.brand {
 		display: flex;
@@ -138,6 +133,11 @@
 		font-weight: 700;
 		letter-spacing: -0.02em;
 		padding: 0 10px 14px;
+	}
+	@media (display-mode: window-controls-overlay) {
+		.brand {
+			-webkit-app-region: drag;
+		}
 	}
 
 	.logo {
