@@ -89,3 +89,18 @@ export function textSwap(_node: Element, { duration = 300, dx = 10 } = {}): Tran
 		css: (t) => `opacity:${t};transform:translateX(${(1 - t) * dx}px)`
 	};
 }
+
+/** Queue row entrance/exit when the current track advances. */
+export function queueItem(
+	_node: Element,
+	{ duration = 280, direction = 1 } = {}
+): TransitionConfig {
+	return {
+		duration: reduced() ? 0 : duration,
+		easing: easeOut,
+		css: (t) => {
+			const distance = (1 - t) * 18 * direction;
+			return `opacity:${t};transform:translateY(${distance}px)`;
+		}
+	};
+}

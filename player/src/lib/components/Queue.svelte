@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { smartDiscover } from "../discover.svelte";
 	import { artistName } from "../format";
+	import { queueItem } from "../motion";
 	import { getPlayer } from "../player.svelte";
 	import Artwork from "./Artwork.svelte";
 	import Icon from "./Icon.svelte";
+	import { flip } from "svelte/animate";
 
 	const player = getPlayer();
 	let dragFrom = $state<number | null>(null);
@@ -50,6 +52,9 @@
 				{#each player.upNext as song, j (song.id + ":" + j)}
 					{@const i = player.index + 1 + j}
 					<li
+						in:queueItem={{ direction: 1 }}
+						out:queueItem={{ direction: -1 }}
+						animate:flip={{ duration: 360 }}
 						draggable="true"
 						class:over={dragOver === i}
 						ondragstart={() => (dragFrom = i)}

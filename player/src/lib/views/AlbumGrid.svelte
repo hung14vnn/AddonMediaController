@@ -95,7 +95,7 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 12px;
-		padding-right: var(--gutter);
+		padding: 0 var(--gutter);
 		margin-bottom: 8px;
 	}
 	.sort {
@@ -103,7 +103,6 @@
 		align-items: center;
 		gap: 8px;
 		font-size: 13px;
-		margin-bottom: 20px;
 	}
 	.back { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 14px; white-space: nowrap; }
 	select {
