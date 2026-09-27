@@ -47,7 +47,7 @@
 		<div class="spinner"></div>
 	{:then d}
 		{#if d.newest.length}
-			<Shelf title="New Releases" seeAll="#/recent" size="lg">
+			<Shelf title="New Releases" size="lg">
 				{#each d.newest as album (album.id)}<AlbumCard {album} />{/each}
 			</Shelf>
 		{/if}
