@@ -8,6 +8,7 @@
 	import { flip } from "svelte/animate";
 
 	const player = getPlayer();
+	let queueContent: HTMLDivElement;
 	let dragFrom = $state<number | null>(null);
 	let dragOver = $state<number | null>(null);
 	let animateQueueChanges = $state(true);
@@ -37,6 +38,18 @@
 			);
 		}
 		clearTimers.push(setTimeout(() => (clearingQueue = false), (count - 1) * 45 + 220));
+	}
+
+	function jumpToTrack(index: number) {
+		// Jumping skips every preceding track at once. Disable the staggered
+		// per-row outro so the remaining queue does not get pushed down one item
+		// at a time while the skipped rows animate away.
+		animateQueueChanges = false;
+		player.jumpTo(index);
+		requestAnimationFrame(() => {
+			animateQueueChanges = true;
+			queueContent?.scrollTo({ top: 0, behavior: 'smooth' });
+		});
 	}
 </script>
 
@@ -70,7 +83,7 @@
 		</div>
 	</header>
 
-	<div class="queue-content">
+	<div class="queue-content" bind:this={queueContent}>
 		{#if !player.upNext.length}
 			<p class="empty" in:fadeOnly={{ duration: 220 }} out:fadeOnly={{ duration: 160 }}>
 				Nothing up next. Use “Play Next” on any song to add it here.
@@ -107,7 +120,7 @@
 						}}
 						ondragend={() => (dragFrom = dragOver = null)}
 					>
-						<button class="item" onclick={() => player.jumpTo(i)}>
+						<button class="item" onclick={() => jumpToTrack(i)}>
 							<span class="art"
 								><Artwork
 									id={song.coverArt}

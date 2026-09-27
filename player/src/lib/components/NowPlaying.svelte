@@ -143,7 +143,14 @@
 				<div class="art-wrap">
 					<div class="art" class:paused={!player.playing}>
 						{#key song.id}
-							<div in:artSwap><Artwork id={song.coverArt} size={600} seed={song.album ?? song.title} /></div>
+							<div in:artSwap>
+								<Artwork
+									id={song.coverArt}
+									size={600}
+									seed={song.album ?? song.title}
+									cropWide
+								/>
+							</div>
 						{/key}
 					</div>
 				</div>

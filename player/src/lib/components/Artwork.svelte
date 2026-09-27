@@ -10,7 +10,8 @@
 		round = false,
 		src: explicitSrc,
 		seed = '',
-		icon = 'note'
+		icon = 'note',
+		cropWide = false
 	}: {
 		id?: string;
 		size?: number;
@@ -19,10 +20,12 @@
 		src?: string;
 		seed?: string;
 		icon?: string;
+		cropWide?: boolean;
 	} = $props();
 
 	let failed = $state(false);
 	let loaded = $state(false);
+	let cropScale = $state(1);
 
 	// TỐI ƯU 1: Tính toán DPR an toàn với cả môi trường SSR / Window
 	const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio > 1 ? 2 : 1) : 1;
@@ -32,7 +35,17 @@
 		void src;
 		failed = false;
 		loaded = false;
+		cropScale = 1;
 	});
+
+	function handleLoad(event: Event) {
+		const image = event.currentTarget as HTMLImageElement;
+		const aspect = image.naturalWidth / image.naturalHeight;
+		// Some provider thumbnails are wide canvases containing a square cover
+		// with baked-in letterboxing. Only the full player opts into this crop.
+		cropScale = cropWide && aspect > 1.2 ? aspect : 1;
+		loaded = true;
+	}
 </script>
 
 <div class="art" class:round style:--h={hue(seed || id || alt)}>
@@ -43,7 +56,9 @@
 			loading="lazy"
 			decoding="async"
 			class:loaded
-			onload={() => (loaded = true)}
+			class:crop-wide={cropWide && cropScale > 1}
+			style:--crop-scale={cropScale}
+			onload={handleLoad}
 			onerror={() => (failed = true)}
 		/>
 	{/if}
@@ -85,6 +100,9 @@
 	}
 	img.loaded {
 		opacity: 1;
+	}
+	img.crop-wide {
+		transform: scale(var(--crop-scale));
 	}
 	.placeholder {
 		position: absolute;

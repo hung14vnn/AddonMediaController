@@ -462,29 +462,46 @@ class YTMusicStreamService:
             return []
 
     async def get_chart_playlists(self, country: str = "VN", limit: int = 10) -> list[dict]:
-        """Playlists of the country's YouTube Music trending chart."""
+        """Music-track playlists from YouTube Music Explore.
+
+        ``get_charts()['videos']`` exposes playlists of top music *videos*, whose
+        entries often retain video-oriented titles. Explore's trending/top-songs
+        sections point at YouTube Music track playlists instead.
+        """
         def _fetch():
             yt = getattr(self, "_yt_client", None) or YTMusic()
-            def get_vids(c):
-                ch = yt.get_charts(c) or {}
-                return ch.get("videos") or []
+            explore = yt.get_explore() or {}
+            sections = (
+                ("trending", f"Trending Music{f' - {country}' if country else ''}"),
+                ("top_songs", f"Top Songs{f' - {country}' if country else ''}"),
+            )
 
-            playlists = get_vids(country)
-            if country != "ZZ":
-                playlists.extend(get_vids("ZZ"))
-            if country != "US":
-                playlists.extend(get_vids("US"))
-            if country != "VN":
-                playlists.extend(get_vids("VN"))
-
-            seen = set()
             result = []
-            for p in playlists:
-                pid = p.get("playlistId")
-                if pid and pid not in seen:
-                    seen.add(pid)
-                    result.append(p)
-                    
+            seen = set()
+            for key, fallback_title in sections:
+                section = explore.get(key) or {}
+                playlist_id = section.get("playlist") or section.get("playlistId")
+                if not playlist_id or playlist_id in seen:
+                    continue
+                seen.add(playlist_id)
+                items = section.get("items") or []
+                thumbnail = next(
+                    (
+                        thumb.get("url")
+                        for item in items
+                        for thumb in (item.get("thumbnails") or [])
+                        if thumb.get("url")
+                    ),
+                    "",
+                )
+                result.append(
+                    {
+                        "playlistId": playlist_id,
+                        "title": section.get("title") or fallback_title,
+                        "thumbnails": [{"url": thumbnail}] if thumbnail else [],
+                    }
+                )
+
             return result[:limit]
 
         try:
