@@ -176,6 +176,28 @@ def _transcode_hint(settings) -> tuple[str, str] | None:
     return None
 
 
+def _ios_client(request: Request) -> bool:
+    """Return whether this request comes from an iOS/iPadOS media client.
+
+    iPadOS can use a desktop-style Macintosh user agent, but still includes
+    ``Mobile`` in the WebKit UA.  Other clients keep the normal Opus path when
+    they explicitly request it.
+    """
+    user_agent = request.headers.get("user-agent", "").lower()
+    return bool(
+        any(token in user_agent for token in ("iphone", "ipad", "ipod"))
+        or "macintosh" in user_agent
+        and "mobile" in user_agent
+    )
+
+
+def _ytmusic_format(request: Request, requested_format: str | None) -> str:
+    """Choose a direct yt-dlp format without invoking ffmpeg."""
+    if requested_format == "opus" and not _ios_client(request):
+        return "opus"
+    return "m4a"
+
+
 async def _dispatch(
     request: Request, endpoint_name: str, services: CompatServices
 ) -> Response:
@@ -964,7 +986,7 @@ def _spotapi_to_child(st: dict) -> m.SChild:
         album=album_name, artist=artist_name, parent=alid, albumId=alid,
         # No album id: point at the track itself; getCoverArt resolves both.
         artistId=artist_id, duration=duration, coverArt=alid or tid, type="music", mediaType="song",
-        suffix="m4a", contentType="audio/mp4", size=10_000_000, bitRate=320,
+        suffix="m4a", contentType="audio/mp4", size=10_000_000,
         path=tid + ".m4a", track=st.get("track_number") or 1,
         discNumber=int(st.get("disc_number") or 1), year=year,
         created=_spotapi_created(album.get("release_date")),
@@ -1229,10 +1251,9 @@ async def _stream(c: Ctx) -> Response:
         raise SubsonicError(70, "Song not found")
     fmt = c.decoded.enum("format", {"raw", "mp3", "opus", "m4a", "aac"})
     if kind == "spotify_track":
-        # The song Child advertises m4a/audio/mp4, so serve exactly that.
-        return await _stream_spotify_track(c, fid, "m4a")
+        return await _stream_spotify_track(c, fid, _ytmusic_format(c.request, fmt))
     if kind == "ytmusic":
-        stream_fmt = "m4a" if fmt in ("m4a", "mp3", "aac", None) else ("opus" if fmt == "opus" else "m4a")
+        stream_fmt = _ytmusic_format(c.request, fmt)
         chunks, headers, status = await c.services.ytmusic_stream.proxy_stream(
             fid, range_header=c.request.headers.get("Range"), fmt=stream_fmt
         )
@@ -1357,6 +1378,7 @@ async def _get_transcode_decision(c: Ctx) -> Response:
     except SubsonicError:
         raise SubsonicError(70, "Song not found")
     if kind == "ytmusic":
+        stream_fmt = _ytmusic_format(c.request, None)
         return c.render(
             "transcodeDecision",
             m.STranscodeDecision(
@@ -1366,7 +1388,9 @@ async def _get_transcode_decision(c: Ctx) -> Response:
                 errorReason=None,
                 transcodeParams=None,
                 sourceStream=m.SStreamDetails(
-                    protocol="http", container="webm", codec="opus"
+                    protocol="http",
+                    container="mp4" if stream_fmt == "m4a" else "webm",
+                    codec="aac" if stream_fmt == "m4a" else "opus",
                 ),
                 transcodeStream=None,
             ),
@@ -1449,8 +1473,9 @@ async def _get_transcode_stream(c: Ctx) -> Response:
     except SubsonicError:
         raise SubsonicError(70, "Song not found")
     if kind == "ytmusic":
+        stream_fmt = _ytmusic_format(c.request, None)
         chunks, headers, status = await c.services.ytmusic_stream.proxy_stream(
-            file_id, range_header=c.request.headers.get("Range")
+            file_id, range_header=c.request.headers.get("Range"), fmt=stream_fmt
         )
         return StreamingResponse(chunks, status_code=status, headers=headers)
     if kind != "track":
@@ -1551,9 +1576,9 @@ async def _build_playlist_detail(c: Ctx, pid: str):
                     duration=duration_sec,
                     type="music",
                     mediaType="song",
-                    coverArt=yt_id if entry.cover_url else _playlist_cover(r),
-                    contentType="audio/webm",
-                    suffix="webm",
+                    coverArt=yt_id,
+                    contentType="audio/mp4",
+                    suffix="m4a",
                 )
             )
             total += duration_sec
@@ -1706,15 +1731,28 @@ async def _update_playlist(c: Ctx) -> Response:
     # library files, so they must be stored as external playlist entries
     # instead of being passed through ``add_file_id_entry``.
     add_file_ids: list[str] = []
-    add_ytmusic_ids: list[str] = []
-    for song_id in c.plist("songIdToAdd"):
+    add_ytmusic_ids: list[dict[str, str]] = []
+    song_ids = c.plist("songIdToAdd")
+    titles = c.plist("songTitle")
+    artists = c.plist("songArtist")
+    albums = c.plist("songAlbum")
+    durations = c.plist("songDuration")
+    for index, song_id in enumerate(song_ids):
         kind, internal = decode(song_id)
         if kind == "track":
             add_file_ids.append(internal)
         elif kind == "ytmusic":
             if not internal:
                 raise SubsonicError(70, "Expected a track id")
-            add_ytmusic_ids.append(internal)
+            add_ytmusic_ids.append(
+                {
+                    "id": internal,
+                    "title": titles[index] if index < len(titles) else "",
+                    "artist": artists[index] if index < len(artists) else "",
+                    "album": albums[index] if index < len(albums) else "",
+                    "duration": durations[index] if index < len(durations) else "",
+                }
+            )
         else:
             raise SubsonicError(70, "Expected a track id")
     remove_indices = [
@@ -1743,15 +1781,16 @@ async def _update_playlist(c: Ctx) -> Response:
             c.user,
             [
                 {
-                    "track_name": "YouTube Track",
-                    "artist_name": "YouTube Music",
-                    "album_name": "YouTube Music",
-                    "album_id": f"ytmusic-{video_id}",
-                    "track_source_id": video_id,
+                    "track_name": item["title"] or "YouTube Track",
+                    "artist_name": item["artist"] or "YouTube Music",
+                    "album_name": item["album"] or "YouTube Music",
+                    "album_id": f"ytmusic-{item['id']}",
+                    "track_source_id": item["id"],
                     "source_type": "ytmusic",
                     "available_sources": ["ytmusic"],
+                    "duration": float(item["duration"]) if item["duration"] else None,
                 }
-                for video_id in add_ytmusic_ids
+                for item in add_ytmusic_ids
             ],
         )
     return c.render(None, None)
@@ -2369,7 +2408,6 @@ def _ytmusic_to_child(t: dict) -> m.SChild | None:
         # Must match what your stream endpoint really serves:
         suffix="m4a",
         contentType="audio/mp4",
-        bitRate=128,
         type="music",
         mediaType="song",
     )

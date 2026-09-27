@@ -309,8 +309,16 @@ export async function createPlaylist(name: string, songIds: string[] = []) {
 	return r.playlist as Playlist | undefined;
 }
 
-export async function addToPlaylist(playlistId: string, songIds: string[]) {
-	await call('updatePlaylist', { playlistId, songIdToAdd: songIds });
+export async function addToPlaylist(playlistId: string, songs: Song[]) {
+	const songIds = songs.map((song) => song.id);
+	await call('updatePlaylist', {
+		playlistId,
+		songIdToAdd: songIds,
+		songTitle: songs.map((song) => song.title),
+		songArtist: songs.map((song) => song.displayArtist ?? song.artist ?? ''),
+		songAlbum: songs.map((song) => song.album ?? ''),
+		songDuration: songs.map((song) => song.duration ?? '')
+	});
 }
 
 export async function removeFromPlaylist(playlistId: string, indexes: number[]) {

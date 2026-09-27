@@ -75,13 +75,15 @@ _YDL_OPUS_OPTIONS: dict[str, object] = {
 }
 # Callers ask for m4a because they advertise audio/mp4 (Subsonic song Child) or
 # play on AVPlayer, which cannot decode WebM/Opus. Sorting by abr first let the
-# higher-bitrate Opus stream win, so filter to m4a before ranking by bitrate.
+# higher-bitrate Opus stream win, so filter to AAC/M4A before ranking by bitrate.
+# Do not fall back to ``bestaudio`` here: that can silently return WebM/Opus
+# and breaks iOS AVPlayer even though the caller requested M4A.
 _YDL_M4A_OPTIONS: dict[str, object] = {
     **_YDL_BASE_OPTIONS,
     "extract_flat": False,
     "skip_download": True,
-    "format": "bestaudio[ext=m4a]/bestaudio/best",
-    "format_sort": ["abr", "acodec:m4a", "ext"],
+    "format": "bestaudio[ext=m4a][acodec^=mp4a]/bestaudio[ext=m4a]",
+    "format_sort": ["abr", "acodec:mp4a", "ext"],
 }
 
 
@@ -176,10 +178,19 @@ class _YtDlp:
     """Thin, synchronous wrapper around yt-dlp."""
 
     @staticmethod
-    def _to_stream_info(info: dict, video_id: str) -> StreamInfo | None:
+    def _to_stream_info(
+        info: dict, video_id: str, *, expected_format: str = "opus"
+    ) -> StreamInfo | None:
         audio_url = info.get("url")
         if not audio_url:
             return None
+        if expected_format == "m4a":
+            # Keep the contract defensive in case yt-dlp changes selector
+            # behaviour or a provider returns an unexpected format.
+            extension = str(info.get("ext") or info.get("audio_ext") or "").lower()
+            codec = str(info.get("acodec") or "").lower()
+            if extension != "m4a" or not codec.startswith("mp4a"):
+                return None
         source_title = str(info.get("title") or "Unknown")
         source_artist = str(info.get("uploader") or info.get("channel") or "Unknown")
         return StreamInfo(
@@ -202,7 +213,11 @@ class _YtDlp:
         options = _YDL_M4A_OPTIONS if fmt == "m4a" else _YDL_OPUS_OPTIONS
         with YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=False)
-        return _YtDlp._to_stream_info(info, video_id) if isinstance(info, dict) else None
+        return (
+            _YtDlp._to_stream_info(info, video_id, expected_format=fmt)
+            if isinstance(info, dict)
+            else None
+        )
 
     @staticmethod
     def _music_search_candidates(query: str) -> list[tuple[str, str]]:
@@ -258,7 +273,9 @@ class _YtDlp:
             info = entries[0]
         if not isinstance(info, dict) or not info.get("id"):
             return None
-        return _YtDlp._to_stream_info(info, str(info["id"]))
+        return _YtDlp._to_stream_info(
+            info, str(info["id"]), expected_format=fmt
+        )
 
 
 def _clean_mv_title(title: str) -> str:
