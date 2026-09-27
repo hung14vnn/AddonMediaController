@@ -3,7 +3,10 @@
 	// large art near the top that shrinks while paused, and a three-button footer
 	// (lyrics · output device · queue). Lyrics/queue sit beside the art on desktop
 	// and replace it on phones.
-	import { artistName, time } from '../format';
+	import { tick } from 'svelte';
+	import { slide } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
+	import { time } from '../format';
 	import { songMenu } from '../menus';
 	import { artSwap, fadeOnly, pop, sheet, textSwap } from '../motion';
 	import { artworkTint, softArt, type Tint } from '../palette';
@@ -29,7 +32,6 @@
 		time(Math.max(0, Math.floor((player.duration || 0) - shownTime)))
 	);
 
-// SỬA THÀNH: Khai báo type trực tiếp cho biến thay vì dùng Generic trên $state
 	let tint: Tint | null = $state(null);
 
 	$effect(() => {
@@ -55,6 +57,109 @@
 
 	async function pickOutput() {
 		if (!(await player.pickOutput())) ui.showToast('No other playback devices found');
+	}
+
+	// Track the mobile breakpoint (matches the 900px CSS media query) so JS can
+	// decide which transitions to run for the art <-> compact-bar morph and the
+	// panel's push-down-the-controls behaviour.
+	let isMobile = $state(false);
+	type Panel = 'lyrics' | 'queue';
+	let mobilePanel = $state<Panel | null>(null);
+	let mobilePanelMounted = $state(false);
+	let mobilePanelLayoutOpen = $state(false);
+	let controlsEl: HTMLDivElement | null = null;
+
+	$effect(() => {
+		const mq = window.matchMedia('(max-width: 899px)');
+		const update = () => (isMobile = mq.matches);
+		update();
+		mq.addEventListener('change', update);
+		return () => mq.removeEventListener('change', update);
+	});
+
+	$effect(() => {
+		if (!isMobile) {
+			mobilePanelMounted = false;
+			mobilePanelLayoutOpen = false;
+			mobilePanel = null;
+			return;
+		}
+
+		if (ui.panel) {
+			mobilePanel = ui.panel;
+			mobilePanelMounted = true;
+			mobilePanelLayoutOpen = true;
+		} else if (mobilePanelMounted) {
+			mobilePanelMounted = false;
+		}
+	});
+
+	function toggleMobilePanel(panel: Panel) {
+		if (!isMobile) {
+			ui.togglePanel(panel);
+			return;
+		}
+
+		if (ui.panel === panel) {
+			// Start the panel outro, but keep the layout in its open state until
+			// the outro is completely finished so the controls do not jump.
+			mobilePanelMounted = false;
+			ui.togglePanel(panel);
+			return;
+		}
+
+		mobilePanel = panel;
+		mobilePanelMounted = true;
+		mobilePanelLayoutOpen = true;
+		ui.togglePanel(panel);
+	}
+
+	function captureControlRows() {
+		if (!controlsEl) return new Map<string, DOMRect>();
+
+		return new Map(
+			Array.from(controlsEl.querySelectorAll<HTMLElement>('[data-flip-row]')).map((el) => [
+				el.dataset.flipRow!,
+				el.getBoundingClientRect()
+			])
+		);
+	}
+
+	function playControlFlip(first: Map<string, DOMRect>) {
+		if (!controlsEl || !first.size) return;
+
+		const duration = 320;
+		const easing = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
+		const rows = Array.from(controlsEl.querySelectorAll<HTMLElement>('[data-flip-row]'));
+
+		for (const el of rows) {
+			const id = el.dataset.flipRow;
+			const before = id ? first.get(id) : undefined;
+			if (!before) continue;
+
+			const after = el.getBoundingClientRect();
+			const dx = before.left - after.left;
+			const dy = before.top - after.top;
+			if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+
+			el.animate(
+				[
+					{ transform: `translate3d(${dx}px, ${dy}px, 0)` },
+					{ transform: 'translate3d(0, 0, 0)' }
+				],
+				{ duration, easing, fill: 'none' }
+			);
+		}
+	}
+
+	async function onMobilePanelOutroEnd() {
+		// Capture while the compact/panel layout is still active. Then let Svelte
+		// commit the final layout and animate every row that moved.
+		const first = captureControlRows();
+		mobilePanel = null;
+		mobilePanelLayoutOpen = false;
+		await tick();
+		requestAnimationFrame(() => playControlFlip(first));
 	}
 
 	// Swipe-down-to-dismiss from anywhere in the Now Playing screen.
@@ -97,7 +202,6 @@
 <div
 	transition:sheet={{ offset: dragY }}
 	class="np"
-	class:has-panel={!!ui.panel}
 	class:tinted={!!tint}
 	style:transform={dragY ? `translateY(${dragY}px)` : undefined}
 	style:transition={dragY && ui.nowPlaying ? 'none' : undefined}
@@ -138,58 +242,95 @@
 	</div>
 
 	{#if song}
-		<div class="layout">
-			<div class="main">
-				<div class="art-wrap">
-					<div class="art" class:paused={!player.playing}>
-						{#key song.id}
-							<div in:artSwap>
-								<Artwork
-									id={song.coverArt}
-									size={600}
-									seed={song.album ?? song.title}
-									cropWide
-								/>
-							</div>
-						{/key}
-					</div>
+		{#snippet panelBody(panel: Panel)}
+			{#key panel}
+				<div
+					class="panel-view"
+					in:textSwap={{ dx: 40, duration: 320 }}
+					out:textSwap={{ dx: -40, duration: 240 }}
+				>
+					{#if panel === 'lyrics'}<Lyrics />{:else}<Queue />{/if}
 				</div>
+			{/key}
+		{/snippet}
 
-				<div class="compact">
-					<span class="c-art"><Artwork id={song.coverArt} size={150} seed={song.album ?? song.title} /></span>
-					<span class="c-text">
+		<div class="layout" class:mobile-panel={isMobile && mobilePanelLayoutOpen}>
+			<div class="main" class:panel-shift={!isMobile && !!ui.panel}>
+				<div class="art-row" class:mini={isMobile && mobilePanelLayoutOpen}>
+					<div class="art-wrap">
+						<div class="art" class:paused={!player.playing}>
+							{#key song.id}
+								<div in:artSwap>
+									<Artwork
+										id={song.coverArt}
+										size={600}
+										seed={song.album ?? song.title}
+										cropWide
+									/>
+								</div>
+							{/key}
+						</div>
+					</div>
+					<div class="meta" inert={!(isMobile && mobilePanelLayoutOpen) ? true : undefined}>
 						<span class="c-title ellipsis">{song.title}</span>
 						<ArtistLinks class="c-artist ellipsis" item={song} onclick={close} />
-					</span>
-					<button class="round" aria-label="Favorite" onclick={() => ui.toggleLove('song', song)}>
+					</div>
+					<button
+						class="round meta-btn"
+						inert={!(isMobile && mobilePanelLayoutOpen) ? true : undefined}
+						aria-label="Favorite"
+						onclick={() => ui.toggleLove('song', song)}
+					>
 						<Icon name={ui.isLoved(song) ? 'starFill' : 'star'} size={16} />
 					</button>
-					<button class="round" aria-label="More options" onclick={(e) => ui.openMenu(e, songMenu(song))}>
+					<button
+						class="round meta-btn"
+						inert={!(isMobile && mobilePanelLayoutOpen) ? true : undefined}
+						aria-label="More options"
+						onclick={(e) => ui.openMenu(e, songMenu(song))}
+					>
 						<Icon name="more" size={17} />
 					</button>
 				</div>
 
-				<div class="controls">
-					<div class="info">
-						{#key song.id}
-							<div class="text" in:textSwap>
-								<span class="title ellipsis">{song.title}</span>
-								<ArtistLinks class="artist ellipsis" item={song} onclick={close} />
-							</div>
-						{/key}
-						<button class="round" class:on={ui.isLoved(song)} aria-label="Favorite" aria-pressed={ui.isLoved(song)} onclick={() => ui.toggleLove('song', song)}>
-							{#key ui.isLoved(song)}
-								<span class="icon-swap" in:pop={{ from: 0.3, duration: 320 }}>
-									<Icon name={ui.isLoved(song) ? 'starFill' : 'star'} size={16} />
-								</span>
-							{/key}
-						</button>
-						<button class="round" aria-label="More options" onclick={(e) => ui.openMenu(e, songMenu(song))}>
-							<Icon name="more" size={17} />
-						</button>
+				{#if isMobile && mobilePanelMounted && mobilePanel}
+					<div
+						class="panel panel-mobile"
+						in:slide={{ duration: 420, easing: cubicOut }}
+						out:slide={{ duration: 300, easing: cubicOut }}
+						onoutroend={onMobilePanelOutroEnd}
+					>
+						{@render panelBody(mobilePanel)}
 					</div>
+				{/if}
 
-					<div class="progress">
+				<div
+					class="controls"
+					class:panel-open={isMobile && mobilePanelLayoutOpen}
+					bind:this={controlsEl}
+				>
+					{#if !(isMobile && mobilePanelLayoutOpen)}
+						<div class="info" data-flip-row="info">
+							{#key song.id}
+								<div class="text" in:textSwap>
+									<span class="title ellipsis">{song.title}</span>
+									<ArtistLinks class="artist ellipsis" item={song} onclick={close} />
+								</div>
+							{/key}
+							<button class="round" class:on={ui.isLoved(song)} aria-label="Favorite" aria-pressed={ui.isLoved(song)} onclick={() => ui.toggleLove('song', song)}>
+								{#key ui.isLoved(song)}
+									<span class="icon-swap" in:pop={{ from: 0.3, duration: 320 }}>
+										<Icon name={ui.isLoved(song) ? 'starFill' : 'star'} size={16} />
+									</span>
+								{/key}
+							</button>
+							<button class="round" aria-label="More options" onclick={(e) => ui.openMenu(e, songMenu(song))}>
+								<Icon name="more" size={17} />
+							</button>
+						</div>
+					{/if}
+
+					<div class="progress" data-flip-row="progress">
 						<Slider value={player.currentTime} max={player.duration} label="Seek" onchange={(v) => player.seek(v)} oninput={(v) => (scrub = v)} />
 						<div class="times">
 							<span>{formattedCurrentTime}</span>
@@ -198,7 +339,7 @@
 						</div>
 					</div>
 
-					<div class="transport">
+					<div class="transport" data-flip-row="transport">
 						<button class="skip" aria-label="Previous" onclick={() => player.previous()}><Icon name="previous" size={36} /></button>
 						<button class="pp" aria-label={player.playing ? 'Pause' : 'Play'} onclick={() => player.toggle()}>
 							{#key player.playing}
@@ -210,42 +351,32 @@
 						<button class="skip" aria-label="Next" onclick={() => player.next()}><Icon name="next" size={36} /></button>
 					</div>
 
-					<div class="volume">
-						<button aria-label={player.muted ? 'Unmute' : 'Mute'} onclick={() => player.toggleMute()}><Icon name="speakerLow" size={15} /></button>
-						<Slider value={player.muted ? 0 : player.volume} max={1} step={0.01} label="Volume" onchange={(v) => player.setVolume(v)} oninput={(v) => v !== null && player.setVolume(v)} />
-						<Icon name="speaker" size={17} />
-					</div>
+					{#if !(isMobile && mobilePanelLayoutOpen)}
+						<div class="volume" data-flip-row="volume">
+							<button aria-label={player.muted ? 'Unmute' : 'Mute'} onclick={() => player.toggleMute()}><Icon name="speakerLow" size={15} /></button>
+							<Slider value={player.muted ? 0 : player.volume} max={1} step={0.01} label="Volume" onchange={(v) => player.setVolume(v)} oninput={(v) => v !== null && player.setVolume(v)} />
+							<Icon name="speaker" size={17} />
+						</div>
+					{/if}
 
-					<div class="bottom">
-						<button class="foot" class:on={ui.panel === 'lyrics'} aria-label="Lyrics" aria-pressed={ui.panel === 'lyrics'} onclick={() => ui.togglePanel('lyrics')}>
+					<div class="bottom" data-flip-row="bottom">
+						<button class="foot" class:on={(isMobile ? mobilePanel === 'lyrics' && mobilePanelLayoutOpen : ui.panel === 'lyrics')} aria-label="Lyrics" aria-pressed={(isMobile ? mobilePanel === 'lyrics' && mobilePanelLayoutOpen : ui.panel === 'lyrics')} onclick={() => toggleMobilePanel('lyrics')}>
 							<Icon name="lyrics" size={21} />
 						</button>
 						<button class="output" class:connected={player.castState === 'connected'} aria-label="Playback device: {outputLabel}" onclick={pickOutput}>
 							<Icon name="airplay" size={21} />
 							<span>{outputLabel}</span>
 						</button>
-						<button class="foot" class:on={ui.panel === 'queue'} aria-label="Playing Next" aria-pressed={ui.panel === 'queue'} onclick={() => ui.togglePanel('queue')}>
+						<button class="foot" class:on={(isMobile ? mobilePanel === 'queue' && mobilePanelLayoutOpen : ui.panel === 'queue')} aria-label="Playing Next" aria-pressed={(isMobile ? mobilePanel === 'queue' && mobilePanelLayoutOpen : ui.panel === 'queue')} onclick={() => toggleMobilePanel('queue')}>
 							<Icon name="queue" size={21} />
 						</button>
 					</div>
 				</div>
 			</div>
 
-			{#if ui.panel}
-				<div
-					class="panel"
-					in:textSwap={{ dx: 40, duration: 420 }}
-					out:textSwap={{ dx: -40, duration: 280 }}
-				>
-					{#key ui.panel}
-						<div
-							class="panel-view"
-							in:textSwap={{ dx: 40, duration: 320 }}
-							out:textSwap={{ dx: -40, duration: 240 }}
-						>
-							{#if ui.panel === 'lyrics'}<Lyrics />{:else}<Queue />{/if}
-						</div>
-					{/key}
+			{#if !isMobile && ui.panel}
+				<div class="panel panel-desktop" in:textSwap={{ dx: 40, duration: 420 }} out:textSwap={{ dx: -40, duration: 280 }}>
+					{@render panelBody(ui.panel)}
 				</div>
 			{/if}
 		</div>
@@ -379,17 +510,28 @@
 		display: flex;
 		flex-direction: column;
 		min-height: 0;
-		transition: width 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
 	}
-	.art-wrap {
+	.art-row {
 		flex: 0 1 auto;
 		min-height: 0;
 		display: flex;
-		justify-content: center;
+		align-items: center;
+		gap: 12px;
 		padding-top: 18px;
+		transition:
+			padding-top 0.42s cubic-bezier(0.2, 0.8, 0.2, 1),
+			gap 0.42s cubic-bezier(0.2, 0.8, 0.2, 1);
+	}
+	.art-row:not(.mini) {
+		gap: 0;
+	}
+	.art-wrap {
+		flex-shrink: 0;
+		width: min(100%, 50vh);
+		transition: width 0.42s cubic-bezier(0.2, 0.8, 0.2, 1);
 	}
 	.art {
-		width: min(100%, 50vh);
+		width: 100%;
 		--art-radius: 10px;
 		--art-shadow: 0 18px 44px rgb(0 0 0 / 0.35);
 		transition: transform 0.55s cubic-bezier(0.3, 1.35, 0.5, 1);
@@ -399,8 +541,33 @@
 		transform: scale(0.84);
 		--art-shadow: 0 8px 22px rgb(0 0 0 / 0.25);
 	}
-	.compact {
-		display: none;
+	/* On mobile, the row also carries the compact title/buttons — collapsed to
+	   zero width (and hidden) whenever the art is at full size, since the art
+	   itself already claims all the row's width at that point. */
+	.meta {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+		opacity: 0;
+		transition: opacity 0.2s ease;
+	}
+	.meta-btn {
+		transition:
+			opacity 0.2s ease,
+			width 0.42s cubic-bezier(0.2, 0.8, 0.2, 1);
+	}
+	.art-row:not(.mini) .meta-btn {
+		width: 0;
+		flex-shrink: 1;
+		overflow: hidden;
+		opacity: 0;
+		pointer-events: none;
+	}
+	.art-row.mini .meta,
+	.art-row.mini .meta-btn {
+		opacity: 1;
 	}
 	.controls {
 		flex: 1;
@@ -588,40 +755,21 @@
 		.main {
 			width: 100%;
 			flex: 1;
-		}
-		.art {
-			width: 100%;
-			max-width: 50vh;
-		}
-		.has-panel .layout {
-			padding-top: 10px;
-		}
-		.has-panel .main,
-		.has-panel .controls {
-			display: contents;
-		}
-		.has-panel .art-wrap,
-		.has-panel .info,
-		.has-panel .volume {
-			display: none;
-		}
-		.has-panel .compact {
-			display: flex;
-			align-items: center;
-			gap: 12px;
-			order: 1;
-			padding-bottom: 10px;
-		}
-		.c-art {
-			width: 56px;
-			--art-radius: 6px;
-			flex-shrink: 0;
-		}
-		.c-text {
-			flex: 1;
 			display: flex;
 			flex-direction: column;
-			min-width: 0;
+			min-height: 0;
+		}
+		.mobile-panel {
+			padding-top: 10px;
+		}
+		.art-row.mini {
+			padding-top: 0;
+		}
+		.art-row.mini .art-wrap {
+			width: 56px;
+		}
+		.art-row.mini .art {
+			--art-radius: 6px;
 		}
 		.c-title {
 			font-weight: 600;
@@ -631,23 +779,16 @@
 			color: rgb(255 255 255 / 0.58);
 			font-size: 15px;
 		}
-		.has-panel .panel {
-			order: 2;
+		.panel-mobile {
 			flex: 1;
-			width: auto;
 			min-height: 0;
-			margin: 0 -12px;
+			width: auto;
+			margin: 0 -12px 10px;
 		}
-		.has-panel .progress {
-			order: 3;
+		.controls.panel-open {
+			flex: 0 0 auto;
 			padding-top: 10px;
-		}
-		.has-panel .transport {
-			order: 4;
-			padding: 4px 0;
-		}
-		.has-panel .bottom {
-			order: 5;
+			gap: 4px;
 		}
 	}
 
@@ -688,10 +829,10 @@
 				width 0.45s cubic-bezier(0.2, 0.8, 0.2, 1),
 				transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
 		}
-		.has-panel .main {
+		.main.panel-shift {
 			transform: translateX(calc((min(48vw, 780px) + 10vw) / -2));
 		}
-		.panel {
+		.panel-desktop {
 			position: absolute;
 			top: 0;
 			bottom: 0;
