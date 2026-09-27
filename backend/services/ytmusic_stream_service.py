@@ -462,9 +462,9 @@ class YTMusicStreamService:
             return []
 
     async def get_new_releases(self, limit: int = 20) -> list[dict]:
-        """Fetch YouTube Music's latest album releases."""
+        """Fetch YouTube Music's latest Vietnam album releases."""
         def _fetch():
-            yt = getattr(self, "_yt_client", None) or YTMusic()
+            yt = getattr(self, "_yt_client", None) or YTMusic(location="VN")
             return (yt.get_explore() or {}).get("new_releases") or []
 
         try:

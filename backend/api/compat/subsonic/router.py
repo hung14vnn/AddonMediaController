@@ -683,18 +683,37 @@ async def _get_album(c: Ctx) -> Response:
         def _fetch():
             from ytmusicapi import YTMusic
 
-            yt = getattr(ytmusic, "_yt_client", None) or YTMusic()
+            yt = getattr(ytmusic, "_yt_client", None) or YTMusic(location="VN")
             return yt.get_album(browse_id)
 
-        album = await ytmusic._run_blocking(_fetch, what="ytmusic album")
-        tracks = [child for t in album.get("tracks", []) if (child := _ytmusic_to_child(t))]
+        try:
+            album = await ytmusic._run_blocking(_fetch, what="ytmusic album")
+        except Exception as exc:
+            logger.exception("YTMusic album lookup failed for %s: %s", browse_id, exc)
+            raise SubsonicError(70, "YouTube Music album unavailable") from exc
+        if not isinstance(album, dict):
+            raise SubsonicError(70, "YouTube Music album not found")
+        tracks = [
+            child
+            for t in (album.get("tracks") or [])
+            if isinstance(t, dict) and (child := _ytmusic_to_child(t))
+        ]
         cover = _ytmusic_thumbnail_url(album.get("thumbnails"))
         if cover:
             _remember_cover("ytmusic", browse_id, cover)
+        album_artists = album.get("artists") or []
+        artist = next(
+            (
+                a.get("name") if isinstance(a, dict) else a
+                for a in album_artists
+                if (a.get("name") if isinstance(a, dict) else a)
+            ),
+            "YouTube Music",
+        )
         detail = m.SAlbumID3(
             id=sid,
             name=album.get("title") or "YouTube Music Release",
-            artist=(album.get("artists") or [{}])[0].get("name") or "YouTube Music",
+            artist=artist,
             coverArt=encode("ytmusic", browse_id),
             songCount=len(tracks),
             song=tracks,
@@ -2414,10 +2433,16 @@ def _ytmusic_to_child(t: dict) -> m.SChild | None:
         return None
     tid = encode("ytmusic", vid)
 
-    artists = [a.get("name") for a in (t.get("artists") or []) if a and a.get("name")]
+    artists = [
+        a.get("name") if isinstance(a, dict) else a
+        for a in (t.get("artists") or [])
+        if (a.get("name") if isinstance(a, dict) else a)
+    ]
     artist_name = ", ".join(artists) if artists else "Unknown Artist"
 
     album = t.get("album") or {}
+    if not isinstance(album, dict):
+        album = {}
     album_name = album.get("name") or "hify Discovery Radio"
     # Radio tracks are not in any saved playlist, so getCoverArt has no stored
     # artwork for them; keep the one YouTube Music sent with the track.
