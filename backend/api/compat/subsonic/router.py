@@ -674,6 +674,32 @@ async def _get_album(c: Ctx) -> Response:
     sid = c.p("id") or ""
     if _kind_of(sid) == "spotify_album":
         return await _get_spotify_album(c, decode(sid)[1])
+    if sid.startswith("ytmusic-album-"):
+        browse_id = sid.removeprefix("ytmusic-album-")
+        ytmusic = c.services.ytmusic_stream
+        if not ytmusic:
+            raise SubsonicError(70, "YouTube Music is disabled")
+
+        def _fetch():
+            from ytmusicapi import YTMusic
+
+            yt = getattr(ytmusic, "_yt_client", None) or YTMusic()
+            return yt.get_album(browse_id)
+
+        album = await ytmusic._run_blocking(_fetch, what="ytmusic album")
+        tracks = [child for t in album.get("tracks", []) if (child := _ytmusic_to_child(t))]
+        cover = _ytmusic_thumbnail_url(album.get("thumbnails"))
+        if cover:
+            _remember_cover("ytmusic", browse_id, cover)
+        detail = m.SAlbumID3(
+            id=sid,
+            name=album.get("title") or "YouTube Music Release",
+            artist=(album.get("artists") or [{}])[0].get("name") or "YouTube Music",
+            coverArt=encode("ytmusic", browse_id),
+            songCount=len(tracks),
+            song=tracks,
+        )
+        return c.render("album", detail)
     rg = _decode_expect(sid, "album")
     album = await c.services.view.get_album(rg, user=c.user)
     if album is None:
@@ -2560,6 +2586,34 @@ async def _get_trending_songs(c: Ctx) -> Response:
 
     songs = await _cached_chart(f"trending:{country}", fetch)
     return c.render("trendingSongs", {"song": songs[:count]})
+
+
+@endpoint("getYtMusicNewReleases")
+async def _get_ytmusic_new_releases(c: Ctx) -> Response:
+    count = c.pint("count", 20, minimum=1, maximum=100) or 20
+    ytmusic = c.services.ytmusic_stream
+    albums = []
+    if ytmusic:
+        for item in await ytmusic.get_new_releases(limit=count):
+            browse_id = item.get("browseId")
+            if not browse_id:
+                continue
+            artists = item.get("artists") or []
+            thumbnails = item.get("thumbnails") or []
+            cover = thumbnails[-1].get("url") if thumbnails else None
+            album_id = f"ytmusic-album-{browse_id}"
+            if cover:
+                _remember_cover("ytmusic", browse_id, cover)
+            albums.append(
+                m.SAlbumID3(
+                    id=album_id,
+                    name=item.get("title") or "YouTube Music Release",
+                    artist=artists[0].get("name") if artists else "YouTube Music",
+                    coverArt=encode("ytmusic", browse_id),
+                    songCount=0,
+                )
+            )
+    return c.render("albumList2", {"album": albums})
 
 
 @endpoint("getTodaysHits")

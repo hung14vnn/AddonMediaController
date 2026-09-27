@@ -148,6 +148,11 @@ export async function getAlbumList(type: AlbumListType, size = 30, offset = 0, e
 	return (r.albumList2?.album ?? []) as Album[];
 }
 
+export async function getYtMusicNewReleases(count = 20) {
+	const r = await call('getYtMusicNewReleases', { count });
+	return (r.albumList2?.album ?? []) as Album[];
+}
+
 export async function getAlbum(id: string) {
 	const r = await call('getAlbum', { id });
 	return r.album as Album;

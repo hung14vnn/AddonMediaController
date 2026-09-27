@@ -1,6 +1,7 @@
 <script lang="ts">
 	import {
 		getAlbumList,
+		getYtMusicNewReleases,
 		getGenres,
 		optional,
 		getRandomRadioMix,
@@ -18,7 +19,7 @@
 
 	function load() {
 		return Promise.all([
-			getAlbumList("newest", 20),
+			getYtMusicNewReleases(20),
 			optional(getAlbumList("frequent", 20)),
 			optional(getAlbumList("random", 20)),
 			optional(getGenres()),
