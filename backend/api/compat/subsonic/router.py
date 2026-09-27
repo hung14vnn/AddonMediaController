@@ -193,7 +193,7 @@ def _ios_client(request: Request) -> bool:
 
 def _ytmusic_format(request: Request, requested_format: str | None) -> str:
     """Choose a direct yt-dlp format without invoking ffmpeg."""
-    if requested_format == "opus" and not _ios_client(request):
+    if not _ios_client(request) and requested_format in (None, "opus"):
         return "opus"
     return "m4a"
 
@@ -1528,6 +1528,7 @@ async def _build_playlist_detail(c: Ctx, pid: str):
         raise SubsonicError(70, "Playlist not found")
     r = detail.record
     songs, total = [], 0
+    ytmusic_format = _ytmusic_format(c.request, None)
     for entry in detail.tracks:
         # Older downloader entries may have the library file in
         # track_source_id while library_file_id was never backfilled.
@@ -1577,8 +1578,10 @@ async def _build_playlist_detail(c: Ctx, pid: str):
                     type="music",
                     mediaType="song",
                     coverArt=yt_id,
-                    contentType="audio/mp4",
-                    suffix="m4a",
+                    contentType=(
+                        "audio/ogg" if ytmusic_format == "opus" else "audio/mp4"
+                    ),
+                    suffix=ytmusic_format,
                 )
             )
             total += duration_sec

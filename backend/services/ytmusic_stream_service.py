@@ -70,7 +70,7 @@ _YDL_OPUS_OPTIONS: dict[str, object] = {
     **_YDL_BASE_OPTIONS,
     "extract_flat": False,
     "skip_download": True,
-    "format": "bestaudio/best",
+    "format": "bestaudio[acodec^=opus]/bestaudio[ext=webm][acodec^=opus]",
     "format_sort": ["abr", "acodec:opus", "ext"],
 }
 # Callers ask for m4a because they advertise audio/mp4 (Subsonic song Child) or
@@ -190,6 +190,10 @@ class _YtDlp:
             extension = str(info.get("ext") or info.get("audio_ext") or "").lower()
             codec = str(info.get("acodec") or "").lower()
             if extension != "m4a" or not codec.startswith("mp4a"):
+                return None
+        elif expected_format == "opus":
+            codec = str(info.get("acodec") or "").lower()
+            if not codec.startswith("opus"):
                 return None
         source_title = str(info.get("title") or "Unknown")
         source_artist = str(info.get("uploader") or info.get("channel") or "Unknown")
