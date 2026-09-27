@@ -6,6 +6,7 @@
 	import ErrorState from '../components/ErrorState.svelte';
 	import Icon from '../components/Icon.svelte';
 	import Sentinel from '../components/Sentinel.svelte';
+	import SortMenu from '../components/SortMenu.svelte';
 	import { router } from '../router.svelte';
 	import type { Album, AlbumListType } from '../types';
 
@@ -62,18 +63,14 @@
 		error = null;
 		untrack(more);
 	});
+
 </script>
 
 <div class="page">
 	<div class="head">
 		<button class="back" onclick={() => router.go('/library')}><Icon name="chevronLeft" size={18} />Library</button>
 		{#if sortable}
-			<label class="sort">
-				<span>Sort</span>
-				<select bind:value={type}>
-					{#each sorts as s}<option value={s.value}>{s.label}</option>{/each}
-				</select>
-			</label>
+			<SortMenu value={type} options={sorts} onchange={(value) => (type = value as AlbumListType)} />
 		{/if}
 	</div>
 	<h1 class="page-title">{title}</h1>
@@ -98,24 +95,7 @@
 		padding: 0 var(--gutter);
 		margin-bottom: 8px;
 	}
-	.sort {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		font-size: 13px;
-	}
 	.back { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 14px; white-space: nowrap; }
-	select {
-		font: inherit;
-		font-size: 13px;
-		color: var(--text);
-		background: var(--fill);
-		border: 0;
-		border-radius: 7px;
-		padding: 5px 8px;
-	}
-	.sort { position: relative; color: var(--accent); }
-	.sort select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
 	@media (max-width: 699px) {
 		:global(.page > .grid) { padding-left: 10px; padding-right: 10px; }
 	}

@@ -60,6 +60,23 @@
 	// Swipe-down-to-dismiss from anywhere in the Now Playing screen.
 	let startY = 0;
 	let dragY = $state(0);
+	let dismissGesture = false;
+
+	function onTouchStart(e: TouchEvent) {
+		// Queue/Lyrics own their touch gestures. Do not let a scroll that bubbles
+		// from the panel move or dismiss the Now Playing sheet.
+		dismissGesture = !(e.target instanceof Element && e.target.closest('.panel'));
+		if (dismissGesture) startY = e.touches[0].clientY;
+	}
+
+	function onTouchMove(e: TouchEvent) {
+		if (dismissGesture) dragY = Math.max(0, e.touches[0].clientY - startY);
+	}
+
+	function onTouchEnd() {
+		if (dismissGesture) dragY > 110 ? close() : (dragY = 0);
+		dismissGesture = false;
+	}
 
 	function close() {
 		ui.nowPlaying = false;
@@ -84,9 +101,10 @@
 	class:tinted={!!tint}
 	style:transform={dragY ? `translateY(${dragY}px)` : undefined}
 	style:transition={dragY && ui.nowPlaying ? 'none' : undefined}
-	ontouchstart={(e) => (startY = e.touches[0].clientY)}
-	ontouchmove={(e) => (dragY = Math.max(0, e.touches[0].clientY - startY))}
-	ontouchend={() => (dragY > 110 ? close() : (dragY = 0))}
+	ontouchstart={onTouchStart}
+	ontouchmove={onTouchMove}
+	ontouchend={onTouchEnd}
+	ontouchcancel={onTouchEnd}
 	role="dialog"
 	tabindex="-1"
 	aria-modal="true"
@@ -207,11 +225,21 @@
 			</div>
 
 			{#if ui.panel}
-				{#key ui.panel}
-					<div class="panel" in:textSwap={{ dx: 40, duration: 420 }}>
-						{#if ui.panel === 'lyrics'}<Lyrics />{:else}<Queue />{/if}
-					</div>
-				{/key}
+				<div
+					class="panel"
+					in:textSwap={{ dx: 40, duration: 420 }}
+					out:textSwap={{ dx: -40, duration: 280 }}
+				>
+					{#key ui.panel}
+						<div
+							class="panel-view"
+							in:textSwap={{ dx: 40, duration: 320 }}
+							out:textSwap={{ dx: -40, duration: 240 }}
+						>
+							{#if ui.panel === 'lyrics'}<Lyrics />{:else}<Queue />{/if}
+						</div>
+					{/key}
+				</div>
 			{/if}
 		</div>
 	{:else}
@@ -525,6 +553,14 @@
 	.panel {
 		width: min(48vw, 780px);
 		min-height: 0;
+		position: relative;
+		flex: 0 1 min(48vw, 780px);
+	}
+	.panel-view {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
 	}
 	.nothing {
 		flex: 1;
@@ -610,6 +646,9 @@
 
 	/* ---- desktop -------------------------------------------------------------- */
 	@media (min-width: 900px) {
+		.layout {
+			position: relative;
+		}
 		.pill {
 			display: none;
 		}
@@ -638,6 +677,19 @@
 		.main {
 			width: min(40vw, 440px);
 			justify-content: center;
+			transition:
+				width 0.45s cubic-bezier(0.2, 0.8, 0.2, 1),
+				transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+		}
+		.has-panel .main {
+			transform: translateX(calc((min(48vw, 780px) + 10vw) / -2));
+		}
+		.panel {
+			position: absolute;
+			top: 0;
+			bottom: 0;
+			left: calc(50% + (min(40vw, 440px) + 10vw - min(48vw, 780px)) / 2);
+			flex: none;
 		}
 		.controls {
 			flex: 0 0 auto;

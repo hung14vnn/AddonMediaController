@@ -207,11 +207,16 @@
 	}
 	.lcd-more {
 		position: absolute;
-		right: 0;
-		top: 50%;
-		transform: translateY(-50%);
+		right: -4px;
+		top: -4px;
+		width: 36px;
+		height: 36px;
+		display: grid;
+		place-items: center;
+		padding: 0;
+		border-radius: 50%;
 		color: var(--text-2);
-		opacity: 0;
+		opacity: 0.72;
 		transition: opacity 0.15s ease;
 	}
 	.lcd:hover .lcd-more,

@@ -395,6 +395,14 @@ a.tile:active {
 	transform: scale(0.95);
 }
 
+/* Track rows should not shrink when tapped; keep the press feedback for
+   ordinary controls and cards. */
+.tracks .lead:active,
+.tracks .main:active,
+.queue .item:active {
+	transform: none;
+}
+
 /* Staggered reveal for grids, shelves and track lists on first paint. */
 @keyframes reveal {
 	from {

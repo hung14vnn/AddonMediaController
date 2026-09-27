@@ -3,6 +3,7 @@
 	import ArtistCard from '../components/ArtistCard.svelte';
 	import ErrorState from '../components/ErrorState.svelte';
 	import Icon from '../components/Icon.svelte';
+	import SortMenu from '../components/SortMenu.svelte';
 	import { router } from '../router.svelte';
 	import type { Artist } from '../types';
 
@@ -33,7 +34,11 @@
 <div class="page">
 	<div class="head">
 		<button class="back" onclick={() => router.go('/library')}><Icon name="chevronLeft" size={18} />Library</button>
-		<label class="sort" aria-label="Sort artists"><span>Sort</span><select bind:value={sort}><option value="name">Name</option><option value="albums">Albums</option></select></label>
+		<SortMenu
+			value={sort}
+			options={[{ value: 'name', label: 'Name' }, { value: 'albums', label: 'Albums' }]}
+			onchange={(value) => (sort = value as typeof sort)}
+		/>
 	</div>
 	<h1 class="page-title">Artists</h1>
 	<div class="tools">
@@ -77,15 +82,10 @@
 		margin-top: 28px;
 	}
 	.head { display: flex; align-items: center; gap: 12px; padding: 0 var(--gutter); margin-bottom: 8px; }
-	.head .page-title { flex: 1; }
 	.back { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 14px; white-space: nowrap; }
 	.tools { display: flex; gap: 10px; align-items: center; margin: 0 var(--gutter) 16px; }
 	.search { flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: var(--text-2); background: var(--fill); border-radius: 9px; }
 	.search input { min-width: 0; width: 100%; border: 0; outline: 0; background: none; color: var(--text); font: inherit; }
-	.sort { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); }
-	select { color: var(--text); background: var(--fill); border: 0; border-radius: 7px; padding: 7px 6px; font: inherit; }
-	.sort { position: relative; color: var(--accent); margin-left: auto; }
-	.sort select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
 	@media (max-width: 699px) {
 		.tools { margin: 0 10px 14px; }
 		.letter { margin: 12px 10px 8px; font-size: 13px; }

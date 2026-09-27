@@ -70,13 +70,6 @@
 	select { color: var(--text); background: var(--fill); border: 0; border-radius: 7px; padding: 7px 6px; font: inherit; }
 	.sort { position: relative; color: var(--accent); }
 	.sort select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
-	.head .page-title {
-		margin-bottom: 20px;
-	}
-	.head .btn {
-		margin-bottom: 20px;
-		min-width: 0;
-	}
 	.playlist-action { display: flex; justify-content: flex-end; margin: -8px var(--gutter) 16px; }
 	.playlist-action .btn { min-width: 0; }
 	@media (max-width: 699px) {

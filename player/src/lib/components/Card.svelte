@@ -132,7 +132,6 @@
 		}
 	}
 	
-	/* TỐI ƯU HỆ THỐNG: Bỏ backdrop-filter hoàn toàn cho nút trong Card */
 	.overlay button {
 		width: 32px;
 		height: 32px;
@@ -179,10 +178,18 @@
 		white-space: nowrap;
 	}
 	.subtitle {
-		color: var(--text-2);
+		font-size: 13px;
+		font-weight: 400;
+		color: var(--text-2) !important;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	/* ArtistLinks renders the subtitle from a child component, so its class is
+	   not covered by Card's scoped selector without an explicit global part. */
+	.meta :global(.subtitle),
+	.meta :global(.subtitle) :global(a) {
+		color: var(--text-2) !important;
 	}
 	a.subtitle:hover,
 	a.title:hover {

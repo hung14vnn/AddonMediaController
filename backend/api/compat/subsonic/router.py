@@ -1701,7 +1701,22 @@ async def _update_playlist(c: Ctx) -> Response:
     pid = _decode_expect(c.p("playlistId") or "", "playlist")
     name = c.p("name")
     public = c.p("public")
-    add_file_ids = [_decode_expect(s, "track") for s in c.plist("songIdToAdd")]
+    # ``songIdToAdd`` is called a track id by Subsonic, but this server also
+    # exposes YouTube Music tracks.  Those use the ``yt-`` prefix and are not
+    # library files, so they must be stored as external playlist entries
+    # instead of being passed through ``add_file_id_entry``.
+    add_file_ids: list[str] = []
+    add_ytmusic_ids: list[str] = []
+    for song_id in c.plist("songIdToAdd"):
+        kind, internal = decode(song_id)
+        if kind == "track":
+            add_file_ids.append(internal)
+        elif kind == "ytmusic":
+            if not internal:
+                raise SubsonicError(70, "Expected a track id")
+            add_ytmusic_ids.append(internal)
+        else:
+            raise SubsonicError(70, "Expected a track id")
     remove_indices = [
         SubsonicParameters({"songIndexToRemove": [value]}).integer(
             "songIndexToRemove", minimum=0, maximum=2_147_483_647
@@ -1722,6 +1737,23 @@ async def _update_playlist(c: Ctx) -> Response:
         if await c.services.view.get_track(fid, user=c.user) is None:
             raise SubsonicError(70, "Song not found")
         await c.services.playlists.add_file_id_entry(pid, fid, requesting=c.user)
+    if add_ytmusic_ids:
+        await c.services.playlists.add_tracks(
+            pid,
+            c.user,
+            [
+                {
+                    "track_name": "YouTube Track",
+                    "artist_name": "YouTube Music",
+                    "album_name": "YouTube Music",
+                    "album_id": f"ytmusic-{video_id}",
+                    "track_source_id": video_id,
+                    "source_type": "ytmusic",
+                    "available_sources": ["ytmusic"],
+                }
+                for video_id in add_ytmusic_ids
+            ],
+        )
     return c.render(None, None)
 
 

@@ -3,6 +3,7 @@ import { getAllSongs, getRandomSongs, getSongsByGenre, getSession } from '../api
 	import ErrorState from '../components/ErrorState.svelte';
 	import Icon from '../components/Icon.svelte';
 	import Sentinel from '../components/Sentinel.svelte';
+	import SortMenu from '../components/SortMenu.svelte';
 	import TrackList from '../components/TrackList.svelte';
 	import { getPlayer } from '../player.svelte';
 import { router } from '../router.svelte';
@@ -59,7 +60,17 @@ import { listOfflineTrackMetadata } from '../offline';
 <div class="page">
 	<div class="head">
 		<button class="back" onclick={() => router.go('/library')}><Icon name="chevronLeft" size={18} />Library</button>
-		<label class="sort" aria-label="Sort songs"><span>Sort</span><select bind:value={sort}><option value="title">Title</option><option value="artist">Artist</option><option value="album">Album</option><option value="added">Recently Added</option><option value="played">Recently Played</option></select></label>
+		<SortMenu
+			value={sort}
+			options={[
+				{ value: 'title', label: 'Title' },
+				{ value: 'artist', label: 'Artist' },
+				{ value: 'album', label: 'Album' },
+				{ value: 'added', label: 'Recently Added' },
+				{ value: 'played', label: 'Recently Played' }
+			]}
+			onchange={(value) => (sort = value as typeof sort)}
+		/>
 	</div>
 	{#if !genre}<h1 class="page-title">Songs</h1>{/if}
 	<div class="tools">
@@ -85,12 +96,7 @@ import { listOfflineTrackMetadata } from '../offline';
 	}
 	.head { display: flex; align-items: center; gap: 12px; padding: 0 var(--gutter); margin-bottom: 8px; }
 	.back { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 14px; }
-	.head .sort { margin-left: auto; }
 	.tools { display: flex; gap: 10px; align-items: center; margin: 0 var(--gutter) 16px; }
 	.search { flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: var(--text-2); background: var(--fill); border-radius: 9px; }
 	.search input { min-width: 0; width: 100%; border: 0; outline: 0; background: none; color: var(--text); font: inherit; }
-	.sort { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); }
-	select { color: var(--text); background: var(--fill); border: 0; border-radius: 7px; padding: 7px 6px; font: inherit; }
-	.sort { position: relative; color: var(--accent); }
-	.sort select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
 </style>
