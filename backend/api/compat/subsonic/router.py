@@ -683,7 +683,7 @@ async def _get_album(c: Ctx) -> Response:
         def _fetch():
             from ytmusicapi import YTMusic
 
-            yt = getattr(ytmusic, "_yt_client", None) or YTMusic(language="vi", location="VN")
+            yt = getattr(ytmusic, "_yt_client", None) or YTMusic()
             return yt.get_album(browse_id)
 
         try:
