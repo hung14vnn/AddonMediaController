@@ -24,7 +24,7 @@
 		clearTimeout(timer);
 		timer = setTimeout(
 			() => router.go(`/search?q=${encodeURIComponent(query)}`, router.route.name === 'search'),
-			220
+			300
 		);
 	}
 

@@ -63,7 +63,7 @@
 		// Keep showing old results while typing, but not another catalog's.
 		if (from !== shownSource) results = null;
 		shownSource = from;
-		search(q, { artist: 12, album: 20, song: 30 }, 0, false, from)
+		search(q, { artist: 12, album: 20, song: 10 }, 0, false, from)
 			.then((r) => mine === seq && (results = r))
 			.catch(() => mine === seq && (results = { artists: [], albums: [], songs: [] }))
 			.finally(() => mine === seq && (loading = false));
@@ -71,7 +71,7 @@
 
 	function onInput() {
 		clearTimeout(timer);
-		timer = setTimeout(() => router.go(`/search?q=${encodeURIComponent(input)}`, true), 250);
+		timer = setTimeout(() => router.go(`/search?q=${encodeURIComponent(input)}`, true), 300);
 	}
 
 	const empty = $derived(results && !results.artists.length && !results.albums.length && !results.songs.length);
@@ -129,7 +129,7 @@
 		align-items: center;
 		gap: 8px;
 		height: 38px;
-		margin: 0 var(--gutter) 24px;
+		margin: 0 var(--gutter) 12px;
 		padding: 0 12px;
 		border-radius: 10px;
 		color: var(--text-2);
@@ -148,7 +148,7 @@
 	.seg {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
-		margin: 0 var(--gutter) 24px;
+		margin: 0 var(--gutter) 12px;
 		padding: 2px;
 		border-radius: 999px;
 		background: var(--fill);
