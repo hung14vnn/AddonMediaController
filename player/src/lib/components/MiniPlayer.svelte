@@ -69,11 +69,15 @@
 		text-align: left;
 	}
 	.art {
+		/* never shrink the artwork to make room for a long title */
+		flex: none;
 		width: 44px;
 		--art-radius: 7px;
 		--art-shadow: 0 2px 8px rgb(0 0 0 / 0.18);
 	}
 	.title {
+		flex: 1;
+		min-width: 0;
 		font-size: 15px;
 		font-weight: 500;
 	}
