@@ -3,19 +3,19 @@
 	// large art near the top that shrinks while paused, and a three-button footer
 	// (lyrics · output device · queue). Lyrics/queue sit beside the art on desktop
 	// and replace it on phones.
-	import { artistName, time } from '../format';
-	import { songMenu } from '../menus';
-	import { artSwap, fadeOnly, pop, sheet, textSwap } from '../motion';
-	import { artworkTint, softArt, type Tint } from '../palette';
-	import { getPlayer } from '../player.svelte';
-	import { router } from '../router.svelte';
-	import { ui } from '../ui.svelte';
-	import Artwork from './Artwork.svelte';
-	import ArtistLinks from './ArtistLinks.svelte';
-	import Icon from './Icon.svelte';
-	import Lyrics from './Lyrics.svelte';
-	import Queue from './Queue.svelte';
-	import Slider from './Slider.svelte';
+	import { artistName, time } from "../format";
+	import { songMenu } from "../menus";
+	import { artSwap, fadeOnly, pop, sheet, textSwap } from "../motion";
+	import { artworkTint, softArt, type Tint } from "../palette";
+	import { getPlayer } from "../player.svelte";
+	import { router } from "../router.svelte";
+	import { ui } from "../ui.svelte";
+	import Artwork from "./Artwork.svelte";
+	import ArtistLinks from "./ArtistLinks.svelte";
+	import Icon from "./Icon.svelte";
+	import Lyrics from "./Lyrics.svelte";
+	import Queue from "./Queue.svelte";
+	import Slider from "./Slider.svelte";
 
 	const player = getPlayer();
 	const song = $derived(player.current);
@@ -26,10 +26,10 @@
 	// TỐI ƯU 1: Làm tròn giây để tránh format chuỗi thời gian liên tục ở từng millisecond
 	const formattedCurrentTime = $derived(time(Math.floor(shownTime)));
 	const formattedRemainingTime = $derived(
-		time(Math.max(0, Math.floor((player.duration || 0) - shownTime)))
+		time(Math.max(0, Math.floor((player.duration || 0) - shownTime))),
 	);
 
-// SỬA THÀNH: Khai báo type trực tiếp cho biến thay vì dùng Generic trên $state
+	// SỬA THÀNH: Khai báo type trực tiếp cho biến thay vì dùng Generic trên $state
 	let tint: Tint | null = $state(null);
 
 	$effect(() => {
@@ -41,20 +41,35 @@
 		return () => (cancelled = true);
 	});
 
-	const LOSSLESS = new Set(['flac', 'alac', 'wav', 'aiff', 'aif', 'ape', 'wv']);
+	const LOSSLESS = new Set([
+		"flac",
+		"alac",
+		"wav",
+		"aiff",
+		"aif",
+		"ape",
+		"wv",
+	]);
 	const quality = $derived.by(() => {
 		const s = song?.suffix?.toLowerCase();
-		if (!s) return '';
-		if (LOSSLESS.has(s)) return 'Lossless';
-		return song?.bitRate ? `${s.toUpperCase()} · ${song.bitRate} kbps` : s.toUpperCase();
+		if (!s) return "";
+		if (LOSSLESS.has(s)) return "Lossless";
+		return song?.bitRate
+			? `${s.toUpperCase()} · ${song.bitRate} kbps`
+			: s.toUpperCase();
 	});
 
 	const outputLabel = $derived(
-		player.castState === 'connected' ? 'Casting' : player.castState === 'connecting' ? 'Connecting…' : 'This Device'
+		player.castState === "connected"
+			? "Casting"
+			: player.castState === "connecting"
+				? "Connecting…"
+				: "This Device",
 	);
 
 	async function pickOutput() {
-		if (!(await player.pickOutput())) ui.showToast('No other playback devices found');
+		if (!(await player.pickOutput()))
+			ui.showToast("No other playback devices found");
 	}
 
 	// Swipe-down-to-dismiss on the header area.
@@ -71,7 +86,7 @@
 	}
 
 	function onKey(e: KeyboardEvent) {
-		if (e.key === 'Escape') close();
+		if (e.key === "Escape") close();
 	}
 </script>
 
@@ -83,7 +98,7 @@
 	class:has-panel={!!ui.panel}
 	class:tinted={!!tint}
 	style:transform={dragY ? `translateY(${dragY}px)` : undefined}
-	style:transition={dragY && ui.nowPlaying ? 'none' : undefined}
+	style:transition={dragY && ui.nowPlaying ? "none" : undefined}
 	role="dialog"
 	aria-modal="true"
 	aria-label="Now Playing"
@@ -101,7 +116,11 @@
 			{/key}
 		{/if}
 		{#if backdrop}
-			{#key backdrop}<canvas use:softArt={backdrop} in:fadeOnly={{ duration: 900 }} out:fadeOnly={{ duration: 900 }}></canvas>{/key}
+			{#key backdrop}<canvas
+					use:softArt={backdrop}
+					in:fadeOnly={{ duration: 900 }}
+					out:fadeOnly={{ duration: 900 }}
+				></canvas>{/key}
 		{/if}
 	</div>
 
@@ -109,7 +128,8 @@
 		class="grab"
 		role="presentation"
 		ontouchstart={(e) => (startY = e.touches[0].clientY)}
-		ontouchmove={(e) => (dragY = Math.max(0, e.touches[0].clientY - startY))}
+		ontouchmove={(e) =>
+			(dragY = Math.max(0, e.touches[0].clientY - startY))}
 		ontouchend={() => (dragY > 110 ? close() : (dragY = 0))}
 	>
 		<button class="dismiss" aria-label="Close Now Playing" onclick={close}>
@@ -124,21 +144,48 @@
 				<div class="art-wrap">
 					<div class="art" class:paused={!player.playing}>
 						{#key song.id}
-							<div in:artSwap><Artwork id={song.coverArt} size={600} seed={song.album ?? song.title} /></div>
+							<div in:artSwap>
+								<Artwork
+									id={song.coverArt}
+									size={600}
+									seed={song.album ?? song.title}
+								/>
+							</div>
 						{/key}
 					</div>
 				</div>
 
 				<div class="compact">
-					<span class="c-art"><Artwork id={song.coverArt} size={150} seed={song.album ?? song.title} /></span>
+					<span class="c-art"
+						><Artwork
+							id={song.coverArt}
+							size={150}
+							seed={song.album ?? song.title}
+						/></span
+					>
 					<span class="c-text">
 						<span class="c-title ellipsis">{song.title}</span>
-						<ArtistLinks class="c-artist ellipsis" item={song} onclick={close} />
+						<ArtistLinks
+							class="c-artist ellipsis"
+							item={song}
+							onclick={close}
+						/>
 					</span>
-					<button class="round" aria-label="Favorite" onclick={() => ui.toggleLove('song', song)}>
-						<Icon name={ui.isLoved(song) ? 'starFill' : 'star'} size={16} />
+					<button
+						class="round"
+						aria-label="Favorite"
+						onclick={() => ui.toggleLove("song", song)}
+					>
+						<Icon
+							name={ui.isLoved(song) ? "starFill" : "star"}
+							size={16}
+						/>
 					</button>
-					<button class="round" aria-label="More options" onclick={(e) => ui.openMenu(e, songMenu(song))}>
+					<button
+						class="round"
+						aria-label="More options"
+						onclick={(e) => ui.openMenu(e, songMenu(song))}
+					>
 						<Icon name="more" size={17} />
 					</button>
 				</div>
@@ -148,23 +195,51 @@
 						{#key song.id}
 							<div class="text" in:textSwap>
 								<span class="title ellipsis">{song.title}</span>
-								<ArtistLinks class="artist ellipsis" item={song} onclick={close} />
+								<ArtistLinks
+									class="artist ellipsis"
+									item={song}
+									onclick={close}
+								/>
 							</div>
 						{/key}
-						<button class="round" class:on={ui.isLoved(song)} aria-label="Favorite" aria-pressed={ui.isLoved(song)} onclick={() => ui.toggleLove('song', song)}>
+						<button
+							class="round"
+							class:on={ui.isLoved(song)}
+							aria-label="Favorite"
+							aria-pressed={ui.isLoved(song)}
+							onclick={() => ui.toggleLove("song", song)}
+						>
 							{#key ui.isLoved(song)}
-								<span class="icon-swap" in:pop={{ from: 0.3, duration: 320 }}>
-									<Icon name={ui.isLoved(song) ? 'starFill' : 'star'} size={16} />
+								<span
+									class="icon-swap"
+									in:pop={{ from: 0.3, duration: 320 }}
+								>
+									<Icon
+										name={ui.isLoved(song)
+											? "starFill"
+											: "star"}
+										size={16}
+									/>
 								</span>
 							{/key}
 						</button>
-						<button class="round" aria-label="More options" onclick={(e) => ui.openMenu(e, songMenu(song))}>
+						<button
+							class="round"
+							aria-label="More options"
+							onclick={(e) => ui.openMenu(e, songMenu(song))}
+						>
 							<Icon name="more" size={17} />
 						</button>
 					</div>
 
 					<div class="progress">
-						<Slider value={player.currentTime} max={player.duration} label="Seek" onchange={(v) => player.seek(v)} oninput={(v) => (scrub = v)} />
+						<Slider
+							value={player.currentTime}
+							max={player.duration}
+							label="Seek"
+							onchange={(v) => player.seek(v)}
+							oninput={(v) => (scrub = v)}
+						/>
 						<div class="times">
 							<span>{formattedCurrentTime}</span>
 							<span class="quality">{quality}</span>
@@ -173,32 +248,80 @@
 					</div>
 
 					<div class="transport">
-						<button class="skip" aria-label="Previous" onclick={() => player.previous()}><Icon name="previous" size={36} /></button>
-						<button class="pp" aria-label={player.playing ? 'Pause' : 'Play'} onclick={() => player.toggle()}>
+						<button
+							class="skip"
+							aria-label="Previous"
+							onclick={() => player.previous()}
+							><Icon name="previous" size={36} /></button
+						>
+						<button
+							class="pp"
+							aria-label={player.playing ? "Pause" : "Play"}
+							onclick={() => player.toggle()}
+						>
 							{#key player.playing}
-								<span class="icon-swap" in:pop={{ from: 0.6, duration: 220 }}>
-									<Icon name={player.playing ? 'pause' : 'play'} size={46} />
+								<span
+									class="icon-swap"
+									in:pop={{ from: 0.6, duration: 220 }}
+								>
+									<Icon
+										name={player.playing ? "pause" : "play"}
+										size={46}
+									/>
 								</span>
 							{/key}
 						</button>
-						<button class="skip" aria-label="Next" onclick={() => player.next()}><Icon name="next" size={36} /></button>
+						<button
+							class="skip"
+							aria-label="Next"
+							onclick={() => player.next()}
+							><Icon name="next" size={36} /></button
+						>
 					</div>
 
 					<div class="volume">
-						<button aria-label={player.muted ? 'Unmute' : 'Mute'} onclick={() => player.toggleMute()}><Icon name="speakerLow" size={15} /></button>
-						<Slider value={player.muted ? 0 : player.volume} max={1} step={0.01} label="Volume" onchange={(v) => player.setVolume(v)} oninput={(v) => v !== null && player.setVolume(v)} />
+						<button
+							aria-label={player.muted ? "Unmute" : "Mute"}
+							onclick={() => player.toggleMute()}
+							><Icon name="speakerLow" size={15} /></button
+						>
+						<Slider
+							value={player.muted ? 0 : player.volume}
+							max={1}
+							step={0.01}
+							label="Volume"
+							onchange={(v) => player.setVolume(v)}
+							oninput={(v) => v !== null && player.setVolume(v)}
+						/>
 						<Icon name="speaker" size={17} />
 					</div>
 
 					<div class="bottom">
-						<button class="foot" class:on={ui.panel === 'lyrics'} aria-label="Lyrics" aria-pressed={ui.panel === 'lyrics'} onclick={() => ui.togglePanel('lyrics')}>
+						<button
+							class="foot"
+							class:on={ui.panel === "lyrics"}
+							aria-label="Lyrics"
+							aria-pressed={ui.panel === "lyrics"}
+							onclick={() => ui.togglePanel("lyrics")}
+						>
 							<Icon name="lyrics" size={21} />
 						</button>
-						<button class="output" class:connected={player.castState === 'connected'} aria-label="Playback device: {outputLabel}" onclick={pickOutput}>
+						<button
+							class="output"
+							class:connected={player.castState === "connected"}
+							aria-label="Playback device: {outputLabel}"
+							onclick={pickOutput}
+						>
 							<Icon name="airplay" size={21} />
 							<span>{outputLabel}</span>
 						</button>
-						<button class="foot" class:on={ui.panel === 'queue'} aria-label="Playing Next" aria-pressed={ui.panel === 'queue'} onclick={() => ui.togglePanel('queue')}>
+						<button
+							class="foot"
+							class:on={ui.panel === "queue"}
+							aria-label="Playing Next"
+							aria-pressed={ui.panel === "queue"}
+							onclick={() => ui.togglePanel("queue")}
+						>
 							<Icon name="queue" size={21} />
 						</button>
 					</div>
@@ -208,7 +331,8 @@
 			{#if ui.panel}
 				{#key ui.panel}
 					<div class="panel" in:textSwap={{ dx: 40, duration: 420 }}>
-						{#if ui.panel === 'lyrics'}<Lyrics />{:else}<Queue />{/if}
+						{#if ui.panel === "lyrics"}<Lyrics />{:else}<Queue
+							/>{/if}
 					</div>
 				{/key}
 			{/if}
@@ -250,8 +374,11 @@
 		position: absolute;
 		inset: 0;
 		z-index: 1;
-		background:
-			radial-gradient(120% 60% at 50% 0%, color-mix(in srgb, var(--top) 85%, #fff 15%), transparent 70%),
+		background: radial-gradient(
+				120% 60% at 50% 0%,
+				color-mix(in srgb, var(--top) 85%, #fff 15%),
+				transparent 70%
+			),
 			linear-gradient(180deg, var(--top) 0%, var(--bottom) 100%);
 	}
 	.backdrop canvas {
@@ -280,11 +407,15 @@
 		mix-blend-mode: soft-light;
 	}
 	.backdrop::after {
-		content: '';
+		content: "";
 		position: absolute;
 		inset: 0;
 		z-index: 3;
-		background: linear-gradient(to bottom, transparent 55%, rgb(0 0 0 / 0.18));
+		background: linear-gradient(
+			to bottom,
+			transparent 55%,
+			rgb(0 0 0 / 0.18)
+		);
 	}
 
 	@keyframes drift {
@@ -592,7 +723,7 @@
 			flex: 1;
 			width: auto;
 			min-height: 0;
-			margin: 0 -12px;
+			margin: 6px -12px;
 		}
 		.has-panel .progress {
 			order: 3;

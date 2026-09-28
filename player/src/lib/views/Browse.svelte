@@ -1,5 +1,6 @@
 <script lang="ts">
 	import {
+		cached,
 		getAlbumList,
 		getGenres,
 		optional,
@@ -16,12 +17,13 @@
 
 	const player = getPlayer();
 
+	// Cached so switching tabs back to Browse renders instantly (see `cached` in api.ts).
 	function load() {
 		return Promise.all([
-			getAlbumList("newest", 20),
-			optional(getAlbumList("frequent", 20)),
-			optional(getAlbumList("random", 20)),
-			optional(getGenres()),
+			cached("browse:newest", () => getAlbumList("newest", 20)),
+			optional(cached("browse:frequent", () => getAlbumList("frequent", 20))),
+			optional(cached("browse:random", () => getAlbumList("random", 20))),
+			optional(cached("genres", () => getGenres())),
 		]).then(([newest, frequent, random, genres]) => ({
 			newest,
 			frequent,
@@ -33,7 +35,9 @@
 
 	const region = /-([A-Z]{2}) /.exec(navigator.language)?.[1];
 	let radioMix = $state(optional(getRandomRadioMix(5)));
-	const trendingPlaylists = optional(getTrendingPlaylists(region));
+	const trendingPlaylists = optional(
+		cached(`browse:trending:${region ?? ""}`, () => getTrendingPlaylists(region)),
+	);
 
 	function reloadRadioMix() {
 		radioMix = optional(getRandomRadioMix(5, true));

@@ -41,11 +41,67 @@ export function getSession() {
 
 export function clearSession() {
 	session = null;
+	clearCache();
 	try {
 		localStorage.removeItem(STORAGE_KEY);
 	} catch {
 		/* storage unavailable */
 	}
+}
+
+const CACHE_PREFIX = 'music.cache:';
+const memo = new Map<string, { at: number; data: unknown }>();
+
+function clearCache() {
+	memo.clear();
+	try {
+		for (const k of Object.keys(localStorage)) if (k.startsWith(CACHE_PREFIX)) localStorage.removeItem(k);
+	} catch {
+		/* storage unavailable */
+	}
+}
+
+/**
+ * Stale-while-revalidate: within `fresh` the cached copy is returned as is; up to `maxAge`
+ * it's returned instantly and refreshed in the background for next time; beyond that (or
+ * with nothing cached) the network is awaited. Scoped per server + user, cleared on sign-out.
+ */
+export function cached<T>(
+	key: string,
+	fetcher: () => Promise<T>,
+	{ fresh = 5 * 60_000, maxAge = 24 * 60 * 60_000 } = {}
+): Promise<T> {
+	const user = session?.username ?? (session?.apiKey ? md5(session.apiKey).slice(0, 8) : '');
+	const k = `${CACHE_PREFIX}${session?.base}|${user}|${key}`;
+
+	let hit = memo.get(k);
+	if (!hit) {
+		try {
+			const raw = localStorage.getItem(k);
+			if (raw) memo.set(k, (hit = JSON.parse(raw)));
+		} catch {
+			/* storage unavailable or corrupt entry */
+		}
+	}
+
+	const age = hit ? Date.now() - hit.at : Infinity;
+	if (hit && age < fresh) return Promise.resolve(hit.data as T);
+
+	const req = fetcher().then((data) => {
+		const entry = { at: Date.now(), data };
+		memo.set(k, entry);
+		try {
+			localStorage.setItem(k, JSON.stringify(entry));
+		} catch {
+			/* quota exceeded: keep the in-memory copy */
+		}
+		return data;
+	});
+	if (hit && age < maxAge) {
+		req.catch(() => {});
+		return Promise.resolve(hit.data as T);
+	}
+	return req;
 }
 
 function randomSalt() {

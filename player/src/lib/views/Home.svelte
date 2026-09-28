@@ -1,5 +1,6 @@
 <script lang="ts">
 	import {
+		cached,
 		getAlbumList,
 		getRandomSongs,
 		getTodaysHits,
@@ -17,12 +18,13 @@
 
 	const player = getPlayer();
 
+	// newest/frequent share Browse's cache keys; random gets its own so the two tabs differ.
 	function load() {
 		return Promise.all([
 			optional(getAlbumList("recent", 20)),
-			getAlbumList("newest", 20),
-			optional(getAlbumList("frequent", 20)),
-			optional(getAlbumList("random", 20)),
+			cached("browse:newest", () => getAlbumList("newest", 20)),
+			optional(cached("browse:frequent", () => getAlbumList("frequent", 20))),
+			optional(cached("home:random", () => getAlbumList("random", 20))),
 			optional(getAlbumList("starred", 20)),
 			optional(getRandomSongs(12)),
 		]).then(([recent, newest, frequent, random, starred, picks]) => ({

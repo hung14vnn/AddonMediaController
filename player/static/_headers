@@ -1,6 +1,6 @@
-# Cloudflare Pages response headers (copied into dist/ by Vite).
-# Vite fingerprints everything in /assets, so those never change.
-/assets/*
+# Cloudflare Pages response headers (copied into dist/ by SvelteKit).
+# SvelteKit fingerprints everything in /_app/immutable, so those never change.
+/_app/immutable/*
   Cache-Control: public, max-age=31536000, immutable
 
 # The shell must revalidate so a new deploy is picked up on the next load.
@@ -8,7 +8,9 @@
   Cache-Control: no-cache
 /index.html
   Cache-Control: no-cache
-/sw.js
+/_app/version.json
+  Cache-Control: no-cache
+/service-worker.js
   Cache-Control: no-cache
 /manifest.webmanifest
   Cache-Control: no-cache

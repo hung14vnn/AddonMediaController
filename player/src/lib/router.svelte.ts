@@ -1,5 +1,8 @@
-// Tiny hash router: hash routing works from any sub-path and needs no server rewrites,
-// which keeps the PWA deployable as plain static files.
+// Thin wrapper over SvelteKit's hash router (see svelte.config.js). Routes live in
+// src/routes; this keeps the small `router.route` / `router.go` / `href` API the
+// components already use.
+import { goto } from '$app/navigation';
+import { page } from '$app/state';
 
 export type Route =
 	| { name: 'home' }
@@ -19,49 +22,38 @@ export type Route =
 	| { name: 'artist'; id: string }
 	| { name: 'playlist'; id: string };
 
-function parse(hash: string): Route {
-	const [path, qs = ''] = hash.replace(/^#/, '').split('?');
-	const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
-	const [head, id] = parts;
+// SvelteKit ignores `?…` inside the hash for matching, and `page.url` has the hash
+// already decoded, so read the query from the raw location instead.
+function hashQuery(): URLSearchParams {
+	return new URLSearchParams(location.hash.split('?')[1] ?? '');
+}
+
+function current(): Route {
+	// e.g. '/', '/album/[id]'; null when nothing matched (the error page).
+	const head = page.route.id?.split('/')[1] ?? '';
 	switch (head) {
-		case 'browse':
-			return { name: 'browse' };
+		case '':
+			return { name: 'home' };
 		case 'search':
-			return { name: 'search', query: new URLSearchParams(qs).get('q') ?? '' };
-		case 'library':
-		case 'profile':
-		case 'recent':
-		case 'artists':
-		case 'albums':
-		case 'songs':
-		case 'playlists':
-		case 'loved':
-		case 'genres':
-			return { name: head };
+			return { name: 'search', query: hashQuery().get('q') ?? '' };
 		case 'genre':
 		case 'album':
 		case 'artist':
 		case 'playlist':
-			if (id) return { name: head, id };
-			break;
+			return { name: head, id: page.params.id ?? '' };
+		default:
+			return { name: head } as Route;
 	}
-	return { name: 'home' };
 }
 
 class Router {
-	route = $state<Route>(parse(location.hash));
-
-	constructor() {
-		addEventListener('hashchange', () => {
-			this.route = parse(location.hash);
-		});
+	get route(): Route {
+		void page.url; // re-run dependents on every navigation, including query-only changes
+		return current();
 	}
 
 	go(path: string, replace = false) {
-		const hash = `#${path}`;
-		if (replace) history.replaceState(null, '', hash);
-		else if (location.hash !== hash) location.hash = hash;
-		this.route = parse(hash);
+		return goto(`#${path}`, { replaceState: replace, keepFocus: true, noScroll: true });
 	}
 }
 

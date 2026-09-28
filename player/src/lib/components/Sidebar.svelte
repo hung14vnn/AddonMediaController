@@ -10,10 +10,12 @@
 
 	let query = $state(router.route.name === 'search' ? router.route.query : '');
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let field: HTMLInputElement | undefined = $state();
 
 	// TỐI ƯU 1: Đồng bộ giá trị input khi router.route thay đổi (ví dụ: người dùng bấm Back/Forward)
+	// Navigation is async, so skip while focused or a landing navigation clobbers fresh keystrokes.
 	$effect(() => {
-		if (router.route.name === 'search') {
+		if (router.route.name === 'search' && document.activeElement !== field) {
 			query = router.route.query ?? '';
 		}
 	});
@@ -62,6 +64,7 @@
 	<label class="search">
 		<Icon name="search" size={15} />
 		<input
+			bind:this={field}
 			type="search"
 			placeholder="Search"
 			bind:value={query}

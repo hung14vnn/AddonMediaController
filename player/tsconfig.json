@@ -1,15 +1,15 @@
 {
-	"extends": "@tsconfig/svelte/tsconfig.json",
+	"extends": "./.svelte-kit/tsconfig.json",
 	"compilerOptions": {
-		"target": "ES2022",
-		"module": "ESNext",
-		"moduleResolution": "bundler",
 		"strict": true,
-		"noEmit": true,
-		"isolatedModules": true,
+		"allowJs": true,
+		"checkJs": true,
 		"skipLibCheck": true,
-		"lib": ["ES2022", "DOM", "DOM.Iterable"],
-		"types": ["vite/client", "node"]
-	},
-	"include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts"]
+		"forceConsistentCasingInFileNames": true,
+		"resolveJsonModule": true,
+		"esModuleInterop": true,
+		"sourceMap": true,
+		"moduleResolution": "bundler",
+		"types": ["node"]
+	}
 }
