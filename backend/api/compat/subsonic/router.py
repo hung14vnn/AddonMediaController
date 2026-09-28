@@ -54,6 +54,8 @@ _AUTH_CODES = {10, 40, 41, 42, 43, 44, 50}
 # per keystroke and give up on slow responses, so local results must not wait
 # on a cold SpotAPI session (its first request can take 5-10s).
 _SPOTAPI_SEARCH_TIMEOUT_S = 4.0
+# Same bound for search3/search2 with source=ytmusic (three filtered searches).
+_YTMUSIC_SEARCH_TIMEOUT_S = 6.0
 _PLAYBACK_REPORT_JSON_FIELDS = frozenset(
     {"mediaId", "mediaType", "positionMs", "state", "playbackRate", "ignoreScrobble"}
 )
@@ -650,6 +652,8 @@ async def _get_artist(c: Ctx) -> Response:
 
     if kind == "spotify_artist":
         return await _get_spotify_artist(c, decode(sid)[1])
+    if sid.startswith("ytmusic-artist-"):
+        return await _get_ytmusic_artist(c, sid.removeprefix("ytmusic-artist-"))
     
     try:
         artist_mbid = _decode_expect(sid, "artist")
@@ -912,6 +916,8 @@ async def _search(c: Ctx):
     s_count = c.pint("songCount", 20, minimum=0, maximum=500) or 0
     s_offset = c.pint("songOffset", 0, minimum=0, maximum=2_147_483_647) or 0
     local_only = str(c.p("localOnly") or "").lower() in {"1", "true", "yes"}
+    # Non-standard: which online catalog to blend in ("spotify" by default).
+    source = "ytmusic" if (c.p("source") or "").lower() == "ytmusic" else "spotify"
 
     artists = []
     albums = []
@@ -924,6 +930,11 @@ async def _search(c: Ctx):
     spot_artists: list = []
     spot_albums: list = []
     spot_songs: list = []
+    if q and not local_only and source == "ytmusic" and (a_count or al_count or s_count):
+        yt_artists, yt_albums, yt_songs = await _ytmusic_search(
+            c, q, artists=a_count, albums=al_count, songs=s_count
+        )
+        return artists, albums, songs, source, yt_artists, yt_albums, yt_songs
     if q and not local_only and (a_count or al_count or s_count):
         from services.spotapi_client import SpotApiClient
 
@@ -950,7 +961,130 @@ async def _search(c: Ctx):
         except Exception as e:
             logger.warning("Spotapi search failed: %s", e)
 
-    return artists, albums, songs, spot_artists, spot_albums, spot_songs
+    return artists, albums, songs, source, spot_artists, spot_albums, spot_songs
+
+
+async def _ytmusic_search(
+    c: Ctx, q: str, *, artists: int, albums: int, songs: int
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Raw YouTube Music search results per category, bounded like the Spotify leg."""
+    ytmusic = c.services.ytmusic_stream
+    if not ytmusic:
+        return [], [], []
+
+    def _fetch():
+        from ytmusicapi import YTMusic
+
+        yt = getattr(ytmusic, "_yt_client", None) or YTMusic()
+        # Filtered searches return a full page per category; an unfiltered one
+        # only carries a couple of items of each.
+        return [
+            yt.search(q, filter=f, limit=n) if n else []
+            for f, n in (("artists", artists), ("albums", albums), ("songs", songs))
+        ]
+
+    try:
+        ya, yl, ys = await asyncio.wait_for(
+            ytmusic._run_blocking(_fetch, what="search"), timeout=_YTMUSIC_SEARCH_TIMEOUT_S
+        )
+    except asyncio.TimeoutError:
+        logger.warning("YTMusic search timed out after %ss", _YTMUSIC_SEARCH_TIMEOUT_S)
+        return [], [], []
+    except Exception as e:
+        logger.warning("YTMusic search failed: %s", e)
+        return [], [], []
+    return (
+        [a for a in ya if isinstance(a, dict) and a.get("browseId")][: min(10, artists)],
+        [a for a in yl if isinstance(a, dict) and a.get("browseId")][: min(20, albums)],
+        [s for s in ys if isinstance(s, dict) and s.get("videoId")][: min(30, songs)],
+    )
+
+
+def _ytmusic_artist_name(a: dict) -> str:
+    # Artist search results carry the name as "artist" (or "artists" in older
+    # ytmusicapi releases); get_artist responses use "name".
+    name = a.get("artist") or a.get("name")
+    if not name:
+        name = next((x.get("name") for x in a.get("artists") or [] if isinstance(x, dict)), None)
+    return name or "Unknown Artist"
+
+
+def _ytmusic_to_artist_id3(a: dict) -> m.SArtistID3:
+    channel_id = a["browseId"]
+    _remember_cover("ytmusic", channel_id, _ytmusic_thumbnail_url(a.get("thumbnails")))
+    return m.SArtistID3(
+        id=f"ytmusic-artist-{channel_id}",
+        name=_ytmusic_artist_name(a),
+        coverArt=encode("ytmusic", channel_id),
+        albumCount=0,
+    )
+
+
+def _ytmusic_to_artist_file(a: dict) -> m.SArtist:
+    s = _ytmusic_to_artist_id3(a)
+    return m.SArtist(id=s.id, name=s.name, coverArt=s.coverArt)
+
+
+def _ytmusic_to_album_id3(al: dict, artist: m.SArtistID3 | None = None) -> m.SAlbumID3:
+    browse_id = al["browseId"]
+    _remember_cover("ytmusic", browse_id, _ytmusic_thumbnail_url(al.get("thumbnails")))
+    first = next((x for x in al.get("artists") or [] if isinstance(x, dict) and x.get("name")), None)
+    year = int(al["year"]) if str(al.get("year") or "").isdigit() else None
+    kind = al.get("type") or al.get("resultType")
+    return m.SAlbumID3(
+        id=f"ytmusic-album-{browse_id}",
+        name=al.get("title") or "YouTube Music Release",
+        artist=first["name"] if first else (artist.name if artist else "YouTube Music"),
+        artistId=(
+            f"ytmusic-artist-{first['id']}" if first and first.get("id")
+            else (artist.id if artist else None)
+        ),
+        coverArt=encode("ytmusic", browse_id),
+        year=year,
+        songCount=0,
+        duration=0,
+        created=_spotapi_created(al.get("year")),
+        # The player tells singles from albums by release type; YouTube Music
+        # results carry no track counts to fall back on.
+        releaseTypes=[str(kind).capitalize()] if kind in ("Album", "Single", "EP", "album", "single", "ep") else None,
+    )
+
+
+def _ytmusic_to_album_child(al: dict) -> m.SChild:
+    s = _ytmusic_to_album_id3(al)
+    return m.SChild(
+        id=s.id, isDir=True, title=s.name, album=s.name, artist=s.artist,
+        artistId=s.artistId, coverArt=s.coverArt, year=s.year, created=s.created,
+    )
+
+
+async def _get_ytmusic_artist(c: Ctx, channel_id: str) -> Response:
+    ytmusic = c.services.ytmusic_stream
+    if not ytmusic:
+        raise SubsonicError(70, "YouTube Music is disabled")
+
+    def _fetch():
+        from ytmusicapi import YTMusic
+
+        yt = getattr(ytmusic, "_yt_client", None) or YTMusic()
+        return yt.get_artist(channel_id)
+
+    try:
+        data = await ytmusic._run_blocking(_fetch, what="ytmusic artist")
+    except Exception as exc:
+        logger.warning("YTMusic artist lookup failed for %s: %s", channel_id, exc)
+        raise SubsonicError(70, "YouTube Music artist unavailable") from exc
+    if not isinstance(data, dict):
+        raise SubsonicError(70, "YouTube Music artist not found")
+    s = _ytmusic_to_artist_id3({**data, "browseId": channel_id})
+    albums: list[m.SAlbumID3] = []
+    for section, kind in (("albums", "Album"), ("singles", "Single")):
+        for al in (data.get(section) or {}).get("results") or []:
+            if isinstance(al, dict) and al.get("browseId"):
+                albums.append(_ytmusic_to_album_id3({"type": kind, **al}, artist=s))
+    s.album = albums
+    s.albumCount = len(albums)
+    return c.render("artist", s)
 
 
 def _spotapi_created(release_date: object) -> str:
@@ -1040,10 +1174,14 @@ def _spotapi_to_child(st: dict) -> m.SChild:
 
 @endpoint("search3")
 async def _search3(c: Ctx) -> Response:
-    artists, albums, songs, sa, sl, st = await _search(c)
-    out_artists = [m.to_artist_id3(a) for a in artists] + [_spotapi_to_artist_id3(a) for a in sa]
-    out_albums = [m.to_album_id3(a) for a in albums] + [_spotapi_to_album_id3(al) for al in sl]
-    out_songs = [c.child(t) for t in songs] + [_spotapi_to_child(t) for t in st]
+    artists, albums, songs, source, sa, sl, st = await _search(c)
+    yt = source == "ytmusic"
+    to_artist = _ytmusic_to_artist_id3 if yt else _spotapi_to_artist_id3
+    to_album = _ytmusic_to_album_id3 if yt else _spotapi_to_album_id3
+    to_song = _ytmusic_to_child if yt else _spotapi_to_child
+    out_artists = [m.to_artist_id3(a) for a in artists] + [to_artist(a) for a in sa]
+    out_albums = [m.to_album_id3(a) for a in albums] + [to_album(al) for al in sl]
+    out_songs = [c.child(t) for t in songs] + [x for t in st if (x := to_song(t))]
     return c.render(
         "searchResult3",
         {"artist": out_artists, "album": out_albums, "song": out_songs},
@@ -1052,10 +1190,14 @@ async def _search3(c: Ctx) -> Response:
 
 @endpoint("search2")
 async def _search2(c: Ctx) -> Response:
-    artists, albums, songs, sa, sl, st = await _search(c)
-    out_artists = [m.to_artist_file(a) for a in artists] + [_spotapi_to_artist_file(a) for a in sa]
-    out_albums = [m.to_album_child(a) for a in albums] + [_spotapi_to_album_child(al) for al in sl]
-    out_songs = [c.child(t) for t in songs] + [_spotapi_to_child(t) for t in st]
+    artists, albums, songs, source, sa, sl, st = await _search(c)
+    yt = source == "ytmusic"
+    to_artist = _ytmusic_to_artist_file if yt else _spotapi_to_artist_file
+    to_album = _ytmusic_to_album_child if yt else _spotapi_to_album_child
+    to_song = _ytmusic_to_child if yt else _spotapi_to_child
+    out_artists = [m.to_artist_file(a) for a in artists] + [to_artist(a) for a in sa]
+    out_albums = [m.to_album_child(a) for a in albums] + [to_album(al) for al in sl]
+    out_songs = [c.child(t) for t in songs] + [x for t in st if (x := to_song(t))]
     return c.render(
         "searchResult2",
         {"artist": out_artists, "album": out_albums, "song": out_songs},
@@ -2464,12 +2606,21 @@ def _ytmusic_to_child(t: dict) -> m.SChild | None:
         "ytmusic", vid, _ytmusic_thumbnail_url(t.get("thumbnails") or t.get("thumbnail"))
     )
 
+    # Link to the YouTube Music album/artist pages when the track names them.
+    album_id = f"ytmusic-album-{album['id']}" if album.get("id") else None
+    first_artist = next(
+        (a for a in (t.get("artists") or []) if isinstance(a, dict) and a.get("id")), None
+    )
+
     return m.SChild(
         id=tid,
         isDir=False,
         title=t.get("title") or "Unknown",
         album=album_name,
         artist=artist_name,
+        parent=album_id,
+        albumId=album_id,
+        artistId=f"ytmusic-artist-{first_artist['id']}" if first_artist else None,
         coverArt=tid,
         duration=_parse_length(t),
         year=int(t["year"]) if str(t.get("year") or "").isdigit() else None,
