@@ -1,13 +1,19 @@
 <script lang="ts">
-	import { href } from '../router.svelte';
-	import type { Artist } from '../types';
-	import Artwork from './Artwork.svelte';
+	import { href } from "../router.svelte";
+	import type { Artist } from "../types";
+	import Artwork from "./Artwork.svelte";
 
 	let { artist }: { artist: Artist } = $props();
 </script>
 
-<a class="artist" href={href.artist(artist.id)}>
-	<Artwork id={artist.coverArt} src={artist.artistImageUrl} seed={artist.name} round icon="mic" />
+<a class="artist" href={href.artist(artist.name)}>
+	<Artwork
+		id={artist.coverArt}
+		src={artist.artistImageUrl}
+		seed={artist.name}
+		round
+		icon="mic"
+	/>
 	<span class="name">{artist.name}</span>
 </a>
 

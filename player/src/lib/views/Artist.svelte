@@ -1,26 +1,38 @@
 <script lang="ts">
-	import { coverUrl, getAlbum, getArtist, getArtistInfo, getTopSongs } from '../api';
-	import AlbumCard from '../components/AlbumCard.svelte';
-	import ArtistCard from '../components/ArtistCard.svelte';
-	import ErrorState from '../components/ErrorState.svelte';
-	import Icon from '../components/Icon.svelte';
-	import Shelf from '../components/Shelf.svelte';
-	import TrackList from '../components/TrackList.svelte';
-	import { stripHtml } from '../format';
-	import { startStation } from '../menus';
-	import { getPlayer } from '../player.svelte';
-	import type { Album } from '../types';
-	import { ui } from '../ui.svelte';
+	import {
+		coverUrl,
+		getAlbum,
+		getArtist,
+		getArtistInfo,
+		getTopSongs,
+	} from "../api";
+	import AlbumCard from "../components/AlbumCard.svelte";
+	import ArtistCard from "../components/ArtistCard.svelte";
+	import ErrorState from "../components/ErrorState.svelte";
+	import Icon from "../components/Icon.svelte";
+	import Shelf from "../components/Shelf.svelte";
+	import TrackList from "../components/TrackList.svelte";
+	import { stripHtml } from "../format";
+	import { startStation } from "../menus";
+	import { getPlayer } from "../player.svelte";
+	import type { Album } from "../types";
+	import { ui } from "../ui.svelte";
 
 	let { id }: { id: string } = $props();
 	const player = getPlayer();
 
 	async function load(artistId: string) {
 		const artist = await getArtist(artistId);
-		const [info, top] = await Promise.all([getArtistInfo(artistId), getTopSongs(artist.name, 10)]);
-		const albums = [...(artist.album ?? [])].sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+		const [info, top] = await Promise.all([
+			getArtistInfo(artistId),
+			getTopSongs(artist.name, 10),
+		]);
+		const albums = [...(artist.album ?? [])].sort(
+			(a, b) => (b.year ?? 0) - (a.year ?? 0),
+		);
 		const isSingle = (a: Album) =>
-			a.releaseTypes?.some((t) => /single|ep/i.test(t)) ?? (a.songCount !== undefined && a.songCount <= 3);
+			a.releaseTypes?.some((t) => /single|ep/i.test(t)) ??
+			(a.songCount !== undefined && a.songCount <= 3);
 		return {
 			artist,
 			info,
@@ -28,7 +40,7 @@
 			latest: albums[0],
 			albums: albums.filter((a) => !isSingle(a) && !a.isCompilation),
 			singles: albums.filter(isSingle),
-			compilations: albums.filter((a) => a.isCompilation && !isSingle(a))
+			compilations: albums.filter((a) => a.isCompilation && !isSingle(a)),
 		};
 	}
 
@@ -50,39 +62,69 @@
 {#await data}
 	<div class="spinner"></div>
 {:then d}
-	{@const candidates = [d.artist.artistImageUrl, coverUrl(d.artist.coverArt, 1200), d.info.largeImageUrl, d.info.mediumImageUrl].filter(Boolean) as string[]}
-	{@const image = candidates[Math.min(imageErrorCount, candidates.length - 1)]}
+	{@const candidates = [
+		d.artist.artistImageUrl,
+		coverUrl(d.artist.coverArt, 1200),
+		d.info.largeImageUrl,
+		d.info.mediumImageUrl,
+	].filter(Boolean) as string[]}
+	{@const image =
+		candidates[Math.min(imageErrorCount, candidates.length - 1)]}
 	{@const bio = stripHtml(d.info.biography)}
 	<div class="page artist-page">
-		<header class="hero" class:has-image={!!image && imageErrorCount < candidates.length}>
-			{#if image && imageErrorCount < candidates.length}<img src={image} alt="" decoding="async" onerror={() => imageErrorCount++} />{/if}
+		<header
+			class="hero"
+			class:has-image={!!image && imageErrorCount < candidates.length}
+		>
+			{#if image && imageErrorCount < candidates.length}<img
+					src={image}
+					alt=""
+					decoding="async"
+					onerror={() => imageErrorCount++}
+				/>{/if}
 			<div class="hero-body">
 				<h1>{d.artist.name}</h1>
 				<div class="hero-actions">
 					<button
 						class="play"
 						aria-label="Play {d.artist.name}"
-						onclick={async () => player.playList(d.top.length ? d.top : await allSongs(d.albums.slice(0, 3)))}
+						onclick={async () =>
+							player.playList(
+								d.top.length
+									? d.top
+									: await allSongs(d.albums.slice(0, 3)),
+							)}
 					>
 						<Icon name="play" size={24} />
 					</button>
 					<button
 						class="pill"
-						onclick={async () => player.playList(await allSongs([...d.albums, ...d.singles]), 0, { shuffle: true })}
+						onclick={async () =>
+							player.playList(
+								await allSongs([...d.albums, ...d.singles]),
+								0,
+								{ shuffle: true },
+							)}
 					>
 						<Icon name="shuffle" size={15} />Shuffle
 					</button>
 					{#if d.top[0]}
-						<button class="pill" onclick={() => startStation(d.top[0])}>
+						<button
+							class="pill"
+							onclick={() => startStation(d.top[0])}
+						>
 							<Icon name="radio" size={15} />Station
 						</button>
 					{/if}
 					<button
 						class="pill icon"
 						aria-label="Favorite"
-						onclick={() => ui.toggleLove('artist', d.artist)}
+						onclick={() => ui.toggleLove("artist", d.artist)}
 					>
-						<Icon name={ui.isLoved(d.artist) ? 'starFill' : 'star'} size={17} />
+						<Icon
+							name={ui.isLoved(d.artist) ? "starFill" : "star"}
+							size={17}
+						/>
 					</button>
 				</div>
 			</div>
@@ -98,35 +140,54 @@
 			{#if d.top.length}
 				<section class="top">
 					<h2 class="section-title flush">Top Songs</h2>
-					<TrackList songs={d.top.slice(0, 8)} showAlbum={false} onplay={(i) => player.playList(d.top, i)} />
+					<TrackList
+						songs={d.top.slice(0, 8)}
+						showAlbum={false}
+						onplay={(i) => player.playList(d.top, i)}
+					/>
 				</section>
 			{/if}
 		</div>
 
 		{#if d.albums.length}
 			<Shelf title="Albums">
-				{#each d.albums as album (album.id)}<AlbumCard {album} showYear />{/each}
+				{#each d.albums as album (album.id)}<AlbumCard
+						{album}
+						showYear
+					/>{/each}
 			</Shelf>
 		{/if}
 		{#if d.singles.length}
 			<Shelf title="Singles & EPs" size="sm">
-				{#each d.singles as album (album.id)}<AlbumCard {album} showYear />{/each}
+				{#each d.singles as album (album.id)}<AlbumCard
+						{album}
+						showYear
+					/>{/each}
 			</Shelf>
 		{/if}
 		{#if d.compilations.length}
 			<Shelf title="Compilations">
-				{#each d.compilations as album (album.id)}<AlbumCard {album} showYear />{/each}
+				{#each d.compilations as album (album.id)}<AlbumCard
+						{album}
+						showYear
+					/>{/each}
 			</Shelf>
 		{/if}
 		{#if d.info.similarArtist?.length}
 			<Shelf title="Similar Artists" size="artist">
-				{#each d.info.similarArtist.filter((a) => a.id) as artist (artist.id)}<ArtistCard {artist} />{/each}
+				{#each d.info.similarArtist.filter((a) => a.id) as artist (artist.id)}<ArtistCard
+						{artist}
+					/>{/each}
 			</Shelf>
 		{/if}
 		{#if bio}
 			<section class="about pad">
 				<h2 class="section-title flush">About {d.artist.name}</h2>
-				<button class="bio" class:open={bioOpen} onclick={() => (bioOpen = !bioOpen)}>
+				<button
+					class="bio"
+					class:open={bioOpen}
+					onclick={() => (bioOpen = !bioOpen)}
+				>
 					{bio}
 				</button>
 			</section>
@@ -155,9 +216,8 @@
 		width: 100%;
 		height: 100%;
 		object-fit: cover;
-		object-position: center 25%;
+		object-position: center 35%;
 		animation: hero-settle 1.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-		/* Ép tạo compositor layer riêng để animation mượt mà không khựng GPU */
 		will-change: transform, opacity;
 	}
 	@keyframes hero-settle {
@@ -171,10 +231,14 @@
 		}
 	}
 	.hero.has-image::after {
-		content: '';
+		content: "";
 		position: absolute;
 		inset: 0;
-		background: linear-gradient(to top, rgba(0, 0, 0, 0.65), transparent 60%);
+		background: linear-gradient(
+			to top,
+			rgba(0, 0, 0, 0.65),
+			transparent 60%
+		);
 	}
 	.hero-body {
 		animation: hero-text 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) 0.15s both;
@@ -224,7 +288,9 @@
 		color: #fff;
 		background: var(--accent);
 		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
-		transition: transform 0.15s ease, background-color 0.15s ease;
+		transition:
+			transform 0.15s ease,
+			background-color 0.15s ease;
 	}
 	.play:hover {
 		transform: scale(1.06);
@@ -245,7 +311,9 @@
 		color: var(--text);
 		/* Solid fill instead of backdrop blur over the large artist image. */
 		background: var(--chrome-strong);
-		transition: background-color 0.15s ease, transform 0.15s ease;
+		transition:
+			background-color 0.15s ease,
+			transform 0.15s ease;
 	}
 	.pill:hover {
 		transform: translateY(-1px);
