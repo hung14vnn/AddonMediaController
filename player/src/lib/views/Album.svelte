@@ -41,6 +41,8 @@
 			subtitle={artistName(album)}
 			subtitleHref={album.artistId ? href.artist(album.artistId) : undefined}
 			meta={[album.genre, album.year].filter(Boolean).join(' · ')}
+			{songs}
+			onmore={(e) => ui.openMenu(e, albumMenu(album))}
 		>
 			{#snippet actions()}
 				<div class="actions">

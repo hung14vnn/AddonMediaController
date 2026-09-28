@@ -176,6 +176,31 @@ async def test_uploaded_playlist_cover_is_advertised_and_served(compat_env, auth
     assert head.headers["content-length"] == str(len(data))
 
 
+async def test_playlist_without_upload_uses_first_track_cover(compat_env):
+    # No uploaded cover: a non-empty playlist still advertises coverArt and serves
+    # its first track's artwork (short-cached, since the first track can change).
+    song = _sub(_get(compat_env, "search3", query=""))["searchResult3"]["song"][0]
+    pid = _sub(_get(compat_env, "createPlaylist", name="No Cover", songId=song["id"]))["playlist"]["id"]
+
+    detail = _sub(_get(compat_env, "getPlaylist", id=pid))["playlist"]
+    assert detail["coverArt"] == pid
+    lists = _sub(_get(compat_env, "getPlaylists"))["playlists"]["playlist"]
+    assert next(p for p in lists if p["id"] == pid)["coverArt"] == pid
+
+    served = _get(compat_env, "getCoverArt", id=pid)
+    own = _get(compat_env, "getCoverArt", id=detail["entry"][0]["coverArt"])
+    assert served.status_code == 200
+    assert served.content == own.content
+    assert served.headers["cache-control"] == "private, max-age=3600"
+
+
+async def test_empty_playlist_has_no_cover(compat_env):
+    pid = _sub(_get(compat_env, "createPlaylist", name="Empty"))["playlist"]["id"]
+    assert "coverArt" not in _sub(_get(compat_env, "getPlaylist", id=pid))["playlist"]
+    lists = _sub(_get(compat_env, "getPlaylists"))["playlists"]["playlist"]
+    assert "coverArt" not in next(p for p in lists if p["id"] == pid)
+
+
 async def test_private_playlist_cover_is_hidden_from_another_user(
     compat_env, auth_store, app_password_service
 ):

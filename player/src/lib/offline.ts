@@ -162,3 +162,44 @@ export async function downloadOfflineTrack(song: Song): Promise<OfflineTrackMeta
 
 	return metadata;
 }
+
+export interface BatchDownloadResult {
+	downloaded: number;
+	/** Already offline before this run. */
+	skipped: number;
+	failed: number;
+	/** Stopped early because the device ran out of storage. */
+	outOfSpace: boolean;
+}
+
+/** Downloads the songs that aren't offline yet, two at a time; stops early when storage runs out. */
+export async function downloadOfflineTracks(
+	songs: Song[],
+	onProgress?: (done: number, total: number) => void
+): Promise<BatchDownloadResult> {
+	ensureSupported();
+	const userId = getSession()?.username;
+	if (!userId) throw new OfflineStorageError('DOWNLOAD', 'Not signed in');
+
+	const have = new Set((await listOfflineTrackMetadata(userId)).map((m) => m.trackId));
+	const todo = [...new Map(songs.filter((s) => !have.has(s.id)).map((s) => [s.id, s])).values()];
+	const result: BatchDownloadResult = { downloaded: 0, skipped: songs.length - todo.length, failed: 0, outOfSpace: false };
+
+	let next = 0;
+	let done = 0;
+	const worker = async () => {
+		while (!result.outOfSpace && next < todo.length) {
+			const song = todo[next++];
+			try {
+				await downloadOfflineTrack(song);
+				result.downloaded++;
+			} catch (e) {
+				result.failed++;
+				if (e instanceof OfflineStorageError && e.code === 'QUOTA') result.outOfSpace = true;
+			}
+			onProgress?.(++done, todo.length);
+		}
+	};
+	await Promise.all([worker(), worker()]);
+	return result;
+}

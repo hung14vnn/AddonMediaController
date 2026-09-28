@@ -15,7 +15,7 @@ export async function startStation(song: Song) {
 }
 
 import { getSession } from './api';
-import { deleteOfflineTrack, downloadOfflineTrack, getOfflineTrackMetadata } from './offline';
+import { deleteOfflineTrack, downloadOfflineTrack, downloadOfflineTracks, getOfflineTrackMetadata } from './offline';
 
 export async function songMenu(song: Song, extra: MenuItem[] = []): Promise<MenuItem[]> {
 	const player = getPlayer();
@@ -95,6 +95,28 @@ export function playlistMenu(playlist: Playlist): MenuItem[] {
 			action: async () => player.playList(await playlistSongs(playlist), 0, { shuffle: true })
 		},
 		{ label: 'Play Next', icon: 'playNext', action: async () => player.playNext(await playlistSongs(playlist)) },
-		{ label: 'Play Last', icon: 'queue', action: async () => player.addToQueue(await playlistSongs(playlist)) }
+		{ label: 'Play Last', icon: 'queue', action: async () => player.addToQueue(await playlistSongs(playlist)) },
+		{ label: 'Download Playlist', icon: 'download', action: async () => downloadAll(await playlistSongs(playlist)) }
 	];
+}
+
+const downloading = new Set<string>();
+
+/** Downloads a whole list for offline use, reporting progress through toasts. */
+export async function downloadAll(songs: Song[]) {
+	const key = songs.map((s) => s.id).join(',');
+	if (!songs.length || downloading.has(key)) return;
+	downloading.add(key);
+	try {
+		ui.showToast('Preparing download…');
+		const r = await downloadOfflineTracks(songs, (done, total) => ui.showToast(`Downloading ${done}/${total}…`));
+		if (r.outOfSpace) ui.showToast(`Out of storage — downloaded ${r.downloaded} songs`);
+		else if (r.failed) ui.showToast(`Downloaded ${r.downloaded}, ${r.failed} failed`);
+		else if (!r.downloaded) ui.showToast('Already downloaded');
+		else ui.showToast(`Downloaded ${r.downloaded} songs`);
+	} catch (e) {
+		ui.showToast(e instanceof Error ? e.message : 'Download failed');
+	} finally {
+		downloading.delete(key);
+	}
 }

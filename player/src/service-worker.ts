@@ -53,6 +53,7 @@ sw.addEventListener('fetch', (event) => {
 	const url = new URL(req.url);
 
 	if (url.pathname.endsWith('/rest/getCoverArt')) {
+		if (url.searchParams.get('id')?.startsWith('pl-')) return;
 		const key = artKey(url);
 		event.respondWith(
 			caches.open(ART).then(async (cache) => {

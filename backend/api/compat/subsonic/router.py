@@ -7,7 +7,7 @@ import logging
 import random
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Awaitable, Callable
 
 import msgspec
@@ -1179,7 +1179,17 @@ async def _get_cover_art(c: Ctx) -> Response:
     elif kind == "playlist":
         path = await c.services.playlists.get_cover_path(internal, c.user)
         if path is None:
-            return _placeholder()
+            # No uploaded cover: use the first track's artwork, resolved exactly as
+            # that track's own cover. Short cache - the first track can change.
+            detail = await _build_playlist_detail(c, internal)
+            first = next((s.coverArt for s in detail.entry or [] if s.coverArt), None)
+            if not first or decode(first)[0] == "playlist":
+                return _placeholder()
+            params = {**c.params, "id": [first]}
+            inner = replace(c, params=params, decoded=SubsonicParameters(params))
+            response = await _get_cover_art(inner)
+            response.headers["Cache-Control"] = "private, max-age=3600"
+            return response
         media_type = {
             ".jpg": "image/jpeg",
             ".jpeg": "image/jpeg",
@@ -1561,8 +1571,12 @@ async def _get_transcode_stream(c: Ctx) -> Response:
         return Response(status_code=429, headers={"Retry-After": "1"})
 
 
-def _playlist_cover(record) -> str | None:
-    return encode("playlist", record.id) if record.cover_image_path else None
+def _playlist_cover(record, has_tracks: bool) -> str | None:
+    # getCoverArt falls back to the first track's art, so any non-empty playlist has
+    # a cover; empty ones get none and clients draw their own placeholder.
+    if record.cover_image_path or has_tracks:
+        return encode("playlist", record.id)
+    return None
 
 
 async def _build_playlist_detail(c: Ctx, pid: str):
@@ -1640,7 +1654,7 @@ async def _build_playlist_detail(c: Ctx, pid: str):
         duration=total,
         created=r.created_at,
         changed=r.updated_at,
-        coverArt=_playlist_cover(r),
+        coverArt=_playlist_cover(r, bool(songs)),
         entry=songs,
     )
 
@@ -1668,7 +1682,7 @@ async def _get_playlists(c: Ctx) -> Response:
                 duration=duration,
                 created=record.created_at,
                 changed=record.updated_at,
-                coverArt=_playlist_cover(record),
+                coverArt=_playlist_cover(record, song_count > 0),
             )
         )
     return c.render("playlists", {"playlist": playlists})

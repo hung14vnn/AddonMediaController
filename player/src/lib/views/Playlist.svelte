@@ -8,7 +8,7 @@
 	import { playlistMenu } from '../menus';
 	import { getPlayer } from '../player.svelte';
 	import { router } from '../router.svelte';
-	import type { Song } from '../types';
+	import type { Playlist, Song } from '../types';
 	import { ui } from '../ui.svelte';
 
 	let { id }: { id: string } = $props();
@@ -26,6 +26,11 @@
 			ui.showToast('Couldn’t remove song');
 		}
 	}
+
+	const menu = (playlist: Playlist) => [
+		...playlistMenu(playlist),
+		{ label: 'Delete Playlist', icon: 'trash', danger: true, action: () => destroy(playlist.name) }
+	];
 
 	async function destroy(name: string) {
 		if (!confirm(`Delete “${name}”? This can’t be undone.`)) return;
@@ -52,6 +57,8 @@
 			meta="{plural(songs.length, 'song')} · {totalDuration(songs)}"
 			description={playlist.comment}
 			icon="playlist"
+			{songs}
+			onmore={(e) => ui.openMenu(e, menu(playlist))}
 		>
 			{#snippet actions()}
 				<div class="actions">
@@ -62,11 +69,7 @@
 					<button
 						class="btn icon-only"
 						aria-label="More options"
-						onclick={(e) =>
-							ui.openMenu(e, [
-								...playlistMenu(playlist),
-								{ label: 'Delete Playlist', icon: 'trash', danger: true, action: () => destroy(playlist.name) }
-							])}
+						onclick={(e) => ui.openMenu(e, menu(playlist))}
 					>
 						<Icon name="more" size={18} />
 					</button>
