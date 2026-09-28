@@ -16,7 +16,8 @@ import type {
 	NativeArtistsResponse,
 	SearchBucketResponse,
 	SearchSuggestResponse,
-	SpotifyTrackResult
+	SpotifyTrackResult,
+	YTMusicTrackResult
 } from '$lib/types';
 
 import { SearchQueryKeyFactory } from './SearchQueryKeyFactory';
@@ -69,8 +70,13 @@ export const getCombinedSearchQueryOptions = (
 export const getCombinedSearchQuery = (
 	getQuery: Getter<string>,
 	limitArtists = 24,
-	limitAlbums = 24
-) => createQuery(() => getCombinedSearchQueryOptions(getQuery(), limitArtists, limitAlbums));
+	limitAlbums = 24,
+	getEnabled: Getter<boolean> = () => true
+) =>
+	createQuery(() => {
+		const options = getCombinedSearchQueryOptions(getQuery(), limitArtists, limitAlbums);
+		return { ...options, enabled: getEnabled() && options.enabled };
+	});
 
 // Search-page prefetch surface: warm the same combined payload used by the page.
 export const getLocalArtistSearchQueryOptions = (query: string, limit = 24) =>
@@ -147,6 +153,26 @@ export const getSpotifyTrackSearchQuery = (getQuery: Getter<string>, limit = 10)
 				api.global.get<{ tracks: SpotifyTrackResult[] }>(API.search.tracks(query, limit), {
 					signal
 				})
+		};
+	});
+
+export const getYtMusicTrackSearchQuery = (
+	getQuery: Getter<string>,
+	getEnabled: Getter<boolean> = () => true,
+	limit = 20
+) =>
+	createQuery(() => {
+		const query = getQuery().trim();
+		return {
+			enabled: getEnabled() && enabled(query),
+			staleTime: successfulSearchStaleTime,
+			retry: false,
+			queryKey: SearchQueryKeyFactory.ytmusicTracks(authStore.user?.id, query, limit),
+			queryFn: ({ signal }) =>
+				api.global.get<{ tracks: YTMusicTrackResult[]; status: string }>(
+					API.search.ytmusicTracks(query, limit),
+					{ signal }
+				)
 		};
 	});
 

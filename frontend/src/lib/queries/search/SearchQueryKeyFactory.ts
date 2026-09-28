@@ -35,6 +35,8 @@ export const SearchQueryKeyFactory = {
 		[...providerAll(userId), 'albums', query.trim().toLowerCase(), limit] as const,
 	tracks: (userId: string | null | undefined, query: string, limit: number) =>
 		[...SearchQueryKeyFactory.all(userId), 'spotify-tracks', query.trim().toLowerCase(), limit] as const,
+	ytmusicTracks: (userId: string | null | undefined, query: string, limit: number) =>
+		[...SearchQueryKeyFactory.all(userId), 'ytmusic-tracks', query.trim().toLowerCase(), limit] as const,
 	suggestions: (userId: string | null | undefined, query: string, limit: number) =>
 		[...providerAll(userId), 'suggestions', query.trim().toLowerCase(), limit] as const
 };

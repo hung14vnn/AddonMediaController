@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 
 from fastapi import APIRouter, Query, Path, BackgroundTasks, Depends, Request
 from core.exceptions import ClientDisconnectedError
@@ -9,11 +10,14 @@ from api.v1.schemas.search import (
     EnrichmentResponse,
     EnrichmentBatchRequest,
     SuggestResponse,
+    YTMusicTrackResult,
+    YTMusicTracksResponse,
 )
 from core.dependencies import (
     get_search_service,
     get_coverart_repository,
     get_search_enrichment_service,
+    get_ytmusic_stream_service,
 )
 from infrastructure.degradation import try_get_degradation_context
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
@@ -208,6 +212,47 @@ async def suggest(
     except Exception:  # noqa: BLE001 - retain the legacy provider as an outage fallback
         logger.exception("Spotify suggest failed; falling back to MusicBrainz")
         return await search_service.suggest(query=stripped, limit=limit)
+
+
+def _ytmusic_track_result(item: dict) -> YTMusicTrackResult:
+    video_id = item["videoId"]
+    artists = [
+        a.get("name") if isinstance(a, dict) else a
+        for a in item.get("artists") or []
+        if (a.get("name") if isinstance(a, dict) else a)
+    ]
+    album = item.get("album") if isinstance(item.get("album"), dict) else {}
+    thumbs = [t for t in item.get("thumbnails") or [] if isinstance(t, dict) and t.get("url")]
+    image = max(thumbs, key=lambda t: t.get("width") or 0)["url"] if thumbs else None
+    if image and "googleusercontent.com" in image:
+        # Artwork URLs carry a =w120-h120 sizing suffix; ask for a sharp square.
+        image = re.sub(r"=w\d+-h\d+", "=w544-h544", image)
+    duration = item.get("duration_seconds")
+    return YTMusicTrackResult(
+        title=item.get("title") or "Unknown",
+        artist=", ".join(artists) or "Unknown Artist",
+        album=album.get("name") or "",
+        video_id=video_id,
+        url=f"https://music.youtube.com/watch?v={video_id}",
+        album_image_url=image,
+        duration_seconds=int(duration) if isinstance(duration, (int, float)) else None,
+    )
+
+
+@router.get("/ytmusic/tracks", response_model=YTMusicTracksResponse)
+async def search_ytmusic_tracks(
+    _current_user: CurrentUserDep,
+    q: str = Query(..., min_length=1, description="Search term"),
+    limit: int = Query(20, ge=1, le=50, description="Max tracks to return"),
+    ytmusic=Depends(get_ytmusic_stream_service),
+):
+    """YouTube Music songs; the frontend downloads them through yt-dlp."""
+    try:
+        raw = await ytmusic.search_tracks(q.strip(), limit=limit)
+    except Exception:  # noqa: BLE001 - an upstream outage is an empty result, not a 500
+        logger.exception("YouTube Music track search failed")
+        return YTMusicTracksResponse(tracks=[], status="error")
+    return YTMusicTracksResponse(tracks=[_ytmusic_track_result(item) for item in raw])
 
 
 @router.get("/{bucket}", response_model=SearchBucketResponse)

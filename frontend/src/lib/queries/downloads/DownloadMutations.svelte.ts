@@ -11,7 +11,7 @@ import { toastStore } from '$lib/stores/toast';
 // Request-surface copy lives beside the other acquisition label mappings.
 import { batchRequestCopy, requestStatusCopy } from '$lib/utils/acquisitionLabels';
 import { albumRequestOutcome } from '$lib/utils/requestOutcome';
-import type { RequestAccepted } from '$lib/types';
+import type { RequestAccepted, YTMusicTrackResult } from '$lib/types';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 
 // Response mirrors for the consolidated request paths that are not shared with
@@ -258,6 +258,24 @@ export function requestSpotifyTrack() {
 		},
 		onError: (err: unknown) =>
 			toastStore.show({ message: errorMessage(err, 'Spotify track request failed'), type: 'error' })
+	}));
+}
+
+/** Download a YouTube Music search result straight through yt-dlp. */
+export function requestYouTubeTrack() {
+	return createMutation(() => ({
+		mutationFn: (track: YTMusicTrackResult) =>
+			api.global.post<{ task_id: string }>(API.downloads.youtube(), {
+				url: track.url,
+				artist_name: track.artist,
+				track_title: track.title
+			}),
+		onSuccess: () => {
+			toastStore.show({ message: 'YouTube audio download started', type: 'success' });
+			void invalidateTasks();
+		},
+		onError: (err: unknown) =>
+			toastStore.show({ message: errorMessage(err, 'YouTube download failed'), type: 'error' })
 	}));
 }
 

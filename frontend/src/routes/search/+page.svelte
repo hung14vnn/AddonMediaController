@@ -11,7 +11,8 @@
 	import type {
 		EnrichmentResponse,
 		EnrichmentSource,
-		SearchRemoteStatus
+		SearchRemoteStatus,
+		SearchSource
 	} from '$lib/types';
 	import { colors } from '$lib/colors';
 	import { searchStore } from '$lib/stores/search';
@@ -23,11 +24,13 @@
 	import { createSearchEnrichmentBatcher } from '$lib/utils/searchEnrichmentBatcher';
 	import { getSearchStatusNotice } from '$lib/utils/searchStatus';
 	import {
-		getCombinedSearchQuery
+		getCombinedSearchQuery,
+		getYtMusicTrackSearchQuery
 	} from '$lib/queries/search/SearchQueries.svelte';
 	import { Check, ArrowRight, RefreshCw } from 'lucide-svelte';
 	import SearchTopResult from '$lib/components/SearchTopResult.svelte';
 	import SpotifyTrackList from '$lib/components/SpotifyTrackList.svelte';
+	import YTMusicTrackList from '$lib/components/YTMusicTrackList.svelte';
 
 	interface Props {
 		data: { query: string };
@@ -41,7 +44,43 @@
 	let enrichmentQuery = $state('');
 
 	let normalizedQuery = $derived(data.query.trim());
-	const searchQuery = getCombinedSearchQuery(() => normalizedQuery);
+
+	const SOURCE_KEY = 'search:source';
+	const sources: { id: SearchSource; label: string }[] = [
+		{ id: 'spotify', label: 'Spotify' },
+		{ id: 'ytmusic', label: 'YouTube Music' }
+	];
+	let source = $state<SearchSource>(savedSource());
+
+	function savedSource(): SearchSource {
+		try {
+			return localStorage.getItem(SOURCE_KEY) === 'ytmusic' ? 'ytmusic' : 'spotify';
+		} catch {
+			return 'spotify';
+		}
+	}
+
+	function pickSource(next: SearchSource) {
+		source = next;
+		try {
+			localStorage.setItem(SOURCE_KEY, next);
+		} catch {
+			// storage blocked: the choice lasts for this visit only
+		}
+	}
+
+	// Only the selected catalog is searched; the other one loads on switch.
+	const searchQuery = getCombinedSearchQuery(
+		() => normalizedQuery,
+		24,
+		24,
+		() => source === 'spotify'
+	);
+	const ytQuery = getYtMusicTrackSearchQuery(
+		() => normalizedQuery,
+		() => source === 'ytmusic'
+	);
+	let ytTracks = $derived(ytQuery.data?.tracks ?? []);
 
 	let baseArtists = $derived(searchQuery.data?.artists ?? []);
 	let baseAlbums = $derived(searchQuery.data?.albums ?? []);
@@ -134,8 +173,8 @@
 </script>
 
 {#if hasSearched || isSearching}
-	<div class="px-8 pt-4 pb-2">
-		<div class="flex gap-2">
+	<div class="px-8 pt-4 pb-2 flex flex-wrap items-center justify-between gap-3">
+		<div class="flex gap-2" class:invisible={source === 'ytmusic'}>
 			<button
 				class="badge badge-lg cursor-pointer"
 				style="background-color: {colors.primary}; color: {colors.secondary};"
@@ -164,10 +203,36 @@
 				Albums
 			</button>
 		</div>
+		<div class="join rounded-full bg-base-200 p-0.5" role="tablist" aria-label="Search source">
+			{#each sources as s (s.id)}
+				<button
+					role="tab"
+					aria-selected={source === s.id}
+					class="join-item btn btn-sm rounded-full border-none px-4 {source === s.id
+						? 'bg-base-100 shadow'
+						: 'btn-ghost text-base-content/60'}"
+					onclick={() => pickSource(s.id)}
+				>
+					{s.label}
+				</button>
+			{/each}
+		</div>
 	</div>
 {/if}
 
-{#if hasSearched}
+{#if hasSearched && source === 'ytmusic'}
+	<section class="px-8 py-4">
+		{#if ytQuery.data?.status === 'error' || ytQuery.isError}
+			<div class="alert alert-warning mb-3" role="status">
+				<span>YouTube Music search is unavailable right now.</span>
+				<button class="btn btn-sm" onclick={() => ytQuery.refetch()}>
+					<RefreshCw class="h-4 w-4" /> Retry
+				</button>
+			</div>
+		{/if}
+		<YTMusicTrackList tracks={ytTracks} title="TRACKS" loading={ytQuery.isFetching} />
+	</section>
+{:else if hasSearched}
 	<section class="px-8 py-4 space-y-8">
 		{#if isSearching}
 			<div

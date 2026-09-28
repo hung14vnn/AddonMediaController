@@ -103,6 +103,20 @@ export type SpotifyTrackResult = {
 	duration_ms?: number | null;
 };
 
+export type YTMusicTrackResult = {
+	type: 'track';
+	title: string;
+	artist: string;
+	album: string;
+	video_id: string;
+	url: string;
+	album_image_url?: string | null;
+	duration_seconds?: number | null;
+};
+
+/** Online catalog the search page reads tracks from. */
+export type SearchSource = 'spotify' | 'ytmusic';
+
 export type EnrichmentSource = 'listenbrainz' | 'lastfm' | 'none';
 
 export type ArtistEnrichment = {

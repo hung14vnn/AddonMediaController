@@ -431,6 +431,15 @@ class YTMusicStreamService:
             logger.warning("YTMusic top songs failed for %r: %s", artist_name, e)
             return []
 
+    async def search_tracks(self, query: str, limit: int = 20) -> list[dict]:
+        """Songs matching *query* on YouTube Music (raw ytmusicapi results)."""
+        def _fetch():
+            yt = getattr(self, "_yt_client", None) or YTMusic()
+            return yt.search(query, filter="songs", limit=limit) or []
+
+        results = await self._run_blocking(_fetch, what="track search")
+        return [r for r in results if isinstance(r, dict) and r.get("videoId")][:limit]
+
     async def get_chart_songs(self, country: str = "VN", limit: int = 20) -> list[dict]:
         """Tracks of the country's YouTube Music trending chart.
 

@@ -20,6 +20,22 @@ class SpotifyTrackResult(AppStruct, kw_only=True):
     duration_ms: int | None = None
 
 
+class YTMusicTrackResult(AppStruct, kw_only=True):
+    type: str = "track"
+    title: str
+    artist: str
+    album: str = ""
+    video_id: str
+    url: str
+    album_image_url: str | None = None
+    duration_seconds: int | None = None
+
+
+class YTMusicTracksResponse(AppStruct, kw_only=True):
+    tracks: list[YTMusicTrackResult] = []
+    status: str = "ok"
+
+
 class SpotifyTracksResponse(AppStruct, kw_only=True):
     tracks: list[SpotifyTrackResult] = []
     next_offset: int | None = None

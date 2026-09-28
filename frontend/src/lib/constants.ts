@@ -627,7 +627,9 @@ export const API = {
 		tracks: (query: string, _limit = 10) =>
 			`/api/v1/search?q=${encodeURIComponent(query.trim())}&buckets=tracks&limit_artists=0&limit_albums=0`,
 		suggest: (query: string, limit = 5) =>
-			`/api/v1/search/suggest?q=${encodeURIComponent(query.trim())}&limit=${limit}`
+			`/api/v1/search/suggest?q=${encodeURIComponent(query.trim())}&limit=${limit}`,
+		ytmusicTracks: (query: string, limit = 20) =>
+			`/api/v1/search/ytmusic/tracks?q=${encodeURIComponent(query.trim())}&limit=${limit}`
 	},
 	system: {
 		health: () => '/api/v1/system/health',
