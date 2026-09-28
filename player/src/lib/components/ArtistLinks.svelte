@@ -1,26 +1,30 @@
 <script lang="ts">
-	import { artistName } from '../format';
-	import { href } from '../router.svelte';
-	import type { Song } from '../types';
+	import { artistName } from "../format";
+	import { href } from "../router.svelte";
+	import type { Song } from "../types";
 
 	let {
 		item,
-		class: className = '',
-		onclick
+		class: className = "",
+		forceName = false,
+		onclick,
 	}: {
-		item: Song | { artist?: string; artistId?: string; displayArtist?: string };
+		item:
+			| Song
+			| { artist?: string; artistId?: string; displayArtist?: string };
 		class?: string;
+		forceName?: boolean;
 		onclick?: (e: MouseEvent) => void;
 	} = $props();
 
 	const artists = $derived.by(() => {
 		const name = artistName(item);
 		// Assuming artists are joined by ", " from the backend.
-		const parts = name.split(', ').filter(Boolean);
+		const parts = name.split(", ").filter(Boolean);
 		return parts.map((part, i) => {
 			return {
 				name: part,
-				url: href.artist(i === 0 && item.artistId ? item.artistId : part)
+				url: href.artist(part),
 			};
 		});
 	});

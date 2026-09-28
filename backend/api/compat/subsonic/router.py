@@ -719,7 +719,15 @@ async def _get_album(c: Ctx) -> Response:
             song=tracks,
         )
         return c.render("album", detail)
-    rg = _decode_expect(sid, "album")
+    try:
+        rg = _decode_expect(sid, "album")
+    except SubsonicError:
+        from services.spotapi_client import SpotApiClient
+        albums, _ = await SpotApiClient().search_albums(sid, limit=1)
+        if not albums:
+            raise SubsonicError(70, "Album not found")
+        return await _get_spotify_album(c, albums[0]["id"])
+
     album = await c.services.view.get_album(rg, user=c.user)
     if album is None:
         raise SubsonicError(70, "Album not found")
@@ -906,15 +914,7 @@ async def _search(c: Ctx):
     local_only = str(c.p("localOnly") or "").lower() in {"1", "true", "yes"}
 
     artists = []
-    if a_count:
-        artists, _ = await c.services.view.get_artists(
-            limit=a_count, offset=a_offset, q=q, user=c.user
-        )
     albums = []
-    if al_count:
-        albums, _ = await c.services.view.get_albums_offset(
-            limit=al_count, offset=al_offset, q=q, user=c.user
-        )
     songs = []
     if s_count:
         songs, _ = await c.services.view.get_tracks_page(

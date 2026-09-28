@@ -273,7 +273,7 @@
 					</div>
 					<div class="meta" inert={!(isMobile && mobilePanelLayoutOpen) ? true : undefined}>
 						<span class="c-title ellipsis">{song.title}</span>
-						<ArtistLinks class="c-artist ellipsis" item={song} onclick={close} />
+						<ArtistLinks class="c-artist ellipsis" item={song} forceName={true} onclick={close} />
 					</div>
 					<button
 						class="round meta-btn"
@@ -314,7 +314,7 @@
 							{#key song.id}
 								<div class="text" in:textSwap>
 									<span class="title ellipsis">{song.title}</span>
-									<ArtistLinks class="artist ellipsis" item={song} onclick={close} />
+									<ArtistLinks class="artist ellipsis" item={song} forceName={true} onclick={close} />
 								</div>
 							{/key}
 							<button class="round" class:on={ui.isLoved(song)} aria-label="Favorite" aria-pressed={ui.isLoved(song)} onclick={() => ui.toggleLove('song', song)}>

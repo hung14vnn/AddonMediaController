@@ -1,16 +1,16 @@
 <script lang="ts">
 	// Desktop transport bar, modelled on music.apple.com: controls left, the "LCD"
 	// (art, title, progress) centred, volume + lyrics/queue toggles right.
-	import { artistName, time } from '../format';
-	import { songMenu } from '../menus';
-	import { getPlayer } from '../player.svelte';
-	import { href } from '../router.svelte';
-	import { artSwap, pop, textSwap } from '../motion';
-	import { ui } from '../ui.svelte';
-	import ArtistLinks from './ArtistLinks.svelte';
-	import Artwork from './Artwork.svelte';
-	import Icon from './Icon.svelte';
-	import Slider from './Slider.svelte';
+	import { artistName, time } from "../format";
+	import { songMenu } from "../menus";
+	import { getPlayer } from "../player.svelte";
+	import { href } from "../router.svelte";
+	import { artSwap, pop, textSwap } from "../motion";
+	import { ui } from "../ui.svelte";
+	import ArtistLinks from "./ArtistLinks.svelte";
+	import Artwork from "./Artwork.svelte";
+	import Icon from "./Icon.svelte";
+	import Slider from "./Slider.svelte";
 
 	const player = getPlayer();
 	const song = $derived(player.current);
@@ -20,53 +20,98 @@
 
 	const formattedCurrentTime = $derived(time(Math.floor(shownTime)));
 	const formattedRemainingTime = $derived(
-		time(Math.max(0, Math.floor((player.duration || 0) - shownTime)))
+		time(Math.max(0, Math.floor((player.duration || 0) - shownTime))),
 	);
 </script>
 
 <div class="bar">
 	<div class="transport">
-		<button class="small" class:on={player.shuffle} aria-label="Shuffle" aria-pressed={player.shuffle} onclick={() => player.toggleShuffle()}>
-			<Icon name="shuffle" size={17} />
-		</button>
-		<button aria-label="Previous" disabled={!song} onclick={() => player.previous()}><Icon name="previous" size={24} /></button>
-		<button class="pp" aria-label={player.playing ? 'Pause' : 'Play'} disabled={!song} onclick={() => player.toggle()}>
-			{#key player.playing}
-				<span class="icon-swap" in:pop={{ from: 0.55, duration: 200 }}><Icon name={player.playing ? 'pause' : 'play'} size={30} /></span>
-			{/key}
-		</button>
-		<button aria-label="Next" disabled={!song} onclick={() => player.next()}><Icon name="next" size={24} /></button>
 		<button
 			class="small"
-			class:on={player.repeat !== 'off'}
+			class:on={player.shuffle}
+			aria-label="Shuffle"
+			aria-pressed={player.shuffle}
+			onclick={() => player.toggleShuffle()}
+		>
+			<Icon name="shuffle" size={17} />
+		</button>
+		<button
+			aria-label="Previous"
+			disabled={!song}
+			onclick={() => player.previous()}
+			><Icon name="previous" size={24} /></button
+		>
+		<button
+			class="pp"
+			aria-label={player.playing ? "Pause" : "Play"}
+			disabled={!song}
+			onclick={() => player.toggle()}
+		>
+			{#key player.playing}
+				<span class="icon-swap" in:pop={{ from: 0.55, duration: 200 }}
+					><Icon
+						name={player.playing ? "pause" : "play"}
+						size={30}
+					/></span
+				>
+			{/key}
+		</button>
+		<button aria-label="Next" disabled={!song} onclick={() => player.next()}
+			><Icon name="next" size={24} /></button
+		>
+		<button
+			class="small"
+			class:on={player.repeat !== "off"}
 			aria-label="Repeat {player.repeat}"
 			onclick={() => player.cycleRepeat()}
 		>
-			<Icon name={player.repeat === 'one' ? 'repeatOne' : 'repeat'} size={17} />
+			<Icon
+				name={player.repeat === "one" ? "repeatOne" : "repeat"}
+				size={17}
+			/>
 		</button>
 	</div>
 
 	<div class="lcd" class:empty={!song}>
 		{#if song}
-			<button class="lcd-art" aria-label="Open Now Playing" onclick={() => (ui.nowPlaying = true)}>
+			<button
+				class="lcd-art"
+				aria-label="Open Now Playing"
+				onclick={() => (ui.nowPlaying = true)}
+			>
 				{#key song.id}
-					<div in:artSwap={{ duration: 360 }}><Artwork id={song.coverArt} size={64} seed={song.album ?? song.title} /></div>
+					<div in:artSwap={{ duration: 360 }}>
+						<Artwork
+							id={song.coverArt}
+							size={64}
+							seed={song.album ?? song.title}
+						/>
+					</div>
 				{/key}
 			</button>
 			<div class="lcd-body">
 				{#key song.id}
-				<div class="lcd-text" in:textSwap={{ dx: 0, duration: 400 }}>
-					<span class="lcd-title ellipsis">{song.title}</span>
-					<span class="lcd-sub ellipsis">
-						<ArtistLinks item={song} />
-						{#if song.album}
-							&nbsp;—&nbsp;{#if song.albumId}<a href={href.album(song.albumId)}>{song.album}</a>{:else}{song.album}{/if}
-						{/if}
-					</span>
-					<button class="lcd-more" aria-label="More options" onclick={(e) => ui.openMenu(e, songMenu(song))}>
-						<Icon name="more" size={18} />
-					</button>
-				</div>
+					<div
+						class="lcd-text"
+						in:textSwap={{ dx: 0, duration: 400 }}
+					>
+						<span class="lcd-title ellipsis">{song.title}</span>
+						<span class="lcd-sub ellipsis">
+							<ArtistLinks item={song} forceName={true} />
+							{#if song.album}
+								&nbsp;—&nbsp;<a href={href.album(song.album)}
+									>{song.album}</a
+								>
+							{/if}
+						</span>
+						<button
+							class="lcd-more"
+							aria-label="More options"
+							onclick={(e) => ui.openMenu(e, songMenu(song))}
+						>
+							<Icon name="more" size={18} />
+						</button>
+					</div>
 				{/key}
 				<div class="lcd-progress">
 					<span class="t">{formattedCurrentTime}</span>
@@ -87,15 +132,41 @@
 
 	<div class="right">
 		<div class="volume">
-			<button aria-label={player.muted ? 'Unmute' : 'Mute'} onclick={() => player.toggleMute()}>
-				<Icon name={player.muted || player.volume === 0 ? 'speakerLow' : 'speaker'} size={18} />
+			<button
+				aria-label={player.muted ? "Unmute" : "Mute"}
+				onclick={() => player.toggleMute()}
+			>
+				<Icon
+					name={player.muted || player.volume === 0
+						? "speakerLow"
+						: "speaker"}
+					size={18}
+				/>
 			</button>
-			<Slider value={player.muted ? 0 : player.volume} max={1} step={0.01} label="Volume" onchange={(v) => player.setVolume(v)} oninput={(v) => v !== null && player.setVolume(v)} />
+			<Slider
+				value={player.muted ? 0 : player.volume}
+				max={1}
+				step={0.01}
+				label="Volume"
+				onchange={(v) => player.setVolume(v)}
+				oninput={(v) => v !== null && player.setVolume(v)}
+			/>
 		</div>
-		<button class="small" class:on={ui.nowPlaying && ui.panel === 'lyrics'} aria-label="Lyrics" disabled={!song} onclick={() => ui.togglePanel('lyrics')}>
+		<button
+			class="small"
+			class:on={ui.nowPlaying && ui.panel === "lyrics"}
+			aria-label="Lyrics"
+			disabled={!song}
+			onclick={() => ui.togglePanel("lyrics")}
+		>
 			<Icon name="lyrics" size={19} />
 		</button>
-		<button class="small" class:on={ui.nowPlaying && ui.panel === 'queue'} aria-label="Playing Next" onclick={() => ui.togglePanel('queue')}>
+		<button
+			class="small"
+			class:on={ui.nowPlaying && ui.panel === "queue"}
+			aria-label="Playing Next"
+			onclick={() => ui.togglePanel("queue")}
+		>
 			<Icon name="queue" size={19} />
 		</button>
 	</div>
@@ -105,7 +176,10 @@
 	.bar {
 		height: var(--bar-h);
 		display: grid;
-		grid-template-columns: minmax(200px, 1fr) minmax(320px, 660px) minmax(200px, 1fr);
+		grid-template-columns: minmax(200px, 1fr) minmax(320px, 660px) minmax(
+				200px,
+				1fr
+			);
 		align-items: center;
 		gap: 16px;
 		padding: 0 20px;
