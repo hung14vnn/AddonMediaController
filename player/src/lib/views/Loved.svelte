@@ -7,12 +7,14 @@
 	import Shelf from '../components/Shelf.svelte';
 	import TrackList from '../components/TrackList.svelte';
 	import { getPlayer } from '../player.svelte';
+import { router } from '../router.svelte';
 
 	const player = getPlayer();
 	let data = $state(getStarred());
 </script>
 
 <div class="page">
+	<div class="head"><button class="back" onclick={() => router.go('/library')}><Icon name="chevronLeft" size={18} />Library</button></div>
 	<h1 class="page-title">Favorites</h1>
 	{#await data}
 		<div class="spinner"></div>
@@ -58,6 +60,8 @@
 		padding-right: var(--gutter);
 		margin-bottom: 6px;
 	}
+	.head { display: flex; align-items: center; padding: 0 var(--gutter); margin-bottom: 8px; }
+	.back { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 14px; }
 	.songs-head .section-title {
 		margin-bottom: 0;
 	}

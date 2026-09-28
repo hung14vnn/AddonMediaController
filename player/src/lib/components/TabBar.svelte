@@ -42,7 +42,7 @@
 		display: flex;
 		justify-content: space-around;
 		padding: 4px 8px max(6px, env(safe-area-inset-bottom));
-		background: var(--tabbar-strong, rgba(20, 20, 22, 0.96));
+		background: var(--tabbar);
 
 		border-top: 0.5px solid var(--hairline);
 	}

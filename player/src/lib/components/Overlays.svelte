@@ -419,6 +419,7 @@
 		--art-radius: 6px;
 	}
 	.text {
+		flex: 1;
 		display: flex;
 		flex-direction: column;
 		min-width: 0;

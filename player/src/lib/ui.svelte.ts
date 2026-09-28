@@ -87,10 +87,7 @@ class UI {
 
 	async addSongsToPlaylist(playlist: Playlist, songs: Song[]) {
 		try {
-			await addToPlaylist(
-				playlist.id,
-				songs.map((s) => s.id)
-			);
+			await addToPlaylist(playlist.id, songs);
 			this.showToast(`Added to “${playlist.name}”`);
 			this.refreshPlaylists();
 		} catch {

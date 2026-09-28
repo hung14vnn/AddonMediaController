@@ -1,13 +1,56 @@
 <script lang="ts">
 	import { smartDiscover } from "../discover.svelte";
 	import { artistName } from "../format";
+	import { fadeOnly, queueItem } from "../motion";
 	import { getPlayer } from "../player.svelte";
 	import Artwork from "./Artwork.svelte";
 	import Icon from "./Icon.svelte";
+	import { flip } from "svelte/animate";
 
 	const player = getPlayer();
+	let queueContent: HTMLDivElement;
 	let dragFrom = $state<number | null>(null);
 	let dragOver = $state<number | null>(null);
+	let animateQueueChanges = $state(true);
+	let clearingQueue = $state(false);
+	let clearTimers: ReturnType<typeof setTimeout>[] = [];
+
+	function toggleShuffle() {
+		animateQueueChanges = false;
+		player.toggleShuffle();
+		requestAnimationFrame(() => (animateQueueChanges = true));
+	}
+
+	function clearQueue() {
+		if (!player.upNext.length) return;
+		const count = player.upNext.length;
+		clearingQueue = true;
+		clearTimers.forEach((timer) => clearTimeout(timer));
+		clearTimers = [];
+
+		// Remove from the bottom upward. Removing the whole array at once makes
+		// the browser reflow every outgoing row to the first line before it can
+		// play its horizontal outro.
+		for (let step = count - 1; step >= 0; step--) {
+			const delay = (count - 1 - step) * 45;
+			clearTimers.push(
+				setTimeout(() => player.removeAt(player.index + 1 + step), delay)
+			);
+		}
+		clearTimers.push(setTimeout(() => (clearingQueue = false), (count - 1) * 45 + 220));
+	}
+
+	function jumpToTrack(index: number) {
+		// Jumping skips every preceding track at once. Disable the staggered
+		// per-row outro so the remaining queue does not get pushed down one item
+		// at a time while the skipped rows animate away.
+		animateQueueChanges = false;
+		player.jumpTo(index);
+		requestAnimationFrame(() => {
+			animateQueueChanges = true;
+			queueContent?.scrollTo({ top: 0, behavior: 'smooth' });
+		});
+	}
 </script>
 
 <div class="queue">
@@ -18,7 +61,7 @@
 				class:on={player.shuffle}
 				aria-pressed={player.shuffle}
 				aria-label="Shuffle"
-				onclick={() => player.toggleShuffle()}
+				onclick={toggleShuffle}
 			>
 				<Icon name="shuffle" size={17} />
 			</button>
@@ -33,23 +76,34 @@
 				/>
 			</button>
 			{#if player.upNext.length}
-				<button class="clear" onclick={() => player.clearUpNext()}
+				<button class="clear" onclick={clearQueue}
 					>Clear</button
 				>
 			{/if}
 		</div>
 	</header>
 
-	<div class="queue-content">
+	<div class="queue-content" bind:this={queueContent}>
 		{#if !player.upNext.length}
-			<p class="empty">
+			<p class="empty" in:fadeOnly={{ duration: 220 }} out:fadeOnly={{ duration: 160 }}>
 				Nothing up next. Use “Play Next” on any song to add it here.
 			</p>
-		{:else}
-			<ol>
-				{#each player.upNext as song, j (song.id + ":" + j)}
-					{@const i = player.index + 1 + j}
-					<li
+		{/if}
+		<ol>
+			{#each player.upNext as song, j (song)}
+				{@const i = player.index + 1 + j}
+				<li
+					in:queueItem={{
+						direction: -1,
+						duration: animateQueueChanges ? 220 : 0,
+						delay: animateQueueChanges ? j * 45 : 0
+					}}
+					out:queueItem={{
+						direction: 1,
+						duration: animateQueueChanges ? 220 : 0,
+						delay: clearingQueue ? 0 : animateQueueChanges ? j * 45 : 0
+					}}
+					animate:flip={{ duration: clearingQueue ? 0 : 500 }}
 						draggable="true"
 						class:over={dragOver === i}
 						ondragstart={() => (dragFrom = i)}
@@ -66,7 +120,7 @@
 						}}
 						ondragend={() => (dragFrom = dragOver = null)}
 					>
-						<button class="item" onclick={() => player.jumpTo(i)}>
+						<button class="item" onclick={() => jumpToTrack(i)}>
 							<span class="art"
 								><Artwork
 									id={song.coverArt}
@@ -90,8 +144,7 @@
 						</button>
 					</li>
 				{/each}
-			</ol>
-		{/if}
+		</ol>
 		{#if player.queue.length > 0}
 			<div class="discover-dock">
 				<button
@@ -127,6 +180,7 @@
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
+		overflow-x: hidden;
 		display: flex;
 		flex-direction: column;
 
@@ -182,6 +236,7 @@
 	li {
 		display: flex;
 		align-items: center;
+		will-change: transform;
 		border-radius: 10px;
 		border-top: 2px solid transparent;
 	}

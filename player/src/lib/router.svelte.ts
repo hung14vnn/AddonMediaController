@@ -14,6 +14,7 @@ export type Route =
 	| { name: 'artists' }
 	| { name: 'albums' }
 	| { name: 'songs' }
+	| { name: 'downloads' }
 	| { name: 'playlists' }
 	| { name: 'loved' }
 	| { name: 'genres' }

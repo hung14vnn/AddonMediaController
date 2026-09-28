@@ -1,4 +1,5 @@
 import { coverUrl, getPlayQueue, savePlayQueue, scrobble, streamUrl } from './api';
+import { sleepTimer } from './sleepTimer.svelte';
 import type { Song } from './types';
 
 export type Repeat = 'off' | 'all' | 'one';
@@ -67,6 +68,9 @@ class Player {
 	private scrobbled = false;
 	private pendingSeek = 0;
 	private saveTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Offline URLs prepared while the current track is playing. */
+	private preparedOffline = new Map<string, { url: string; revoke: () => void }>();
+	private preparingOffline = new Set<string>();
 	/** Lets only one tab play at a time (like music.apple.com). */
 	private channel: BroadcastChannel | null = null;
 	private readonly tabId = Math.random().toString(36).slice(2);
@@ -186,11 +190,6 @@ class Player {
 		this.load(i, true);
 	}
 
-	clearUpNext() {
-		this.queue.splice(this.index + 1);
-		this.persist();
-	}
-
 	// ---- transport -----------------------------------------------------------
 
 	toggle() {
@@ -208,9 +207,9 @@ class Player {
 		this.audio.pause();
 	}
 
-	next() {
-		if (this.index < this.queue.length - 1) this.load(this.index + 1, true);
-		else if (this.repeat === 'all' && this.queue.length) this.load(0, true);
+	next(backgroundSafe = false) {
+		if (this.index < this.queue.length - 1) this.load(this.index + 1, true, 0, !backgroundSafe);
+		else if (this.repeat === 'all' && this.queue.length) this.load(0, true, 0, !backgroundSafe);
 		else {
 			this.audio.pause();
 			this.seek(0);
@@ -276,7 +275,7 @@ class Player {
 		}
 	}
 
-	private async load(i: number, autoplay: boolean, startAt = 0) {
+	private async load(i: number, autoplay: boolean, startAt = 0, waitForOffline = true) {
 		const song = this.queue[i];
 		if (!song) return;
 		
@@ -291,20 +290,28 @@ class Player {
 		if (autoplay) this.buffering = true;
 
 		let src = streamUrl(song.id);
-		
-		const { getSession } = await import('./api');
-		const session = getSession();
-		if (session?.username) {
-			try {
-				const { createOfflineTrackUrl } = await import('./offline');
-				const offline = await createOfflineTrackUrl(session.username, song.id);
-				if (offline) {
-					src = offline.url;
-					this.releaseOfflineUrl();
-					this.currentOfflineRevoke = offline.revoke;
+		const prepared = this.preparedOffline.get(song.id);
+		if (prepared) {
+			src = prepared.url;
+			this.preparedOffline.delete(song.id);
+			this.releaseOfflineUrl();
+			this.currentOfflineRevoke = prepared.revoke;
+		} else if (waitForOffline) {
+			// Manual track changes may still wait for an offline copy.
+			const { getSession } = await import('./api');
+			const session = getSession();
+			if (session?.username) {
+				try {
+					const { createOfflineTrackUrl } = await import('./offline');
+					const offline = await createOfflineTrackUrl(session.username, song.id);
+					if (offline) {
+						src = offline.url;
+						this.releaseOfflineUrl();
+						this.currentOfflineRevoke = offline.revoke;
+					}
+				} catch {
+					// Fallback to stream URL
 				}
-			} catch {
-				// Fallback to stream URL
 			}
 		}
 
@@ -324,6 +331,34 @@ class Player {
 		}
 		this.updateMetadata();
 		this.persist();
+		this.prepareNextOffline();
+	}
+
+	/** Resolve the next track's offline URL before the current track ends. */
+	private prepareNextOffline() {
+		const next = this.queue[this.index + 1];
+		if (!next || this.preparedOffline.has(next.id) || this.preparingOffline.has(next.id)) return;
+		this.preparingOffline.add(next.id);
+		void (async () => {
+			try {
+				const { getSession } = await import('./api');
+				const session = getSession();
+				if (!session?.username) return;
+				const { createOfflineTrackUrl } = await import('./offline');
+				const offline = await createOfflineTrackUrl(session.username, next.id);
+				if (offline) {
+					if (this.queue[this.index + 1]?.id === next.id && !this.destroyed) {
+						this.preparedOffline.set(next.id, offline);
+					} else {
+						offline.revoke();
+					}
+				}
+			} catch {
+				// Streaming remains the fallback.
+			} finally {
+				this.preparingOffline.delete(next.id);
+			}
+		})();
 	}
 
 	private onTime() {
@@ -343,13 +378,13 @@ class Player {
 		if (this.repeat === 'one') {
 			this.scrobbled = false;
 			this.audio.currentTime = 0;
-			this.audio.play();
+			this.audio.play().catch(() => (this.playing = false));
 			return;
 		}
-		
-		import('./sleepTimer.svelte').then(({ sleepTimer }) => {
-			if (!sleepTimer.onTrackEnded()) this.next();
-		});
+
+		// Track changes from `ended` must not wait for IndexedDB/dynamic imports:
+		// those callbacks can be suspended while a PWA is backgrounded.
+		if (!sleepTimer.onTrackEnded()) this.next(true);
 	}
 
 	private setupRemotePlayback() {
@@ -497,6 +532,9 @@ class Player {
 		this.audio.removeAttribute('src');
 		this.audio.load();
 		this.releaseOfflineUrl();
+		for (const prepared of this.preparedOffline.values()) prepared.revoke();
+		this.preparedOffline.clear();
+		this.preparingOffline.clear();
 		this.channel?.close();
 		this.channel = null;
 		clearTimeout(this.saveTimer);
@@ -507,6 +545,9 @@ class Player {
 		this.audio.pause();
 		this.audio.removeAttribute('src');
 		this.releaseOfflineUrl();
+		for (const prepared of this.preparedOffline.values()) prepared.revoke();
+		this.preparedOffline.clear();
+		this.preparingOffline.clear();
 		this.queue = [];
 		this.index = -1;
 		this.unshuffled = null;

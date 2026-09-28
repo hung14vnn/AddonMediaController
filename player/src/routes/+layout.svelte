@@ -104,12 +104,12 @@
 		overflow-x: hidden;
 		min-height: 0;
 		scrollbar-gutter: stable;
+		scrollbar-width: thin;
 	}
 	.dock {
 		display: none;
 	}
 
-	/* Phone/tablet: tab bar + floating mini player instead of sidebar + top bar. */
 	@media (max-width: 899px) {
 		.app {
 			display: block;
@@ -121,6 +121,7 @@
 		main {
 			height: 100%;
 			padding-bottom: calc(64px + env(safe-area-inset-bottom));
+			scrollbar-width: thin;
 		}
 		.has-mini main {
 			padding-bottom: calc(128px + env(safe-area-inset-bottom));

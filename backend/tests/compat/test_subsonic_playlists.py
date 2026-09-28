@@ -68,6 +68,28 @@ async def test_create_replace_existing(compat_env):
     assert replaced["entry"][0]["id"] == songs[1]
 
 
+async def test_update_adds_ytmusic_track(compat_env):
+    pid = _sub(_get(compat_env, "createPlaylist", name="YouTube Mix"))["playlist"]["id"]
+
+    _sub(_get(
+        compat_env,
+        "updatePlaylist",
+        playlistId=pid,
+        songIdToAdd="yt-R-hYM3BqTbA",
+        songTitle="Test YouTube Song",
+        songArtist="Test Artist",
+        songAlbum="Test Album",
+        songDuration="123",
+    ))
+
+    playlist = _sub(_get(compat_env, "getPlaylist", id=pid))["playlist"]
+    assert playlist["songCount"] == 1
+    assert playlist["entry"][0]["id"] == "yt-R-hYM3BqTbA"
+    assert playlist["entry"][0]["title"] == "Test YouTube Song"
+    assert playlist["entry"][0]["artist"] == "Test Artist"
+    assert playlist["entry"][0]["album"] == "Test Album"
+
+
 async def test_get_unknown_playlist_is_70(compat_env):
     body = json.loads(_get(compat_env, "getPlaylist", id="pl-nope").content)["subsonic-response"]
     assert body["error"]["code"] == 70

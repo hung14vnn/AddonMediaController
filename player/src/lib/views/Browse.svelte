@@ -2,6 +2,7 @@
 	import {
 		cached,
 		getAlbumList,
+		getYtMusicNewReleases,
 		getGenres,
 		optional,
 		getRandomRadioMix,
@@ -20,7 +21,7 @@
 	// Cached so switching tabs back to Browse renders instantly (see `cached` in api.ts).
 	function load() {
 		return Promise.all([
-			cached("browse:newest", () => getAlbumList("newest", 20)),
+			cached("browse:yt-new", () => getYtMusicNewReleases(20)),
 			optional(cached("browse:frequent", () => getAlbumList("frequent", 20))),
 			optional(cached("browse:random", () => getAlbumList("random", 20))),
 			optional(cached("genres", () => getGenres())),
@@ -50,7 +51,7 @@
 		<div class="spinner"></div>
 	{:then d}
 		{#if d.newest.length}
-			<Shelf title="New Releases" seeAll="#/recent" size="lg">
+			<Shelf title="New Releases" size="lg">
 				{#each d.newest as album (album.id)}<AlbumCard {album} />{/each}
 			</Shelf>
 		{/if}

@@ -18,11 +18,11 @@
 
 	const player = getPlayer();
 
-	// newest/frequent share Browse's cache keys; random gets its own so the two tabs differ.
+	// frequent shares Browse's cache key; random gets its own so the two tabs differ.
 	function load() {
 		return Promise.all([
 			optional(getAlbumList("recent", 20)),
-			cached("browse:newest", () => getAlbumList("newest", 20)),
+			cached("home:newest", () => getAlbumList("newest", 20)),
 			optional(cached("browse:frequent", () => getAlbumList("frequent", 20))),
 			optional(cached("home:random", () => getAlbumList("random", 20))),
 			optional(getAlbumList("starred", 20)),
@@ -45,9 +45,6 @@
 	const trending = optional(getTrendingSongs(10, region));
 	const hits = optional(getTodaysHits(10));
 
-	async function shuffleAll() {
-		player.playList(await getRandomSongs(100), 0, { shuffle: true });
-	}
 </script>
 
 {#snippet songs(title: string, list: Song[])}
@@ -72,9 +69,6 @@
 	<div class="head">
 		<h1 class="page-title">Home</h1>
 		<div class="head-actions">
-			<button class="btn secondary" onclick={shuffleAll}
-				><Icon name="shuffle" size={16} />Shuffle All</button
-			>
 			<ProfileButton />
 		</div>
 	</div>
@@ -183,12 +177,6 @@
 			display: grid;
 			grid-template-columns: 1fr 1fr;
 			column-gap: 24px;
-		}
-	}
-	@media (max-width: 699px) {
-		.head .btn {
-			min-width: 0;
-			padding: 0 12px;
 		}
 	}
 </style>

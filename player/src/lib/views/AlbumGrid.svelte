@@ -4,7 +4,10 @@
 	import { getAlbumList } from '../api';
 	import AlbumCard from '../components/AlbumCard.svelte';
 	import ErrorState from '../components/ErrorState.svelte';
+	import Icon from '../components/Icon.svelte';
 	import Sentinel from '../components/Sentinel.svelte';
+	import SortMenu from '../components/SortMenu.svelte';
+	import { router } from '../router.svelte';
 	import type { Album, AlbumListType } from '../types';
 
 	const PAGE = 60;
@@ -60,20 +63,17 @@
 		error = null;
 		untrack(more);
 	});
+
 </script>
 
 <div class="page">
 	<div class="head">
-		<h1 class="page-title">{title}</h1>
+		<button class="back" onclick={() => router.go('/library')}><Icon name="chevronLeft" size={18} />Library</button>
 		{#if sortable}
-			<label class="sort">
-				<span class="muted">Sort by</span>
-				<select bind:value={type}>
-					{#each sorts as s}<option value={s.value}>{s.label}</option>{/each}
-				</select>
-			</label>
+			<SortMenu value={type} options={sorts} onchange={(value) => (type = value as AlbumListType)} />
 		{/if}
 	</div>
+	<h1 class="page-title">{title}</h1>
 	{#if error && !albums.length}
 		<ErrorState {error} />
 	{:else if done && !albums.length}
@@ -92,22 +92,11 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 12px;
-		padding-right: var(--gutter);
+		padding: 0 var(--gutter);
+		margin-bottom: 8px;
 	}
-	.sort {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		font-size: 13px;
-		margin-bottom: 20px;
-	}
-	select {
-		font: inherit;
-		font-size: 13px;
-		color: var(--text);
-		background: var(--fill);
-		border: 0;
-		border-radius: 7px;
-		padding: 5px 8px;
+	.back { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 14px; white-space: nowrap; }
+	@media (max-width: 699px) {
+		:global(.page > .grid) { padding-left: 10px; padding-right: 10px; }
 	}
 </style>

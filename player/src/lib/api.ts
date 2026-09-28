@@ -204,6 +204,11 @@ export async function getAlbumList(type: AlbumListType, size = 30, offset = 0, e
 	return (r.albumList2?.album ?? []) as Album[];
 }
 
+export async function getYtMusicNewReleases(count = 20) {
+	const r = await call('getYtMusicNewReleases', { count });
+	return (r.albumList2?.album ?? []) as Album[];
+}
+
 export async function getAlbum(id: string) {
 	const r = await call('getAlbum', { id });
 	return r.album as Album;
@@ -311,13 +316,14 @@ export async function getGenres() {
 	return ((r.genres?.genre ?? []) as Genre[]).sort((a, b) => (b.songCount ?? 0) - (a.songCount ?? 0));
 }
 
-export async function search(query: string, counts = { artist: 8, album: 12, song: 20 }, songOffset = 0) {
+export async function search(query: string, counts = { artist: 8, album: 12, song: 20 }, songOffset = 0, localOnly = false) {
 	const r = await call('search3', {
 		query,
 		artistCount: counts.artist,
 		albumCount: counts.album,
 		songCount: counts.song,
-		songOffset
+		songOffset,
+		localOnly
 	});
 	const res = r.searchResult3 ?? {};
 	return {
@@ -364,8 +370,16 @@ export async function createPlaylist(name: string, songIds: string[] = []) {
 	return r.playlist as Playlist | undefined;
 }
 
-export async function addToPlaylist(playlistId: string, songIds: string[]) {
-	await call('updatePlaylist', { playlistId, songIdToAdd: songIds });
+export async function addToPlaylist(playlistId: string, songs: Song[]) {
+	const songIds = songs.map((song) => song.id);
+	await call('updatePlaylist', {
+		playlistId,
+		songIdToAdd: songIds,
+		songTitle: songs.map((song) => song.title),
+		songArtist: songs.map((song) => song.displayArtist ?? song.artist ?? ''),
+		songAlbum: songs.map((song) => song.album ?? ''),
+		songDuration: songs.map((song) => song.duration ?? '')
+	});
 }
 
 export async function removeFromPlaylist(playlistId: string, indexes: number[]) {
