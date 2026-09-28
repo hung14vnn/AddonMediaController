@@ -186,7 +186,7 @@ def is_media_request(path: str) -> bool:
     low = path.casefold()
     if low.startswith("/subsonic/rest/"):
         endpoint = low.rsplit("/", 1)[-1].removesuffix(".view")
-        return endpoint in {"stream", "download"}
+        return endpoint in {"stream", "download", "getcoverart", "getavatar", "gettranscodestream"}
     return low.startswith("/jellyfin/audio/")
 
 
