@@ -22,6 +22,9 @@ function isStandalone() {
 /** How long an automatic play() may hang before we assume the browser blocked it. */
 const AUTOPLAY_STALL_MS = 10_000;
 
+/** Browser-reported length this much longer than the server's means the browser misread it. */
+const DURATION_MISMATCH_RATIO = 1.25;
+
 /**
  * Merge `b` into `a` spread evenly with a little jitter, keeping each list's own
  * order (ported from the main frontend's queueHelpers.interleaveEvenly).
@@ -82,6 +85,13 @@ class Player {
 	private audio: HTMLAudioElement;
 	private unshuffled: Song[] | null = null;
 	private scrobbled = false;
+	/**
+	 * Server-reported length used in place of a misread `audio.duration`. iOS Safari
+	 * misjudges fragmented (DASH) m4a such as YouTube Music streams, often at about
+	 * double, then plays silence up to that length before `ended` fires.
+	 */
+	private durationCap = 0;
+	private cappedEnd = false;
 	private pendingSeek = 0;
 	private saveTimer: ReturnType<typeof setTimeout> | undefined;
 	/** Offline URLs prepared while the current track is playing. */
@@ -123,11 +133,9 @@ class Player {
 				a.currentTime = this.pendingSeek;
 				this.pendingSeek = 0;
 			}
-			this.duration = Number.isFinite(a.duration) ? a.duration : (this.current?.duration ?? 0);
+			this.applyDuration();
 		});
-		a.addEventListener('durationchange', () => {
-			if (Number.isFinite(a.duration)) this.duration = a.duration;
-		});
+		a.addEventListener('durationchange', () => this.applyDuration());
 		a.addEventListener('timeupdate', () => this.onTime());
 		a.addEventListener('ended', () => this.onEnded());
 		a.addEventListener('error', () => {
@@ -246,13 +254,14 @@ class Player {
 		}
 	}
 
-	previous() {
+	previous(backgroundSafe = false) {
 		// Like every music app: restart the song unless we're within the first 3 seconds.
 		if (this.audio.currentTime > 3 || this.index <= 0) this.seek(0);
-		else this.load(this.index - 1, true);
+		else this.load(this.index - 1, true, 0, !backgroundSafe);
 	}
 
 	seek(seconds: number) {
+		if (seconds < this.durationCap - 1) this.cappedEnd = false;
 		this.currentTime = seconds;
 		if (this.audio.src) this.audio.currentTime = seconds;
 		else this.pendingSeek = seconds;
@@ -313,6 +322,8 @@ class Player {
 		this.index = i;
 		this.error = null;
 		this.scrobbled = false;
+		this.durationCap = 0;
+		this.cappedEnd = false;
 		this.currentTime = startAt;
 		this.duration = song.duration ?? 0;
 		this.pendingSeek = startAt;
@@ -399,6 +410,27 @@ class Player {
 			scrobble(song.id, true);
 		}
 		if (Math.floor(a.currentTime) % 5 === 0) this.updatePosition();
+		// The real audio is over; don't sit through the silence up to the misread length.
+		if (this.durationCap && !this.cappedEnd && a.currentTime >= this.durationCap - 0.25) {
+			this.cappedEnd = true;
+			this.onEnded();
+		}
+	}
+
+	private applyDuration() {
+		const a = this.audio;
+		const reported = this.current?.duration ?? 0;
+		if (!Number.isFinite(a.duration)) {
+			if (!this.duration) this.duration = reported;
+			return;
+		}
+		if (reported > 0 && a.duration > reported * DURATION_MISMATCH_RATIO) {
+			this.durationCap = reported;
+			this.duration = reported;
+		} else {
+			this.durationCap = 0;
+			this.duration = a.duration;
+		}
 	}
 
 	/**
@@ -430,6 +462,7 @@ class Player {
 	private onEnded() {
 		if (this.repeat === 'one') {
 			this.scrobbled = false;
+			this.cappedEnd = false;
 			this.audio.currentTime = 0;
 			this.autoplay();
 			return;
@@ -472,8 +505,9 @@ class Player {
 		const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
 			['play', () => this.resume()],
 			['pause', () => this.pause()],
-			['previoustrack', () => this.previous()],
-			['nexttrack', () => this.next()],
+			// Lock-screen skips while hidden must not await IndexedDB/imports (see onEnded).
+			['previoustrack', () => this.previous(document.hidden)],
+			['nexttrack', () => this.next(document.hidden)],
 			['seekto', (d) => d.seekTime !== undefined && this.seek(d.seekTime)]
 		];
 		// iOS shows ±10s buttons instead of previous/next track whenever seek
