@@ -6,6 +6,22 @@ export type Repeat = 'off' | 'all' | 'one';
 
 const QUEUE_KEY = 'music.queue';
 
+/** iPadOS reports a Mac user agent; touch support tells them apart. */
+const isIOS =
+	typeof navigator !== 'undefined' &&
+	(/iphone|ipad|ipod/i.test(navigator.userAgent) ||
+		(/mac/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
+
+function isStandalone() {
+	return (
+		window.matchMedia?.('(display-mode: standalone)').matches ||
+		(navigator as Navigator & { standalone?: boolean }).standalone === true
+	);
+}
+
+/** How long an automatic play() may hang before we assume the browser blocked it. */
+const AUTOPLAY_STALL_MS = 10_000;
+
 /**
  * Merge `b` into `a` spread evenly with a little jitter, keeping each list's own
  * order (ported from the main frontend's queueHelpers.interleaveEvenly).
@@ -75,6 +91,16 @@ class Player {
 	private channel: BroadcastChannel | null = null;
 	private readonly tabId = Math.random().toString(36).slice(2);
 	private destroyed = false;
+	/**
+	 * An automatic play() (track change, repeat) was refused or stalled while the
+	 * page was in the background, as iOS PWAs do. Retried when the page is visible.
+	 */
+	private autoplayBlocked = false;
+	private readonly onVisibilityChange = () => {
+		if (document.visibilityState !== 'visible' || !this.autoplayBlocked) return;
+		this.autoplayBlocked = false;
+		this.autoplay();
+	};
 
 	constructor() {
 		this.audio = new Audio();
@@ -82,6 +108,7 @@ class Player {
 		const a = this.audio;
 		a.addEventListener('play', () => {
 			this.playing = true;
+			this.autoplayBlocked = false;
 			this.channel?.postMessage({ type: 'playing', tab: this.tabId });
 		});
 		a.addEventListener('pause', () => {
@@ -114,10 +141,11 @@ class Player {
 		});
 		this.setupMediaSession();
 		this.setupRemotePlayback();
+		document.addEventListener('visibilitychange', this.onVisibilityChange);
 		if ('BroadcastChannel' in window) {
 			this.channel = new BroadcastChannel('music-player');
 			this.channel.onmessage = (e) => {
-				if (e.data?.type === 'playing' && e.data.tab !== this.tabId) this.audio.pause();
+				if (e.data?.type === 'playing' && e.data.tab !== this.tabId) this.pause();
 			};
 		}
 		this.restore();
@@ -204,6 +232,8 @@ class Player {
 	}
 
 	pause() {
+		// An explicit pause (or another tab taking over) cancels any pending retry.
+		this.autoplayBlocked = false;
 		this.audio.pause();
 	}
 
@@ -323,10 +353,7 @@ class Player {
 
 		this.audio.src = src;
 		if (autoplay) {
-			this.audio.play().catch(() => {
-				this.playing = false;
-				this.buffering = false;
-			});
+			this.autoplay();
 			scrobble(song.id, false);
 		}
 		this.updateMetadata();
@@ -374,11 +401,37 @@ class Player {
 		if (Math.floor(a.currentTime) % 5 === 0) this.updatePosition();
 	}
 
+	/**
+	 * play() for starts the user didn't tap (track changes, repeat). A backgrounded
+	 * iOS PWA may reject it or leave it hanging, so flag it for retry on return.
+	 */
+	private autoplay() {
+		const a = this.audio;
+		const src = a.src;
+		const stall = setTimeout(() => {
+			if (a.paused && a.src === src && (document.hidden || (isIOS && isStandalone()))) {
+				this.autoplayBlocked = true;
+			}
+		}, AUTOPLAY_STALL_MS);
+		a.play()
+			.then(() => clearTimeout(stall))
+			.catch((e: unknown) => {
+				clearTimeout(stall);
+				// A newer src replaced this one; its own play() owns the state now.
+				if (a.src !== src) return;
+				this.playing = false;
+				this.buffering = false;
+				if (document.hidden && e instanceof DOMException && e.name === 'NotAllowedError') {
+					this.autoplayBlocked = true;
+				}
+			});
+	}
+
 	private onEnded() {
 		if (this.repeat === 'one') {
 			this.scrobbled = false;
 			this.audio.currentTime = 0;
-			this.audio.play().catch(() => (this.playing = false));
+			this.autoplay();
 			return;
 		}
 
@@ -421,17 +474,29 @@ class Player {
 			['pause', () => this.pause()],
 			['previoustrack', () => this.previous()],
 			['nexttrack', () => this.next()],
-			['seekto', (d) => d.seekTime !== undefined && this.seek(d.seekTime)],
-			['seekbackward', (d) => this.seek(Math.max(0, this.currentTime - (d.seekOffset ?? 10)))],
-			['seekforward', (d) => this.seek(this.currentTime + (d.seekOffset ?? 10))]
+			['seekto', (d) => d.seekTime !== undefined && this.seek(d.seekTime)]
 		];
-		for (const [action, handler] of handlers) {
-			try {
-				ms.setActionHandler(action, handler);
-			} catch {
-				/* action unsupported */
-			}
+		// iOS shows ±10s buttons instead of previous/next track whenever seek
+		// handlers exist, so they are only registered on other platforms.
+		if (!isIOS) {
+			handlers.push(
+				['seekbackward', (d) => this.seek(Math.max(0, this.currentTime - (d.seekOffset ?? 10)))],
+				['seekforward', (d) => this.seek(this.currentTime + (d.seekOffset ?? 10))]
+			);
 		}
+		const register = () => {
+			for (const [action, handler] of handlers) {
+				try {
+					ms.setActionHandler(action, handler);
+				} catch {
+					/* action unsupported */
+				}
+			}
+		};
+		// Handlers set before playback starts can leave iOS showing the ±10s layout;
+		// registering on the first 'playing' gives previous/next track.
+		if (isIOS) this.audio.addEventListener('playing', register, { once: true });
+		else register();
 	}
 
 	private updateMetadata() {
@@ -537,11 +602,13 @@ class Player {
 		this.preparingOffline.clear();
 		this.channel?.close();
 		this.channel = null;
+		document.removeEventListener('visibilitychange', this.onVisibilityChange);
 		clearTimeout(this.saveTimer);
 	}
 
 	/** Called on sign-out. */
 	reset() {
+		this.autoplayBlocked = false;
 		this.audio.pause();
 		this.audio.removeAttribute('src');
 		this.releaseOfflineUrl();

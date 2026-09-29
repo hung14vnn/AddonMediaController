@@ -79,9 +79,6 @@
 			var(--slider-fill, var(--text-2)) var(--pct),
 			var(--slider-track, var(--fill-strong)) var(--pct)
 		);
-		/* TỐI ƯU 2: Dùng transform thay vì transition height để không gây Reflow Layout */
-		transform-origin: center;
-		will-change: transform;
 	}
 	.slider::-moz-range-track {
 		height: var(--h);

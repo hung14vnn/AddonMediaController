@@ -236,7 +236,6 @@
 	li {
 		display: flex;
 		align-items: center;
-		will-change: transform;
 		border-radius: 10px;
 		border-top: 2px solid transparent;
 	}

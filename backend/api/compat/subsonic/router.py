@@ -1500,10 +1500,16 @@ async def _download(c: Ctx) -> Response:
     if kind == "spotify_track":
         return await _stream_spotify_track(c, fid, "m4a")
     if kind == "ytmusic":
+        # Offline copies must play on every device, and iOS cannot decode WebM/Opus.
         chunks, headers, status = await c.services.ytmusic_stream.proxy_stream(
-            fid, range_header=c.request.headers.get("Range")
+            fid, range_header=c.request.headers.get("Range"), fmt="m4a"
         )
-        return StreamingResponse(chunks, status_code=status, headers=headers)
+        return StreamingResponse(
+            chunks,
+            status_code=status,
+            headers=headers,
+            media_type=headers.get("Content-Type", "application/octet-stream"),
+        )
     if kind != "track":
         raise SubsonicError(70, "Invalid id type")
     track = await c.services.view.get_track(fid, user=c.user)

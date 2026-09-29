@@ -428,10 +428,6 @@
 		height: 140%;
 		/* Tiny canvas stretched up: the browser's smoothing stands in for blur(). */
 		image-rendering: auto;
-
-		/* Ép tạo riêng Layer Hardware Acceleration (GPU) */
-		transform: translateZ(0);
-		will-change: transform;
 	}
 
 	/* TỐI ƯU 4: Tắt animation xoay/trôi (drift) trên điện thoại để tiết kiệm pin & hạ nhiệt CPU/GPU */

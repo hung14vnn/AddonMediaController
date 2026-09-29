@@ -88,8 +88,6 @@
 		transition:
 			transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
 			box-shadow 0.35s ease;
-		/* Ép Compositor Layer để animation hover trơn tru 60 FPS */
-		will-change: transform;
 	}
 	@media (hover: hover) {
 		.card:hover .cover :global(.art) {
@@ -115,7 +113,6 @@
 		transition:
 			opacity 0.18s ease,
 			transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
-		will-change: opacity, transform;
 	}
 	.overlay button {
 		transform: translateY(6px);

@@ -96,7 +96,6 @@
 		opacity: 0;
 		z-index: 1;
 		transition: opacity 0.2s ease;
-		will-change: opacity;
 	}
 	img.loaded {
 		opacity: 1;

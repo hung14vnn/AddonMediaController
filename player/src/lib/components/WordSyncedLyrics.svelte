@@ -15,7 +15,6 @@
 		currentTimeSeconds?: number;
 		isPlaying?: boolean;
 		isrc?: string;
-		/** Giới hạn FPS của clock. 0 = không giới hạn (theo refresh rate màn hình). */
 		maxFps?: number;
 		onseek?: (seconds: number) => void;
 	}
@@ -23,9 +22,6 @@
 	const AM_LYRICS_CDN_URL =
 		"https://cdn.jsdelivr.net/npm/@uimaxbai/am-lyrics@1.7.2/dist/src/am-lyrics.min.js";
 
-	// ---------------------------------------------------------------------------
-	// CDN loader (dùng chung cho mọi instance)
-	// ---------------------------------------------------------------------------
 
 	let cdnPromise: Promise<void> | null = null;
 
@@ -90,8 +86,8 @@
 	const RESYNC_THRESHOLD_MS = 300;
 
 	let element = $state<AmLyricsElement | null>(null);
-	/** true khi custom element đã được define và upgrade xong */
 	let ready = $state(false);
+	let isPhone = $state(false);
 
 	const durationMs = $derived(
 		durationSeconds > 0 ? Math.round(durationSeconds * 1000) : 0,
@@ -104,6 +100,8 @@
 	let clockFrame: number | null = null;
 	let anchorMediaTimeMs = 0;
 	let anchorWallClockMs = 0;
+
+	let disposed = false;
 
 	// ---------------------------------------------------------------------------
 	// Clock
@@ -178,8 +176,13 @@
 		const now = performance.now();
 		const target = clampTime(mediaTimeMs);
 
-		// Đang phát và player chỉ báo timeupdate bình thường (không seek):
-		// dời mốc cho khớp player, để clock tự publish theo nhịp maxFps.
+		if (document.hidden) {
+			anchorMediaTimeMs = target;
+			anchorWallClockMs = now;
+			stopClock();
+			return;
+		}
+
 		if (playing && clockFrame !== null) {
 			const predicted = anchorMediaTimeMs + (now - anchorWallClockMs);
 			if (Math.abs(target - predicted) < RESYNC_THRESHOLD_MS) {
@@ -189,7 +192,6 @@
 			}
 		}
 
-		// Play/pause, seek, đổi bài → cập nhật ngay
 		anchorMediaTimeMs = target;
 		anchorWallClockMs = now;
 		publishCurrentTime(target);
@@ -245,18 +247,39 @@
 	// ---------------------------------------------------------------------------
 
 	onMount(() => {
-		let disposed = false;
-
 		loadAmLyrics()
 			.then(() => {
 				if (!disposed) ready = true;
 			})
 			.catch((error) => console.error(error));
 
+		// Hiện lại → publish ngay thời gian hiện tại và chạy lại clock nếu đang phát.
+		const onVisibilityChange = () => {
+			if (document.hidden) stopClock();
+			else if (ready && element)
+				anchorClock(Math.max(0, currentTimeSeconds) * 1000, isPlaying);
+		};
+		document.addEventListener("visibilitychange", onVisibilityChange);
+
 		return () => {
 			disposed = true;
+			document.removeEventListener("visibilitychange", onVisibilityChange);
 			stopClock();
 		};
+	});
+
+	$effect(() => {
+		const mq = window.matchMedia("(max-width: 899px)");
+		const update = () => (isPhone = mq.matches);
+		update();
+		mq.addEventListener("change", update);
+		return () => mq.removeEventListener("change", update);
+	});
+
+	$effect(() => {
+		const target = element;
+		if (!target) return;
+		target.toggleAttribute("no-blur", isPhone);
 	});
 
 	// Gắn listener + ẩn footer, một lần khi element sẵn sàng
