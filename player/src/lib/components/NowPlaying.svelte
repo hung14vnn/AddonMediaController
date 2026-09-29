@@ -4,7 +4,6 @@
 	// (lyrics · output device · queue). Lyrics/queue sit beside the art on desktop
 	// and replace it on phones.
 	import { tick } from 'svelte';
-	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { time } from '../format';
 	import { songMenu } from '../menus';
@@ -26,7 +25,7 @@
 	let scrub = $state<number | null>(null);
 	const shownTime = $derived(scrub ?? player.currentTime);
 
-	// TỐI ƯU 1: Làm tròn giây để tránh format chuỗi thời gian liên tục ở từng millisecond
+	// Round to whole seconds so the time strings are not re-formatted every millisecond.
 	const formattedCurrentTime = $derived(time(Math.floor(shownTime)));
 	const formattedRemainingTime = $derived(
 		time(Math.max(0, Math.floor((player.duration || 0) - shownTime)))
@@ -59,15 +58,16 @@
 		if (!(await player.pickOutput())) ui.showToast('No other playback devices found');
 	}
 
-	// Track the mobile breakpoint (matches the 900px CSS media query) so JS can
-	// decide which transitions to run for the art <-> compact-bar morph and the
-	// panel's push-down-the-controls behaviour.
+	// ---- mobile panel + FLIP ---------------------------------------------------
+	// Track the mobile breakpoint (matches the 900px CSS media query).
 	let isMobile = $state(false);
 	type Panel = 'lyrics' | 'queue';
-	let mobilePanel = $state<Panel | null>(null);
-	let mobilePanelMounted = $state(false);
-	let mobilePanelLayoutOpen = $state(false);
-	let controlsEl: HTMLDivElement | null = $state(null);
+	// Single source of truth: is a panel open on mobile?
+	const mobileOpen = $derived(isMobile && !!ui.panel);
+
+	let mainEl: HTMLDivElement | null = null;
+	let panelEl: HTMLDivElement | null = null;
+	let leaveBox: { top: number; left: number; width: number; height: number } | null = null;
 
 	$effect(() => {
 		const mq = window.matchMedia('(max-width: 899px)');
@@ -77,89 +77,88 @@
 		return () => mq.removeEventListener('change', update);
 	});
 
-	$effect(() => {
-		if (!isMobile) {
-			mobilePanelMounted = false;
-			mobilePanelLayoutOpen = false;
-			mobilePanel = null;
-			return;
-		}
-
-		if (ui.panel) {
-			mobilePanel = ui.panel;
-			mobilePanelMounted = true;
-			mobilePanelLayoutOpen = true;
-		} else if (mobilePanelMounted) {
-			mobilePanelMounted = false;
-		}
-	});
-
-	function toggleMobilePanel(panel: Panel) {
-		if (!isMobile) {
-			ui.togglePanel(panel);
-			return;
-		}
-
-		if (ui.panel === panel) {
-			// Start the panel outro, but keep the layout in its open state until
-			// the outro is completely finished so the controls do not jump.
-			mobilePanelMounted = false;
-			ui.togglePanel(panel);
-			return;
-		}
-
-		mobilePanel = panel;
-		mobilePanelMounted = true;
-		mobilePanelLayoutOpen = true;
-		ui.togglePanel(panel);
+	// Panel only uses opacity + transform, never touches layout.
+	function panelIn(_node: HTMLElement, { duration = 320 } = {}) {
+		return {
+			duration,
+			easing: cubicOut,
+			css: (t: number) => `opacity:${t};transform:translateY(${(1 - t) * 16}px)`
+		};
 	}
 
-	function captureControlRows() {
-		if (!controlsEl) return new Map<string, DOMRect>();
-
-		return new Map(
-			Array.from(controlsEl.querySelectorAll<HTMLElement>('[data-flip-row]')).map((el) => [
-				el.dataset.flipRow!,
-				el.getBoundingClientRect()
-			])
-		);
+	// On leave: pull the panel out of the flow (absolute, keeping its old box) so the
+	// new layout applies immediately and FLIP can animate the rest.
+	function panelOut(node: HTMLElement, { duration = 220 } = {}) {
+		if (leaveBox) {
+			Object.assign(node.style, {
+				position: 'absolute',
+				top: `${leaveBox.top}px`,
+				left: `${leaveBox.left}px`,
+				width: `${leaveBox.width}px`,
+				height: `${leaveBox.height}px`,
+				margin: '0',
+				pointerEvents: 'none'
+			});
+		}
+		return {
+			duration,
+			easing: cubicOut,
+			css: (t: number) => `opacity:${t};transform:translateY(${(1 - t) * 14}px)`
+		};
 	}
 
-	function playControlFlip(first: Map<string, DOMRect>) {
-		if (!controlsEl || !first.size) return;
+	const FLIP_EASING = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
 
-		const duration = 320;
-		const easing = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
-		const rows = Array.from(controlsEl.querySelectorAll<HTMLElement>('[data-flip-row]'));
+	async function flip(mutate: () => void) {
+		if (!mainEl) return mutate();
+
+		const els = () => Array.from(mainEl!.querySelectorAll<HTMLElement>('[data-flip]'));
+
+		// FIRST: measure (works even if a previous animation is mid-flight)
+		const first = new Map(els().map((el) => [el.dataset.flip!, el.getBoundingClientRect()]));
+		const m = mainEl.getBoundingClientRect();
+		const p = panelEl?.getBoundingClientRect();
+		leaveBox = p
+			? { top: p.top - m.top, left: p.left - m.left, width: p.width, height: p.height }
+			: null;
+
+		mutate();
+		await tick();
+		leaveBox = null;
+
+		// Cancel old animations before measuring LAST so we get the true final position
+		const rows = els();
+		rows.forEach((el) => el.getAnimations().forEach((a) => a.cancel()));
 
 		for (const el of rows) {
-			const id = el.dataset.flipRow;
-			const before = id ? first.get(id) : undefined;
+			const before = first.get(el.dataset.flip!);
 			if (!before) continue;
-
 			const after = el.getBoundingClientRect();
 			const dx = before.left - after.left;
 			const dy = before.top - after.top;
-			if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+			const sx = after.width ? before.width / after.width : 1;
+			const sy = after.height ? before.height / after.height : 1;
+			if (
+				Math.abs(dx) < 0.5 &&
+				Math.abs(dy) < 0.5 &&
+				Math.abs(sx - 1) < 0.005 &&
+				Math.abs(sy - 1) < 0.005
+			)
+				continue;
 
 			el.animate(
 				[
-					{ transform: `translate3d(${dx}px, ${dy}px, 0)` },
-					{ transform: 'translate3d(0, 0, 0)' }
+					{ transform: `translate3d(${dx}px, ${dy}px, 0) scale(${sx}, ${sy})` },
+					{ transform: 'translate3d(0, 0, 0) scale(1, 1)' }
 				],
-				{ duration, easing, fill: 'none' }
+				{ duration: 380, easing: FLIP_EASING }
 			);
 		}
 	}
 
-	async function onMobilePanelOutroEnd() {
-		// Capture while the compact/panel layout is still active. Then let Svelte
-		// commit the final layout and animate every row that moved.
-		const first = captureControlRows();
-		mobilePanel = null;
-		mobilePanelLayoutOpen = false;
-		await tick();
-		requestAnimationFrame(() => playControlFlip(first));
+	function toggleMobilePanel(panel: Panel) {
+		if (!isMobile) return ui.togglePanel(panel);
+		flip(() => ui.togglePanel(panel));
 	}
 
 	// Swipe-down-to-dismiss from anywhere in the Now Playing screen.
@@ -254,10 +253,10 @@
 			{/key}
 		{/snippet}
 
-		<div class="layout" class:mobile-panel={isMobile && mobilePanelLayoutOpen}>
-			<div class="main" class:panel-shift={!isMobile && !!ui.panel}>
-				<div class="art-row" class:mini={isMobile && mobilePanelLayoutOpen}>
-					<div class="art-wrap">
+		<div class="layout" class:mobile-panel={mobileOpen}>
+			<div class="main" class:panel-shift={!isMobile && !!ui.panel} bind:this={mainEl}>
+				<div class="art-row" class:mini={mobileOpen}>
+					<div class="art-wrap" data-flip="art">
 						<div class="art" class:paused={!player.playing}>
 							{#key song.id}
 								<div in:artSwap>
@@ -271,13 +270,13 @@
 							{/key}
 						</div>
 					</div>
-					<div class="meta" inert={!(isMobile && mobilePanelLayoutOpen) ? true : undefined}>
+					<div class="meta" inert={!mobileOpen ? true : undefined}>
 						<span class="c-title ellipsis">{song.title}</span>
-						<ArtistLinks class="c-artist ellipsis" item={song} forceName={true} onclick={close} />
+						<ArtistLinks class="c-artist ellipsis" item={song} onclick={close} />
 					</div>
 					<button
 						class="round meta-btn"
-						inert={!(isMobile && mobilePanelLayoutOpen) ? true : undefined}
+						inert={!mobileOpen ? true : undefined}
 						aria-label="Favorite"
 						onclick={() => ui.toggleLove('song', song)}
 					>
@@ -285,7 +284,7 @@
 					</button>
 					<button
 						class="round meta-btn"
-						inert={!(isMobile && mobilePanelLayoutOpen) ? true : undefined}
+						inert={!mobileOpen ? true : undefined}
 						aria-label="More options"
 						onclick={(e) => ui.openMenu(e, songMenu(song))}
 					>
@@ -293,28 +292,19 @@
 					</button>
 				</div>
 
-				{#if isMobile && mobilePanelMounted && mobilePanel}
-					<div
-						class="panel panel-mobile"
-						in:slide={{ duration: 420, easing: cubicOut }}
-						out:slide={{ duration: 300, easing: cubicOut }}
-						onoutroend={onMobilePanelOutroEnd}
-					>
-						{@render panelBody(mobilePanel)}
+				{#if mobileOpen && ui.panel}
+					<div class="panel panel-mobile" bind:this={panelEl} in:panelIn out:panelOut>
+						{@render panelBody(ui.panel)}
 					</div>
 				{/if}
 
-				<div
-					class="controls"
-					class:panel-open={isMobile && mobilePanelLayoutOpen}
-					bind:this={controlsEl}
-				>
-					{#if !(isMobile && mobilePanelLayoutOpen)}
-						<div class="info" data-flip-row="info">
+				<div class="controls" class:panel-open={mobileOpen}>
+					{#if !mobileOpen}
+						<div class="info" data-flip="info" in:fadeOnly={{ duration: 260 }}>
 							{#key song.id}
 								<div class="text" in:textSwap>
 									<span class="title ellipsis">{song.title}</span>
-									<ArtistLinks class="artist ellipsis" item={song} forceName={true} onclick={close} />
+									<ArtistLinks class="artist ellipsis" item={song} onclick={close} />
 								</div>
 							{/key}
 							<button class="round" class:on={ui.isLoved(song)} aria-label="Favorite" aria-pressed={ui.isLoved(song)} onclick={() => ui.toggleLove('song', song)}>
@@ -330,7 +320,7 @@
 						</div>
 					{/if}
 
-					<div class="progress" data-flip-row="progress">
+					<div class="progress" data-flip="progress">
 						<Slider value={player.currentTime} max={player.duration} label="Seek" onchange={(v) => player.seek(v)} oninput={(v) => (scrub = v)} />
 						<div class="times">
 							<span>{formattedCurrentTime}</span>
@@ -339,7 +329,7 @@
 						</div>
 					</div>
 
-					<div class="transport" data-flip-row="transport">
+					<div class="transport" data-flip="transport">
 						<button class="skip" aria-label="Previous" onclick={() => player.previous()}><Icon name="previous" size={36} /></button>
 						<button class="pp" aria-label={player.playing ? 'Pause' : 'Play'} onclick={() => player.toggle()}>
 							{#key player.playing}
@@ -351,23 +341,23 @@
 						<button class="skip" aria-label="Next" onclick={() => player.next()}><Icon name="next" size={36} /></button>
 					</div>
 
-					{#if !(isMobile && mobilePanelLayoutOpen)}
-						<div class="volume" data-flip-row="volume">
+					{#if !mobileOpen}
+						<div class="volume" data-flip="volume" in:fadeOnly={{ duration: 260 }}>
 							<button aria-label={player.muted ? 'Unmute' : 'Mute'} onclick={() => player.toggleMute()}><Icon name="speakerLow" size={15} /></button>
 							<Slider value={player.muted ? 0 : player.volume} max={1} step={0.01} label="Volume" onchange={(v) => player.setVolume(v)} oninput={(v) => v !== null && player.setVolume(v)} />
 							<Icon name="speaker" size={17} />
 						</div>
 					{/if}
 
-					<div class="bottom" data-flip-row="bottom">
-						<button class="foot" class:on={(isMobile ? mobilePanel === 'lyrics' && mobilePanelLayoutOpen : ui.panel === 'lyrics')} aria-label="Lyrics" aria-pressed={(isMobile ? mobilePanel === 'lyrics' && mobilePanelLayoutOpen : ui.panel === 'lyrics')} onclick={() => toggleMobilePanel('lyrics')}>
+					<div class="bottom" data-flip="bottom">
+						<button class="foot" class:on={ui.panel === 'lyrics'} aria-label="Lyrics" aria-pressed={ui.panel === 'lyrics'} onclick={() => toggleMobilePanel('lyrics')}>
 							<Icon name="lyrics" size={21} />
 						</button>
 						<button class="output" class:connected={player.castState === 'connected'} aria-label="Playback device: {outputLabel}" onclick={pickOutput}>
 							<Icon name="airplay" size={21} />
 							<span>{outputLabel}</span>
 						</button>
-						<button class="foot" class:on={(isMobile ? mobilePanel === 'queue' && mobilePanelLayoutOpen : ui.panel === 'queue')} aria-label="Playing Next" aria-pressed={(isMobile ? mobilePanel === 'queue' && mobilePanelLayoutOpen : ui.panel === 'queue')} onclick={() => toggleMobilePanel('queue')}>
+						<button class="foot" class:on={ui.panel === 'queue'} aria-label="Playing Next" aria-pressed={ui.panel === 'queue'} onclick={() => toggleMobilePanel('queue')}>
 							<Icon name="queue" size={21} />
 						</button>
 					</div>
@@ -430,9 +420,12 @@
 		image-rendering: auto;
 	}
 
-	/* TỐI ƯU 4: Tắt animation xoay/trôi (drift) trên điện thoại để tiết kiệm pin & hạ nhiệt CPU/GPU */
+	/* Drift animation + dedicated GPU layer only on desktop: saves battery and
+	   memory on phones (a 140% x 140% layer is expensive to keep around). */
 	@media (min-width: 900px) {
 		.backdrop canvas {
+			transform: translateZ(0);
+			will-change: transform;
 			animation: drift 40s ease-in-out infinite alternate;
 		}
 	}
@@ -507,6 +500,12 @@
 		flex-direction: column;
 		min-height: 0;
 	}
+	/* Layout changes are NOT transitioned in CSS: the FLIP in the script animates
+	   [data-flip] elements with transforms instead (compositor only). */
+	[data-flip] {
+		transform-origin: 0 0;
+		will-change: transform;
+	}
 	.art-row {
 		flex: 0 1 auto;
 		min-height: 0;
@@ -514,9 +513,6 @@
 		align-items: center;
 		gap: 12px;
 		padding-top: 18px;
-		transition:
-			padding-top 0.42s cubic-bezier(0.2, 0.8, 0.2, 1),
-			gap 0.42s cubic-bezier(0.2, 0.8, 0.2, 1);
 	}
 	.art-row:not(.mini) {
 		gap: 0;
@@ -524,7 +520,6 @@
 	.art-wrap {
 		flex-shrink: 0;
 		width: min(100%, 50vh);
-		transition: width 0.42s cubic-bezier(0.2, 0.8, 0.2, 1);
 	}
 	.art {
 		width: 100%;
@@ -550,9 +545,7 @@
 		transition: opacity 0.2s ease;
 	}
 	.meta-btn {
-		transition:
-			opacity 0.2s ease,
-			width 0.42s cubic-bezier(0.2, 0.8, 0.2, 1);
+		transition: opacity 0.2s ease;
 	}
 	.art-row:not(.mini) .meta-btn {
 		width: 0;
@@ -749,6 +742,8 @@
 			gap: 0;
 		}
 		.main {
+			/* positioned so the leaving panel (absolute) anchors correctly */
+			position: relative;
 			width: 100%;
 			flex: 1;
 			display: flex;
