@@ -24,6 +24,8 @@
 	const backdrop = $derived(song?.coverArt);
 	let scrub = $state<number | null>(null);
 	const shownTime = $derived(scrub ?? player.currentTime);
+	// Whole seconds: the bar moves ~1px/s, so repainting on every timeupdate (~4/s) is wasted.
+	const progressTime = $derived(Math.floor(player.currentTime));
 
 	// Round to whole seconds so the time strings are not re-formatted every millisecond.
 	const formattedCurrentTime = $derived(time(Math.floor(shownTime)));
@@ -65,8 +67,8 @@
 	// Single source of truth: is a panel open on mobile?
 	const mobileOpen = $derived(isMobile && !!ui.panel);
 
-	let mainEl: HTMLDivElement | null = null;
-	let panelEl: HTMLDivElement | null = null;
+	let mainEl = $state<HTMLDivElement | null>(null);
+	let panelEl = $state<HTMLDivElement | null>(null);
 	let leaveBox: { top: number; left: number; width: number; height: number } | null = null;
 
 	$effect(() => {
@@ -321,7 +323,7 @@
 					{/if}
 
 					<div class="progress" data-flip="progress">
-						<Slider value={player.currentTime} max={player.duration} label="Seek" onchange={(v) => player.seek(v)} oninput={(v) => (scrub = v)} />
+						<Slider value={progressTime} max={player.duration} label="Seek" onchange={(v) => player.seek(v)} oninput={(v) => (scrub = v)} />
 						<div class="times">
 							<span>{formattedCurrentTime}</span>
 							<span class="quality">{quality}</span>

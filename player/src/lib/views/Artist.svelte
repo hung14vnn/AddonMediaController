@@ -218,7 +218,6 @@
 		object-fit: cover;
 		object-position: center 35%;
 		animation: hero-settle 1.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-		will-change: transform, opacity;
 	}
 	@keyframes hero-settle {
 		from {
@@ -251,7 +250,6 @@
 		gap: 16px;
 		flex-wrap: wrap;
 		padding: 0 var(--gutter) 24px;
-		will-change: transform, opacity;
 	}
 	@keyframes hero-text {
 		from {

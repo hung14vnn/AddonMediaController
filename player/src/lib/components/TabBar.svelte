@@ -66,8 +66,6 @@
 
 	a.active :global(svg) {
 		animation: tab-bounce 0.42s cubic-bezier(0.3, 1.6, 0.5, 1);
-		/* Ép tạo riêng Compositor Layer cho Icon khi nhảy animation */
-		will-change: transform;
 	}
 
 	@keyframes tab-bounce {

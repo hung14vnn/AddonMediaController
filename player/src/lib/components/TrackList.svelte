@@ -61,12 +61,12 @@
 						<Artwork id={song.coverArt} size={64} seed={song.album ?? song.title} />
 						{#if current}
 							<span class="thumb-overlay">
-								<span class="bars" class:paused={!player.playing}><i></i><i></i><i></i></span>
+								<span class="bars" class:paused={!player.playing || ui.nowPlaying}><i></i><i></i><i></i></span>
 							</span>
 						{/if}
 					</span>
 				{:else if current}
-					<span class="bars" class:paused={!player.playing}><i></i><i></i><i></i></span>
+					<span class="bars" class:paused={!player.playing || ui.nowPlaying}><i></i><i></i><i></i></span>
 				{:else}
 					<!-- TỐI ƯU 1: Bọc nút Play và số thứ tự vào cùng 1 wrapper tĩnh để chống Reflow -->
 					<span class="lead-stack">
@@ -296,7 +296,6 @@
 		align-items: flex-end;
 		gap: 2px;
 		height: 12px;
-		will-change: transform;
 	}
 	.bars i {
 		width: 3px;
@@ -305,7 +304,6 @@
 		background: var(--bar, var(--accent));
 		animation: eq 0.9s ease-in-out infinite alternate;
 		transform-origin: bottom;
-		will-change: transform;
 	}
 	.bars i:nth-child(2) {
 		animation-delay: -0.3s;

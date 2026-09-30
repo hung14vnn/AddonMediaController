@@ -8,18 +8,10 @@
 
 	const player = getPlayer();
 	const song = $derived(player.current);
-
-	// TỐI ƯU 1: Làm tròn % về 1 chữ số thập phân (ví dụ: "45.2%")
-	// Giúp giảm Style Recalculation của trình duyệt
-	const pct = $derived.by(() => {
-		if (!player.duration || player.duration <= 0) return '0';
-		const raw = (player.currentTime / player.duration) * 100;
-		return Math.min(100, Math.max(0, raw)).toFixed(1);
-	});
 </script>
 
 {#if song}
-	<div class="mini" style:--pct="{pct}%" in:rise out:rise={{ duration: 220 }}>
+	<div class="mini" in:rise out:rise={{ duration: 220 }}>
 		<button class="open" onclick={() => (ui.nowPlaying = true)} aria-label="Open Now Playing">
 			{#key song.id}
 				<span class="art" in:artSwap={{ duration: 320 }}>
@@ -38,7 +30,6 @@
 		<button class="ctl" aria-label="Next" onclick={() => player.next()}>
 			<Icon name="next" size={24} />
 		</button>
-		<span class="progress" aria-hidden="true"></span>
 	</div>
 {/if}
 
@@ -87,22 +78,5 @@
 		display: grid;
 		place-items: center;
 		color: var(--text);
-	}
-
-	.progress {
-		position: absolute;
-		left: 0;
-		bottom: 0;
-		height: 2px;
-		width: 100%;
-
-		/* TỐI ƯU 3: Dùng transform: scaleX thay vì width để không gây Reflow Layout */
-		transform: scaleX(calc(var(--pct) / 100));
-		transform-origin: left center;
-		transition: transform 0.3s linear;
-		will-change: transform;
-
-		background: var(--accent);
-		opacity: 0.8;
 	}
 </style>

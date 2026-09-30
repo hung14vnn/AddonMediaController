@@ -6,6 +6,25 @@ export type Repeat = 'off' | 'all' | 'one';
 
 const QUEUE_KEY = 'music.queue';
 
+/** iPadOS reports a Mac user agent; touch support tells them apart. */
+const isIOS =
+	typeof navigator !== 'undefined' &&
+	(/iphone|ipad|ipod/i.test(navigator.userAgent) ||
+		(/mac/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
+
+function isStandalone() {
+	return (
+		window.matchMedia?.('(display-mode: standalone)').matches ||
+		(navigator as Navigator & { standalone?: boolean }).standalone === true
+	);
+}
+
+/** How long an automatic play() may hang before we assume the browser blocked it. */
+const AUTOPLAY_STALL_MS = 10_000;
+
+/** Browser-reported length this much longer than the server's means the browser misread it. */
+const DURATION_MISMATCH_RATIO = 1.25;
+
 /**
  * Merge `b` into `a` spread evenly with a little jitter, keeping each list's own
  * order (ported from the main frontend's queueHelpers.interleaveEvenly).
@@ -66,6 +85,13 @@ class Player {
 	private audio: HTMLAudioElement;
 	private unshuffled: Song[] | null = null;
 	private scrobbled = false;
+	/**
+	 * Server-reported length used in place of a misread `audio.duration`. iOS Safari
+	 * misjudges fragmented (DASH) m4a such as YouTube Music streams, often at about
+	 * double, then plays silence up to that length before `ended` fires.
+	 */
+	private durationCap = 0;
+	private cappedEnd = false;
 	private pendingSeek = 0;
 	private loadToken = 0;
 	private saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -76,6 +102,16 @@ class Player {
 	private channel: BroadcastChannel | null = null;
 	private readonly tabId = Math.random().toString(36).slice(2);
 	private destroyed = false;
+	/**
+	 * An automatic play() (track change, repeat) was refused or stalled while the
+	 * page was in the background, as iOS PWAs do. Retried when the page is visible.
+	 */
+	private autoplayBlocked = false;
+	private readonly onVisibilityChange = () => {
+		if (document.visibilityState !== 'visible' || !this.autoplayBlocked) return;
+		this.autoplayBlocked = false;
+		this.autoplay();
+	};
 
 	constructor() {
 		this.audio = new Audio();
@@ -83,6 +119,7 @@ class Player {
 		const a = this.audio;
 		a.addEventListener('play', () => {
 			this.playing = true;
+			this.autoplayBlocked = false;
 			this.channel?.postMessage({ type: 'playing', tab: this.tabId });
 		});
 		a.addEventListener('pause', () => {
@@ -97,11 +134,9 @@ class Player {
 				a.currentTime = this.pendingSeek;
 				this.pendingSeek = 0;
 			}
-			this.duration = Number.isFinite(a.duration) ? a.duration : (this.current?.duration ?? 0);
+			this.applyDuration();
 		});
-		a.addEventListener('durationchange', () => {
-			if (Number.isFinite(a.duration)) this.duration = a.duration;
-		});
+		a.addEventListener('durationchange', () => this.applyDuration());
 		a.addEventListener('timeupdate', () => this.onTime());
 		a.addEventListener('ended', () => this.onEnded());
 		a.addEventListener('error', () => {
@@ -115,10 +150,11 @@ class Player {
 		});
 		this.setupMediaSession();
 		this.setupRemotePlayback();
+		document.addEventListener('visibilitychange', this.onVisibilityChange);
 		if ('BroadcastChannel' in window) {
 			this.channel = new BroadcastChannel('music-player');
 			this.channel.onmessage = (e) => {
-				if (e.data?.type === 'playing' && e.data.tab !== this.tabId) this.audio.pause();
+				if (e.data?.type === 'playing' && e.data.tab !== this.tabId) this.pause();
 			};
 		}
 		this.restore();
@@ -205,6 +241,8 @@ class Player {
 	}
 
 	pause() {
+		// An explicit pause (or another tab taking over) cancels any pending retry.
+		this.autoplayBlocked = false;
 		this.audio.pause();
 	}
 
@@ -217,13 +255,14 @@ class Player {
 		}
 	}
 
-	previous() {
+	previous(backgroundSafe = false) {
 		// Like every music app: restart the song unless we're within the first 3 seconds.
 		if (this.audio.currentTime > 3 || this.index <= 0) this.seek(0);
-		else this.load(this.index - 1, true);
+		else this.load(this.index - 1, true, 0, !backgroundSafe);
 	}
 
 	seek(seconds: number) {
+		if (seconds < this.durationCap - 1) this.cappedEnd = false;
 		this.currentTime = seconds;
 		if (this.audio.src) this.audio.currentTime = seconds;
 		else this.pendingSeek = seconds;
@@ -285,6 +324,8 @@ class Player {
 		this.index = i;
 		this.error = null;
 		this.scrobbled = false;
+		this.durationCap = 0;
+		this.cappedEnd = false;
 		this.currentTime = startAt;
 		this.duration = song.duration ?? 0;
 		this.pendingSeek = startAt;
@@ -332,10 +373,7 @@ class Player {
 		this.audio.src = src;
 		this.audio.load();
 		if (autoplay) {
-			this.audio.play().catch(() => {
-				this.playing = false;
-				this.buffering = false;
-			});
+			this.autoplay();
 			scrobble(song.id, false);
 		}
 		this.updateMetadata();
@@ -381,13 +419,61 @@ class Player {
 			scrobble(song.id, true);
 		}
 		if (Math.floor(a.currentTime) % 5 === 0) this.updatePosition();
+		// The real audio is over; don't sit through the silence up to the misread length.
+		if (this.durationCap && !this.cappedEnd && a.currentTime >= this.durationCap - 0.25) {
+			this.cappedEnd = true;
+			this.onEnded();
+		}
+	}
+
+	private applyDuration() {
+		const a = this.audio;
+		const reported = this.current?.duration ?? 0;
+		if (!Number.isFinite(a.duration)) {
+			if (!this.duration) this.duration = reported;
+			return;
+		}
+		if (reported > 0 && a.duration > reported * DURATION_MISMATCH_RATIO) {
+			this.durationCap = reported;
+			this.duration = reported;
+		} else {
+			this.durationCap = 0;
+			this.duration = a.duration;
+		}
+	}
+
+	/**
+	 * play() for starts the user didn't tap (track changes, repeat). A backgrounded
+	 * iOS PWA may reject it or leave it hanging, so flag it for retry on return.
+	 */
+	private autoplay() {
+		const a = this.audio;
+		const src = a.src;
+		const stall = setTimeout(() => {
+			if (a.paused && a.src === src && (document.hidden || (isIOS && isStandalone()))) {
+				this.autoplayBlocked = true;
+			}
+		}, AUTOPLAY_STALL_MS);
+		a.play()
+			.then(() => clearTimeout(stall))
+			.catch((e: unknown) => {
+				clearTimeout(stall);
+				// A newer src replaced this one; its own play() owns the state now.
+				if (a.src !== src) return;
+				this.playing = false;
+				this.buffering = false;
+				if (document.hidden && e instanceof DOMException && e.name === 'NotAllowedError') {
+					this.autoplayBlocked = true;
+				}
+			});
 	}
 
 	private onEnded() {
 		if (this.repeat === 'one') {
 			this.scrobbled = false;
+			this.cappedEnd = false;
 			this.audio.currentTime = 0;
-			this.audio.play().catch(() => (this.playing = false));
+			this.autoplay();
 			return;
 		}
 
@@ -428,19 +514,32 @@ class Player {
 		const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
 			['play', () => this.resume()],
 			['pause', () => this.pause()],
-			['previoustrack', () => this.previous()],
-			['nexttrack', () => this.next()],
-			['seekto', (d) => d.seekTime !== undefined && this.seek(d.seekTime)],
-			['seekbackward', (d) => this.seek(Math.max(0, this.currentTime - (d.seekOffset ?? 10)))],
-			['seekforward', (d) => this.seek(this.currentTime + (d.seekOffset ?? 10))]
+			// Lock-screen skips while hidden must not await IndexedDB/imports (see onEnded).
+			['previoustrack', () => this.previous(document.hidden)],
+			['nexttrack', () => this.next(document.hidden)],
+			['seekto', (d) => d.seekTime !== undefined && this.seek(d.seekTime)]
 		];
-		for (const [action, handler] of handlers) {
-			try {
-				ms.setActionHandler(action, handler);
-			} catch {
-				/* action unsupported */
-			}
+		// iOS shows ±10s buttons instead of previous/next track whenever seek
+		// handlers exist, so they are only registered on other platforms.
+		if (!isIOS) {
+			handlers.push(
+				['seekbackward', (d) => this.seek(Math.max(0, this.currentTime - (d.seekOffset ?? 10)))],
+				['seekforward', (d) => this.seek(this.currentTime + (d.seekOffset ?? 10))]
+			);
 		}
+		const register = () => {
+			for (const [action, handler] of handlers) {
+				try {
+					ms.setActionHandler(action, handler);
+				} catch {
+					/* action unsupported */
+				}
+			}
+		};
+		// Handlers set before playback starts can leave iOS showing the ±10s layout;
+		// registering on the first 'playing' gives previous/next track.
+		if (isIOS) this.audio.addEventListener('playing', register, { once: true });
+		else register();
 	}
 
 	private updateMetadata() {
@@ -546,11 +645,13 @@ class Player {
 		this.preparingOffline.clear();
 		this.channel?.close();
 		this.channel = null;
+		document.removeEventListener('visibilitychange', this.onVisibilityChange);
 		clearTimeout(this.saveTimer);
 	}
 
 	/** Called on sign-out. */
 	reset() {
+		this.autoplayBlocked = false;
 		this.audio.pause();
 		this.audio.removeAttribute('src');
 		this.releaseOfflineUrl();

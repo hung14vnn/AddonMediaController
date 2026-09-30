@@ -71,7 +71,7 @@
 				isPlaying={player.playing}
 				isrc={song.isrc?.[0] ?? ""}
 				onseek={(s) => player.seek(s)}
-				maxFps={30}
+				maxFps={15}
 			/>
 		</div>
 	{/key}
