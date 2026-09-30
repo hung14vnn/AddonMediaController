@@ -1,5 +1,5 @@
 <script lang="ts">
-import { getAllSongs, getRandomSongs, getSongsByGenre, getSession } from '../api';
+import { getAllSongs, getSongsByGenre, getSession } from '../api';
 	import ErrorState from '../components/ErrorState.svelte';
 	import Icon from '../components/Icon.svelte';
 	import Sentinel from '../components/Sentinel.svelte';
@@ -48,8 +48,7 @@ import { listOfflineTrackMetadata } from '../offline';
 	}
 
 	async function shuffle() {
-		const pool = genre ? songs : await getRandomSongs(200);
-		player.playList(pool, 0, { shuffle: true });
+		player.playList(visibleSongs, 0, { shuffle: true });
 	}
 
 	more();
@@ -82,8 +81,8 @@ import { listOfflineTrackMetadata } from '../offline';
 		<div class="empty-state"><h3>No Songs</h3></div>
 	{:else}
 		<div class="pad actions bar">
-			<button class="btn" disabled={!songs.length} onclick={() => player.playList(songs)}><Icon name="play" size={16} />Play</button>
-			<button class="btn" disabled={!songs.length} onclick={shuffle}><Icon name="shuffle" size={16} />Shuffle</button>
+			<button class="btn" disabled={!visibleSongs.length} onclick={() => player.playList(visibleSongs)}><Icon name="play" size={16} />Play</button>
+			<button class="btn" disabled={!visibleSongs.length} onclick={shuffle}><Icon name="shuffle" size={16} />Shuffle</button>
 		</div>
 		<div class="pad"><TrackList songs={visibleSongs} {downloadedIds} /></div>
 		{#if !done}<Sentinel onvisible={more} {loading} />{/if}

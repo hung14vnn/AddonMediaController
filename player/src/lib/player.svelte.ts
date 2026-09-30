@@ -67,6 +67,7 @@ class Player {
 	private unshuffled: Song[] | null = null;
 	private scrobbled = false;
 	private pendingSeek = 0;
+	private loadToken = 0;
 	private saveTimer: ReturnType<typeof setTimeout> | undefined;
 	/** Offline URLs prepared while the current track is playing. */
 	private preparedOffline = new Map<string, { url: string; revoke: () => void }>();
@@ -280,6 +281,7 @@ class Player {
 		if (!song) return;
 		
 		const targetIndex = i;
+		const token = ++this.loadToken;
 		this.index = i;
 		this.error = null;
 		this.scrobbled = false;
@@ -316,12 +318,19 @@ class Player {
 		}
 
 		// Bail out if the user skipped to another track while we were awaiting DB
-		if (this.index !== targetIndex) {
+		if (this.index !== targetIndex || token !== this.loadToken) {
 			if (src.startsWith('blob:')) URL.revokeObjectURL(src);
 			return;
 		}
 
+		// Safari/iOS can keep the old decoded resource alive when src is replaced
+		// immediately after `ended`. Explicitly reset the media element before
+		// loading the next source so playback state and audio output stay aligned.
+		this.audio.pause();
+		this.audio.removeAttribute('src');
+		this.audio.load();
 		this.audio.src = src;
+		this.audio.load();
 		if (autoplay) {
 			this.audio.play().catch(() => {
 				this.playing = false;
