@@ -21,16 +21,71 @@ import { listOfflineTrackMetadata } from '../offline';
 	let query = $state('');
 	let sort = $state<'title' | 'artist' | 'album' | 'added' | 'played'>('title');
 	let downloadedIds = $state(new Set<string>());
-	const visibleSongs = $derived(
-		songs
-			.filter((song) => `${song.title} ${song.artist ?? ''} ${song.album ?? ''}`.toLowerCase().includes(query.toLowerCase()))
-			.sort((a, b) => {
+
+	function fold(value: string): string {
+		return value
+			.normalize('NFD')
+			.replace(/[\u0300-\u036f]/g, '')
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, ' ')
+			.trim();
+	}
+
+	function editDistance(a: string, b: string): number {
+		const previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+		for (let i = 1; i <= a.length; i++) {
+			let diagonal = previous[0];
+			previous[0] = i;
+			for (let j = 1; j <= b.length; j++) {
+				const old = previous[j];
+				previous[j] = a[i - 1] === b[j - 1]
+					? diagonal
+					: 1 + Math.min(diagonal, previous[j], previous[j - 1]);
+				diagonal = old;
+			}
+		}
+		return previous[b.length];
+	}
+
+	function fuzzyMatch(song: Song, term: string): boolean {
+		const fields = [song.title, song.artist, song.album]
+			.filter(Boolean)
+			.map((value) => fold(value ?? ''));
+		const queryWords = term.split(' ').filter(Boolean);
+		const fieldWords = fields.flatMap((value) => value.split(' '));
+		if (!queryWords.length || !fieldWords.length) return false;
+
+		const score = queryWords.reduce((total, word) => {
+			const best = Math.max(
+				...fieldWords.map((candidate) => {
+					const distance = editDistance(word, candidate);
+					return 1 - distance / Math.max(word.length, candidate.length);
+				})
+			);
+			return total + best;
+		}, 0) / queryWords.length;
+
+		// Short words need a stricter threshold to avoid too many unrelated songs.
+		const threshold = term.replaceAll(' ', '').length <= 4 ? 0.8 : 0.68;
+		return score >= threshold;
+	}
+
+	const visibleSongs = $derived.by(() => {
+		const term = fold(query);
+		let filtered = songs;
+		if (term) {
+			const exact = songs.filter((song) =>
+				fold(`${song.title} ${song.artist ?? ''} ${song.album ?? ''}`).includes(term)
+			);
+			filtered = exact.length ? exact : songs.filter((song) => fuzzyMatch(song, term));
+		}
+		return [...filtered].sort((a, b) => {
 				if (sort === 'artist') return (a.artist ?? '').localeCompare(b.artist ?? '');
 				if (sort === 'album') return (a.album ?? '').localeCompare(b.album ?? '');
 				if (sort === 'added' || sort === 'played') return String((b as any)[sort === 'added' ? 'created' : 'lastPlayed'] ?? '').localeCompare(String((a as any)[sort === 'added' ? 'created' : 'lastPlayed'] ?? ''));
 				return a.title.localeCompare(b.title);
-			})
-	);
+		});
+	});
 
 	async function more() {
 		if (loading || done) return;

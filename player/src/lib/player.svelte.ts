@@ -66,6 +66,10 @@ class Player {
 	private cappedEnd = false;
 	private pendingSeek = 0;
 	private loadToken = 0;
+	/** Prevent a synthetic duration-cap end and the native ended event from advancing twice. */
+	private handledEndToken = -1;
+	/** A late native ended event can arrive after the capped-end callback changed src. */
+	private ignoreNativeEndedUntil = 0;
 	private saveTimer: ReturnType<typeof setTimeout> | undefined;
 	private destroyed = false;
 
@@ -314,7 +318,7 @@ class Player {
 		}
 
 		// Bail out if the user skipped to another track while we were awaiting DB
-		if (this.index !== targetIndex || token !== this.loadToken) {
+		if (this.destroyed || this.index !== targetIndex || token !== this.loadToken) {
 			if (src.startsWith('blob:')) URL.revokeObjectURL(src);
 			return;
 		}
@@ -357,7 +361,7 @@ class Player {
 		// The real audio is over; don't sit through the silence up to the misread length.
 		if (this.durationCap && !this.cappedEnd && a.currentTime >= this.durationCap - 0.25) {
 			this.cappedEnd = true;
-			this.onEnded();
+			this.onEnded(true);
 		}
 	}
 
@@ -383,7 +387,13 @@ class Player {
 		this.load(this.index, true, this.currentTime, false);
 	}
 
-	private onEnded() {
+	private onEnded(synthetic = false) {
+		if (!synthetic && performance.now() < this.ignoreNativeEndedUntil) return;
+		if (synthetic) {
+			// WebKit may dispatch the native event for the old source after load() has
+			// already installed the next one. Keep that stale event from skipping it.
+			this.ignoreNativeEndedUntil = performance.now() + 1500;
+		}
 		if (this.repeat === 'one') {
 			this.scrobbled = false;
 			this.cappedEnd = false;
@@ -391,6 +401,12 @@ class Player {
 			this.autoplay.start();
 			return;
 		}
+
+		// onTime() can end a track from the server-reported duration just before the
+		// media element emits its own `ended` event. Both callbacks may otherwise
+		// advance the queue, skipping the next song (especially when the screen is off).
+		if (this.handledEndToken === this.loadToken) return;
+		this.handledEndToken = this.loadToken;
 
 		// Track changes from `ended` must not wait for IndexedDB/dynamic imports:
 		// those callbacks can be suspended while a PWA is backgrounded.
@@ -471,6 +487,7 @@ class Player {
 	destroy() {
 		this.saveSnapshot();
 		this.destroyed = true;
+		this.loadToken++;
 		this.audio.pause();
 		this.audio.removeAttribute('src');
 		this.audio.load();
@@ -485,12 +502,18 @@ class Player {
 
 	/** Called on sign-out. */
 	reset() {
+		// Invalidate a load that may still be waiting for IndexedDB/offline lookup.
+		this.loadToken++;
 		this.autoplay.cancel();
 		this.audio.pause();
 		this.audio.removeAttribute('src');
 		this.prepared.clear();
 		this.queue = [];
 		this.index = -1;
+		this.currentTime = 0;
+		this.duration = 0;
+		this.error = null;
+		this.buffering = false;
 		this.unshuffled = null;
 		clearSnapshot();
 	}

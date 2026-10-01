@@ -182,6 +182,21 @@ describe('Player track changes', () => {
 		audio.fire('timeupdate');
 		expect(player.current?.id).toBe('b');
 	});
+
+	it('does not advance twice when a capped end is followed by native ended', async () => {
+		const { player, audio } = await freshPlayer();
+		player.playList([song('a'), song('b'), song('c')]);
+		await flush();
+		audio.duration = 400;
+		audio.fire('durationchange');
+		audio.currentTime = 199.8;
+		audio.fire('timeupdate');
+		expect(player.current?.id).toBe('b');
+
+		// Some mobile engines still dispatch the old element's ended notification.
+		audio.fire('ended');
+		expect(player.current?.id).toBe('b');
+	});
 });
 
 describe('Player interruptions', () => {
