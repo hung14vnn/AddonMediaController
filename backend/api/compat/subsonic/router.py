@@ -505,6 +505,8 @@ async def _spotify_cover_url(kind: str, spotify_id: str) -> str:
         url = _largest_image_url((await client.get_artist(spotify_id)).get("images"))
     elif kind == "spotify_album":
         url = _largest_image_url((await client.get_album(spotify_id)).get("images"))
+    elif kind == "spotify_playlist":
+        url = _largest_image_url((await client.get_playlist(spotify_id)).get("images"))
     else:
         st = await client.get_track(spotify_id)
         url = _largest_image_url((st.get("album") or {}).get("images"))
@@ -1301,7 +1303,7 @@ async def _get_cover_art(c: Ctx) -> Response:
             )
             if result:
                 break
-    elif kind in ("spotify_artist", "spotify_album", "spotify_track"):
+    elif kind in ("spotify_artist", "spotify_album", "spotify_track", "spotify_playlist"):
         try:
             cover_url = await _spotify_cover_url(kind, internal)
         except Exception as e:
@@ -1892,11 +1894,11 @@ async def _get_playlist(c: Ctx) -> Response:
             if st.get("name") and len(_SPOTIFY_TRACK_META) < _SPOTIFY_TRACK_META_MAX:
                 _SPOTIFY_TRACK_META[st["id"]] = (", ".join(names), str(st["name"]))
                 
-        tid = encode("spotify", playlist_id)
+        tid = encode("spotify_playlist", playlist_id)
         images = pl.get("images") or []
         cover = images[0].get("url") if images else ""
         if cover:
-            _remember_cover("spotify", playlist_id, cover)
+            _remember_cover("spotify_playlist", playlist_id, cover)
             
         detail = m.SPlaylist(
             id=raw_id,
@@ -2851,14 +2853,14 @@ async def _get_ytmusic_new_releases(c: Ctx) -> Response:
         images = al.get("images") or []
         cover = images[0].get("url") if images else None
         if cover:
-            _remember_cover("spotify", al["id"], cover)
+            _remember_cover("spotify_album", al["id"], cover)
             
         albums.append(
             m.SAlbumID3(
                 id=f"spotify-album-{al['id']}",
                 name=al.get("name") or "Spotify Release",
                 artist=artist_name,
-                coverArt=encode("spotify", al["id"]),
+                coverArt=encode("spotify_album", al["id"]),
                 songCount=0,
             )
         )
@@ -2972,11 +2974,11 @@ async def _get_trending_playlists(c: Ctx) -> Response:
         if not p:
             continue
             
-        tid = encode("spotify", pid)
+        tid = encode("spotify_playlist", pid)
         images = p.get("images") or []
         cover = images[0].get("url") if images else ""
         if cover:
-            _remember_cover("spotify", pid, cover)
+            _remember_cover("spotify_playlist", pid, cover)
             
         playlists.append(
             m.SPlaylist(
