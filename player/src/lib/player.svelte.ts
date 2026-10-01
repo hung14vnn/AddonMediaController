@@ -19,11 +19,29 @@ function isStandalone() {
 	);
 }
 
+/** Safari's Audio Session API (iOS 17+); not in TypeScript's DOM lib yet. */
+type AudioSessionLike = EventTarget & {
+	type: string;
+	readonly state: 'inactive' | 'active' | 'interrupted';
+};
+
 /** How long an automatic play() may hang before we assume the browser blocked it. */
 const AUTOPLAY_STALL_MS = 10_000;
 
 /** Browser-reported length this much longer than the server's means the browser misread it. */
 const DURATION_MISMATCH_RATIO = 1.25;
+
+/** An AirPlay/Cast route still connecting after this long is treated as stuck. */
+const CAST_STALL_MS = 6_000;
+
+/**
+ * Seconds before the end at which the next track is downloaded into memory. Once the
+ * audio stops, Android may cut a screen-off PWA's network, so the next track must not
+ * need it.
+ */
+const PREFETCH_LEAD_S = 45;
+/** Long mixes/podcasts stay streamed rather than held in memory whole. */
+const PREFETCH_MAX_DURATION_S = 20 * 60;
 
 /**
  * Merge `b` into `a` spread evenly with a little jitter, keeping each list's own
@@ -78,6 +96,11 @@ class Player {
 	/** Remote Playback API (Chromecast etc. on Chrome/Android; AirPlay picker on Safari). */
 	castAvailable = $state(false);
 	castState = $state<'disconnected' | 'connecting' | 'connected'>('disconnected');
+	/**
+	 * Still 'connecting' after CAST_STALL_MS. iOS has already moved the audio off the
+	 * iPhone by then, so playback runs on in silence until the user picks a device.
+	 */
+	castStalled = $state(false);
 
 	current = $derived(this.index >= 0 ? (this.queue[this.index] ?? null) : null);
 	upNext = $derived(this.queue.slice(this.index + 1));
@@ -98,6 +121,8 @@ class Player {
 	/** Offline URLs prepared while the current track is playing. */
 	private preparedOffline = new Map<string, { url: string; revoke: () => void }>();
 	private preparingOffline = new Set<string>();
+	/** Upcoming track already prefetched (or tried) during this track; one attempt each. */
+	private prefetchedFor: string | null = null;
 	/** Lets only one tab play at a time (like music.apple.com). */
 	private channel: BroadcastChannel | null = null;
 	private readonly tabId = Math.random().toString(36).slice(2);
@@ -123,6 +148,8 @@ class Player {
 			this.channel?.postMessage({ type: 'playing', tab: this.tabId });
 		});
 		a.addEventListener('pause', () => {
+			this.lastSystemPauseAt = this.userPausing ? 0 : performance.now();
+			this.userPausing = false;
 			this.playing = false;
 			this.persist(true);
 		});
@@ -150,7 +177,9 @@ class Player {
 		});
 		this.setupMediaSession();
 		this.setupRemotePlayback();
+		this.setupAudioSession();
 		document.addEventListener('visibilitychange', this.onVisibilityChange);
+		window.addEventListener('pagehide', this.onPageHide);
 		if ('BroadcastChannel' in window) {
 			this.channel = new BroadcastChannel('music-player');
 			this.channel.onmessage = (e) => {
@@ -243,6 +272,8 @@ class Player {
 	pause() {
 		// An explicit pause (or another tab taking over) cancels any pending retry.
 		this.autoplayBlocked = false;
+		this.resumeAfterInterruption = false;
+		this.userPausing = true;
 		this.audio.pause();
 	}
 
@@ -326,6 +357,7 @@ class Player {
 		this.scrobbled = false;
 		this.durationCap = 0;
 		this.cappedEnd = false;
+		this.prefetchedFor = null;
 		this.currentTime = startAt;
 		this.duration = song.duration ?? 0;
 		this.pendingSeek = startAt;
@@ -381,6 +413,44 @@ class Player {
 		this.prepareNextOffline();
 	}
 
+	/** The track `next()` would load when the current one ends. */
+	private upcoming(): Song | undefined {
+		return this.queue[this.index + 1] ?? (this.repeat === 'all' ? this.queue[0] : undefined);
+	}
+
+	/**
+	 * Download the upcoming track while this one is still audible, so the `ended`
+	 * hand-off plays from memory. Shares `preparedOffline` with downloaded tracks;
+	 * a downloaded copy found by prepareNextOffline() wins and skips this.
+	 */
+	private prefetchNext() {
+		const next = this.upcoming();
+		if (!next || next.id === this.current?.id || this.prefetchedFor === next.id) return;
+		if (this.preparedOffline.has(next.id) || this.preparingOffline.has(next.id)) return;
+		if ((next.duration ?? 0) > PREFETCH_MAX_DURATION_S) return;
+		const src = streamUrl(next.id);
+		if (!src) return;
+		// timeupdate fires ~4×/s: a failed fetch must not be retried on every tick.
+		this.prefetchedFor = next.id;
+		this.preparingOffline.add(next.id);
+		void fetch(src)
+			.then((res) => (res.ok ? res.blob() : null))
+			.then((blob) => {
+				if (!blob || this.destroyed || this.upcoming()?.id !== next.id) return;
+				// Only the upcoming track is worth holding; drop anything the queue moved past.
+				for (const [id, prepared] of this.preparedOffline) {
+					prepared.revoke();
+					this.preparedOffline.delete(id);
+				}
+				const url = URL.createObjectURL(blob);
+				this.preparedOffline.set(next.id, { url, revoke: () => URL.revokeObjectURL(url) });
+			})
+			.catch(() => {
+				// Streaming at track change remains the fallback.
+			})
+			.finally(() => this.preparingOffline.delete(next.id));
+	}
+
 	/** Resolve the next track's offline URL before the current track ends. */
 	private prepareNextOffline() {
 		const next = this.queue[this.index + 1];
@@ -419,6 +489,7 @@ class Player {
 			scrobble(song.id, true);
 		}
 		if (Math.floor(a.currentTime) % 5 === 0) this.updatePosition();
+		if (dur > 0 && dur - a.currentTime <= PREFETCH_LEAD_S) this.prefetchNext();
 		// The real audio is over; don't sit through the silence up to the misread length.
 		if (this.durationCap && !this.cappedEnd && a.currentTime >= this.durationCap - 0.25) {
 			this.cappedEnd = true;
@@ -482,6 +553,59 @@ class Player {
 		if (!sleepTimer.onTrackEnded()) this.next(true);
 	}
 
+	/** Playing when an interruption (phone call, Siri, alarm) took the audio session. */
+	private resumeAfterInterruption = false;
+	/** Set around pause() so the 'pause' event can tell user pauses from system ones. */
+	private userPausing = false;
+	private lastSystemPauseAt = 0;
+	private audioSession: AudioSessionLike | null = null;
+	private readonly onAudioSessionChange = () => {
+		const session = this.audioSession;
+		if (!session) return;
+		if (session.state === 'interrupted') {
+			// WebKit can leave the element "playing" through a call: the clock runs on with
+			// no output and nothing resumes it afterwards. Pause for real and remember.
+			// Some versions fire 'pause' themselves just before reporting the interruption.
+			const justPausedBySystem = performance.now() - this.lastSystemPauseAt < 2000;
+			if (!this.audio.paused || justPausedBySystem) {
+				this.resumeAfterInterruption = true;
+				this.audio.pause();
+			}
+			return;
+		}
+		if (this.resumeAfterInterruption) {
+			this.resumeAfterInterruption = false;
+			// Still backgrounded after the call: autoplay() flags it for retry on return.
+			this.autoplay();
+		}
+	};
+
+	/**
+	 * Swiping an iOS home-screen app away can leave its WebKit process, and the audio,
+	 * alive for a while. `pagehide` with persisted=false means the page is being torn
+	 * down (not bfcached), so stop rather than play on with no UI. Best effort: iOS
+	 * does not always deliver it. The snapshot keeps the position for next launch.
+	 */
+	private readonly onPageHide = (e: PageTransitionEvent) => {
+		if (e.persisted) return;
+		this.writeSnapshot();
+		this.pause();
+		if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
+	};
+
+	private setupAudioSession() {
+		const session = (navigator as Navigator & { audioSession?: AudioSessionLike }).audioSession;
+		if (!session) return;
+		this.audioSession = session;
+		try {
+			// Media playback, like a music app: proper interruption handling, ignores the mute switch.
+			session.type = 'playback';
+		} catch {
+			/* read-only on some versions */
+		}
+		session.addEventListener('statechange', this.onAudioSessionChange);
+	}
+
 	private setupRemotePlayback() {
 		const remote = (this.audio as HTMLAudioElement & { remote?: RemotePlayback }).remote;
 		if (!remote) return;
@@ -489,10 +613,22 @@ class Player {
 			// Some browsers can't monitor continuously; assume a picker may exist.
 			this.castAvailable = true;
 		});
-		const sync = () => (this.castState = remote.state);
+		let stallTimer: ReturnType<typeof setTimeout> | undefined;
+		const sync = () => {
+			this.castState = remote.state;
+			clearTimeout(stallTimer);
+			this.castStalled = false;
+			if (remote.state === 'connecting') {
+				stallTimer = setTimeout(() => {
+					if (remote.state === 'connecting') this.castStalled = true;
+				}, CAST_STALL_MS);
+			}
+		};
 		remote.addEventListener('connecting', sync);
 		remote.addEventListener('connect', sync);
 		remote.addEventListener('disconnect', sync);
+		// Events only report changes; a reload mid-AirPlay would otherwise show "This Device".
+		sync();
 	}
 
 	/** Opens the system device picker; false when this browser has none. */
@@ -646,6 +782,8 @@ class Player {
 		this.channel?.close();
 		this.channel = null;
 		document.removeEventListener('visibilitychange', this.onVisibilityChange);
+		this.audioSession?.removeEventListener('statechange', this.onAudioSessionChange);
+		window.removeEventListener('pagehide', this.onPageHide);
 		clearTimeout(this.saveTimer);
 	}
 

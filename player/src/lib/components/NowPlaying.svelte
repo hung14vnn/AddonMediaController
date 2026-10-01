@@ -53,8 +53,19 @@
 	});
 
 	const outputLabel = $derived(
-		player.castState === 'connected' ? 'Casting' : player.castState === 'connecting' ? 'Connecting…' : 'This Device'
+		player.castStalled
+			? 'Not responding'
+			: player.castState === 'connected'
+				? 'Casting'
+				: player.castState === 'connecting'
+					? 'Connecting…'
+					: 'This Device'
 	);
+
+	// A stuck AirPlay/Cast hand-off keeps the clock running with no sound; say why.
+	$effect(() => {
+		if (player.castStalled) ui.showToast('Playback device isn’t responding — tap the output button to switch back');
+	});
 
 	async function pickOutput() {
 		if (!(await player.pickOutput())) ui.showToast('No other playback devices found');
@@ -326,7 +337,12 @@
 						<Slider value={progressTime} max={player.duration} label="Seek" onchange={(v) => player.seek(v)} oninput={(v) => (scrub = v)} />
 						<div class="times">
 							<span>{formattedCurrentTime}</span>
-							<span class="quality">{quality}</span>
+							{#if player.muted}
+								<!-- iOS ignores volume but honours mute, and the volume row is hidden while a panel is open. -->
+								<button class="quality muted" onclick={() => player.toggleMute()}>Muted · Tap to unmute</button>
+							{:else}
+								<span class="quality">{quality}</span>
+							{/if}
 							<span class="right">-{formattedRemainingTime}</span>
 						</div>
 					</div>
@@ -355,7 +371,7 @@
 						<button class="foot" class:on={ui.panel === 'lyrics'} aria-label="Lyrics" aria-pressed={ui.panel === 'lyrics'} onclick={() => toggleMobilePanel('lyrics')}>
 							<Icon name="lyrics" size={21} />
 						</button>
-						<button class="output" class:connected={player.castState === 'connected'} aria-label="Playback device: {outputLabel}" onclick={pickOutput}>
+						<button class="output" class:connected={player.castState === 'connected'} class:stalled={player.castStalled} aria-label="Playback device: {outputLabel}" onclick={pickOutput}>
 							<Icon name="airplay" size={21} />
 							<span>{outputLabel}</span>
 						</button>
@@ -639,6 +655,9 @@
 		font-weight: 600;
 		letter-spacing: 0.01em;
 	}
+	.quality.muted {
+		color: #ffd60a;
+	}
 
 	/* ---- transport ------------------------------------------------------------ */
 	.transport {
@@ -712,6 +731,9 @@
 	}
 	.output.connected {
 		color: #fff;
+	}
+	.output.stalled {
+		color: #ffd60a;
 	}
 
 	/* ---- side panel (lyrics / queue) ------------------------------------------ */
