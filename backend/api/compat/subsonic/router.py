@@ -2945,16 +2945,15 @@ async def _get_trending_playlists(c: Ctx) -> Response:
     from services.spotapi_client import SpotApiClient
     
     # Hardcoded trending playlists
-    # Top 50 Global, Top 50 VN, Today's Top Hits, Viral 50 Global
     trending_ids = [
         "37i9dQZEVXbMDoHDwVN2tF", # Top 50 Global
         "37i9dQZEVXbLdGSmz6xilI", # Top 50 VN
         "37i9dQZF1DXcBWIGoYBM5M", # Today's Top Hits
-        "37i9dQZEVXbLiRSasKsOU9", # Viral 50 Global
-        "37i9dQZEVXbL1Fl8wdLlqn", # Viral 50 VN
         "37i9dQZF1DX4g8Gs5nUhpp", # Hot Hits Vietnam
-        "37i9dQZF1DX44t7uFCKLWq", # V-Pop Không Thể Thiếu
         "37i9dQZF1DXbYM3nMM0oPk", # Mega Hit Mix
+        "37i9dQZF1DX0XUsuxWHRQd", # RapCaviar
+        "37i9dQZF1DWUa8ZRTfalHk", # Pop Rising
+        "37i9dQZF1DWWQRwui0ExPn", # Lofi Beats
     ]
     
     client = SpotApiClient()

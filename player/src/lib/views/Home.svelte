@@ -42,8 +42,8 @@
 	// Charts come from YouTube Music / Spotify and can be slow on a cold cache, so
 	// they load on their own and never hold back (or break) the library shelves.
 	const region = /-([A-Z]{2})/.exec(navigator.language)?.[1];
-	const trending = optional(getTrendingSongs(10, region));
-	const hits = optional(getTodaysHits(10));
+	const trending = optional(cached(`home:trending:${region ?? ""}`, () => getTrendingSongs(10, region)));
+	const hits = optional(cached("home:hits", () => getTodaysHits(10)));
 
 </script>
 
