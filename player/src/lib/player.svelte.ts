@@ -17,6 +17,7 @@ import {
 } from './playback/queue';
 import { pickOutput, watchRemotePlayback, type CastState } from './playback/remotePlayback';
 import { SingleTab } from './playback/singleTab';
+import { StallWatchdog } from './playback/stallWatchdog';
 import { clearSnapshot, readSnapshot, writeSnapshot } from './playback/snapshot';
 import { sleepTimer } from './sleepTimer.svelte';
 import type { Song } from './types';
@@ -72,6 +73,7 @@ class Player {
 	private autoplay: Autoplay;
 	private interruptions: InterruptionGuard;
 	private singleTab: SingleTab;
+	private watchdog: StallWatchdog;
 
 	constructor() {
 		this.audio = new Audio();
@@ -83,6 +85,7 @@ class Player {
 		});
 		this.interruptions = new InterruptionGuard(a, () => this.autoplay.start());
 		this.singleTab = new SingleTab(() => this.pause());
+		this.watchdog = new StallWatchdog(a, () => this.reloadCurrent());
 
 		a.addEventListener('play', () => {
 			this.playing = true;
@@ -197,6 +200,8 @@ class Player {
 
 	resume() {
 		if (!this.audio.src && this.current) this.load(this.index, true, this.currentTime);
+		// A dead stream ignores play(); only a fresh request at this position recovers it.
+		else if (this.current && this.watchdog.needsReload()) this.load(this.index, true, this.currentTime);
 		else this.audio.play().catch(() => (this.playing = false));
 	}
 
@@ -291,6 +296,7 @@ class Player {
 		this.durationCap = 0;
 		this.cappedEnd = false;
 		this.prepared.startTrack();
+		this.watchdog.track(song.id);
 		this.currentTime = startAt;
 		this.duration = song.duration ?? 0;
 		this.pendingSeek = startAt;
@@ -365,6 +371,16 @@ class Player {
 		const resolved = resolveDuration(this.audio.duration, this.current?.duration ?? 0, this.duration);
 		this.duration = resolved.duration;
 		if (resolved.cap !== undefined) this.durationCap = resolved.cap;
+	}
+
+	/**
+	 * The stream stopped delivering mid-track: fetch it again from where it froze.
+	 * Background-safe (no IndexedDB/import awaits) since it can fire with the screen off.
+	 */
+	private reloadCurrent() {
+		if (!this.current) return;
+		this.buffering = true;
+		this.load(this.index, true, this.currentTime, false);
 	}
 
 	private onEnded() {
@@ -462,6 +478,7 @@ class Player {
 		this.singleTab.close();
 		this.autoplay.dispose();
 		this.interruptions.dispose();
+		this.watchdog.dispose();
 		window.removeEventListener('pagehide', this.onPageHide);
 		clearTimeout(this.saveTimer);
 	}

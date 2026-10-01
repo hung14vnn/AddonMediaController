@@ -68,7 +68,7 @@
 				album={song.album ?? ""}
 				durationSeconds={player.duration || song.duration || 0}
 				currentTimeSeconds={player.currentTime}
-				isPlaying={player.playing}
+				isPlaying={player.playing && !player.buffering}
 				isrc={song.isrc?.[0] ?? ""}
 				onseek={(s) => player.seek(s)}
 				maxFps={15}
