@@ -1,38 +1,27 @@
-import { coverUrl, getPlayQueue, savePlayQueue, scrobble, streamUrl } from './api';
+import { getPlayQueue, savePlayQueue, scrobble, streamUrl } from './api';
+import { Autoplay } from './playback/autoplay';
+import { resolveDuration } from './playback/duration';
+import { InterruptionGuard } from './playback/interruptions';
+import { clearMediaSession, setMediaMetadata, setMediaPosition, setupMediaSession } from './playback/mediaSession';
+import { PreparedTracks } from './playback/preparedTracks';
+import {
+	cycleRepeat,
+	indexAfterUnshuffle,
+	interleaveEvenly,
+	moveItem,
+	nextIndex,
+	planPlayOrder,
+	removeAt,
+	shuffleAround,
+	type Repeat
+} from './playback/queue';
+import { pickOutput, watchRemotePlayback, type CastState } from './playback/remotePlayback';
+import { SingleTab } from './playback/singleTab';
+import { clearSnapshot, readSnapshot, writeSnapshot } from './playback/snapshot';
 import { sleepTimer } from './sleepTimer.svelte';
 import type { Song } from './types';
 
-export type Repeat = 'off' | 'all' | 'one';
-
-const QUEUE_KEY = 'music.queue';
-
-/** iPadOS reports a Mac user agent; touch support tells them apart. */
-const isIOS =
-	typeof navigator !== 'undefined' &&
-	(/iphone|ipad|ipod/i.test(navigator.userAgent) ||
-		(/mac/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
-
-function isStandalone() {
-	return (
-		window.matchMedia?.('(display-mode: standalone)').matches ||
-		(navigator as Navigator & { standalone?: boolean }).standalone === true
-	);
-}
-
-/** Safari's Audio Session API (iOS 17+); not in TypeScript's DOM lib yet. */
-type AudioSessionLike = EventTarget & {
-	type: string;
-	readonly state: 'inactive' | 'active' | 'interrupted';
-};
-
-/** How long an automatic play() may hang before we assume the browser blocked it. */
-const AUTOPLAY_STALL_MS = 10_000;
-
-/** Browser-reported length this much longer than the server's means the browser misread it. */
-const DURATION_MISMATCH_RATIO = 1.25;
-
-/** An AirPlay/Cast route still connecting after this long is treated as stuck. */
-const CAST_STALL_MS = 6_000;
+export type { Repeat };
 
 /**
  * Seconds before the end at which the next track is downloaded into memory. Once the
@@ -40,46 +29,12 @@ const CAST_STALL_MS = 6_000;
  * need it.
  */
 const PREFETCH_LEAD_S = 45;
-/** Long mixes/podcasts stay streamed rather than held in memory whole. */
-const PREFETCH_MAX_DURATION_S = 20 * 60;
-
-/**
- * Merge `b` into `a` spread evenly with a little jitter, keeping each list's own
- * order (ported from the main frontend's queueHelpers.interleaveEvenly).
- */
-function interleaveEvenly<T>(a: T[], b: T[], jitter = 0.8): T[] {
-	const out: T[] = [];
-	let i = 0;
-	let j = 0;
-	while (i < a.length || j < b.length) {
-		if (j >= b.length) {
-			out.push(a[i++]);
-			continue;
-		}
-		if (i >= a.length) {
-			out.push(b[j++]);
-			continue;
-		}
-		const progressA = (i + 0.5) / a.length;
-		const progressB = (j + 0.5 + (Math.random() - 0.5) * jitter) / b.length;
-		if (progressA <= progressB) out.push(a[i++]);
-		else out.push(b[j++]);
-	}
-	return out;
-}
-
-function shuffled<T>(items: T[]): T[] {
-	const out = [...items];
-	for (let i = out.length - 1; i > 0; i--) {
-		const j = Math.floor(Math.random() * (i + 1));
-		[out[i], out[j]] = [out[j], out[i]];
-	}
-	return out;
-}
 
 /**
  * Single audio engine. The queue is the play order; when shuffle is on, the
  * original order is kept in `unshuffled` so turning shuffle off restores it.
+ * Platform work (lock screen, AirPlay, iOS interruptions, prefetch) lives in
+ * ./playback; this class owns the reactive state and the track-change logic.
  */
 class Player {
 	queue = $state<Song[]>([]);
@@ -95,11 +50,8 @@ class Player {
 	error = $state<string | null>(null);
 	/** Remote Playback API (Chromecast etc. on Chrome/Android; AirPlay picker on Safari). */
 	castAvailable = $state(false);
-	castState = $state<'disconnected' | 'connecting' | 'connected'>('disconnected');
-	/**
-	 * Still 'connecting' after CAST_STALL_MS. iOS has already moved the audio off the
-	 * iPhone by then, so playback runs on in silence until the user picks a device.
-	 */
+	castState = $state<CastState>('disconnected');
+	/** Stuck 'connecting': the audio has left the device but nothing plays it. */
 	castStalled = $state(false);
 
 	current = $derived(this.index >= 0 ? (this.queue[this.index] ?? null) : null);
@@ -108,48 +60,37 @@ class Player {
 	private audio: HTMLAudioElement;
 	private unshuffled: Song[] | null = null;
 	private scrobbled = false;
-	/**
-	 * Server-reported length used in place of a misread `audio.duration`. iOS Safari
-	 * misjudges fragmented (DASH) m4a such as YouTube Music streams, often at about
-	 * double, then plays silence up to that length before `ended` fires.
-	 */
+	/** Server-reported length that playback ends at in place of a misread `audio.duration`. */
 	private durationCap = 0;
 	private cappedEnd = false;
 	private pendingSeek = 0;
 	private loadToken = 0;
 	private saveTimer: ReturnType<typeof setTimeout> | undefined;
-	/** Offline URLs prepared while the current track is playing. */
-	private preparedOffline = new Map<string, { url: string; revoke: () => void }>();
-	private preparingOffline = new Set<string>();
-	/** Upcoming track already prefetched (or tried) during this track; one attempt each. */
-	private prefetchedFor: string | null = null;
-	/** Lets only one tab play at a time (like music.apple.com). */
-	private channel: BroadcastChannel | null = null;
-	private readonly tabId = Math.random().toString(36).slice(2);
 	private destroyed = false;
-	/**
-	 * An automatic play() (track change, repeat) was refused or stalled while the
-	 * page was in the background, as iOS PWAs do. Retried when the page is visible.
-	 */
-	private autoplayBlocked = false;
-	private readonly onVisibilityChange = () => {
-		if (document.visibilityState !== 'visible' || !this.autoplayBlocked) return;
-		this.autoplayBlocked = false;
-		this.autoplay();
-	};
+
+	private prepared = new PreparedTracks();
+	private autoplay: Autoplay;
+	private interruptions: InterruptionGuard;
+	private singleTab: SingleTab;
 
 	constructor() {
 		this.audio = new Audio();
 		this.audio.preload = 'auto';
 		const a = this.audio;
+		this.autoplay = new Autoplay(a, () => {
+			this.playing = false;
+			this.buffering = false;
+		});
+		this.interruptions = new InterruptionGuard(a, () => this.autoplay.start());
+		this.singleTab = new SingleTab(() => this.pause());
+
 		a.addEventListener('play', () => {
 			this.playing = true;
-			this.autoplayBlocked = false;
-			this.channel?.postMessage({ type: 'playing', tab: this.tabId });
+			this.autoplay.cancel();
+			this.singleTab.announcePlaying();
 		});
 		a.addEventListener('pause', () => {
-			this.lastSystemPauseAt = this.userPausing ? 0 : performance.now();
-			this.userPausing = false;
+			this.interruptions.notePause();
 			this.playing = false;
 			this.persist(true);
 		});
@@ -175,17 +116,23 @@ class Player {
 			this.volume = a.volume;
 			this.muted = a.muted;
 		});
-		this.setupMediaSession();
-		this.setupRemotePlayback();
-		this.setupAudioSession();
-		document.addEventListener('visibilitychange', this.onVisibilityChange);
+
+		setupMediaSession(a, {
+			play: () => this.resume(),
+			pause: () => this.pause(),
+			previous: (backgroundSafe) => this.previous(backgroundSafe),
+			next: (backgroundSafe) => this.next(backgroundSafe),
+			seek: (seconds) => this.seek(seconds),
+			currentTime: () => this.currentTime
+		});
+		watchRemotePlayback(a, {
+			availability: (available) => (this.castAvailable = available),
+			state: (state, stalled) => {
+				this.castState = state;
+				this.castStalled = stalled;
+			}
+		});
 		window.addEventListener('pagehide', this.onPageHide);
-		if ('BroadcastChannel' in window) {
-			this.channel = new BroadcastChannel('music-player');
-			this.channel.onmessage = (e) => {
-				if (e.data?.type === 'playing' && e.data.tab !== this.tabId) this.pause();
-			};
-		}
 		this.restore();
 	}
 
@@ -193,24 +140,11 @@ class Player {
 
 	playList(songs: Song[], start = 0, opts: { shuffle?: boolean } = {}) {
 		if (!songs.length) return;
-		this.unshuffled = null;
-		if (opts.shuffle) {
-			this.shuffle = true;
-			this.unshuffled = [...songs];
-			this.queue = shuffled(songs);
-			this.load(0, true);
-		} else {
-			if (this.shuffle) {
-				// Keep shuffle on like Apple Music: start with the tapped song, shuffle the rest.
-				const first = songs[start];
-				this.unshuffled = [...songs];
-				this.queue = [first, ...shuffled(songs.filter((_, i) => i !== start))];
-				this.load(0, true);
-			} else {
-				this.queue = [...songs];
-				this.load(start, true);
-			}
-		}
+		const order = planPlayOrder(songs, start, this.shuffle, !!opts.shuffle);
+		this.shuffle = order.shuffle;
+		this.unshuffled = order.unshuffled;
+		this.queue = order.queue;
+		this.load(order.start, true);
 	}
 
 	playNext(songs: Song[]) {
@@ -238,17 +172,14 @@ class Player {
 	}
 
 	removeAt(i: number) {
-		if (i === this.index) return;
-		this.queue.splice(i, 1);
-		if (i < this.index) this.index--;
+		const index = removeAt(this.queue, this.index, i);
+		if (index === null) return;
+		this.index = index;
 		this.persist();
 	}
 
 	moveUpNext(from: number, to: number) {
-		const [song] = this.queue.splice(from, 1);
-		this.queue.splice(to, 0, song);
-		if (from < this.index && to >= this.index) this.index--;
-		else if (from > this.index && to <= this.index) this.index++;
+		this.index = moveItem(this.queue, this.index, from, to);
 		this.persist();
 	}
 
@@ -270,16 +201,17 @@ class Player {
 	}
 
 	pause() {
-		// An explicit pause (or another tab taking over) cancels any pending retry.
-		this.autoplayBlocked = false;
-		this.resumeAfterInterruption = false;
-		this.userPausing = true;
+		// An explicit pause (or another tab taking over) cancels any pending retry or
+		// resume-after-call.
+		this.autoplay.cancel();
+		this.interruptions.userPause();
 		this.audio.pause();
 	}
 
+	/** `backgroundSafe`: the page may be hidden, so don't await IndexedDB/imports first. */
 	next(backgroundSafe = false) {
-		if (this.index < this.queue.length - 1) this.load(this.index + 1, true, 0, !backgroundSafe);
-		else if (this.repeat === 'all' && this.queue.length) this.load(0, true, 0, !backgroundSafe);
+		const i = nextIndex(this.queue.length, this.index, this.repeat);
+		if (i >= 0) this.load(i, true, 0, !backgroundSafe);
 		else {
 			this.audio.pause();
 			this.seek(0);
@@ -315,15 +247,15 @@ class Player {
 			this.shuffle = true;
 			this.unshuffled = [...this.queue];
 			if (cur) {
-				const rest = this.queue.filter((_, i) => i !== this.index);
-				this.queue = [cur, ...shuffled(rest)];
-				this.index = 0;
+				const order = shuffleAround(this.queue, this.index);
+				this.queue = order.queue;
+				this.index = order.index;
 			}
 		} else {
 			this.shuffle = false;
 			if (this.unshuffled) {
 				this.queue = this.unshuffled;
-				this.index = cur ? Math.max(0, this.queue.findIndex((s) => s.id === cur.id)) : -1;
+				this.index = indexAfterUnshuffle(this.queue, cur);
 			}
 			this.unshuffled = null;
 		}
@@ -331,25 +263,26 @@ class Player {
 	}
 
 	cycleRepeat() {
-		this.repeat = this.repeat === 'off' ? 'all' : this.repeat === 'all' ? 'one' : 'off';
+		this.repeat = cycleRepeat(this.repeat);
 		this.persist();
 	}
 
-	// ---- internals -----------------------------------------------------------
-
-	private currentOfflineRevoke: (() => void) | null = null;
-
-	private releaseOfflineUrl() {
-		if (this.currentOfflineRevoke) {
-			this.currentOfflineRevoke();
-			this.currentOfflineRevoke = null;
-		}
+	/** Opens the system device picker; false when this browser has none. */
+	pickOutput(): Promise<boolean> {
+		return pickOutput(this.audio);
 	}
 
+	// ---- track changes -------------------------------------------------------
+
+	/**
+	 * Start track `i`. `waitForOffline` lets manual changes look for a downloaded
+	 * copy first; changes that may run in the background (`ended`, lock screen
+	 * while hidden) pass false, since those awaits can be suspended there.
+	 */
 	private async load(i: number, autoplay: boolean, startAt = 0, waitForOffline = true) {
 		const song = this.queue[i];
 		if (!song) return;
-		
+
 		const targetIndex = i;
 		const token = ++this.loadToken;
 		this.index = i;
@@ -357,36 +290,20 @@ class Player {
 		this.scrobbled = false;
 		this.durationCap = 0;
 		this.cappedEnd = false;
-		this.prefetchedFor = null;
+		this.prepared.startTrack();
 		this.currentTime = startAt;
 		this.duration = song.duration ?? 0;
 		this.pendingSeek = startAt;
-		
+
 		if (autoplay) this.buffering = true;
 
-		let src = streamUrl(song.id);
-		const prepared = this.preparedOffline.get(song.id);
-		if (prepared) {
-			src = prepared.url;
-			this.preparedOffline.delete(song.id);
-			this.releaseOfflineUrl();
-			this.currentOfflineRevoke = prepared.revoke;
-		} else if (waitForOffline) {
-			// Manual track changes may still wait for an offline copy.
-			const { getSession } = await import('./api');
-			const session = getSession();
-			if (session?.username) {
-				try {
-					const { createOfflineTrackUrl } = await import('./offline');
-					const offline = await createOfflineTrackUrl(session.username, song.id);
-					if (offline) {
-						src = offline.url;
-						this.releaseOfflineUrl();
-						this.currentOfflineRevoke = offline.revoke;
-					}
-				} catch {
-					// Fallback to stream URL
-				}
+		const ready = this.prepared.take(song.id);
+		let src = ready ?? streamUrl(song.id);
+		if (!ready && waitForOffline) {
+			const offline = await this.prepared.lookupOffline(song.id);
+			if (offline) {
+				src = offline.url;
+				this.prepared.adopt(offline);
 			}
 		}
 
@@ -405,77 +322,18 @@ class Player {
 		this.audio.src = src;
 		this.audio.load();
 		if (autoplay) {
-			this.autoplay();
+			this.autoplay.start();
 			scrobble(song.id, false);
 		}
-		this.updateMetadata();
+		setMediaMetadata(this.current);
 		this.persist();
-		this.prepareNextOffline();
+		const next = this.queue[this.index + 1];
+		if (next) this.prepared.prepareOffline(next, () => !this.destroyed && this.queue[this.index + 1]?.id === next.id);
 	}
 
 	/** The track `next()` would load when the current one ends. */
 	private upcoming(): Song | undefined {
 		return this.queue[this.index + 1] ?? (this.repeat === 'all' ? this.queue[0] : undefined);
-	}
-
-	/**
-	 * Download the upcoming track while this one is still audible, so the `ended`
-	 * hand-off plays from memory. Shares `preparedOffline` with downloaded tracks;
-	 * a downloaded copy found by prepareNextOffline() wins and skips this.
-	 */
-	private prefetchNext() {
-		const next = this.upcoming();
-		if (!next || next.id === this.current?.id || this.prefetchedFor === next.id) return;
-		if (this.preparedOffline.has(next.id) || this.preparingOffline.has(next.id)) return;
-		if ((next.duration ?? 0) > PREFETCH_MAX_DURATION_S) return;
-		const src = streamUrl(next.id);
-		if (!src) return;
-		// timeupdate fires ~4×/s: a failed fetch must not be retried on every tick.
-		this.prefetchedFor = next.id;
-		this.preparingOffline.add(next.id);
-		void fetch(src)
-			.then((res) => (res.ok ? res.blob() : null))
-			.then((blob) => {
-				if (!blob || this.destroyed || this.upcoming()?.id !== next.id) return;
-				// Only the upcoming track is worth holding; drop anything the queue moved past.
-				for (const [id, prepared] of this.preparedOffline) {
-					prepared.revoke();
-					this.preparedOffline.delete(id);
-				}
-				const url = URL.createObjectURL(blob);
-				this.preparedOffline.set(next.id, { url, revoke: () => URL.revokeObjectURL(url) });
-			})
-			.catch(() => {
-				// Streaming at track change remains the fallback.
-			})
-			.finally(() => this.preparingOffline.delete(next.id));
-	}
-
-	/** Resolve the next track's offline URL before the current track ends. */
-	private prepareNextOffline() {
-		const next = this.queue[this.index + 1];
-		if (!next || this.preparedOffline.has(next.id) || this.preparingOffline.has(next.id)) return;
-		this.preparingOffline.add(next.id);
-		void (async () => {
-			try {
-				const { getSession } = await import('./api');
-				const session = getSession();
-				if (!session?.username) return;
-				const { createOfflineTrackUrl } = await import('./offline');
-				const offline = await createOfflineTrackUrl(session.username, next.id);
-				if (offline) {
-					if (this.queue[this.index + 1]?.id === next.id && !this.destroyed) {
-						this.preparedOffline.set(next.id, offline);
-					} else {
-						offline.revoke();
-					}
-				}
-			} catch {
-				// Streaming remains the fallback.
-			} finally {
-				this.preparingOffline.delete(next.id);
-			}
-		})();
 	}
 
 	private onTime() {
@@ -489,7 +347,7 @@ class Player {
 			scrobble(song.id, true);
 		}
 		if (Math.floor(a.currentTime) % 5 === 0) this.updatePosition();
-		if (dur > 0 && dur - a.currentTime <= PREFETCH_LEAD_S) this.prefetchNext();
+		if (dur > 0 && dur - a.currentTime <= PREFETCH_LEAD_S) this.prefetchUpcoming();
 		// The real audio is over; don't sit through the silence up to the misread length.
 		if (this.durationCap && !this.cappedEnd && a.currentTime >= this.durationCap - 0.25) {
 			this.cappedEnd = true;
@@ -497,46 +355,16 @@ class Player {
 		}
 	}
 
-	private applyDuration() {
-		const a = this.audio;
-		const reported = this.current?.duration ?? 0;
-		if (!Number.isFinite(a.duration)) {
-			if (!this.duration) this.duration = reported;
-			return;
-		}
-		if (reported > 0 && a.duration > reported * DURATION_MISMATCH_RATIO) {
-			this.durationCap = reported;
-			this.duration = reported;
-		} else {
-			this.durationCap = 0;
-			this.duration = a.duration;
-		}
+	private prefetchUpcoming() {
+		const next = this.upcoming();
+		if (!next || next.id === this.current?.id) return;
+		this.prepared.prefetch(next, streamUrl(next.id), () => !this.destroyed && this.upcoming()?.id === next.id);
 	}
 
-	/**
-	 * play() for starts the user didn't tap (track changes, repeat). A backgrounded
-	 * iOS PWA may reject it or leave it hanging, so flag it for retry on return.
-	 */
-	private autoplay() {
-		const a = this.audio;
-		const src = a.src;
-		const stall = setTimeout(() => {
-			if (a.paused && a.src === src && (document.hidden || (isIOS && isStandalone()))) {
-				this.autoplayBlocked = true;
-			}
-		}, AUTOPLAY_STALL_MS);
-		a.play()
-			.then(() => clearTimeout(stall))
-			.catch((e: unknown) => {
-				clearTimeout(stall);
-				// A newer src replaced this one; its own play() owns the state now.
-				if (a.src !== src) return;
-				this.playing = false;
-				this.buffering = false;
-				if (document.hidden && e instanceof DOMException && e.name === 'NotAllowedError') {
-					this.autoplayBlocked = true;
-				}
-			});
+	private applyDuration() {
+		const resolved = resolveDuration(this.audio.duration, this.current?.duration ?? 0, this.duration);
+		this.duration = resolved.duration;
+		if (resolved.cap !== undefined) this.durationCap = resolved.cap;
 	}
 
 	private onEnded() {
@@ -544,7 +372,7 @@ class Player {
 			this.scrobbled = false;
 			this.cappedEnd = false;
 			this.audio.currentTime = 0;
-			this.autoplay();
+			this.autoplay.start();
 			return;
 		}
 
@@ -553,32 +381,9 @@ class Player {
 		if (!sleepTimer.onTrackEnded()) this.next(true);
 	}
 
-	/** Playing when an interruption (phone call, Siri, alarm) took the audio session. */
-	private resumeAfterInterruption = false;
-	/** Set around pause() so the 'pause' event can tell user pauses from system ones. */
-	private userPausing = false;
-	private lastSystemPauseAt = 0;
-	private audioSession: AudioSessionLike | null = null;
-	private readonly onAudioSessionChange = () => {
-		const session = this.audioSession;
-		if (!session) return;
-		if (session.state === 'interrupted') {
-			// WebKit can leave the element "playing" through a call: the clock runs on with
-			// no output and nothing resumes it afterwards. Pause for real and remember.
-			// Some versions fire 'pause' themselves just before reporting the interruption.
-			const justPausedBySystem = performance.now() - this.lastSystemPauseAt < 2000;
-			if (!this.audio.paused || justPausedBySystem) {
-				this.resumeAfterInterruption = true;
-				this.audio.pause();
-			}
-			return;
-		}
-		if (this.resumeAfterInterruption) {
-			this.resumeAfterInterruption = false;
-			// Still backgrounded after the call: autoplay() flags it for retry on return.
-			this.autoplay();
-		}
-	};
+	private updatePosition() {
+		setMediaPosition(this.duration, this.currentTime, this.audio.playbackRate);
+	}
 
 	/**
 	 * Swiping an iOS home-screen app away can leave its WebKit process, and the audio,
@@ -588,149 +393,30 @@ class Player {
 	 */
 	private readonly onPageHide = (e: PageTransitionEvent) => {
 		if (e.persisted) return;
-		this.writeSnapshot();
+		this.saveSnapshot();
 		this.pause();
-		if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
+		clearMediaSession();
 	};
 
-	private setupAudioSession() {
-		const session = (navigator as Navigator & { audioSession?: AudioSessionLike }).audioSession;
-		if (!session) return;
-		this.audioSession = session;
-		try {
-			// Media playback, like a music app: proper interruption handling, ignores the mute switch.
-			session.type = 'playback';
-		} catch {
-			/* read-only on some versions */
-		}
-		session.addEventListener('statechange', this.onAudioSessionChange);
-	}
+	// ---- persistence ---------------------------------------------------------
 
-	private setupRemotePlayback() {
-		const remote = (this.audio as HTMLAudioElement & { remote?: RemotePlayback }).remote;
-		if (!remote) return;
-		remote.watchAvailability((available) => (this.castAvailable = available)).catch(() => {
-			// Some browsers can't monitor continuously; assume a picker may exist.
-			this.castAvailable = true;
+	private saveSnapshot() {
+		writeSnapshot({
+			queue: this.queue,
+			index: this.index,
+			time: this.currentTime,
+			shuffle: this.shuffle,
+			repeat: this.repeat,
+			unshuffled: this.unshuffled
 		});
-		let stallTimer: ReturnType<typeof setTimeout> | undefined;
-		const sync = () => {
-			this.castState = remote.state;
-			clearTimeout(stallTimer);
-			this.castStalled = false;
-			if (remote.state === 'connecting') {
-				stallTimer = setTimeout(() => {
-					if (remote.state === 'connecting') this.castStalled = true;
-				}, CAST_STALL_MS);
-			}
-		};
-		remote.addEventListener('connecting', sync);
-		remote.addEventListener('connect', sync);
-		remote.addEventListener('disconnect', sync);
-		// Events only report changes; a reload mid-AirPlay would otherwise show "This Device".
-		sync();
-	}
-
-	/** Opens the system device picker; false when this browser has none. */
-	async pickOutput(): Promise<boolean> {
-		const remote = (this.audio as HTMLAudioElement & { remote?: RemotePlayback }).remote;
-		if (!remote) return false;
-		try {
-			await remote.prompt();
-			return true;
-		} catch (e) {
-			// NotAllowedError = user dismissed the picker, which still counts as shown.
-			return e instanceof DOMException && e.name === 'NotAllowedError';
-		}
-	}
-
-	private setupMediaSession() {
-		if (!('mediaSession' in navigator)) return;
-		const ms = navigator.mediaSession;
-		const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
-			['play', () => this.resume()],
-			['pause', () => this.pause()],
-			// Lock-screen skips while hidden must not await IndexedDB/imports (see onEnded).
-			['previoustrack', () => this.previous(document.hidden)],
-			['nexttrack', () => this.next(document.hidden)],
-			['seekto', (d) => d.seekTime !== undefined && this.seek(d.seekTime)]
-		];
-		// iOS shows ±10s buttons instead of previous/next track whenever seek
-		// handlers exist, so they are only registered on other platforms.
-		if (!isIOS) {
-			handlers.push(
-				['seekbackward', (d) => this.seek(Math.max(0, this.currentTime - (d.seekOffset ?? 10)))],
-				['seekforward', (d) => this.seek(this.currentTime + (d.seekOffset ?? 10))]
-			);
-		}
-		const register = () => {
-			for (const [action, handler] of handlers) {
-				try {
-					ms.setActionHandler(action, handler);
-				} catch {
-					/* action unsupported */
-				}
-			}
-		};
-		// Handlers set before playback starts can leave iOS showing the ±10s layout;
-		// registering on the first 'playing' gives previous/next track.
-		if (isIOS) this.audio.addEventListener('playing', register, { once: true });
-		else register();
-	}
-
-	private updateMetadata() {
-		const song = this.current;
-		if (!song || !('mediaSession' in navigator)) return;
-		const artwork = [300, 600].map((size) => ({
-			src: coverUrl(song.coverArt, size) ?? '',
-			sizes: `${size}x${size}`,
-			type: 'image/jpeg'
-		}));
-		navigator.mediaSession.metadata = new MediaMetadata({
-			title: song.title,
-			artist: song.displayArtist ?? song.artist ?? '',
-			album: song.album ?? '',
-			artwork: song.coverArt ? artwork : []
-		});
-	}
-
-	private updatePosition() {
-		if (!('mediaSession' in navigator) || !this.duration) return;
-		try {
-			navigator.mediaSession.setPositionState({
-				duration: this.duration,
-				position: Math.min(this.currentTime, this.duration),
-				playbackRate: this.audio.playbackRate
-			});
-		} catch {
-			/* invalid state mid-load */
-		}
 	}
 
 	/** Local snapshot always; the server copy (cross-device resume) on pause and track change. */
-	private writeSnapshot() {
-		try {
-			localStorage.setItem(
-				QUEUE_KEY,
-				JSON.stringify({
-					queue: this.queue,
-					index: this.index,
-					time: this.currentTime,
-					shuffle: this.shuffle,
-					repeat: this.repeat,
-					unshuffled: this.unshuffled
-				})
-			);
-		} catch {
-			/* storage full or unavailable */
-		}
-	}
-
 	private persist(toServer = false) {
 		// A replaced instance must never write over its successor's snapshot.
 		if (this.destroyed) return;
 		clearTimeout(this.saveTimer);
-		this.saveTimer = setTimeout(() => this.writeSnapshot(), 300);
+		this.saveTimer = setTimeout(() => this.saveSnapshot(), 300);
 		if (toServer || !this.playing) {
 			savePlayQueue(
 				this.queue.map((s) => s.id),
@@ -741,22 +427,17 @@ class Player {
 	}
 
 	private async restore() {
-		try {
-			const raw = localStorage.getItem(QUEUE_KEY);
-			if (raw) {
-				const saved = JSON.parse(raw);
-				this.queue = saved.queue ?? [];
-				this.index = Math.min(saved.index ?? -1, this.queue.length - 1);
-				this.currentTime = saved.time ?? 0;
-				this.duration = this.current?.duration ?? 0;
-				this.shuffle = !!saved.shuffle;
-				this.repeat = saved.repeat ?? 'off';
-				this.unshuffled = saved.unshuffled ?? null;
-				this.updateMetadata();
-				if (this.queue.length) return;
-			}
-		} catch {
-			/* corrupt snapshot */
+		const saved = readSnapshot();
+		if (saved) {
+			this.queue = saved.queue;
+			this.index = saved.index;
+			this.currentTime = saved.time;
+			this.duration = this.current?.duration ?? 0;
+			this.shuffle = saved.shuffle;
+			this.repeat = saved.repeat;
+			this.unshuffled = saved.unshuffled;
+			setMediaMetadata(this.current);
+			if (this.queue.length) return;
 		}
 		const remote = await getPlayQueue();
 		if (remote && !this.queue.length) {
@@ -764,46 +445,37 @@ class Player {
 			this.index = Math.max(0, remote.songs.findIndex((s) => s.id === remote.current));
 			this.currentTime = remote.position / 1000;
 			this.duration = this.current?.duration ?? 0;
-			this.updateMetadata();
+			setMediaMetadata(this.current);
 		}
 	}
 
+	// ---- lifecycle -----------------------------------------------------------
+
 	/** Stops and releases the audio element so it can never keep playing orphaned. */
 	destroy() {
-		this.writeSnapshot();
+		this.saveSnapshot();
 		this.destroyed = true;
 		this.audio.pause();
 		this.audio.removeAttribute('src');
 		this.audio.load();
-		this.releaseOfflineUrl();
-		for (const prepared of this.preparedOffline.values()) prepared.revoke();
-		this.preparedOffline.clear();
-		this.preparingOffline.clear();
-		this.channel?.close();
-		this.channel = null;
-		document.removeEventListener('visibilitychange', this.onVisibilityChange);
-		this.audioSession?.removeEventListener('statechange', this.onAudioSessionChange);
+		this.prepared.clear();
+		this.singleTab.close();
+		this.autoplay.dispose();
+		this.interruptions.dispose();
 		window.removeEventListener('pagehide', this.onPageHide);
 		clearTimeout(this.saveTimer);
 	}
 
 	/** Called on sign-out. */
 	reset() {
-		this.autoplayBlocked = false;
+		this.autoplay.cancel();
 		this.audio.pause();
 		this.audio.removeAttribute('src');
-		this.releaseOfflineUrl();
-		for (const prepared of this.preparedOffline.values()) prepared.revoke();
-		this.preparedOffline.clear();
-		this.preparingOffline.clear();
+		this.prepared.clear();
 		this.queue = [];
 		this.index = -1;
 		this.unshuffled = null;
-		try {
-			localStorage.removeItem(QUEUE_KEY);
-		} catch {
-			/* ignore */
-		}
+		clearSnapshot();
 	}
 }
 

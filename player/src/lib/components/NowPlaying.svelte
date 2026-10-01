@@ -182,7 +182,7 @@
 	function onTouchStart(e: TouchEvent) {
 		// Queue/Lyrics own their touch gestures. Do not let a scroll that bubbles
 		// from the panel move or dismiss the Now Playing sheet.
-		dismissGesture = !(e.target instanceof Element && e.target.closest('.panel'));
+		dismissGesture = !(e.target instanceof Element && e.target.closest('.panel, .slider'));
 		if (dismissGesture) startY = e.touches[0].clientY;
 	}
 

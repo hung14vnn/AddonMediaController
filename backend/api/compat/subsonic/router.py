@@ -1872,6 +1872,46 @@ async def _get_playlist(c: Ctx) -> Response:
         )
         return c.render("playlist", detail)
 
+    if raw_id.startswith("spotify-playlist-"):
+        playlist_id = raw_id[len("spotify-playlist-"):]
+        from services.spotapi_client import SpotApiClient
+        
+        try:
+            pl = await SpotApiClient().get_playlist(playlist_id)
+        except Exception as e:
+            logger.warning("Spotapi get_playlist failed for %s: %s", playlist_id, e)
+            raise SubsonicError(70, "Spotify Playlist not found") from e
+            
+        tracks = pl.get("_tracks") or []
+        songs = []
+        for st in tracks:
+            if not st.get("id"):
+                continue
+            songs.append(_spotapi_to_child(st))
+            names = [str(a["name"]) for a in (st.get("artists") or [])[:2] if a.get("name")]
+            if st.get("name") and len(_SPOTIFY_TRACK_META) < _SPOTIFY_TRACK_META_MAX:
+                _SPOTIFY_TRACK_META[st["id"]] = (", ".join(names), str(st["name"]))
+                
+        tid = encode("spotify", playlist_id)
+        images = pl.get("images") or []
+        cover = images[0].get("url") if images else ""
+        if cover:
+            _remember_cover("spotify", playlist_id, cover)
+            
+        detail = m.SPlaylist(
+            id=raw_id,
+            name=pl.get("name") or "Spotify Playlist",
+            owner="Spotify",
+            public=True,
+            songCount=len(songs),
+            duration=sum((s.duration or 0) for s in songs),
+            created=None,
+            changed=None,
+            coverArt=tid,
+            entry=songs
+        )
+        return c.render("playlist", detail)
+
     if raw_id.startswith("ytmusic-radiomix-"):
         video_id = raw_id[len("ytmusic-radiomix-"):]
         ytmusic = c.services.ytmusic_stream
@@ -2787,28 +2827,44 @@ async def _get_trending_songs(c: Ctx) -> Response:
 @endpoint("getYtMusicNewReleases")
 async def _get_ytmusic_new_releases(c: Ctx) -> Response:
     count = c.pint("count", 20, minimum=1, maximum=100) or 20
-    ytmusic = c.services.ytmusic_stream
+    from services.spotapi_client import SpotApiClient
+    try:
+        # New Music Friday playlist
+        tracks = await SpotApiClient().get_playlist_tracks("37i9dQZF1DX4JAvHpjipBk")
+    except Exception as e:
+        logger.warning("Spotapi New Music Friday failed: %s", e)
+        return c.render("albumList2", {"album": []})
+
+    seen = set()
     albums = []
-    if ytmusic:
-        for item in await ytmusic.get_new_releases(limit=count):
-            browse_id = item.get("browseId")
-            if not browse_id:
-                continue
-            artists = item.get("artists") or []
-            thumbnails = item.get("thumbnails") or []
-            cover = thumbnails[-1].get("url") if thumbnails else None
-            album_id = f"ytmusic-album-{browse_id}"
-            if cover:
-                _remember_cover("ytmusic", browse_id, cover)
-            albums.append(
-                m.SAlbumID3(
-                    id=album_id,
-                    name=item.get("title") or "YouTube Music Release",
-                    artist=artists[0].get("name") if artists else "YouTube Music",
-                    coverArt=encode("ytmusic", browse_id),
-                    songCount=0,
-                )
+    for st in tracks:
+        al = st.get("album")
+        if not al or not al.get("id"):
+            continue
+        if al["id"] in seen:
+            continue
+        seen.add(al["id"])
+        
+        artists = al.get("artists") or []
+        artist_name = artists[0].get("name") if artists else "Spotify"
+        
+        images = al.get("images") or []
+        cover = images[0].get("url") if images else None
+        if cover:
+            _remember_cover("spotify", al["id"], cover)
+            
+        albums.append(
+            m.SAlbumID3(
+                id=f"spotify-album-{al['id']}",
+                name=al.get("name") or "Spotify Release",
+                artist=artist_name,
+                coverArt=encode("spotify", al["id"]),
+                songCount=0,
             )
+        )
+        if len(albums) >= count:
+            break
+            
     return c.render("albumList2", {"album": albums})
 
 
@@ -2875,36 +2931,68 @@ async def _get_random_radio_mix(c: Ctx) -> Response:
     return c.render("randomRadioMix", {"playlist": playlists})
 
 
+_TRENDING_PLAYLISTS_CACHE = (0.0, [])
+
 @endpoint("getTrendingPlaylists")
 async def _get_trending_playlists(c: Ctx) -> Response:
-    country = (c.p("country") or "VN").strip().upper()
-    if not re.fullmatch(r"[A-Z]{2}", country):
-        country = "VN"
-    ytmusic = c.services.ytmusic_stream
-    if not ytmusic:
-        return c.render("playlists", {"playlist": []})
+    global _TRENDING_PLAYLISTS_CACHE
+    
+    if time.monotonic() - _TRENDING_PLAYLISTS_CACHE[0] < _CHART_TTL and _TRENDING_PLAYLISTS_CACHE[1]:
+        return c.render("playlists", {"playlist": _TRENDING_PLAYLISTS_CACHE[1]})
         
-    charts = await ytmusic.get_chart_playlists(country)
+    from services.spotapi_client import SpotApiClient
+    
+    # Hardcoded trending playlists
+    # Top 50 Global, Top 50 VN, Today's Top Hits, Viral 50 Global
+    trending_ids = [
+        "37i9dQZEVXbMDoHDwVN2tF", # Top 50 Global
+        "37i9dQZEVXbLdGSmz6xilI", # Top 50 VN
+        "37i9dQZF1DXcBWIGoYBM5M", # Today's Top Hits
+        "37i9dQZEVXbLiRSasKsOU9", # Viral 50 Global
+        "37i9dQZEVXbL1Fl8wdLlqn", # Viral 50 VN
+        "37i9dQZF1DX4g8Gs5nUhpp", # Hot Hits Vietnam
+        "37i9dQZF1DX44t7uFCKLWq", # V-Pop Không Thể Thiếu
+        "37i9dQZF1DXbYM3nMM0oPk", # Mega Hit Mix
+    ]
+    
+    client = SpotApiClient()
+    
+    async def fetch_playlist(pid):
+        try:
+            p = await client.get_playlist(pid)
+            return pid, p
+        except Exception as e:
+            logger.warning("Spotapi get_playlist failed for %s: %s", pid, e)
+            return pid, None
+
+    results = await asyncio.gather(*(fetch_playlist(pid) for pid in trending_ids))
+    
     playlists = []
-    for p in charts:
-        if not p.get("playlistId"):
+    for pid, p in results:
+        if not p:
             continue
-        tid = encode("ytmusic", p['playlistId'])
-        url = p.get("thumbnails", [{}])[-1].get("url") if p.get("thumbnails") else ""
-        if url:
-            _remember_cover("ytmusic", p['playlistId'], url)
+            
+        tid = encode("spotify", pid)
+        images = p.get("images") or []
+        cover = images[0].get("url") if images else ""
+        if cover:
+            _remember_cover("spotify", pid, cover)
             
         playlists.append(
             m.SPlaylist(
-                id=f"ytmusic-playlist-{p['playlistId']}",
-                name=p.get("title") or "YouTube Chart",
-                owner="YouTube Music",
+                id=f"spotify-playlist-{pid}",
+                name=p.get("name") or "Spotify Chart",
+                owner="Spotify",
                 public=True,
-                songCount=200,
+                songCount=p.get("tracks", {}).get("total") or 50,
                 duration=0,
                 created=None,
                 changed=None,
                 coverArt=tid,
             )
         )
+        
+    if playlists:
+        _TRENDING_PLAYLISTS_CACHE = (time.monotonic(), playlists)
+        
     return c.render("playlists", {"playlist": playlists})
