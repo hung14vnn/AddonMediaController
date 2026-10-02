@@ -491,7 +491,7 @@ class Player {
 		void fetch(url)
 			.then((res) => (res.ok ? res.blob() : Promise.reject(new Error(`HTTP ${res.status}`))))
 			.then((blob) => {
-				logPlayback('prefetch', `id=${next.id} ${Math.round(blob.size / 1024)}KB ${blob.type} ${Math.round(performance.now() - started)}ms`);
+				logPlayback('prefetch', `id=${next.id} "${next.title}" ${Math.round(blob.size / 1024)}KB ${blob.type} ${Math.round(performance.now() - started)}ms`);
 				if (this.destroyed || this.upcoming()?.id !== next.id || this.nextReady?.id === next.id) return;
 				const blobUrl = URL.createObjectURL(blob);
 				this.nextReady?.copy.revoke();
@@ -499,7 +499,7 @@ class Player {
 			})
 			.catch((e: unknown) => {
 				// Streaming at the track change remains the fallback.
-				logPlayback('prefetch-failed', `id=${next.id} ${String(e)}`);
+				logPlayback('prefetch-failed', `id=${next.id} "${next.title}" ${String(e)}`);
 			});
 	}
 

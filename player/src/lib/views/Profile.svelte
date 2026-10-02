@@ -136,6 +136,7 @@
 	}
 
 	function parseLog(lines: string[]) {
+		let currentTrack = "";
 		return lines.slice(-150).map((line) => {
 			const parts = line.split(" ");
 			const timePart = parts[0] || "";
@@ -161,7 +162,29 @@
 				detailStart = 3;
 			}
 			const detail = parts.slice(detailStart).join(" ");
-			return { raw: line, time, event, hidden, detail };
+
+			let track = currentTrack;
+			if (event === "load") {
+				const match = detail.match(/"(.*?)"/);
+				if (match) {
+					currentTrack = match[1];
+					track = currentTrack;
+				}
+			} else if (event === "prefetch" || event === "prefetch-failed") {
+				const match = detail.match(/"(.*?)"/);
+				if (match) {
+					track = match[1];
+				}
+			}
+
+			return {
+				raw: line,
+				time,
+				event,
+				hidden,
+				detail,
+				currentTrack: track,
+			};
 		});
 	}
 
@@ -179,10 +202,101 @@
 		return "note";
 	}
 
+	function formatEventFriendly(
+		event: string,
+		detail: string,
+		currentTrack: string,
+	) {
+		let name = event;
+		let info = detail;
+
+		switch (event) {
+			case "load":
+				name = "Loading Track";
+				break;
+			case "play":
+				name = "Play Requested";
+				break;
+			case "playing":
+				name = "Playing";
+				break;
+			case "pause":
+				name = "Paused (System/Browser)";
+				break;
+			case "pause-request":
+				name = "Paused (User Action)";
+				break;
+			case "waiting":
+				name = "Buffering...";
+				break;
+			case "canplay":
+				name = "Ready to Play";
+				break;
+			case "emptied":
+				name = "Buffer Emptied / Track Changed";
+				break;
+			case "visibility":
+				name = "App Visibility";
+				info =
+					detail === "hidden"
+						? "Hidden (Background)"
+						: detail === "visible"
+							? "Visible (Foreground)"
+							: detail;
+				break;
+			case "play-rejected":
+				name = "Play Blocked (Auto-play policy)";
+				break;
+			case "prefetch":
+				name = "Prefetching Next Track";
+				break;
+			case "prefetch-failed":
+				name = "Prefetch Failed";
+				break;
+			case "media-error":
+				name = "Audio Error";
+				break;
+			case "stall-reload":
+				name = "Network Stalled, Reloading";
+				break;
+			case "pagehide":
+				name = "App Closed/Hidden";
+				break;
+			case "sleep-timer-stop":
+				name = "Sleep Timer: Playback Stopped";
+				break;
+			case "ended":
+				name = "Track Ended";
+				break;
+			case "suspend":
+				name = "Network Suspended";
+				break;
+			case "abort":
+				name = "Playback Aborted";
+				break;
+			case "timeupdate":
+				name = "Time Update";
+				break;
+		}
+
+		if (info.includes("rs=") && info.includes("ns=")) {
+			info = `[State: ${info}]`;
+		}
+
+		return { name, info, track: currentTrack };
+	}
+
 	const parsedLog = $derived(parseLog(playbackLog));
+
+	import { tick } from "svelte";
 
 	function refreshPlaybackLog() {
 		playbackLog = readPlaybackLog();
+		tick().then(() => {
+			if (logEntriesContainer)
+				logEntriesContainer.scrollTop =
+					logEntriesContainer.scrollHeight;
+		});
 	}
 
 	async function copyPlaybackLog() {
@@ -213,6 +327,8 @@
 		ui.me?.username ?? session?.username ?? "Account",
 	);
 	const isAdmin = $derived(!!ui.me?.adminRole);
+
+	let logEntriesContainer = $state<HTMLDivElement>();
 </script>
 
 <div class="page">
@@ -382,7 +498,18 @@
 			</button>
 		</div>
 		{#if playbackLog.length}
-			<details class="log">
+			<details
+				class="log"
+				ontoggle={(e) => {
+					if (e.currentTarget.open) {
+						tick().then(() => {
+							if (logEntriesContainer)
+								logEntriesContainer.scrollTop =
+									logEntriesContainer.scrollHeight;
+						});
+					}
+				}}
+			>
 				<summary>View log details</summary>
 				<div class="log-actions">
 					<button
@@ -403,8 +530,13 @@
 						<Icon name="refresh" size={16} />
 					</button>
 				</div>
-				<div class="log-entries">
+				<div class="log-entries" bind:this={logEntriesContainer}>
 					{#each parsedLog as entry}
+						{@const friendly = formatEventFriendly(
+							entry.event,
+							entry.detail,
+							entry.currentTrack,
+						)}
 						<div class="log-entry">
 							<div class="time">{entry.time}</div>
 							<Icon
@@ -413,12 +545,16 @@
 								class="event-icon"
 							/>
 							<div class="event-details">
-								<span class="event-name">{entry.event}</span>
+								<span class="event-name">{friendly.name}</span>
 								{#if entry.hidden}<span class="badge small"
 										>Hidden</span
 									>{/if}
-								{#if entry.detail}<span class="event-detail"
-										>{entry.detail}</span
+								{#if friendly.track && entry.event !== "load"}<span
+										class="event-track"
+										>· {friendly.track}</span
+									>{/if}
+								{#if friendly.info}<span class="event-detail"
+										>{friendly.info}</span
 									>{/if}
 							</div>
 						</div>
@@ -554,6 +690,10 @@
 	.event-name {
 		font-weight: 600;
 		color: var(--text);
+	}
+	.event-track {
+		color: var(--text-2);
+		font-style: italic;
 	}
 	.event-detail {
 		color: var(--text-2);
