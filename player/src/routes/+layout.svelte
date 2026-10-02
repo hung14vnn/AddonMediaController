@@ -1,26 +1,28 @@
 <script lang="ts">
-	import { afterNavigate } from '$app/navigation';
-	import { page } from '$app/state';
-	import { onMount, type Snippet } from 'svelte';
-	import '../app.css';
-	import MiniPlayer from '$lib/components/MiniPlayer.svelte';
-	import NowPlaying from '$lib/components/NowPlaying.svelte';
-	import Overlays from '$lib/components/Overlays.svelte';
-	import PlayerBar from '$lib/components/PlayerBar.svelte';
-	import Sidebar from '$lib/components/Sidebar.svelte';
-	import TabBar from '$lib/components/TabBar.svelte';
-	import { getPlayer } from '$lib/player.svelte';
-	import { pageIn } from '$lib/motion';
-	import { auth } from '$lib/session.svelte';
-	import { ui } from '$lib/ui.svelte';
-	import Login from '$lib/views/Login.svelte';
+	import { afterNavigate } from "$app/navigation";
+	import { page } from "$app/state";
+	import { onMount, type Snippet } from "svelte";
+	import "../app.css";
+	import MiniPlayer from "$lib/components/MiniPlayer.svelte";
+	import NowPlaying from "$lib/components/NowPlaying.svelte";
+	import Overlays from "$lib/components/Overlays.svelte";
+	import PlayerBar from "$lib/components/PlayerBar.svelte";
+	import Sidebar from "$lib/components/Sidebar.svelte";
+	import TabBar from "$lib/components/TabBar.svelte";
+	import { getPlayer } from "$lib/player.svelte";
+	import { pageIn } from "$lib/motion";
+	import { auth } from "$lib/session.svelte";
+	import { ui } from "$lib/ui.svelte";
+	import Login from "$lib/views/Login.svelte";
 
 	let { children }: { children: Snippet } = $props();
 
 	let main: HTMLElement | undefined = $state();
 
 	// Remount the view per path so each page starts fresh (search keeps its instance).
-	const viewKey = $derived(page.route.id === '/search' ? 'search' : page.url.hash);
+	const viewKey = $derived(
+		page.route.id === "/search" ? "search" : page.url.hash,
+	);
 
 	$effect(() => {
 		if (auth.signedIn) {
@@ -31,27 +33,31 @@
 
 	// <main> is the scroll container, so SvelteKit's window scroll handling doesn't apply.
 	afterNavigate(({ from, to }) => {
-		if (from?.route.id === '/search' && to?.route.id === '/search') return;
+		if (from?.route.id === "/search" && to?.route.id === "/search") return;
 		main?.scrollTo({ top: 0 });
 	});
 
 	onMount(() => {
-		if ('serviceWorker' in navigator && import.meta.env.PROD) {
-			navigator.serviceWorker.register('./service-worker.js').catch(() => {
-				/* offline support is optional */
-			});
+		if ("serviceWorker" in navigator && import.meta.env.PROD) {
+			navigator.serviceWorker
+				.register("./service-worker.js")
+				.catch(() => {
+					/* offline support is optional */
+				});
 		}
 	});
 
 	function onKey(e: KeyboardEvent) {
 		const t = e.target as HTMLElement;
-		if (t.closest('input, textarea, select, [contenteditable]')) return;
+		if (t.closest("input, textarea, select, [contenteditable]")) return;
 		const player = getPlayer();
-		if (e.code === 'Space') {
+		if (e.code === "Space") {
 			e.preventDefault();
 			player.toggle();
-		} else if ((e.metaKey || e.ctrlKey) && e.key === 'ArrowRight') player.next();
-		else if ((e.metaKey || e.ctrlKey) && e.key === 'ArrowLeft') player.previous();
+		} else if ((e.metaKey || e.ctrlKey) && e.key === "ArrowRight")
+			player.next();
+		else if ((e.metaKey || e.ctrlKey) && e.key === "ArrowLeft")
+			player.previous();
 	}
 </script>
 
@@ -87,8 +93,8 @@
 		grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
 		grid-template-rows: var(--bar-h) minmax(0, 1fr);
 		grid-template-areas:
-			'side bar'
-			'side main';
+			"side bar"
+			"side main";
 	}
 	.side {
 		grid-area: side;
@@ -104,7 +110,6 @@
 		overflow-x: hidden;
 		min-height: 0;
 		scrollbar-gutter: stable;
-		scrollbar-width: thin;
 	}
 	.dock {
 		display: none;
@@ -121,7 +126,6 @@
 		main {
 			height: 100%;
 			padding-bottom: calc(64px + env(safe-area-inset-bottom));
-			scrollbar-width: thin;
 		}
 		.has-mini main {
 			padding-bottom: calc(128px + env(safe-area-inset-bottom));

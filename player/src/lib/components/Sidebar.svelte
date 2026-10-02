@@ -1,30 +1,39 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
-	import { href, router } from '../router.svelte';
-	import { getSession } from '../api';
-	import { ui } from '../ui.svelte';
-	import Avatar from './Avatar.svelte';
-	import Icon from './Icon.svelte';
+	import { onDestroy } from "svelte";
+	import { href, router } from "../router.svelte";
+	import { getSession } from "../api";
+	import { ui } from "../ui.svelte";
+	import Avatar from "./Avatar.svelte";
+	import Icon from "./Icon.svelte";
 
 	const session = getSession();
 
-	let query = $state(router.route.name === 'search' ? router.route.query : '');
+	let query = $state(
+		router.route.name === "search" ? router.route.query : "",
+	);
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let field: HTMLInputElement | undefined = $state();
 
 	// TỐI ƯU 1: Đồng bộ giá trị input khi router.route thay đổi (ví dụ: người dùng bấm Back/Forward)
 	// Navigation is async, so skip while focused or a landing navigation clobbers fresh keystrokes.
 	$effect(() => {
-		if (router.route.name === 'search' && document.activeElement !== field) {
-			query = router.route.query ?? '';
+		if (
+			router.route.name === "search" &&
+			document.activeElement !== field
+		) {
+			query = router.route.query ?? "";
 		}
 	});
 
 	function onSearch() {
 		clearTimeout(timer);
 		timer = setTimeout(
-			() => router.go(`/search?q=${encodeURIComponent(query)}`, router.route.name === 'search'),
-			300
+			() =>
+				router.go(
+					`/search?q=${encodeURIComponent(query)}`,
+					router.route.name === "search",
+				),
+			300,
 		);
 	}
 
@@ -34,24 +43,34 @@
 	});
 
 	const r = $derived(router.route);
-	const activeId = $derived('id' in r ? r.id : null);
+	const activeId = $derived("id" in r ? r.id : null);
 
 	const top = [
-		{ path: '/', name: 'home', label: 'Home', icon: 'home' },
-		{ path: '/browse', name: 'browse', label: 'Browse', icon: 'browse' }
+		{ path: "/", name: "home", label: "Home", icon: "home" },
+		{ path: "/browse", name: "browse", label: "Browse", icon: "browse" },
 	];
 	const library = [
-		{ path: '/recent', name: 'recent', label: 'Recently Added', icon: 'clock' },
-		{ path: '/artists', name: 'artists', label: 'Artists', icon: 'mic' },
-		{ path: '/albums', name: 'albums', label: 'Albums', icon: 'album' },
-		{ path: '/songs', name: 'songs', label: 'Songs', icon: 'note' },
-		{ path: '/downloads', name: 'downloads', label: 'Downloaded', icon: 'download' },
-		{ path: '/loved', name: 'loved', label: 'Favorites', icon: 'star' },
-		{ path: '/genres', name: 'genres', label: 'Genres', icon: 'browse' }
+		{
+			path: "/recent",
+			name: "recent",
+			label: "Recently Added",
+			icon: "clock",
+		},
+		{ path: "/artists", name: "artists", label: "Artists", icon: "mic" },
+		{ path: "/albums", name: "albums", label: "Albums", icon: "album" },
+		{ path: "/songs", name: "songs", label: "Songs", icon: "note" },
+		{
+			path: "/downloads",
+			name: "downloads",
+			label: "Downloaded",
+			icon: "download",
+		},
+		{ path: "/loved", name: "loved", label: "Favorites", icon: "star" },
+		{ path: "/genres", name: "genres", label: "Genres", icon: "browse" },
 	];
 
 	async function newPlaylist() {
-		const name = prompt('Playlist name', 'New Playlist');
+		const name = prompt("Playlist name", "New Playlist");
 		if (name?.trim()) await ui.createPlaylistWith(name.trim(), []);
 	}
 </script>
@@ -70,7 +89,9 @@
 			placeholder="Search"
 			bind:value={query}
 			oninput={onSearch}
-			onfocus={() => router.route.name !== 'search' && router.go(`/search?q=${encodeURIComponent(query)}`)}
+			onfocus={() =>
+				router.route.name !== "search" &&
+				router.go(`/search?q=${encodeURIComponent(query)}`)}
 		/>
 	</label>
 
@@ -97,25 +118,41 @@
 		</ul>
 
 		<h4>
-			<a href="#/playlists" class:active-h={r.name === 'playlists'}>Playlists</a>
-			<button aria-label="New Playlist" onclick={newPlaylist}><Icon name="plus" size={16} /></button>
+			<a href="#/playlists" class:active-h={r.name === "playlists"}
+				>Playlists</a
+			>
+			<button aria-label="New Playlist" onclick={newPlaylist}
+				><Icon name="plus" size={16} /></button
+			>
 		</h4>
 		<ul>
 			{#each ui.playlists as pl (pl.id)}
 				<li>
-					<a href={href.playlist(pl.id)} class:active={r.name === 'playlist' && activeId === pl.id}>
-						<Icon name="playlist" size={18} /><span class="ellipsis">{pl.name}</span>
+					<a
+						href={href.playlist(pl.id)}
+						class:active={r.name === "playlist" &&
+							activeId === pl.id}
+					>
+						<Icon name="playlist" size={18} /><span class="ellipsis"
+							>{pl.name}</span
+						>
 					</a>
 				</li>
 			{/each}
 		</ul>
 	</div>
 
-	<a class="me" href="#/profile" class:active={r.name === 'profile'}>
+	<a class="me" href="#/profile" class:active={r.name === "profile"}>
 		<Avatar username={ui.me?.username ?? session?.username} size={28} />
 		<span class="me-text">
-			<span class="ellipsis">{ui.me?.username ?? session?.username ?? 'Account'}</span>
-			<small>{ui.me?.adminRole ? 'Administrator' : 'Account & Settings'}</small>
+			<span class="ellipsis"
+				>{ui.me?.username ?? session?.username ?? "Account"}</span
+			>
+			<small
+				>{ui.me?.adminRole
+					? "Administrator"
+					: "Account & Settings"}</small
+			>
 		</span>
 	</a>
 </nav>
@@ -127,7 +164,8 @@
 		flex-direction: column;
 		padding: 16px 10px 10px;
 		background: var(--sidebar, rgba(28, 28, 30, 0.85));
-		border-right: 0.5px solid var(--hairline);	}
+		border-right: 0.5px solid var(--hairline);
+	}
 
 	.brand {
 		display: flex;
@@ -169,7 +207,9 @@
 	}
 
 	.search:focus-within {
-		box-shadow: 0 0 0 3px var(--accent-soft), inset 0 0 0 1px var(--accent);
+		box-shadow:
+			0 0 0 3px var(--accent-soft),
+			inset 0 0 0 1px var(--accent);
 	}
 
 	.search input {
@@ -186,7 +226,6 @@
 	.scroll {
 		flex: 1;
 		overflow-y: auto;
-		scrollbar-width: thin;
 	}
 
 	ul {
@@ -223,7 +262,9 @@
 		width: 22px;
 		height: 22px;
 		border-radius: 5px;
-		transition: color 0.15s ease, background-color 0.15s ease;
+		transition:
+			color 0.15s ease,
+			background-color 0.15s ease;
 	}
 
 	h4 button:hover {

@@ -6,27 +6,27 @@
 		SubsonicError,
 		startScan,
 		type ScanStatus,
-		type ServerInfo
-	} from '../api';
-	import Avatar from '../components/Avatar.svelte';
-	import Icon from '../components/Icon.svelte';
-	import { plural } from '../format';
-	import { ui } from '../ui.svelte';
+		type ServerInfo,
+	} from "../api";
+	import Avatar from "../components/Avatar.svelte";
+	import Icon from "../components/Icon.svelte";
+	import { plural } from "../format";
+	import { ui } from "../ui.svelte";
 
 	let { onsignout }: { onsignout: () => void } = $props();
 
 	const session = getSession();
 	const host = (() => {
 		try {
-			return new URL(session?.base ?? '', location.href).host;
+			return new URL(session?.base ?? "", location.href).host;
 		} catch {
-			return session?.base ?? '';
+			return session?.base ?? "";
 		}
 	})();
 
 	let server = $state<ServerInfo | null>(null);
 	let scan = $state<ScanStatus | null>(null);
-	let scanError = $state('');
+	let scanError = $state("");
 	let starting = $state(false);
 	let pollTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -38,30 +38,32 @@
 	async function refreshScan(wasScanning = false) {
 		try {
 			scan = await getScanStatus();
-			scanError = '';
+			scanError = "";
 		} catch (e) {
-			scanError = e instanceof Error ? e.message : 'Couldn’t read scan status';
+			scanError =
+				e instanceof Error ? e.message : "Couldn’t read scan status";
 			return;
 		}
 		clearTimeout(pollTimer);
-		if (scan.scanning) pollTimer = setTimeout(() => refreshScan(true), 2000);
-		else if (wasScanning) ui.showToast('Library scan finished');
+		if (scan.scanning)
+			pollTimer = setTimeout(() => refreshScan(true), 2000);
+		else if (wasScanning) ui.showToast("Library scan finished");
 	}
 
 	async function rescan() {
 		starting = true;
-		scanError = '';
+		scanError = "";
 		try {
 			scan = await startScan();
-			ui.showToast('Library scan started');
+			ui.showToast("Library scan started");
 			refreshScan(true);
 		} catch (e) {
 			scanError =
 				e instanceof SubsonicError && e.code === 50
-					? 'Only administrators can start a library scan.'
+					? "Only administrators can start a library scan."
 					: e instanceof Error
 						? e.message
-						: 'Couldn’t start the scan';
+						: "Couldn’t start the scan";
 		} finally {
 			starting = false;
 		}
@@ -74,15 +76,22 @@
 	async function clearArtCache() {
 		try {
 			const keys = await caches.keys();
-			await Promise.all(keys.filter((k) => k.startsWith('art-')).map((k) => caches.delete(k)));
+			await Promise.all(
+				keys
+					.filter((k) => k.startsWith("art-"))
+					.map((k) => caches.delete(k)),
+			);
 			cacheCleared = true;
-			ui.showToast('Artwork cache cleared');
+			ui.showToast("Artwork cache cleared");
 		} catch {
-			ui.showToast('Couldn’t clear the cache');
+			ui.showToast("Couldn’t clear the cache");
 		}
 	}
 
-	import { deleteAllOfflineTracks, listOfflineTrackMetadata } from '../offline';
+	import {
+		deleteAllOfflineTracks,
+		listOfflineTrackMetadata,
+	} from "../offline";
 	let offlineCount = $state<number | null>(null);
 	let clearingDownloads = $state(false);
 
@@ -96,29 +105,93 @@
 
 	async function clearDownloads() {
 		if (!session?.username) return;
-		if (!confirm('Remove all downloaded songs from this device?')) return;
+		if (!confirm("Remove all downloaded songs from this device?")) return;
 		clearingDownloads = true;
 		try {
 			await deleteAllOfflineTracks(session.username);
 			offlineCount = 0;
-			ui.showToast('Removed downloaded songs');
+			ui.showToast("Removed downloaded songs");
 		} catch {
-			ui.showToast('Couldn’t remove downloaded songs');
+			ui.showToast("Couldn’t remove downloaded songs");
 		} finally {
 			clearingDownloads = false;
 		}
 	}
 
-	import { clearPlaybackLog, readPlaybackLog } from '../playback/debugLog';
+	import {
+		clearPlaybackLog,
+		readPlaybackLog,
+		isPlaybackLogEnabled,
+		setPlaybackLogEnabled,
+	} from "../playback/debugLog";
 	let playbackLog = $state(readPlaybackLog());
+	let logEnabled = $state(isPlaybackLogEnabled());
+
+	function togglePlaybackLog() {
+		logEnabled = !logEnabled;
+		setPlaybackLogEnabled(logEnabled);
+		if (!logEnabled) {
+			resetPlaybackLog();
+		}
+	}
+
+	function parseLog(lines: string[]) {
+		return lines.slice(-150).map((line) => {
+			const parts = line.split(" ");
+			const timePart = parts[0] || "";
+			let time = timePart.split(".")[0] || "";
+
+			if (time) {
+				const [h, m, s] = time.split(":").map(Number);
+				if (!isNaN(h) && !isNaN(m) && !isNaN(s)) {
+					const d = new Date();
+					d.setUTCHours(h, m, s, 0);
+					const localH = d.getHours().toString().padStart(2, "0");
+					const localM = d.getMinutes().toString().padStart(2, "0");
+					const localS = d.getSeconds().toString().padStart(2, "0");
+					time = `${localH}:${localM}:${localS}`;
+				}
+			}
+
+			const event = parts[1] || "";
+			let hidden = false;
+			let detailStart = 2;
+			if (parts[2] === "[hidden]") {
+				hidden = true;
+				detailStart = 3;
+			}
+			const detail = parts.slice(detailStart).join(" ");
+			return { raw: line, time, event, hidden, detail };
+		});
+	}
+
+	function getEventIcon(event: string) {
+		const ev = event.toLowerCase();
+		if (ev.includes("play")) return "play";
+		if (ev.includes("pause")) return "pause";
+		if (ev.includes("error") || ev.includes("abort") || ev.includes("fail"))
+			return "close";
+		if (ev === "ended" || ev === "next") return "next";
+		if (ev === "waiting" || ev === "stalled" || ev.includes("load"))
+			return "clock";
+		if (ev.includes("visibility") || ev.includes("pagehide"))
+			return "browse";
+		return "note";
+	}
+
+	const parsedLog = $derived(parseLog(playbackLog));
+
+	function refreshPlaybackLog() {
+		playbackLog = readPlaybackLog();
+	}
 
 	async function copyPlaybackLog() {
 		playbackLog = readPlaybackLog();
 		try {
-			await navigator.clipboard.writeText(playbackLog.join('\n'));
-			ui.showToast('Playback log copied');
+			await navigator.clipboard.writeText(playbackLog.join("\n"));
+			ui.showToast("Playback log copied");
 		} catch {
-			ui.showToast('Couldn’t copy — select the log below instead');
+			ui.showToast("Couldn’t copy — select the log below instead");
 		}
 	}
 
@@ -128,10 +201,17 @@
 	}
 
 	function signOut() {
-		if (confirm('Sign out of hify? Your queue on this device will be cleared.')) onsignout();
+		if (
+			confirm(
+				"Sign out of hify? Your queue on this device will be cleared.",
+			)
+		)
+			onsignout();
 	}
 
-	const displayName = $derived(ui.me?.username ?? session?.username ?? 'Account');
+	const displayName = $derived(
+		ui.me?.username ?? session?.username ?? "Account",
+	);
 	const isAdmin = $derived(!!ui.me?.adminRole);
 </script>
 
@@ -143,8 +223,11 @@
 		<div class="who">
 			<h2>{displayName}</h2>
 			<div class="badges">
-				{#if isAdmin}<span class="badge accent">Administrator</span>{/if}
-				<span class="badge">{session?.apiKey ? 'API key' : 'App password'}</span>
+				{#if isAdmin}<span class="badge accent">Administrator</span
+					>{/if}
+				<span class="badge"
+					>{session?.apiKey ? "API key" : "App password"}</span
+				>
 			</div>
 			<span class="muted host">{host}</span>
 		</div>
@@ -153,7 +236,9 @@
 	<h3 class="group-title">Library</h3>
 	<div class="group">
 		<div class="row">
-			<span class="icon-box scan" class:spinning={scan?.scanning}><Icon name="refresh" size={18} /></span>
+			<span class="icon-box scan" class:spinning={scan?.scanning}
+				><Icon name="refresh" size={18} /></span
+			>
 			<div class="text">
 				<span class="label">Library Scan</span>
 				<span class="detail">
@@ -162,9 +247,21 @@
 					{:else if !scan}
 						Checking…
 					{:else if scan.scanning}
-						Scanning{#if scan.count}&nbsp;· {plural(scan.count, 'item').replace(String(scan.count), scan.count.toLocaleString())}{/if}…
+						Scanning{#if scan.count}&nbsp;· {plural(
+								scan.count,
+								"item",
+							).replace(
+								String(scan.count),
+								scan.count.toLocaleString(),
+							)}{/if}…
 					{:else}
-						Up to date{#if scan.count}&nbsp;· {plural(scan.count, 'item').replace(String(scan.count), scan.count.toLocaleString())}{/if}
+						Up to date{#if scan.count}&nbsp;· {plural(
+								scan.count,
+								"item",
+							).replace(
+								String(scan.count),
+								scan.count.toLocaleString(),
+							)}{/if}
 					{/if}
 				</span>
 			</div>
@@ -173,7 +270,11 @@
 				disabled={starting || !!scan?.scanning}
 				onclick={rescan}
 			>
-				{scan?.scanning ? 'Scanning…' : starting ? 'Starting…' : 'Rescan'}
+				{scan?.scanning
+					? "Scanning…"
+					: starting
+						? "Starting…"
+						: "Rescan"}
 			</button>
 		</div>
 		{#if scan?.scanning}
@@ -186,15 +287,30 @@
 		<div class="row">
 			<span class="icon-box"><Icon name="server" size={18} /></span>
 			<div class="text">
-				<span class="label">{server?.type ?? 'Subsonic server'}</span>
+				<span class="label">{server?.type ?? "Subsonic server"}</span>
 				<span class="detail">{host}</span>
 			</div>
 		</div>
 		<dl>
-			{#if server?.serverVersion}<div><dt>Server version</dt><dd>{server.serverVersion}</dd></div>{/if}
-			{#if server?.version}<div><dt>API version</dt><dd>{server.version}{#if server.openSubsonic}&nbsp;· OpenSubsonic{/if}</dd></div>{/if}
-			{#if ui.me?.maxBitRate}<div><dt>Max bitrate</dt><dd>{ui.me.maxBitRate} kbps</dd></div>{/if}
-			<div><dt>Scrobbling</dt><dd>{ui.me?.scrobblingEnabled === false ? 'Off' : 'On'}</dd></div>
+			{#if server?.serverVersion}<div>
+					<dt>Server version</dt>
+					<dd>{server.serverVersion}</dd>
+				</div>{/if}
+			{#if server?.version}<div>
+					<dt>API version</dt>
+					<dd>
+						{server.version}{#if server.openSubsonic}&nbsp;·
+							OpenSubsonic{/if}
+					</dd>
+				</div>{/if}
+			{#if ui.me?.maxBitRate}<div>
+					<dt>Max bitrate</dt>
+					<dd>{ui.me.maxBitRate} kbps</dd>
+				</div>{/if}
+			<div>
+				<dt>Scrobbling</dt>
+				<dd>{ui.me?.scrobblingEnabled === false ? "Off" : "On"}</dd>
+			</div>
 		</dl>
 	</div>
 
@@ -204,18 +320,39 @@
 			<span class="icon-box"><Icon name="album" size={18} /></span>
 			<div class="text">
 				<span class="label">Artwork Cache</span>
-				<span class="detail">Cover art saved for offline use on this device.</span>
+				<span class="detail"
+					>Cover art saved for offline use on this device.</span
+				>
 			</div>
-			<button class="btn small secondary" disabled={cacheCleared} onclick={clearArtCache}>{cacheCleared ? 'Cleared' : 'Clear'}</button>
+			<button
+				class="btn small secondary"
+				disabled={cacheCleared}
+				onclick={clearArtCache}
+				>{cacheCleared ? "Cleared" : "Clear"}</button
+			>
 		</div>
 		<div class="row" style="border-top: 0.5px solid var(--hairline);">
-			<span class="icon-box" style="background: #34c759;"><Icon name="download" size={18} /></span>
+			<span class="icon-box" style="background: #34c759;"
+				><Icon name="download" size={18} /></span
+			>
 			<div class="text">
 				<span class="label">Downloaded Songs</span>
-				<span class="detail">{offlineCount !== null ? (offlineCount === 0 ? 'No songs' : plural(offlineCount, 'song')) : 'Checking…'}</span>
+				<span class="detail"
+					>{offlineCount !== null
+						? offlineCount === 0
+							? "No songs"
+							: plural(offlineCount, "song")
+						: "Checking…"}</span
+				>
 			</div>
-			<button class="btn small secondary" disabled={offlineCount === null || offlineCount === 0 || clearingDownloads} onclick={clearDownloads}>
-				{clearingDownloads ? 'Clearing…' : 'Clear'}
+			<button
+				class="btn small secondary"
+				disabled={offlineCount === null ||
+					offlineCount === 0 ||
+					clearingDownloads}
+				onclick={clearDownloads}
+			>
+				{clearingDownloads ? "Clearing…" : "Clear"}
 			</button>
 		</div>
 	</div>
@@ -223,24 +360,78 @@
 	<h3 class="group-title">Diagnostics</h3>
 	<div class="group">
 		<div class="row">
-			<span class="icon-box"><Icon name="refresh" size={18} /></span>
+			<span class="icon-box" style="background: #a2845e;"
+				><Icon name="list" size={18} /></span
+			>
 			<div class="text">
 				<span class="label">Playback Log</span>
-				<span class="detail">{playbackLog.length ? plural(playbackLog.length, 'event') : 'Empty'} — what the player did.</span>
+				<span class="detail">
+					{logEnabled ? "Recording" : "Paused"} ·
+					{playbackLog.length
+						? plural(playbackLog.length, "event")
+						: "Empty"}
+				</span>
 			</div>
-			<button class="btn small secondary" disabled={!playbackLog.length} onclick={copyPlaybackLog}>Copy</button>
-			<button class="btn small secondary" disabled={!playbackLog.length} onclick={resetPlaybackLog}>Clear</button>
+			<button
+				class="btn small"
+				class:secondary={logEnabled}
+				class:accent={!logEnabled}
+				onclick={togglePlaybackLog}
+			>
+				{logEnabled ? "Disable" : "Enable"}
+			</button>
 		</div>
 		{#if playbackLog.length}
 			<details class="log">
-				<summary>Show</summary>
-				<pre>{playbackLog.slice(-150).join('\n')}</pre>
+				<summary>View log details</summary>
+				<div class="log-actions">
+					<button
+						class="btn small secondary"
+						onclick={copyPlaybackLog}>Copy to Clipboard</button
+					>
+					<button
+						class="btn small secondary danger"
+						onclick={resetPlaybackLog}>Clear Log</button
+					>
+					<button
+						class="btn small secondary"
+						style="padding: 0 8px; margin-left: auto;"
+						title="Refresh log"
+						aria-label="Refresh"
+						onclick={refreshPlaybackLog}
+					>
+						<Icon name="refresh" size={16} />
+					</button>
+				</div>
+				<div class="log-entries">
+					{#each parsedLog as entry}
+						<div class="log-entry">
+							<div class="time">{entry.time}</div>
+							<Icon
+								name={getEventIcon(entry.event)}
+								size={14}
+								class="event-icon"
+							/>
+							<div class="event-details">
+								<span class="event-name">{entry.event}</span>
+								{#if entry.hidden}<span class="badge small"
+										>Hidden</span
+									>{/if}
+								{#if entry.detail}<span class="event-detail"
+										>{entry.detail}</span
+									>{/if}
+							</div>
+						</div>
+					{/each}
+				</div>
 			</details>
 		{/if}
 	</div>
 
 	<div class="pad signout">
-		<button class="signout-btn" onclick={signOut}><Icon name="signOut" size={18} />Sign Out</button>
+		<button class="signout-btn" onclick={signOut}
+			><Icon name="signOut" size={18} />Sign Out</button
+		>
 	</div>
 </div>
 
@@ -304,18 +495,76 @@
 	}
 	.log summary {
 		cursor: pointer;
-		color: var(--text-2);
+		color: var(--accent);
 		font-size: 13px;
+		font-weight: 500;
+		outline: none;
 	}
-	.log pre {
-		margin: 8px 0 0;
-		max-height: 320px;
-		overflow: auto;
+	.log-actions {
+		display: flex;
+		gap: 8px;
+		margin-top: 12px;
+	}
+	.log-actions .btn.danger {
+		color: #ff3b30;
+	}
+	.log-entries {
+		margin: 12px 0 0;
+		padding: 4px 0;
+		background: var(--bg2);
+		border-radius: 8px;
+		max-height: 400px;
+		overflow-y: auto;
+		display: flex;
+		flex-direction: column;
+	}
+	.log-entry {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		padding: 6px 12px;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+			monospace;
+		font-size: 12px;
+		line-height: 1.4;
+		border-bottom: 1px solid var(--hairline);
+	}
+	.log-entry:last-child {
+		border-bottom: none;
+	}
+	.log-entry .time {
+		color: var(--text-muted);
+		flex-shrink: 0;
 		font-size: 11px;
-		line-height: 1.45;
-		white-space: pre-wrap;
-		word-break: break-all;
-		user-select: text;
+		margin-top: 1px;
+	}
+	.log-entry :global(.event-icon) {
+		color: var(--text-2);
+		margin-top: 2px;
+		flex-shrink: 0;
+	}
+	.event-details {
+		display: flex;
+		flex-wrap: wrap;
+		column-gap: 6px;
+		row-gap: 2px;
+		align-items: center;
+		min-width: 0;
+	}
+	.event-name {
+		font-weight: 600;
+		color: var(--text);
+	}
+	.event-detail {
+		color: var(--text-2);
+		word-break: break-word;
+	}
+	.badge.small {
+		font-size: 9px;
+		padding: 1px 4px;
+		border-radius: 4px;
+		text-transform: uppercase;
+		font-weight: 700;
 	}
 	.row {
 		display: flex;
