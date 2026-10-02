@@ -1,28 +1,31 @@
 import { coverUrl } from '../api';
 import type { Song } from '../types';
-import { isIOS } from './platform';
 
 export interface MediaSessionControls {
 	play(): void;
 	pause(): void;
-	/** `backgroundSafe`: the page is hidden, so the change must not await IndexedDB/imports. */
-	previous(backgroundSafe: boolean): void;
-	next(backgroundSafe: boolean): void;
+	previous(): void;
+	next(): void;
 	seek(seconds: number): void;
 	currentTime(): number;
 }
 
 const supported = () => typeof navigator !== 'undefined' && 'mediaSession' in navigator;
 
+/** iPadOS reports a Mac user agent; touch support tells them apart. */
+const isIOS =
+	typeof navigator !== 'undefined' &&
+	(/iphone|ipad|ipod/i.test(navigator.userAgent) ||
+		(/mac/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
+
 /** Lock-screen / Control Centre / notification controls. */
 export function setupMediaSession(audio: HTMLAudioElement, controls: MediaSessionControls) {
 	if (!supported()) return;
-	const ms = navigator.mediaSession;
 	const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
 		['play', () => controls.play()],
 		['pause', () => controls.pause()],
-		['previoustrack', () => controls.previous(document.hidden)],
-		['nexttrack', () => controls.next(document.hidden)],
+		['previoustrack', () => controls.previous()],
+		['nexttrack', () => controls.next()],
 		['seekto', (d) => d.seekTime !== undefined && controls.seek(d.seekTime)]
 	];
 	// iOS shows ±10s buttons instead of previous/next track whenever seek
@@ -36,16 +39,16 @@ export function setupMediaSession(audio: HTMLAudioElement, controls: MediaSessio
 	const register = () => {
 		for (const [action, handler] of handlers) {
 			try {
-				ms.setActionHandler(action, handler);
+				navigator.mediaSession.setActionHandler(action, handler);
 			} catch {
 				/* action unsupported */
 			}
 		}
 	};
-	// Handlers set before playback starts can leave iOS showing the ±10s layout;
-	// registering on the first 'playing' gives previous/next track.
+	register();
+	// Handlers set before playback starts can still leave iOS on the ±10s layout;
+	// registering again on the first 'playing' gives previous/next track.
 	if (isIOS) audio.addEventListener('playing', register, { once: true });
-	else register();
 }
 
 export function setMediaMetadata(song: Song | null) {

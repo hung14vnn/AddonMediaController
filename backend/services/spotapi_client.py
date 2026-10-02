@@ -221,7 +221,7 @@ def _album_item(value: Any, track_values: list[Any] | None = None) -> dict[str, 
 
 def _search_items(raw: Mapping[str, Any], kind: str) -> list[dict[str, Any]]:
     search = _mapping(_mapping(raw.get("data")).get("searchV2"))
-    key = {"tracks": "tracksV2", "artists": "artists", "albums": "albumsV2"}[kind]
+    key = {"tracks": "tracksV2", "artists": "artists", "albums": "albumsV2", "playlists": "playlists"}[kind]
     return _items(search.get(key))
 
 
@@ -314,7 +314,7 @@ class SpotApiClient:
 
     async def search_all(
         self, query: str, limit: int = 5
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
         """Artists, albums and tracks for one query with two upstream requests.
 
         The artist and song searches run concurrently, and albums are derived
@@ -327,7 +327,20 @@ class SpotApiClient:
         (artists, _has_more), raw = await asyncio.gather(artists_task, raw_task)
         tracks = [_track_item(item) for item in _search_items(raw, "tracks")][:limit]
         albums = self._albums_from_raw(raw)[:limit]
-        return artists, albums, tracks
+        playlists_raw = _search_items(raw, "playlists")[:limit]
+        playlists = []
+        for item in playlists_raw:
+            p = _unwrap_data(item)
+            pid = _spotify_id(p, "playlist")
+            if pid:
+                playlists.append({
+                    "id": pid,
+                    "name": p.get("name", "Spotify Playlist"),
+                    "description": p.get("description", ""),
+                    "images": _images(p.get("images") or p.get("coverArt") or p.get("visuals")),
+                    "owner": _mapping(p.get("owner")).get("name", "Spotify"),
+                })
+        return artists, albums, tracks, playlists
 
     @staticmethod
     def _albums_from_raw(raw: dict[str, Any]) -> list[dict[str, Any]]:

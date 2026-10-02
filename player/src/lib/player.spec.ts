@@ -1,6 +1,5 @@
 // Track-change paths of the Player, driven through a fake <audio> (jsdom has no media
-// playback). The key invariant: a change from `ended` sets the next src synchronously,
-// because awaits there can be suspended in a backgrounded PWA.
+// playback).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Song } from './types';
 
@@ -25,6 +24,7 @@ class FakeAudio extends EventTarget {
 	volume = 1;
 	muted = false;
 	playbackRate = 1;
+	readyState = 0;
 	src = '';
 	load = vi.fn();
 	play = vi.fn(() => {
@@ -43,6 +43,11 @@ class FakeAudio extends EventTarget {
 	}
 	removeAttribute(name: string) {
 		if (name === 'src') this.src = '';
+	}
+	/** The new source has data: `canplay`. */
+	ready() {
+		this.readyState = 4;
+		this.fire('canplay');
 	}
 	fire(type: string) {
 		this.dispatchEvent(new Event(type));
@@ -69,17 +74,10 @@ async function freshPlayer() {
 	return { player, audio: FakeAudio.last };
 }
 
-let session: FakeAudioSession;
-
 beforeEach(() => {
 	localStorage.clear();
 	vi.stubGlobal('Audio', FakeAudio);
-	session = new FakeAudioSession();
-	Object.defineProperty(navigator, 'audioSession', { value: session, configurable: true });
 	sleepTimer.onTrackEnded.mockReturnValue(false);
-	let n = 0;
-	URL.createObjectURL = vi.fn(() => `blob:test/${++n}`);
-	URL.revokeObjectURL = vi.fn();
 });
 
 afterEach(() => {
@@ -88,54 +86,74 @@ afterEach(() => {
 });
 
 describe('Player track changes', () => {
-	it('starts the tapped song', async () => {
+	it('starts the tapped song: set src and load(), then play() on canplay', async () => {
 		const { player, audio } = await freshPlayer();
 		player.playList([song('a'), song('b'), song('c')], 1);
 		await flush();
 		expect(player.current?.id).toBe('b');
 		expect(audio.src).toContain('id=b');
-		expect(audio.play).toHaveBeenCalled();
-		expect(session.type).toBe('playback');
+		expect(audio.load).toHaveBeenCalled();
+		// Loading: the button shows a spinner, not "playing" in silence.
+		expect(audio.play).not.toHaveBeenCalled();
+		expect(player.playing).toBe(false);
+		expect(player.buffering).toBe(true);
+		expect(player.active).toBe(true);
+		audio.ready();
+		expect(audio.play).toHaveBeenCalledTimes(1);
+		expect(player.playing).toBe(true);
+		expect(player.buffering).toBe(false);
 	});
 
-	it('moves to the next song synchronously on ended', async () => {
+	it('kicks a waiting element that already has enough data', async () => {
+		const { player, audio } = await freshPlayer();
+		player.playList([song('a')]);
+		await flush();
+		audio.ready();
+		audio.play.mockClear();
+		audio.fire('waiting');
+		expect(audio.play).toHaveBeenCalledTimes(1);
+		expect(player.current?.id).toBe('a');
+	});
+
+	it('shows paused, not playing, when the browser refuses play()', async () => {
+		const { player, audio } = await freshPlayer();
+		player.playList([song('a')]);
+		await flush();
+		audio.play.mockImplementationOnce(() => Promise.reject(new DOMException('blocked', 'NotAllowedError')));
+		audio.ready();
+		await flush();
+		expect(player.playing).toBe(false);
+		expect(player.buffering).toBe(false);
+		expect(player.active).toBe(false);
+	});
+
+	it('does not start by itself on canplay after the user paused', async () => {
+		const { player, audio } = await freshPlayer();
+		player.playList([song('a')]);
+		await flush();
+		player.pause();
+		audio.ready();
+		expect(audio.play).not.toHaveBeenCalled();
+		expect(player.active).toBe(false);
+	});
+
+	it('moves to the next song on ended', async () => {
 		const { player, audio } = await freshPlayer();
 		player.playList([song('a'), song('b')]);
 		await flush();
 		audio.fire('ended');
-		// No await: the src must already be set.
+		await flush();
 		expect(player.current?.id).toBe('b');
 		expect(audio.src).toContain('id=b');
 	});
 
-	it('plays the prefetched copy when the song ends, without fetching again', async () => {
-		const fetchMock = vi.fn(async () => new Response('audio'));
-		vi.stubGlobal('fetch', fetchMock);
+	it('keeps only the latest of two quick track changes', async () => {
 		const { player, audio } = await freshPlayer();
-		player.playList([song('a'), song('b')]);
+		player.playList([song('a'), song('b'), song('c')]);
+		player.jumpTo(2);
 		await flush();
-		audio.duration = 200;
-		audio.fire('durationchange');
-		for (const t of [170, 170.25, 170.5]) {
-			audio.currentTime = t;
-			audio.fire('timeupdate');
-		}
-		await flush();
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-		audio.fire('ended');
-		expect(audio.src).toMatch(/^blob:test\//);
-	});
-
-	it('does not prefetch before the last 45 seconds', async () => {
-		const fetchMock = vi.fn(async () => new Response('audio'));
-		vi.stubGlobal('fetch', fetchMock);
-		const { player, audio } = await freshPlayer();
-		player.playList([song('a'), song('b')]);
-		await flush();
-		audio.duration = 200;
-		audio.currentTime = 100;
-		audio.fire('timeupdate');
-		expect(fetchMock).not.toHaveBeenCalled();
+		expect(player.current?.id).toBe('c');
+		expect(audio.src).toContain('id=c');
 	});
 
 	it('restarts the same song on repeat-one', async () => {
@@ -168,69 +186,158 @@ describe('Player track changes', () => {
 		await flush();
 		sleepTimer.onTrackEnded.mockReturnValue(true);
 		audio.fire('ended');
+		await flush();
 		expect(player.current?.id).toBe('a');
 	});
 
-	it('ends at the server length when iOS reports about double', async () => {
+	it('takes the duration from the media element once known', async () => {
 		const { player, audio } = await freshPlayer();
-		player.playList([song('a', 200), song('b')]);
+		player.playList([song('a', 200)]);
 		await flush();
+		audio.duration = 201.5;
+		audio.fire('durationchange');
+		expect(player.duration).toBe(201.5);
+	});
+});
+
+describe('Player platform fixes', () => {
+	it('ends at the server length when iOS reports about double, advancing once', async () => {
+		const { player, audio } = await freshPlayer();
+		player.playList([song('a', 200), song('b'), song('c')]);
+		await flush();
+		audio.ready();
 		audio.duration = 400;
 		audio.fire('durationchange');
 		expect(player.duration).toBe(200);
 		audio.currentTime = 199.8;
 		audio.fire('timeupdate');
-		expect(player.current?.id).toBe('b');
-	});
-
-	it('does not advance twice when a capped end is followed by native ended', async () => {
-		const { player, audio } = await freshPlayer();
-		player.playList([song('a'), song('b'), song('c')]);
 		await flush();
-		audio.duration = 400;
-		audio.fire('durationchange');
-		audio.currentTime = 199.8;
-		audio.fire('timeupdate');
 		expect(player.current?.id).toBe('b');
-
-		// Some mobile engines still dispatch the old element's ended notification.
+		// A stale native ended for the old source must not skip 'b'.
 		audio.fire('ended');
-		expect(player.current?.id).toBe('b');
-	});
-});
-
-describe('Player interruptions', () => {
-	it('pauses for a call and resumes afterwards', async () => {
-		const { player, audio } = await freshPlayer();
-		player.playList([song('a')]);
 		await flush();
-		expect(audio.paused).toBe(false);
-		session.set('interrupted');
-		expect(audio.paused).toBe(true);
-		expect(player.playing).toBe(false);
-		audio.play.mockClear();
-		session.set('active');
-		expect(audio.play).toHaveBeenCalledTimes(1);
+		expect(player.current?.id).toBe('c');
+	});
+
+	it('reloads at the current position when the clock freezes while playing', async () => {
+		vi.useFakeTimers();
+		try {
+			const { player, audio } = await freshPlayer();
+			player.playList([song('a')]);
+			await vi.advanceTimersByTimeAsync(0);
+			audio.ready();
+			audio.currentTime = 42;
+			audio.fire('timeupdate');
+			audio.load.mockClear();
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(audio.load).toHaveBeenCalled();
+			expect(player.current?.id).toBe('a');
+			expect(player.currentTime).toBe(42);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('reloads a next track that never reaches canplay', async () => {
+		vi.useFakeTimers();
+		try {
+			const { player, audio } = await freshPlayer();
+			player.playList([song('a'), song('b')]);
+			await vi.advanceTimersByTimeAsync(0);
+			audio.ready();
+			audio.fire('ended');
+			await vi.advanceTimersByTimeAsync(0);
+			audio.load.mockClear();
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(player.current?.id).toBe('b');
+			expect(audio.load).toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('does not reload while paused for a call', async () => {
+		vi.useFakeTimers();
+		const session = new FakeAudioSession();
+		Object.defineProperty(navigator, 'audioSession', { value: session, configurable: true });
+		try {
+			const { player, audio } = await freshPlayer();
+			player.playList([song('a')]);
+			await vi.advanceTimersByTimeAsync(0);
+			audio.ready();
+			session.set('interrupted');
+			audio.load.mockClear();
+			await vi.advanceTimersByTimeAsync(30_000);
+			expect(audio.load).not.toHaveBeenCalled();
+			expect(audio.paused).toBe(true);
+			expect(player.current?.id).toBe('a');
+		} finally {
+			delete (navigator as { audioSession?: unknown }).audioSession;
+			vi.useRealTimers();
+		}
+	});
+
+	it('pauses for a call and resumes afterwards', async () => {
+		const session = new FakeAudioSession();
+		Object.defineProperty(navigator, 'audioSession', { value: session, configurable: true });
+		try {
+			const { player, audio } = await freshPlayer();
+			expect(session.type).toBe('playback');
+			player.playList([song('a')]);
+			await flush();
+			audio.ready();
+			session.set('interrupted');
+			expect(audio.paused).toBe(true);
+			audio.play.mockClear();
+			session.set('active');
+			expect(audio.play).toHaveBeenCalledTimes(1);
+		} finally {
+			delete (navigator as { audioSession?: unknown }).audioSession;
+		}
 	});
 
 	it('stays paused after the call when the user paused during it', async () => {
-		const { player, audio } = await freshPlayer();
-		player.playList([song('a')]);
-		await flush();
-		session.set('interrupted');
-		player.pause();
-		audio.play.mockClear();
-		session.set('active');
-		expect(audio.play).not.toHaveBeenCalled();
+		const session = new FakeAudioSession();
+		Object.defineProperty(navigator, 'audioSession', { value: session, configurable: true });
+		try {
+			const { player, audio } = await freshPlayer();
+			player.playList([song('a')]);
+			await flush();
+			audio.ready();
+			session.set('interrupted');
+			player.pause();
+			audio.play.mockClear();
+			session.set('active');
+			expect(audio.play).not.toHaveBeenCalled();
+		} finally {
+			delete (navigator as { audioSession?: unknown }).audioSession;
+		}
 	});
 
-	it('pauses when the page is torn down', async () => {
+	it('changes track synchronously while hidden instead of awaiting IndexedDB', async () => {
+		const { player, audio } = await freshPlayer();
+		player.playList([song('a'), song('b')]);
+		await flush();
+		vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+		try {
+			audio.fire('ended');
+			// No await: the src must already be set.
+			expect(audio.src).toContain('id=b');
+		} finally {
+			vi.restoreAllMocks();
+		}
+	});
+});
+
+describe('Player unload', () => {
+	it('releases the source on sign-out', async () => {
 		const { player, audio } = await freshPlayer();
 		player.playList([song('a')]);
 		await flush();
-		window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false }));
+		player.reset();
 		expect(audio.paused).toBe(true);
-		expect(player.playing).toBe(false);
+		expect(audio.src).toBe('');
+		expect(player.current).toBeNull();
 	});
 });
 

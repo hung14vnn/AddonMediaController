@@ -349,12 +349,13 @@
 
 					<div class="transport" data-flip="transport">
 						<button class="skip" aria-label="Previous" onclick={() => player.previous()}><Icon name="previous" size={36} /></button>
-						<button class="pp" aria-label={player.playing ? 'Pause' : 'Play'} onclick={() => player.toggle()}>
-							{#key player.playing}
+						<button class="pp has-ring" aria-label={player.active ? 'Pause' : 'Play'} onclick={() => player.toggle()}>
+							{#key player.active}
 								<span class="icon-swap" in:pop={{ from: 0.6, duration: 220 }}>
-									<Icon name={player.playing ? 'pause' : 'play'} size={46} />
+									<Icon name={player.active ? 'pause' : 'play'} size={46} />
 								</span>
 							{/key}
+							{#if player.buffering}<span class="loading-ring"></span>{/if}
 						</button>
 						<button class="skip" aria-label="Next" onclick={() => player.next()}><Icon name="next" size={36} /></button>
 					</div>

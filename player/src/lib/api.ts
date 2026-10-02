@@ -98,7 +98,7 @@ export function cached<T>(
 		return data;
 	});
 	if (hit && age < maxAge) {
-		req.catch(() => {});
+		req.catch(() => { });
 		return Promise.resolve(hit.data as T);
 	}
 	return req;
@@ -321,7 +321,7 @@ export type SearchSource = 'spotify' | 'ytmusic';
 
 export async function search(
 	query: string,
-	counts = { artist: 8, album: 12, song: 20 },
+	counts = { artist: 8, album: 10, song: 20, playlist: 10 },
 	songOffset = 0,
 	localOnly = false,
 	source: SearchSource = 'spotify'
@@ -331,6 +331,7 @@ export async function search(
 		artistCount: counts.artist,
 		albumCount: counts.album,
 		songCount: counts.song,
+		playlistCount: counts.playlist,
 		songOffset,
 		localOnly,
 		source
@@ -339,7 +340,8 @@ export async function search(
 	return {
 		artists: (res.artist ?? []) as Artist[],
 		albums: (res.album ?? []) as Album[],
-		songs: (res.song ?? []) as Song[]
+		songs: (res.song ?? []) as Song[],
+		playlists: (res.playlist ?? []) as Playlist[]
 	};
 }
 

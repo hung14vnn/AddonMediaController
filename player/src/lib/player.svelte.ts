@@ -1,9 +1,6 @@
-import { getPlayQueue, savePlayQueue, scrobble, streamUrl } from './api';
-import { Autoplay } from './playback/autoplay';
-import { resolveDuration } from './playback/duration';
+import { getPlayQueue, getSession, savePlayQueue, scrobble, streamUrl } from './api';
 import { InterruptionGuard } from './playback/interruptions';
 import { clearMediaSession, setMediaMetadata, setMediaPosition, setupMediaSession } from './playback/mediaSession';
-import { PreparedTracks } from './playback/preparedTracks';
 import {
 	cycleRepeat,
 	indexAfterUnshuffle,
@@ -17,25 +14,52 @@ import {
 } from './playback/queue';
 import { pickOutput, watchRemotePlayback, type CastState } from './playback/remotePlayback';
 import { SingleTab } from './playback/singleTab';
-import { StallWatchdog } from './playback/stallWatchdog';
 import { clearSnapshot, readSnapshot, writeSnapshot } from './playback/snapshot';
 import { sleepTimer } from './sleepTimer.svelte';
 import type { Song } from './types';
 
 export type { Repeat };
 
-/**
- * Seconds before the end at which the next track is downloaded into memory. Once the
- * audio stops, Android may cut a screen-off PWA's network, so the next track must not
- * need it.
- */
-const PREFETCH_LEAD_S = 45;
+interface ObjectUrl {
+	url: string;
+	revoke: () => void;
+}
+
+/** A downloaded track's blob URL, tagged with the song it plays. */
+interface OfflineCopy {
+	id: string;
+	copy: ObjectUrl;
+}
+
+/** Playing with a frozen clock for this long means the stream stopped delivering. */
+const STALL_MS = 8_000;
+const STALL_CHECK_MS = 2_000;
+/** Reloads per track before giving up, so a dead server isn't hammered. */
+const MAX_RELOADS = 3;
+
+/** HTMLMediaElement.HAVE_FUTURE_DATA: enough buffered to keep playing. */
+const HAVE_FUTURE_DATA = 3;
+
+/** A browser-reported length this much over the server's means the browser misread it. */
+const DURATION_MISMATCH_RATIO = 1.25;
+
+/** The downloaded copy of `id`, if the signed-in user has one. */
+async function lookupOffline(id: string): Promise<ObjectUrl | null> {
+	const session = getSession();
+	if (!session?.username) return null;
+	try {
+		const { createOfflineTrackUrl } = await import('./offline');
+		return await createOfflineTrackUrl(session.username, id);
+	} catch {
+		return null;
+	}
+}
 
 /**
- * Single audio engine. The queue is the play order; when shuffle is on, the
- * original order is kept in `unshuffled` so turning shuffle off restores it.
- * Platform work (lock screen, AirPlay, iOS interruptions, prefetch) lives in
- * ./playback; this class owns the reactive state and the track-change logic.
+ * Single audio engine, modelled on Navidrome's web player: one <audio> element whose
+ * src is swapped and load()ed on every track change, then played. The queue is the
+ * play order; when shuffle is on, the original order is kept in `unshuffled` so
+ * turning shuffle off restores it.
  */
 class Player {
 	queue = $state<Song[]>([]);
@@ -55,55 +79,71 @@ class Player {
 	/** Stuck 'connecting': the audio has left the device but nothing plays it. */
 	castStalled = $state(false);
 
+	/** What the play/pause button shows: playing, or loading towards it (with a spinner). */
+	active = $derived(this.playing || this.buffering);
 	current = $derived(this.index >= 0 ? (this.queue[this.index] ?? null) : null);
 	upNext = $derived(this.queue.slice(this.index + 1));
 
 	private audio: HTMLAudioElement;
 	private unshuffled: Song[] | null = null;
 	private scrobbled = false;
-	/** Server-reported length that playback ends at in place of a misread `audio.duration`. */
-	private durationCap = 0;
-	private cappedEnd = false;
 	private pendingSeek = 0;
+	/** Invalidates a load still waiting on the offline lookup when another one starts. */
 	private loadToken = 0;
-	/** Prevent a synthetic duration-cap end and the native ended event from advancing twice. */
-	private handledEndToken = -1;
-	/** A late native ended event can arrive after the capped-end callback changed src. */
-	private ignoreNativeEndedUntil = 0;
+	/** Offline copy now playing, revoked on the next change. */
+	private playingOffline: OfflineCopy | null = null;
+	/**
+	 * Offline copy of the upcoming track, looked up ahead of time so a change with the
+	 * screen off (where IndexedDB awaits can stall) needn't wait for it.
+	 */
+	private nextOffline: OfflineCopy | null = null;
+	/**
+	 * Server length that playback ends at, or 0. iOS Safari misreads fragmented m4a
+	 * (YouTube Music streams), often at about double, then plays silence up to it.
+	 */
+	private durationCap = 0;
+	/** Playback is wanted: set by a play request, cleared by a pause that isn't a track change. */
+	private playRequested = false;
+	private stallTimer: ReturnType<typeof setInterval> | undefined;
+	private lastProgressAt = 0;
+	private lastProgressTime = -1;
+	private reloads = 0;
+	private reloadsFor: string | null = null;
 	private saveTimer: ReturnType<typeof setTimeout> | undefined;
 	private destroyed = false;
-
-	private prepared = new PreparedTracks();
-	private autoplay: Autoplay;
-	private interruptions: InterruptionGuard;
 	private singleTab: SingleTab;
-	private watchdog: StallWatchdog;
+	private interruptions: InterruptionGuard;
 
 	constructor() {
 		this.audio = new Audio();
 		this.audio.preload = 'auto';
 		const a = this.audio;
-		this.autoplay = new Autoplay(a, () => {
-			this.playing = false;
-			this.buffering = false;
-		});
-		this.interruptions = new InterruptionGuard(a, () => this.autoplay.start());
 		this.singleTab = new SingleTab(() => this.pause());
-		this.watchdog = new StallWatchdog(a, () => this.reloadCurrent());
+		this.interruptions = new InterruptionGuard(a, () => this.play());
 
+		// Event flow follows Navidrome's player: a track change only sets src and load()s;
+		// play() is called once `canplay` says there is data, and a `waiting` element that
+		// already has enough buffered is kicked with play() again.
 		a.addEventListener('play', () => {
 			this.playing = true;
-			this.autoplay.cancel();
 			this.singleTab.announcePlaying();
 		});
 		a.addEventListener('pause', () => {
-			this.interruptions.notePause();
 			this.playing = false;
+			// A pause that isn't part of a track change (end of track, headphones out)
+			// drops the request, so a later `canplay` won't start playback by itself.
+			if (!this.buffering) this.playRequested = false;
 			this.persist(true);
 		});
-		a.addEventListener('waiting', () => (this.buffering = true));
+		a.addEventListener('waiting', () => {
+			this.buffering = true;
+			if (this.playRequested && a.readyState >= HAVE_FUTURE_DATA) this.play();
+		});
 		a.addEventListener('playing', () => (this.buffering = false));
-		a.addEventListener('canplay', () => (this.buffering = false));
+		a.addEventListener('canplay', () => {
+			this.buffering = false;
+			if (this.playRequested && a.paused) this.play();
+		});
 		a.addEventListener('loadedmetadata', () => {
 			if (this.pendingSeek) {
 				a.currentTime = this.pendingSeek;
@@ -117,6 +157,7 @@ class Player {
 		a.addEventListener('error', () => {
 			if (!a.src || !this.current) return;
 			this.error = `Couldn't play “${this.current.title}”`;
+			this.playRequested = false;
 			this.buffering = false;
 		});
 		a.addEventListener('volumechange', () => {
@@ -127,8 +168,8 @@ class Player {
 		setupMediaSession(a, {
 			play: () => this.resume(),
 			pause: () => this.pause(),
-			previous: (backgroundSafe) => this.previous(backgroundSafe),
-			next: (backgroundSafe) => this.next(backgroundSafe),
+			previous: () => this.previous(),
+			next: () => this.next(),
 			seek: (seconds) => this.seek(seconds),
 			currentTime: () => this.currentTime
 		});
@@ -185,6 +226,12 @@ class Player {
 		this.persist();
 	}
 
+	clearUpNext(keepCount = 0) {
+		if (this.index + 1 + keepCount >= this.queue.length) return;
+		this.queue.splice(this.index + 1 + keepCount);
+		this.persist();
+	}
+
 	moveUpNext(from: number, to: number) {
 		this.index = moveItem(this.queue, this.index, from, to);
 		this.persist();
@@ -198,43 +245,38 @@ class Player {
 
 	toggle() {
 		if (!this.current) return;
-		if (this.audio.paused) this.resume();
-		else this.audio.pause();
+		if (this.playRequested) this.pause();
+		else this.resume();
 	}
 
 	resume() {
 		if (!this.audio.src && this.current) this.load(this.index, true, this.currentTime);
-		// A dead stream ignores play(); only a fresh request at this position recovers it.
-		else if (this.current && this.watchdog.needsReload()) this.load(this.index, true, this.currentTime);
-		else this.audio.play().catch(() => (this.playing = false));
+		else this.play();
 	}
 
 	pause() {
-		// An explicit pause (or another tab taking over) cancels any pending retry or
-		// resume-after-call.
-		this.autoplay.cancel();
+		this.playRequested = false;
+		this.buffering = false;
 		this.interruptions.userPause();
 		this.audio.pause();
 	}
 
-	/** `backgroundSafe`: the page may be hidden, so don't await IndexedDB/imports first. */
-	next(backgroundSafe = false) {
+	next() {
 		const i = nextIndex(this.queue.length, this.index, this.repeat);
-		if (i >= 0) this.load(i, true, 0, !backgroundSafe);
+		if (i >= 0) this.load(i, true);
 		else {
-			this.audio.pause();
+			this.pause();
 			this.seek(0);
 		}
 	}
 
-	previous(backgroundSafe = false) {
+	previous() {
 		// Like every music app: restart the song unless we're within the first 3 seconds.
 		if (this.audio.currentTime > 3 || this.index <= 0) this.seek(0);
-		else this.load(this.index - 1, true, 0, !backgroundSafe);
+		else this.load(this.index - 1, true);
 	}
 
 	seek(seconds: number) {
-		if (seconds < this.durationCap - 1) this.cappedEnd = false;
 		this.currentTime = seconds;
 		if (this.audio.src) this.audio.currentTime = seconds;
 		else this.pendingSeek = seconds;
@@ -283,67 +325,91 @@ class Player {
 
 	// ---- track changes -------------------------------------------------------
 
-	/**
-	 * Start track `i`. `waitForOffline` lets manual changes look for a downloaded
-	 * copy first; changes that may run in the background (`ended`, lock screen
-	 * while hidden) pass false, since those awaits can be suspended there.
-	 */
-	private async load(i: number, autoplay: boolean, startAt = 0, waitForOffline = true) {
+	/** Start track `i`, from a downloaded copy when there is one. */
+	private async load(i: number, autoplay: boolean, startAt = 0) {
 		const song = this.queue[i];
 		if (!song) return;
 
-		const targetIndex = i;
 		const token = ++this.loadToken;
 		this.index = i;
 		this.error = null;
 		this.scrobbled = false;
 		this.durationCap = 0;
-		this.cappedEnd = false;
-		this.prepared.startTrack();
-		this.watchdog.track(song.id);
 		this.currentTime = startAt;
 		this.duration = song.duration ?? 0;
 		this.pendingSeek = startAt;
+		this.lastProgressAt = performance.now();
+		this.lastProgressTime = -1;
+		if (song.id !== this.reloadsFor) {
+			this.reloadsFor = song.id;
+			this.reloads = 0;
+		}
+		// Like Navidrome: not playing while the new source loads; `canplay` starts it.
+		this.playing = false;
+		this.playRequested = autoplay;
+		this.buffering = autoplay;
+		if (autoplay) this.armStallCheck();
 
-		if (autoplay) this.buffering = true;
-
-		const ready = this.prepared.take(song.id);
-		let src = ready ?? streamUrl(song.id);
-		if (!ready && waitForOffline) {
-			const offline = await this.prepared.lookupOffline(song.id);
-			if (offline) {
-				src = offline.url;
-				this.prepared.adopt(offline);
+		let offline: OfflineCopy | null = null;
+		if (this.playingOffline?.id === song.id) {
+			// Restarting the same track: keep its URL.
+			offline = this.playingOffline;
+			this.playingOffline = null;
+		} else if (this.nextOffline?.id === song.id) {
+			offline = this.nextOffline;
+			this.nextOffline = null;
+		} else if (!document.hidden) {
+			// Hidden (screen off, lock-screen skip): stream right away rather than await IndexedDB.
+			const copy = await lookupOffline(song.id);
+			// The user moved on to another track while we were looking.
+			if (this.destroyed || token !== this.loadToken) {
+				copy?.revoke();
+				return;
 			}
+			if (copy) offline = { id: song.id, copy };
 		}
+		this.releaseOffline();
+		this.playingOffline = offline;
 
-		// Bail out if the user skipped to another track while we were awaiting DB
-		if (this.destroyed || this.index !== targetIndex || token !== this.loadToken) {
-			if (src.startsWith('blob:')) URL.revokeObjectURL(src);
-			return;
-		}
-
-		// Safari/iOS can keep the old decoded resource alive when src is replaced
-		// immediately after `ended`. Explicitly reset the media element before
-		// loading the next source so playback state and audio output stay aligned.
-		this.audio.pause();
-		this.audio.removeAttribute('src');
+		this.audio.src = offline?.copy.url ?? streamUrl(song.id);
 		this.audio.load();
-		this.audio.src = src;
-		this.audio.load();
-		if (autoplay) {
-			this.autoplay.start();
-			scrobble(song.id, false);
-		}
+		if (autoplay) scrobble(song.id, false);
 		setMediaMetadata(this.current);
 		this.persist();
-		const next = this.queue[this.index + 1];
-		if (next) this.prepared.prepareOffline(next, () => !this.destroyed && this.queue[this.index + 1]?.id === next.id);
+		this.prepareNextOffline();
 	}
 
 	/** The track `next()` would load when the current one ends. */
 	private upcoming(): Song | undefined {
 		return this.queue[this.index + 1] ?? (this.repeat === 'all' ? this.queue[0] : undefined);
+	}
+
+	private prepareNextOffline() {
+		const next = this.upcoming();
+		if (!next || next.id === this.current?.id || this.nextOffline?.id === next.id) return;
+		void lookupOffline(next.id).then((copy) => {
+			if (!copy) return;
+			if (this.destroyed || this.upcoming()?.id !== next.id || this.nextOffline?.id === next.id) {
+				copy.revoke();
+				return;
+			}
+			this.nextOffline?.copy.revoke();
+			this.nextOffline = { id: next.id, copy };
+		});
+	}
+
+	private play() {
+		this.playRequested = true;
+		this.armStallCheck();
+		const token = this.loadToken;
+		this.audio.play().catch(() => {
+			// A track change interrupted this play(); the new source's `canplay` owns it now.
+			if (token !== this.loadToken) return;
+			// Refused (e.g. autoplay blocked): show it as paused rather than playing in silence.
+			this.playRequested = false;
+			this.playing = false;
+			this.buffering = false;
+		});
 	}
 
 	private onTime() {
@@ -356,77 +422,93 @@ class Player {
 			this.scrobbled = true;
 			scrobble(song.id, true);
 		}
-		if (Math.floor(a.currentTime) % 5 === 0) this.updatePosition();
-		if (dur > 0 && dur - a.currentTime <= PREFETCH_LEAD_S) this.prefetchUpcoming();
-		// The real audio is over; don't sit through the silence up to the misread length.
-		if (this.durationCap && !this.cappedEnd && a.currentTime >= this.durationCap - 0.25) {
-			this.cappedEnd = true;
-			this.onEnded(true);
+		if (a.currentTime !== this.lastProgressTime) {
+			this.lastProgressTime = a.currentTime;
+			this.lastProgressAt = performance.now();
 		}
-	}
-
-	private prefetchUpcoming() {
-		const next = this.upcoming();
-		if (!next || next.id === this.current?.id) return;
-		this.prepared.prefetch(next, streamUrl(next.id), () => !this.destroyed && this.upcoming()?.id === next.id);
+		if (Math.floor(a.currentTime) % 5 === 0) this.updatePosition();
+		// The real audio is over; don't sit through the silence up to the misread length.
+		// Pausing first keeps the element from reaching its own `ended` and advancing twice.
+		if (this.durationCap && !a.paused && a.currentTime >= this.durationCap - 0.25) {
+			a.pause();
+			this.onEnded();
+		}
 	}
 
 	private applyDuration() {
-		const resolved = resolveDuration(this.audio.duration, this.current?.duration ?? 0, this.duration);
-		this.duration = resolved.duration;
-		if (resolved.cap !== undefined) this.durationCap = resolved.cap;
-	}
-
-	/**
-	 * The stream stopped delivering mid-track: fetch it again from where it froze.
-	 * Background-safe (no IndexedDB/import awaits) since it can fire with the screen off.
-	 */
-	private reloadCurrent() {
-		if (!this.current) return;
-		this.buffering = true;
-		this.load(this.index, true, this.currentTime, false);
-	}
-
-	private onEnded(synthetic = false) {
-		if (!synthetic && performance.now() < this.ignoreNativeEndedUntil) return;
-		if (synthetic) {
-			// WebKit may dispatch the native event for the old source after load() has
-			// already installed the next one. Keep that stale event from skipping it.
-			this.ignoreNativeEndedUntil = performance.now() + 1500;
+		const d = this.audio.duration;
+		if (!Number.isFinite(d) || d <= 0) return;
+		const reported = this.current?.duration ?? 0;
+		if (reported > 0 && d > reported * DURATION_MISMATCH_RATIO) {
+			this.duration = reported;
+			this.durationCap = reported;
+		} else {
+			this.duration = d;
+			this.durationCap = 0;
 		}
+	}
+
+	// ---- stalled streams -----------------------------------------------------
+	// A stream that stops delivering (network drop, Wi-Fi/4G switch, a load that never
+	// reaches `canplay`) leaves playback wanted but the clock frozen; only a fresh
+	// request at the current position recovers it.
+
+	private armStallCheck() {
+		this.lastProgressAt = performance.now();
+		this.stallTimer ??= setInterval(this.checkStall, STALL_CHECK_MS);
+	}
+
+	private disarmStallCheck() {
+		clearInterval(this.stallTimer);
+		this.stallTimer = undefined;
+	}
+
+	private readonly checkStall = () => {
+		if (!this.playRequested || !this.current) return this.disarmStallCheck();
+		// Paused by the system (a call) rather than stuck loading: not a stall.
+		if (this.audio.paused && !this.buffering) return;
+		if (performance.now() - this.lastProgressAt < STALL_MS) return;
+		if (this.reloads >= MAX_RELOADS) return this.disarmStallCheck();
+		this.reloads++;
+		this.load(this.index, true, this.currentTime);
+	};
+
+	private onEnded() {
 		if (this.repeat === 'one') {
 			this.scrobbled = false;
-			this.cappedEnd = false;
 			this.audio.currentTime = 0;
-			this.autoplay.start();
+			this.play();
 			return;
 		}
-
-		// onTime() can end a track from the server-reported duration just before the
-		// media element emits its own `ended` event. Both callbacks may otherwise
-		// advance the queue, skipping the next song (especially when the screen is off).
-		if (this.handledEndToken === this.loadToken) return;
-		this.handledEndToken = this.loadToken;
-
-		// Track changes from `ended` must not wait for IndexedDB/dynamic imports:
-		// those callbacks can be suspended while a PWA is backgrounded.
-		if (!sleepTimer.onTrackEnded()) this.next(true);
+		if (!sleepTimer.onTrackEnded()) this.next();
 	}
 
 	private updatePosition() {
 		setMediaPosition(this.duration, this.currentTime, this.audio.playbackRate);
 	}
 
-	/**
-	 * Swiping an iOS home-screen app away can leave its WebKit process, and the audio,
-	 * alive for a while. `pagehide` with persisted=false means the page is being torn
-	 * down (not bfcached), so stop rather than play on with no UI. Best effort: iOS
-	 * does not always deliver it. The snapshot keeps the position for next launch.
-	 */
+	private releaseOffline() {
+		this.playingOffline?.copy.revoke();
+		this.playingOffline = null;
+	}
+
+	/** Unload the element so it stops fetching and releases the stream. */
+	private unload() {
+		this.loadToken++;
+		this.playRequested = false;
+		this.buffering = false;
+		this.audio.pause();
+		this.audio.removeAttribute('src');
+		this.audio.load();
+		this.disarmStallCheck();
+		this.releaseOffline();
+		this.nextOffline?.copy.revoke();
+		this.nextOffline = null;
+	}
+
 	private readonly onPageHide = (e: PageTransitionEvent) => {
 		if (e.persisted) return;
 		this.saveSnapshot();
-		this.pause();
 		clearMediaSession();
 	};
 
@@ -487,27 +569,16 @@ class Player {
 	destroy() {
 		this.saveSnapshot();
 		this.destroyed = true;
-		this.loadToken++;
-		this.audio.pause();
-		this.audio.removeAttribute('src');
-		this.audio.load();
-		this.prepared.clear();
+		this.unload();
 		this.singleTab.close();
-		this.autoplay.dispose();
 		this.interruptions.dispose();
-		this.watchdog.dispose();
 		window.removeEventListener('pagehide', this.onPageHide);
 		clearTimeout(this.saveTimer);
 	}
 
 	/** Called on sign-out. */
 	reset() {
-		// Invalidate a load that may still be waiting for IndexedDB/offline lookup.
-		this.loadToken++;
-		this.autoplay.cancel();
-		this.audio.pause();
-		this.audio.removeAttribute('src');
-		this.prepared.clear();
+		this.unload();
 		this.queue = [];
 		this.index = -1;
 		this.currentTime = 0;

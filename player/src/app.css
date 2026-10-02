@@ -489,6 +489,23 @@ a.tile:active {
     reveal-late 0.2s ease 0.35s both;
 }
 
+/* Play/pause button while the track loads: a ring spins around it. */
+.has-ring {
+  position: relative;
+}
+
+.loading-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  pointer-events: none;
+  animation:
+    spin 0.8s linear infinite,
+    reveal-late 0.2s ease 0.35s both;
+}
+
 @keyframes reveal-late {
   from {
     opacity: 0;

@@ -917,6 +917,7 @@ async def _search(c: Ctx):
     al_offset = c.pint("albumOffset", 0, minimum=0, maximum=2_147_483_647) or 0
     s_count = c.pint("songCount", 20, minimum=0, maximum=500) or 0
     s_offset = c.pint("songOffset", 0, minimum=0, maximum=2_147_483_647) or 0
+    pl_count = c.pint("playlistCount", 20, minimum=0, maximum=500) or 0
     local_only = str(c.p("localOnly") or "").lower() in {"1", "true", "yes"}
     # Non-standard: which online catalog to blend in ("spotify" by default).
     source = "ytmusic" if (c.p("source") or "").lower() == "ytmusic" else "spotify"
@@ -924,6 +925,7 @@ async def _search(c: Ctx):
     artists = []
     albums = []
     songs = []
+    playlists = []
     if s_count:
         songs, _ = await c.services.view.get_tracks_page(
             limit=s_count, offset=s_offset, q=q, user=c.user
@@ -932,20 +934,21 @@ async def _search(c: Ctx):
     spot_artists: list = []
     spot_albums: list = []
     spot_songs: list = []
-    if q and not local_only and source == "ytmusic" and (a_count or al_count or s_count):
-        yt_artists, yt_albums, yt_songs = await _ytmusic_search(
-            c, q, artists=a_count, albums=al_count, songs=s_count
+    if q and not local_only and source == "ytmusic" and (a_count or al_count or s_count or pl_count):
+        yt_artists, yt_albums, yt_songs, yt_playlists = await _ytmusic_search(
+            c, q, artists=a_count, albums=al_count, songs=s_count, playlists=pl_count
         )
-        return artists, albums, songs, source, yt_artists, yt_albums, yt_songs
-    if q and not local_only and (a_count or al_count or s_count):
+        return artists, albums, songs, playlists, source, yt_artists, yt_albums, yt_songs, yt_playlists
+    if q and not local_only and (a_count or al_count or s_count or pl_count):
         from services.spotapi_client import SpotApiClient
 
         # Clients search on every keystroke and drop slow responses, so the
         # Spotify leg is bounded: on timeout the local results still go out
         # on time and the upstream call keeps running in its worker thread,
         # which leaves the shared SpotAPI session warm for the next search.
+        spot_playlists: list = []
         try:
-            sa_res, sl_res, st_res = await asyncio.wait_for(
+            sa_res, sl_res, st_res, sp_res = await asyncio.wait_for(
                 SpotApiClient().search_all(q, limit=5),
                 timeout=_SPOTAPI_SEARCH_TIMEOUT_S,
             )
@@ -955,6 +958,8 @@ async def _search(c: Ctx):
                 spot_albums = sl_res[: min(5, al_count)]
             if s_count:
                 spot_songs = st_res[: min(5, s_count)]
+            if pl_count:
+                spot_playlists = sp_res[: min(5, pl_count)]
         except asyncio.TimeoutError:
             logger.warning(
                 "Spotapi search timed out after %ss; returning local results only",
@@ -963,16 +968,16 @@ async def _search(c: Ctx):
         except Exception as e:
             logger.warning("Spotapi search failed: %s", e)
 
-    return artists, albums, songs, source, spot_artists, spot_albums, spot_songs
+    return artists, albums, songs, playlists, source, spot_artists, spot_albums, spot_songs, spot_playlists
 
 
 async def _ytmusic_search(
-    c: Ctx, q: str, *, artists: int, albums: int, songs: int
-) -> tuple[list[dict], list[dict], list[dict]]:
+    c: Ctx, q: str, *, artists: int, albums: int, songs: int, playlists: int
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     """Raw YouTube Music search results per category, bounded like the Spotify leg."""
     ytmusic = c.services.ytmusic_stream
     if not ytmusic:
-        return [], [], []
+        return [], [], [], []
 
     def _fetch():
         from ytmusicapi import YTMusic
@@ -982,23 +987,24 @@ async def _ytmusic_search(
         # only carries a couple of items of each.
         return [
             yt.search(q, filter=f, limit=n) if n else []
-            for f, n in (("artists", artists), ("albums", albums), ("songs", songs))
+            for f, n in (("artists", artists), ("albums", albums), ("songs", songs), ("playlists", playlists))
         ]
 
     try:
-        ya, yl, ys = await asyncio.wait_for(
+        ya, yl, ys, yp = await asyncio.wait_for(
             ytmusic._run_blocking(_fetch, what="search"), timeout=_YTMUSIC_SEARCH_TIMEOUT_S
         )
     except asyncio.TimeoutError:
         logger.warning("YTMusic search timed out after %ss", _YTMUSIC_SEARCH_TIMEOUT_S)
-        return [], [], []
+        return [], [], [], []
     except Exception as e:
         logger.warning("YTMusic search failed: %s", e)
-        return [], [], []
+        return [], [], [], []
     return (
         [a for a in ya if isinstance(a, dict) and a.get("browseId")][: min(10, artists)],
         [a for a in yl if isinstance(a, dict) and a.get("browseId")][: min(20, albums)],
         [s for s in ys if isinstance(s, dict) and s.get("videoId")][: min(30, songs)],
+        [p for p in yp if isinstance(p, dict) and p.get("browseId")][: min(20, playlists)],
     )
 
 
@@ -1174,25 +1180,54 @@ def _spotapi_to_child(st: dict) -> m.SChild:
     )
 
 
+def _ytmusic_to_playlist(p: dict) -> m.SPlaylist:
+    browse_id = p["browseId"]
+    _remember_cover("ytmusic", browse_id, _ytmusic_thumbnail_url(p.get("thumbnails")))
+    return m.SPlaylist(
+        id=f"ytmusic-playlist-{browse_id}",
+        name=p.get("title") or "YouTube Music Playlist",
+        owner=p.get("author", "YouTube Music"),
+        public=True,
+        songCount=int(p.get("itemCount") or 0),
+        coverArt=encode("ytmusic", browse_id),
+    )
+
+
+def _spotapi_to_playlist(p: dict) -> m.SPlaylist:
+    pid = encode("spotify_playlist", p["id"])
+    _remember_cover("spotify_playlist", p["id"], _largest_image_url(p.get("images")))
+    return m.SPlaylist(
+        id=pid,
+        name=p.get("name", "Spotify Playlist"),
+        comment=p.get("description", ""),
+        owner=p.get("owner", "Spotify"),
+        public=True,
+        songCount=0,
+        coverArt=pid,
+    )
+
+
 @endpoint("search3")
 async def _search3(c: Ctx) -> Response:
-    artists, albums, songs, source, sa, sl, st = await _search(c)
+    artists, albums, songs, playlists, source, sa, sl, st, sp = await _search(c)
     yt = source == "ytmusic"
     to_artist = _ytmusic_to_artist_id3 if yt else _spotapi_to_artist_id3
     to_album = _ytmusic_to_album_id3 if yt else _spotapi_to_album_id3
     to_song = _ytmusic_to_child if yt else _spotapi_to_child
+    to_playlist = _ytmusic_to_playlist if yt else _spotapi_to_playlist
     out_artists = [m.to_artist_id3(a) for a in artists] + [to_artist(a) for a in sa]
     out_albums = [m.to_album_id3(a) for a in albums] + [to_album(al) for al in sl]
     out_songs = [c.child(t) for t in songs] + [x for t in st if (x := to_song(t))]
+    out_playlists = [p for p in playlists] + [to_playlist(p) for p in sp]
     return c.render(
         "searchResult3",
-        {"artist": out_artists, "album": out_albums, "song": out_songs},
+        {"artist": out_artists, "album": out_albums, "song": out_songs, "playlist": out_playlists},
     )
 
 
 @endpoint("search2")
 async def _search2(c: Ctx) -> Response:
-    artists, albums, songs, source, sa, sl, st = await _search(c)
+    artists, albums, songs, playlists, source, sa, sl, st, sp = await _search(c)
     yt = source == "ytmusic"
     to_artist = _ytmusic_to_artist_file if yt else _spotapi_to_artist_file
     to_album = _ytmusic_to_album_child if yt else _spotapi_to_album_child

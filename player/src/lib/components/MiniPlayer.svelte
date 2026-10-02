@@ -20,12 +20,13 @@
 				<span class="title ellipsis" in:textSwap>{song.title}</span>
 			{/key}
 		</button>
-		<button class="ctl" aria-label={player.playing ? 'Pause' : 'Play'} onclick={() => player.toggle()}>
-			{#key player.playing}
+		<button class="ctl has-ring" aria-label={player.active ? 'Pause' : 'Play'} onclick={() => player.toggle()}>
+			{#key player.active}
 				<span class="icon-swap" in:pop={{ from: 0.5, duration: 200 }}>
-					<Icon name={player.playing ? 'pause' : 'play'} size={24} />
+					<Icon name={player.active ? 'pause' : 'play'} size={24} />
 				</span>
 			{/key}
+			{#if player.buffering}<span class="loading-ring"></span>{/if}
 		</button>
 		<button class="ctl" aria-label="Next" onclick={() => player.next()}>
 			<Icon name="next" size={24} />

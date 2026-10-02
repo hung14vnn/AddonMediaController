@@ -42,19 +42,20 @@
 			><Icon name="previous" size={24} /></button
 		>
 		<button
-			class="pp"
-			aria-label={player.playing ? "Pause" : "Play"}
+			class="pp has-ring"
+			aria-label={player.active ? "Pause" : "Play"}
 			disabled={!song}
 			onclick={() => player.toggle()}
 		>
-			{#key player.playing}
+			{#key player.active}
 				<span class="icon-swap" in:pop={{ from: 0.55, duration: 200 }}
 					><Icon
-						name={player.playing ? "pause" : "play"}
+						name={player.active ? "pause" : "play"}
 						size={30}
 					/></span
 				>
 			{/key}
+			{#if player.buffering}<span class="loading-ring"></span>{/if}
 		</button>
 		<button aria-label="Next" disabled={!song} onclick={() => player.next()}
 			><Icon name="next" size={24} /></button

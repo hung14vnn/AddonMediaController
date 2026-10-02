@@ -23,21 +23,37 @@
 
 	function clearQueue() {
 		if (!player.upNext.length) return;
+
+		queueContent?.scrollTo({ top: 0, behavior: "smooth" });
+
 		const count = player.upNext.length;
 		clearingQueue = true;
 		clearTimers.forEach((timer) => clearTimeout(timer));
 		clearTimers = [];
 
+		const animateCount = Math.min(count, 20);
+		if (count > animateCount) {
+			player.clearUpNext(animateCount);
+		}
+
 		// Remove from the bottom upward. Removing the whole array at once makes
 		// the browser reflow every outgoing row to the first line before it can
 		// play its horizontal outro.
-		for (let step = count - 1; step >= 0; step--) {
-			const delay = (count - 1 - step) * 45;
+		for (let step = animateCount - 1; step >= 0; step--) {
+			const delay = (animateCount - 1 - step) * 45;
 			clearTimers.push(
-				setTimeout(() => player.removeAt(player.index + 1 + step), delay)
+				setTimeout(
+					() => player.removeAt(player.index + 1 + step),
+					delay,
+				),
 			);
 		}
-		clearTimers.push(setTimeout(() => (clearingQueue = false), (count - 1) * 45 + 220));
+		clearTimers.push(
+			setTimeout(
+				() => (clearingQueue = false),
+				(animateCount - 1) * 45 + 220,
+			),
+		);
 	}
 
 	function jumpToTrack(index: number) {
@@ -48,7 +64,7 @@
 		player.jumpTo(index);
 		requestAnimationFrame(() => {
 			animateQueueChanges = true;
-			queueContent?.scrollTo({ top: 0, behavior: 'smooth' });
+			queueContent?.scrollTo({ top: 0, behavior: "smooth" });
 		});
 	}
 </script>
@@ -76,16 +92,18 @@
 				/>
 			</button>
 			{#if player.upNext.length}
-				<button class="clear" onclick={clearQueue}
-					>Clear</button
-				>
+				<button class="clear" onclick={clearQueue}>Clear</button>
 			{/if}
 		</div>
 	</header>
 
 	<div class="queue-content" bind:this={queueContent}>
 		{#if !player.upNext.length}
-			<p class="empty" in:fadeOnly={{ duration: 220 }} out:fadeOnly={{ duration: 160 }}>
+			<p
+				class="empty"
+				in:fadeOnly={{ duration: 220 }}
+				out:fadeOnly={{ duration: 160 }}
+			>
 				Nothing up next. Use “Play Next” on any song to add it here.
 			</p>
 		{/if}
@@ -96,54 +114,58 @@
 					in:queueItem={{
 						direction: -1,
 						duration: animateQueueChanges ? 220 : 0,
-						delay: animateQueueChanges ? j * 45 : 0
+						delay: animateQueueChanges ? j * 45 : 0,
 					}}
 					out:queueItem={{
 						direction: 1,
 						duration: animateQueueChanges ? 220 : 0,
-						delay: clearingQueue ? 0 : animateQueueChanges ? j * 45 : 0
+						delay: clearingQueue
+							? 0
+							: animateQueueChanges
+								? j * 45
+								: 0,
 					}}
 					animate:flip={{ duration: clearingQueue ? 0 : 500 }}
-						draggable="true"
-						class:over={dragOver === i}
-						ondragstart={() => (dragFrom = i)}
-						ondragover={(e) => {
-							e.preventDefault();
-							dragOver = i;
-						}}
-						ondragleave={() => dragOver === i && (dragOver = null)}
-						ondrop={(e) => {
-							e.preventDefault();
-							if (dragFrom !== null && dragFrom !== i)
-								player.moveUpNext(dragFrom, i);
-							dragFrom = dragOver = null;
-						}}
-						ondragend={() => (dragFrom = dragOver = null)}
-					>
-						<button class="item" onclick={() => jumpToTrack(i)}>
-							<span class="art"
-								><Artwork
-									id={song.coverArt}
-									size={64}
-									seed={song.album ?? song.title}
-								/></span
-							>
-							<span class="text">
-								<span class="title ellipsis">{song.title}</span>
-								<span class="artist ellipsis"
-									>{artistName(song)}</span
-								>
-							</span>
-						</button>
-						<button
-							class="remove"
-							aria-label="Remove {song.title}"
-							onclick={() => player.removeAt(i)}
+					draggable="true"
+					class:over={dragOver === i}
+					ondragstart={() => (dragFrom = i)}
+					ondragover={(e) => {
+						e.preventDefault();
+						dragOver = i;
+					}}
+					ondragleave={() => dragOver === i && (dragOver = null)}
+					ondrop={(e) => {
+						e.preventDefault();
+						if (dragFrom !== null && dragFrom !== i)
+							player.moveUpNext(dragFrom, i);
+						dragFrom = dragOver = null;
+					}}
+					ondragend={() => (dragFrom = dragOver = null)}
+				>
+					<button class="item" onclick={() => jumpToTrack(i)}>
+						<span class="art"
+							><Artwork
+								id={song.coverArt}
+								size={64}
+								seed={song.album ?? song.title}
+							/></span
 						>
-							<Icon name="close" size={16} />
-						</button>
-					</li>
-				{/each}
+						<span class="text">
+							<span class="title ellipsis">{song.title}</span>
+							<span class="artist ellipsis"
+								>{artistName(song)}</span
+							>
+						</span>
+					</button>
+					<button
+						class="remove"
+						aria-label="Remove {song.title}"
+						onclick={() => player.removeAt(i)}
+					>
+						<Icon name="close" size={16} />
+					</button>
+				</li>
+			{/each}
 		</ol>
 		{#if player.queue.length > 0}
 			<div class="discover-dock">
@@ -313,7 +335,7 @@
 		font-size: 0.85rem;
 		font-weight: 500;
 		color: #fff;
-		background: rgb(40 40 40 / 0.9);
+		background: rgb(40 40 40 / 0.65);
 		box-shadow: 0 4px 14px rgb(0 0 0 / 0.4);
 		transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 	}

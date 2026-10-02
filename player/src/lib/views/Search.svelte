@@ -4,6 +4,7 @@
 	import ArtistCard from '../components/ArtistCard.svelte';
 	import GenreTiles from '../components/GenreTiles.svelte';
 	import Icon from '../components/Icon.svelte';
+	import PlaylistCard from '../components/PlaylistCard.svelte';
 	import Shelf from '../components/Shelf.svelte';
 	import TrackList from '../components/TrackList.svelte';
 	import { router } from '../router.svelte';
@@ -63,9 +64,9 @@
 		// Keep showing old results while typing, but not another catalog's.
 		if (from !== shownSource) results = null;
 		shownSource = from;
-		search(q, { artist: 12, album: 20, song: 10 }, 0, false, from)
+		search(q, { artist: 12, album: 20, song: 10, playlist: 10 }, 0, false, from)
 			.then((r) => mine === seq && (results = r))
-			.catch(() => mine === seq && (results = { artists: [], albums: [], songs: [] }))
+			.catch(() => mine === seq && (results = { artists: [], albums: [], songs: [], playlists: [] }))
 			.finally(() => mine === seq && (loading = false));
 	});
 
@@ -74,7 +75,7 @@
 		timer = setTimeout(() => router.go(`/search?q=${encodeURIComponent(input)}`, true), 300);
 	}
 
-	const empty = $derived(results && !results.artists.length && !results.albums.length && !results.songs.length);
+	const empty = $derived(results && !results.artists.length && !results.albums.length && !results.songs.length && !results.playlists?.length);
 </script>
 
 <div class="page">
@@ -82,7 +83,7 @@
 		<h1 class="page-title">Search</h1>
 		<label class="field">
 			<Icon name="search" size={18} />
-			<input bind:this={field} type="search" placeholder="Artists, Songs, Albums…" bind:value={input} oninput={onInput} autocapitalize="none" autocomplete="off" />
+			<input bind:this={field} type="search" placeholder="Artists, Songs, Albums, Playlists…" bind:value={input} oninput={onInput} autocapitalize="none" autocomplete="off" />
 		</label>
 		<div class="seg" role="tablist" aria-label="Search source">
 			{#each sources as s (s.id)}
@@ -118,6 +119,11 @@
 		{#if results.albums.length}
 			<Shelf title="Albums">
 				{#each results.albums as album (album.id)}<AlbumCard {album} />{/each}
+			</Shelf>
+		{/if}
+		{#if results.playlists?.length}
+			<Shelf title="Playlists">
+				{#each results.playlists as playlist (playlist.id)}<PlaylistCard {playlist} />{/each}
 			</Shelf>
 		{/if}
 	{/if}
