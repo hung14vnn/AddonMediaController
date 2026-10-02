@@ -239,11 +239,26 @@ class Player {
 	}
 
 	/** Spread songs through the not-yet-played part of the queue (Smart Discover). */
-	interleaveUpNext(songs: Song[]) {
+	interleaveUpNext(songs: Song[], limit?: number) {
 		if (!songs.length) return;
 		if (!this.current) return this.playList(songs);
 		const start = this.index + 1;
-		this.queue = [...this.queue.slice(0, start), ...interleaveEvenly(this.queue.slice(start), songs)];
+		
+		let targetSection: Song[];
+		let restSection: Song[];
+		if (limit) {
+			targetSection = this.queue.slice(start, start + limit);
+			restSection = this.queue.slice(start + limit);
+		} else {
+			targetSection = this.queue.slice(start);
+			restSection = [];
+		}
+
+		this.queue = [
+			...this.queue.slice(0, start),
+			...interleaveEvenly(targetSection, songs),
+			...restSection
+		];
 		this.unshuffled?.push(...songs);
 		this.persist();
 	}

@@ -8,6 +8,7 @@ import { ui } from './ui.svelte';
 
 const MAX_SEEDS = 5;
 const SUGGESTIONS = 15;
+const SCOPE_SIZE = 15;
 
 const trackKey = (s: Song) => `${(s.artist ?? s.displayArtist ?? '').toLowerCase()}|${s.title.toLowerCase()}`;
 
@@ -16,13 +17,13 @@ class SmartDiscover {
 
 	async run() {
 		const player = getPlayer();
-		const queue = player.queue;
-		if (this.discovering || queue.length === 0) return;
+		if (this.discovering || player.queue.length === 0) return;
 		this.discovering = true;
 
 		try {
-			// Partial Fisher–Yates: a random sample of up to five seeds from the whole queue.
-			const pool = [...queue];
+			// Partial Fisher–Yates: a random sample of up to five seeds from the local scope
+			// (the currently playing track and the next 14).
+			const pool = player.queue.slice(player.index, player.index + SCOPE_SIZE);
 			const count = Math.min(MAX_SEEDS, pool.length);
 			for (let i = 0; i < count; i++) {
 				const j = i + Math.floor(Math.random() * (pool.length - i));
@@ -46,7 +47,7 @@ class SmartDiscover {
 				return;
 			}
 
-			player.interleaveUpNext(fresh);
+			player.interleaveUpNext(fresh, SCOPE_SIZE - 1);
 			ui.showToast(`Discovered ${fresh.length} new track${fresh.length === 1 ? '' : 's'}`);
 		} catch (e) {
 			console.error('Smart Discover failed:', e);
