@@ -347,7 +347,7 @@ export async function search(
 
 /** OpenSubsonic allows an empty search3 query to page through every song. */
 export async function getAllSongs(offset = 0, count = 100) {
-	return (await search('', { artist: 0, album: 0, song: count }, offset)).songs;
+	return (await search('', { artist: 0, album: 0, song: count, playlist: 0 }, offset)).songs;
 }
 
 export async function getStarred() {

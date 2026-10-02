@@ -26,10 +26,15 @@ class FakeAudio extends EventTarget {
 	playbackRate = 1;
 	readyState = 0;
 	src = '';
-	load = vi.fn();
+	/** Like the media element load algorithm: drop the data and stop. */
+	load = vi.fn(() => {
+		this.readyState = 0;
+		this.paused = true;
+	});
 	play = vi.fn(() => {
 		this.paused = false;
 		this.dispatchEvent(new Event('play'));
+		if (this.readyState < 3) this.dispatchEvent(new Event('waiting'));
 		return Promise.resolve();
 	});
 	pause = vi.fn(() => {
@@ -77,6 +82,7 @@ async function freshPlayer() {
 beforeEach(() => {
 	localStorage.clear();
 	vi.stubGlobal('Audio', FakeAudio);
+	vi.stubGlobal('fetch', vi.fn(async () => new Response('')));
 	sleepTimer.onTrackEnded.mockReturnValue(false);
 });
 
@@ -86,22 +92,71 @@ afterEach(() => {
 });
 
 describe('Player track changes', () => {
-	it('starts the tapped song: set src and load(), then play() on canplay', async () => {
+	it('starts the tapped song: set src, load(), play(), spinner until canplay', async () => {
 		const { player, audio } = await freshPlayer();
 		player.playList([song('a'), song('b'), song('c')], 1);
 		await flush();
 		expect(player.current?.id).toBe('b');
 		expect(audio.src).toContain('id=b');
 		expect(audio.load).toHaveBeenCalled();
-		// Loading: the button shows a spinner, not "playing" in silence.
-		expect(audio.play).not.toHaveBeenCalled();
-		expect(player.playing).toBe(false);
+		// play() at once keeps the audio session alive while the source loads.
+		expect(audio.play).toHaveBeenCalledTimes(1);
 		expect(player.buffering).toBe(true);
 		expect(player.active).toBe(true);
 		audio.ready();
-		expect(audio.play).toHaveBeenCalledTimes(1);
 		expect(player.playing).toBe(true);
 		expect(player.buffering).toBe(false);
+	});
+
+	it('plays on canplay when the early play() did not stick', async () => {
+		const { player, audio } = await freshPlayer();
+		player.playList([song('a')]);
+		await flush();
+		audio.paused = true;
+		audio.play.mockClear();
+		audio.ready();
+		expect(audio.play).toHaveBeenCalledTimes(1);
+		expect(player.current?.id).toBe('a');
+	});
+
+	it('retries a play() refused in the background once the app is visible', async () => {
+		const { player, audio } = await freshPlayer();
+		player.playList([song('a'), song('b')]);
+		await flush();
+		audio.ready();
+		const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+		try {
+			audio.play.mockImplementationOnce(() => Promise.reject(new DOMException('blocked', 'NotAllowedError')));
+			audio.fire('ended');
+			await flush();
+			expect(player.current?.id).toBe('b');
+			expect(player.active).toBe(false);
+			audio.play.mockClear();
+			hidden.mockReturnValue(false);
+			document.dispatchEvent(new Event('visibilitychange'));
+			expect(audio.play).toHaveBeenCalledTimes(1);
+		} finally {
+			vi.restoreAllMocks();
+		}
+	});
+
+	it('warms up the next track 30 seconds before the end', async () => {
+		const fetchMock = vi.fn(async () => new Response('ab'));
+		vi.stubGlobal('fetch', fetchMock);
+		const { player, audio } = await freshPlayer();
+		player.playList([song('a', 200), song('b')]);
+		await flush();
+		audio.ready();
+		audio.currentTime = 100;
+		audio.fire('timeupdate');
+		expect(fetchMock).not.toHaveBeenCalled();
+		for (const t of [171, 172, 173]) {
+			audio.currentTime = t;
+			audio.fire('timeupdate');
+		}
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('id=b'), { headers: { Range: 'bytes=0-1' } });
+		expect(player.current?.id).toBe('a');
 	});
 
 	it('kicks a waiting element that already has enough data', async () => {
@@ -117,10 +172,8 @@ describe('Player track changes', () => {
 
 	it('shows paused, not playing, when the browser refuses play()', async () => {
 		const { player, audio } = await freshPlayer();
-		player.playList([song('a')]);
-		await flush();
 		audio.play.mockImplementationOnce(() => Promise.reject(new DOMException('blocked', 'NotAllowedError')));
-		audio.ready();
+		player.playList([song('a')]);
 		await flush();
 		expect(player.playing).toBe(false);
 		expect(player.buffering).toBe(false);
@@ -132,6 +185,7 @@ describe('Player track changes', () => {
 		player.playList([song('a')]);
 		await flush();
 		player.pause();
+		audio.play.mockClear();
 		audio.ready();
 		expect(audio.play).not.toHaveBeenCalled();
 		expect(player.active).toBe(false);
@@ -249,6 +303,8 @@ describe('Player platform fixes', () => {
 			await vi.advanceTimersByTimeAsync(0);
 			audio.load.mockClear();
 			await vi.advanceTimersByTimeAsync(10_000);
+			expect(audio.load).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(15_000);
 			expect(player.current?.id).toBe('b');
 			expect(audio.load).toHaveBeenCalled();
 		} finally {

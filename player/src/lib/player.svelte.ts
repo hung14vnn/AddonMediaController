@@ -33,12 +33,20 @@ interface OfflineCopy {
 
 /** Playing with a frozen clock for this long means the stream stopped delivering. */
 const STALL_MS = 8_000;
+/** Same, before the first byte: a cold YouTube track takes the server seconds to resolve. */
+const LOAD_STALL_MS = 20_000;
 const STALL_CHECK_MS = 2_000;
 /** Reloads per track before giving up, so a dead server isn't hammered. */
 const MAX_RELOADS = 3;
 
 /** HTMLMediaElement.HAVE_FUTURE_DATA: enough buffered to keep playing. */
 const HAVE_FUTURE_DATA = 3;
+
+/**
+ * Seconds before the end at which the next track's stream is requested once, so the
+ * server has already resolved it (a YouTube lookup takes seconds) when it's needed.
+ */
+const WARM_UP_LEAD_S = 30;
 
 /** A browser-reported length this much over the server's means the browser misread it. */
 const DURATION_MISMATCH_RATIO = 1.25;
@@ -104,6 +112,10 @@ class Player {
 	private durationCap = 0;
 	/** Playback is wanted: set by a play request, cleared by a pause that isn't a track change. */
 	private playRequested = false;
+	/** play() was refused while the page was hidden: retry once it is visible again. */
+	private resumeWhenVisible = false;
+	/** Upcoming track whose stream was already warmed up during this one. */
+	private warmedFor: string | null = null;
 	private stallTimer: ReturnType<typeof setInterval> | undefined;
 	private lastProgressAt = 0;
 	private lastProgressTime = -1;
@@ -121,11 +133,12 @@ class Player {
 		this.singleTab = new SingleTab(() => this.pause());
 		this.interruptions = new InterruptionGuard(a, () => this.play());
 
-		// Event flow follows Navidrome's player: a track change only sets src and load()s;
-		// play() is called once `canplay` says there is data, and a `waiting` element that
+		// Event flow follows Navidrome's player: a track change sets src and load()s,
+		// `canplay` (re)starts playback that is wanted, and a `waiting` element that
 		// already has enough buffered is kicked with play() again.
 		a.addEventListener('play', () => {
 			this.playing = true;
+			this.resumeWhenVisible = false;
 			this.singleTab.announcePlaying();
 		});
 		a.addEventListener('pause', () => {
@@ -181,6 +194,7 @@ class Player {
 			}
 		});
 		window.addEventListener('pagehide', this.onPageHide);
+		document.addEventListener('visibilitychange', this.onVisibilityChange);
 		this.restore();
 	}
 
@@ -256,6 +270,7 @@ class Player {
 
 	pause() {
 		this.playRequested = false;
+		this.resumeWhenVisible = false;
 		this.buffering = false;
 		this.interruptions.userPause();
 		this.audio.pause();
@@ -344,7 +359,6 @@ class Player {
 			this.reloadsFor = song.id;
 			this.reloads = 0;
 		}
-		// Like Navidrome: not playing while the new source loads; `canplay` starts it.
 		this.playing = false;
 		this.playRequested = autoplay;
 		this.buffering = autoplay;
@@ -373,7 +387,13 @@ class Player {
 
 		this.audio.src = offline?.copy.url ?? streamUrl(song.id);
 		this.audio.load();
-		if (autoplay) scrobble(song.id, false);
+		if (autoplay) {
+			// Unlike Navidrome, play() right away rather than waiting for `canplay`: a cold
+			// YouTube track takes seconds to arrive, and Android/iOS refuse to start audio
+			// from a background page that has been silent that long. `canplay` still retries.
+			this.play();
+			scrobble(song.id, false);
+		}
 		setMediaMetadata(this.current);
 		this.persist();
 		this.prepareNextOffline();
@@ -409,7 +429,30 @@ class Player {
 			this.playRequested = false;
 			this.playing = false;
 			this.buffering = false;
+			if (document.hidden) this.resumeWhenVisible = true;
 		});
+	}
+
+	private readonly onVisibilityChange = () => {
+		if (document.hidden || !this.resumeWhenVisible || !this.current) return;
+		this.resumeWhenVisible = false;
+		this.play();
+	};
+
+	private warmUpNext() {
+		const next = this.upcoming();
+		if (!next || next.id === this.warmedFor || next.id === this.current?.id || this.nextOffline?.id === next.id) {
+			return;
+		}
+		this.warmedFor = next.id;
+		const url = streamUrl(next.id);
+		if (!url) return;
+		// Two bytes are enough for the server to resolve and cache the source.
+		void fetch(url, { headers: { Range: 'bytes=0-1' } })
+			.then((res) => res.body?.cancel())
+			.catch(() => {
+				// The track will just resolve when it starts.
+			});
 	}
 
 	private onTime() {
@@ -427,6 +470,7 @@ class Player {
 			this.lastProgressAt = performance.now();
 		}
 		if (Math.floor(a.currentTime) % 5 === 0) this.updatePosition();
+		if (dur > 0 && dur - a.currentTime <= WARM_UP_LEAD_S) this.warmUpNext();
 		// The real audio is over; don't sit through the silence up to the misread length.
 		// Pausing first keeps the element from reaching its own `ended` and advancing twice.
 		if (this.durationCap && !a.paused && a.currentTime >= this.durationCap - 0.25) {
@@ -467,7 +511,9 @@ class Player {
 		if (!this.playRequested || !this.current) return this.disarmStallCheck();
 		// Paused by the system (a call) rather than stuck loading: not a stall.
 		if (this.audio.paused && !this.buffering) return;
-		if (performance.now() - this.lastProgressAt < STALL_MS) return;
+		// HAVE_NOTHING: no byte yet, the server may still be resolving the source.
+		const limit = this.audio.readyState === 0 ? LOAD_STALL_MS : STALL_MS;
+		if (performance.now() - this.lastProgressAt < limit) return;
 		if (this.reloads >= MAX_RELOADS) return this.disarmStallCheck();
 		this.reloads++;
 		this.load(this.index, true, this.currentTime);
@@ -573,6 +619,7 @@ class Player {
 		this.singleTab.close();
 		this.interruptions.dispose();
 		window.removeEventListener('pagehide', this.onPageHide);
+		document.removeEventListener('visibilitychange', this.onVisibilityChange);
 		clearTimeout(this.saveTimer);
 	}
 

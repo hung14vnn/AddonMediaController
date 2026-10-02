@@ -1909,8 +1909,8 @@ async def _get_playlist(c: Ctx) -> Response:
         )
         return c.render("playlist", detail)
 
-    if raw_id.startswith("spotify-playlist-"):
-        playlist_id = raw_id[len("spotify-playlist-"):]
+    if raw_id.startswith("spotify-playlist-") or raw_id.startswith("sp-"):
+        playlist_id = raw_id[len("spotify-playlist-"):] if raw_id.startswith("spotify-playlist-") else raw_id[len("sp-"):]
         from services.spotapi_client import SpotApiClient
         
         try:
