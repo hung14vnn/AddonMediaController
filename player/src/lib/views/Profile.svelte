@@ -123,10 +123,12 @@
 		readPlaybackLog,
 		isPlaybackLogEnabled,
 		setPlaybackLogEnabled,
+		readApiErrorLog,
+		clearApiErrorLog,
 	} from "../playback/debugLog";
 	let playbackLog = $state(readPlaybackLog());
 	let logEnabled = $state(isPlaybackLogEnabled());
-
+	let apiErrorLog = $state(readApiErrorLog());
 	function togglePlaybackLog() {
 		logEnabled = !logEnabled;
 		setPlaybackLogEnabled(logEnabled);
@@ -184,6 +186,32 @@
 				hidden,
 				detail,
 				currentTrack: track,
+			};
+		});
+	}
+
+	function parseApiErrorLog(lines: string[]) {
+		return lines.slice(-150).map((line) => {
+			const timePart = line.split(" ")[0] || "";
+			let time = timePart.split(".")[0] || "";
+
+			if (time) {
+				const [h, m, s] = time.split(":").map(Number);
+				if (!isNaN(h) && !isNaN(m) && !isNaN(s)) {
+					const d = new Date();
+					d.setUTCHours(h, m, s, 0);
+					const localH = d.getHours().toString().padStart(2, "0");
+					const localM = d.getMinutes().toString().padStart(2, "0");
+					const localS = d.getSeconds().toString().padStart(2, "0");
+					time = `${localH}:${localM}:${localS}`;
+				}
+			}
+
+			const content = line.substring(timePart.length + 1);
+			return {
+				raw: line,
+				time,
+				content,
 			};
 		});
 	}
@@ -287,6 +315,7 @@
 	}
 
 	const parsedLog = $derived(parseLog(playbackLog));
+	const parsedApiErrorLog = $derived(parseApiErrorLog(apiErrorLog));
 
 	import { tick } from "svelte";
 
@@ -296,6 +325,15 @@
 			if (logEntriesContainer)
 				logEntriesContainer.scrollTop =
 					logEntriesContainer.scrollHeight;
+		});
+	}
+
+	function refreshApiErrorLog() {
+		apiErrorLog = readApiErrorLog();
+		tick().then(() => {
+			if (apiErrorLogEntriesContainer)
+				apiErrorLogEntriesContainer.scrollTop =
+					apiErrorLogEntriesContainer.scrollHeight;
 		});
 	}
 
@@ -314,6 +352,21 @@
 		playbackLog = [];
 	}
 
+	function resetApiErrorLog() {
+		clearApiErrorLog();
+		apiErrorLog = [];
+	}
+
+	async function copyApiErrorLog() {
+		apiErrorLog = readApiErrorLog();
+		try {
+			await navigator.clipboard.writeText(apiErrorLog.join("\n"));
+			ui.showToast("API error log copied");
+		} catch {
+			ui.showToast("Couldn’t copy — select the log below instead");
+		}
+	}
+
 	function signOut() {
 		if (
 			confirm(
@@ -329,6 +382,7 @@
 	const isAdmin = $derived(!!ui.me?.adminRole);
 
 	let logEntriesContainer = $state<HTMLDivElement>();
+	let apiErrorLogEntriesContainer = $state<HTMLDivElement>();
 </script>
 
 <div class="page">
@@ -477,7 +531,7 @@
 	<div class="group">
 		<div class="row">
 			<span class="icon-box" style="background: #a2845e;"
-				><Icon name="list" size={18} /></span
+				><Icon name="server" size={18} /></span
 			>
 			<div class="text">
 				<span class="label">Playback Log</span>
@@ -556,6 +610,72 @@
 								{#if friendly.info}<span class="event-detail"
 										>{friendly.info}</span
 									>{/if}
+							</div>
+						</div>
+					{/each}
+				</div>
+			</details>
+		{/if}
+	</div>
+
+	<h3 class="group-title">Error Reports</h3>
+	<div class="group">
+		<div class="row">
+			<span class="icon-box" style="background: #e74c3c;"
+				><Icon name="server" size={18} /></span
+			>
+			<div class="text">
+				<span class="label">API Error Log</span>
+				<span class="detail">
+					{apiErrorLog.length
+						? plural(apiErrorLog.length, "error")
+						: "No errors"}
+				</span>
+			</div>
+		</div>
+		{#if apiErrorLog.length}
+			<details
+				class="log"
+				ontoggle={(e) => {
+					if (e.currentTarget.open) {
+						tick().then(() => {
+							if (apiErrorLogEntriesContainer)
+								apiErrorLogEntriesContainer.scrollTop =
+									apiErrorLogEntriesContainer.scrollHeight;
+						});
+					}
+				}}
+			>
+				<summary>View API errors</summary>
+				<div class="log-actions">
+					<button
+						class="btn small secondary"
+						onclick={copyApiErrorLog}>Copy to Clipboard</button
+					>
+					<button
+						class="btn small secondary danger"
+						onclick={resetApiErrorLog}>Clear Log</button
+					>
+					<button
+						class="btn small secondary"
+						style="padding: 0 8px; margin-left: auto;"
+						title="Refresh log"
+						aria-label="Refresh"
+						onclick={refreshApiErrorLog}
+					>
+						<Icon name="refresh" size={16} />
+					</button>
+				</div>
+				<div
+					class="log-entries"
+					bind:this={apiErrorLogEntriesContainer}
+				>
+					{#each parsedApiErrorLog as entry}
+						<div class="log-entry">
+							<div class="time">{entry.time}</div>
+							<Icon name="close" size={14} class="event-icon" />
+							<div class="event-details">
+								<span class="event-name">{entry.content}</span>
 							</div>
 						</div>
 					{/each}

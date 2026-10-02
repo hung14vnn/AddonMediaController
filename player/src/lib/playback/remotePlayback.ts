@@ -40,8 +40,20 @@ export function watchRemotePlayback(audio: HTMLAudioElement, listener: RemotePla
 	sync();
 }
 
-/** Opens the system device picker; false when this browser has none. */
 export async function pickOutput(audio: HTMLAudioElement): Promise<boolean> {
+	// Try local device picker first (Chrome/Edge on Windows/Android).
+	if ('setSinkId' in audio && navigator.mediaDevices && 'selectAudioOutput' in navigator.mediaDevices) {
+		try {
+			const device = await (navigator.mediaDevices as any).selectAudioOutput();
+			await (audio as any).setSinkId(device.deviceId);
+			return true;
+		} catch (e) {
+			// NotAllowedError = user dismissed the picker, which still counts as shown.
+			if (e instanceof DOMException && e.name === 'NotAllowedError') return true;
+			// For other errors, fall through to Remote Playback.
+		}
+	}
+
 	const remote = remoteOf(audio);
 	if (!remote) return false;
 	try {

@@ -3,21 +3,22 @@
 	// large art near the top that shrinks while paused, and a three-button footer
 	// (lyrics · output device · queue). Lyrics/queue sit beside the art on desktop
 	// and replace it on phones.
-	import { tick } from 'svelte';
-	import { cubicOut } from 'svelte/easing';
-	import { time } from '../format';
-	import { songMenu } from '../menus';
-	import { artSwap, fadeOnly, pop, sheet, textSwap } from '../motion';
-	import { artworkTint, softArt, type Tint } from '../palette';
-	import { getPlayer } from '../player.svelte';
-	import { router } from '../router.svelte';
-	import { ui } from '../ui.svelte';
-	import Artwork from './Artwork.svelte';
-	import ArtistLinks from './ArtistLinks.svelte';
-	import Icon from './Icon.svelte';
-	import Lyrics from './Lyrics.svelte';
-	import Queue from './Queue.svelte';
-	import Slider from './Slider.svelte';
+	import { tick } from "svelte";
+	import { cubicOut } from "svelte/easing";
+	import { time } from "../format";
+	import { songMenu } from "../menus";
+	import { artSwap, fadeOnly, pop, sheet, textSwap } from "../motion";
+	import { artworkTint, softArt, type Tint } from "../palette";
+	import { getPlayer } from "../player.svelte";
+	import { router } from "../router.svelte";
+	import { sleepTimer } from "../sleepTimer.svelte";
+	import { ui } from "../ui.svelte";
+	import Artwork from "./Artwork.svelte";
+	import ArtistLinks from "./ArtistLinks.svelte";
+	import Icon from "./Icon.svelte";
+	import Lyrics from "./Lyrics.svelte";
+	import Queue from "./Queue.svelte";
+	import Slider from "./Slider.svelte";
 
 	const player = getPlayer();
 	const song = $derived(player.current);
@@ -30,7 +31,7 @@
 	// Round to whole seconds so the time strings are not re-formatted every millisecond.
 	const formattedCurrentTime = $derived(time(Math.floor(shownTime)));
 	const formattedRemainingTime = $derived(
-		time(Math.max(0, Math.floor((player.duration || 0) - shownTime)))
+		time(Math.max(0, Math.floor((player.duration || 0) - shownTime))),
 	);
 
 	let tint: Tint | null = $state(null);
@@ -44,95 +45,124 @@
 		return () => (cancelled = true);
 	});
 
-	const LOSSLESS = new Set(['flac', 'alac', 'wav', 'aiff', 'aif', 'ape', 'wv']);
+	const LOSSLESS = new Set([
+		"flac",
+		"alac",
+		"wav",
+		"aiff",
+		"aif",
+		"ape",
+		"wv",
+	]);
 	const quality = $derived.by(() => {
 		const s = song?.suffix?.toLowerCase();
-		if (!s) return '';
-		if (LOSSLESS.has(s)) return 'Lossless';
-		return song?.bitRate ? `${s.toUpperCase()} · ${song.bitRate} kbps` : s.toUpperCase();
+		if (!s) return "";
+		if (LOSSLESS.has(s)) return "Lossless";
+		return song?.bitRate
+			? `${s.toUpperCase()} · ${song.bitRate} kbps`
+			: s.toUpperCase();
 	});
 
 	const outputLabel = $derived(
 		player.castStalled
-			? 'Not responding'
-			: player.castState === 'connected'
-				? 'Casting'
-				: player.castState === 'connecting'
-					? 'Connecting…'
-					: 'This Device'
+			? "Not responding"
+			: player.castState === "connected"
+				? "Casting"
+				: player.castState === "connecting"
+					? "Connecting…"
+					: "This Device",
 	);
 
 	// A stuck AirPlay/Cast hand-off keeps the clock running with no sound; say why.
 	$effect(() => {
-		if (player.castStalled) ui.showToast('Playback device isn’t responding — tap the output button to switch back');
+		if (player.castStalled)
+			ui.showToast(
+				"Playback device isn’t responding — tap the output button to switch back",
+			);
 	});
 
 	async function pickOutput() {
-		if (!(await player.pickOutput())) ui.showToast('No other playback devices found');
+		if (!(await player.pickOutput()))
+			ui.showToast("No other playback devices found");
 	}
 
 	// ---- mobile panel + FLIP ---------------------------------------------------
 	// Track the mobile breakpoint (matches the 900px CSS media query).
 	let isMobile = $state(false);
-	type Panel = 'lyrics' | 'queue';
+	type Panel = "lyrics" | "queue";
 	// Single source of truth: is a panel open on mobile?
 	const mobileOpen = $derived(isMobile && !!ui.panel);
 
 	let mainEl = $state<HTMLDivElement | null>(null);
 	let panelEl = $state<HTMLDivElement | null>(null);
-	let leaveBox: { top: number; left: number; width: number; height: number } | null = null;
+	let leaveBox: {
+		top: number;
+		left: number;
+		width: number;
+		height: number;
+	} | null = null;
 
 	$effect(() => {
-		const mq = window.matchMedia('(max-width: 899px)');
+		const mq = window.matchMedia("(max-width: 899px)");
 		const update = () => (isMobile = mq.matches);
 		update();
-		mq.addEventListener('change', update);
-		return () => mq.removeEventListener('change', update);
+		mq.addEventListener("change", update);
+		return () => mq.removeEventListener("change", update);
 	});
 
 	// Panel only uses opacity + transform, never touches layout.
-	function panelIn(_node: HTMLElement, { duration = 320 } = {}) {
+	function panelIn(_node: HTMLElement, { duration = 500 } = {}) {
 		return {
 			duration,
 			easing: cubicOut,
-			css: (t: number) => `opacity:${t};transform:translateY(${(1 - t) * 16}px)`
+			css: (t: number) =>
+				`opacity:${t};transform:translateY(${(1 - t) * 16}px)`,
 		};
 	}
 
 	// On leave: pull the panel out of the flow (absolute, keeping its old box) so the
 	// new layout applies immediately and FLIP can animate the rest.
-	function panelOut(node: HTMLElement, { duration = 220 } = {}) {
+	function panelOut(node: HTMLElement, { duration = 350 } = {}) {
 		if (leaveBox) {
 			Object.assign(node.style, {
-				position: 'absolute',
+				position: "absolute",
 				top: `${leaveBox.top}px`,
 				left: `${leaveBox.left}px`,
 				width: `${leaveBox.width}px`,
 				height: `${leaveBox.height}px`,
-				margin: '0',
-				pointerEvents: 'none'
+				margin: "0",
+				pointerEvents: "none",
 			});
 		}
 		return {
 			duration,
 			easing: cubicOut,
-			css: (t: number) => `opacity:${t};transform:translateY(${(1 - t) * 14}px)`
+			css: (t: number) =>
+				`opacity:${t};transform:translateY(${(1 - t) * 14}px)`,
 		};
 	}
 
-	const FLIP_EASING = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
+	const FLIP_EASING = "cubic-bezier(0.2, 0.8, 0.2, 1)";
 
 	async function flip(mutate: () => void) {
 		if (!mainEl) return mutate();
 
-		const els = () => Array.from(mainEl!.querySelectorAll<HTMLElement>('[data-flip]'));
+		const els = () =>
+			Array.from(mainEl!.querySelectorAll<HTMLElement>("[data-flip]"));
 
 		// FIRST: measure (works even if a previous animation is mid-flight)
-		const first = new Map(els().map((el) => [el.dataset.flip!, el.getBoundingClientRect()]));
+		const first = new Map(
+			els().map((el) => [el.dataset.flip!, el.getBoundingClientRect()]),
+		);
 		const m = mainEl.getBoundingClientRect();
 		const p = panelEl?.getBoundingClientRect();
 		leaveBox = p
-			? { top: p.top - m.top, left: p.left - m.left, width: p.width, height: p.height }
+			? {
+					top: p.top - m.top,
+					left: p.left - m.left,
+					width: p.width,
+					height: p.height,
+				}
 			: null;
 
 		mutate();
@@ -161,10 +191,12 @@
 
 			el.animate(
 				[
-					{ transform: `translate3d(${dx}px, ${dy}px, 0) scale(${sx}, ${sy})` },
-					{ transform: 'translate3d(0, 0, 0) scale(1, 1)' }
+					{
+						transform: `translate3d(${dx}px, ${dy}px, 0) scale(${sx}, ${sy})`,
+					},
+					{ transform: "translate3d(0, 0, 0) scale(1, 1)" },
 				],
-				{ duration: 380, easing: FLIP_EASING }
+				{ duration: 550, easing: FLIP_EASING },
 			);
 		}
 	}
@@ -182,7 +214,9 @@
 	function onTouchStart(e: TouchEvent) {
 		// Queue/Lyrics own their touch gestures. Do not let a scroll that bubbles
 		// from the panel move or dismiss the Now Playing sheet.
-		dismissGesture = !(e.target instanceof Element && e.target.closest('.panel, .slider'));
+		dismissGesture = !(
+			e.target instanceof Element && e.target.closest(".panel, .slider")
+		);
 		if (dismissGesture) startY = e.touches[0].clientY;
 	}
 
@@ -205,7 +239,7 @@
 	}
 
 	function onKey(e: KeyboardEvent) {
-		if (e.key === 'Escape') close();
+		if (e.key === "Escape") close();
 	}
 </script>
 
@@ -216,7 +250,7 @@
 	class="np"
 	class:tinted={!!tint}
 	style:transform={dragY ? `translateY(${dragY}px)` : undefined}
-	style:transition={dragY && ui.nowPlaying ? 'none' : undefined}
+	style:transition={dragY && ui.nowPlaying ? "none" : undefined}
 	ontouchstart={onTouchStart}
 	ontouchmove={onTouchMove}
 	ontouchend={onTouchEnd}
@@ -239,14 +273,15 @@
 			{/key}
 		{/if}
 		{#if backdrop}
-			{#key backdrop}<canvas use:softArt={backdrop} in:fadeOnly={{ duration: 900 }} out:fadeOnly={{ duration: 900 }}></canvas>{/key}
+			{#key backdrop}<canvas
+					use:softArt={backdrop}
+					in:fadeOnly={{ duration: 900 }}
+					out:fadeOnly={{ duration: 900 }}
+				></canvas>{/key}
 		{/if}
 	</div>
 
-	<div
-		class="grab"
-		role="presentation"
-	>
+	<div class="grab" role="presentation">
 		<button class="dismiss" aria-label="Close Now Playing" onclick={close}>
 			<span class="pill"></span>
 			<Icon name="chevronDown" size={26} />
@@ -261,13 +296,17 @@
 					in:textSwap={{ dx: 40, duration: 320 }}
 					out:textSwap={{ dx: -40, duration: 240 }}
 				>
-					{#if panel === 'lyrics'}<Lyrics />{:else}<Queue />{/if}
+					{#if panel === "lyrics"}<Lyrics />{:else}<Queue />{/if}
 				</div>
 			{/key}
 		{/snippet}
 
 		<div class="layout" class:mobile-panel={mobileOpen}>
-			<div class="main" class:panel-shift={!isMobile && !!ui.panel} bind:this={mainEl}>
+			<div
+				class="main"
+				class:panel-shift={!isMobile && !!ui.panel}
+				bind:this={mainEl}
+			>
 				<div class="art-row" class:mini={mobileOpen}>
 					<div class="art-wrap" data-flip="art">
 						<div class="art" class:paused={!player.playing}>
@@ -285,15 +324,22 @@
 					</div>
 					<div class="meta" inert={!mobileOpen ? true : undefined}>
 						<span class="c-title ellipsis">{song.title}</span>
-						<ArtistLinks class="c-artist ellipsis" item={song} onclick={close} />
+						<ArtistLinks
+							class="c-artist ellipsis"
+							item={song}
+							onclick={close}
+						/>
 					</div>
 					<button
 						class="round meta-btn"
 						inert={!mobileOpen ? true : undefined}
 						aria-label="Favorite"
-						onclick={() => ui.toggleLove('song', song)}
+						onclick={() => ui.toggleLove("song", song)}
 					>
-						<Icon name={ui.isLoved(song) ? 'starFill' : 'star'} size={16} />
+						<Icon
+							name={ui.isLoved(song) ? "starFill" : "star"}
+							size={16}
+						/>
 					</button>
 					<button
 						class="round meta-btn"
@@ -306,40 +352,97 @@
 				</div>
 
 				{#if mobileOpen && ui.panel}
-					<div class="panel panel-mobile" bind:this={panelEl} in:panelIn out:panelOut>
+					<div
+						class="panel panel-mobile"
+						bind:this={panelEl}
+						in:panelIn
+						out:panelOut
+					>
 						{@render panelBody(ui.panel)}
 					</div>
 				{/if}
 
 				<div class="controls" class:panel-open={mobileOpen}>
 					{#if !mobileOpen}
-						<div class="info" data-flip="info" in:fadeOnly={{ duration: 260 }}>
+						<div
+							class="info"
+							data-flip="info"
+							in:fadeOnly={{ duration: 260 }}
+						>
 							{#key song.id}
 								<div class="text" in:textSwap>
-									<span class="title ellipsis">{song.title}</span>
-									<ArtistLinks class="artist ellipsis" item={song} onclick={close} />
+									<span class="title ellipsis"
+										>{song.title}</span
+									>
+									<ArtistLinks
+										class="artist ellipsis"
+										item={song}
+										onclick={close}
+									/>
 								</div>
 							{/key}
-							<button class="round" class:on={ui.isLoved(song)} aria-label="Favorite" aria-pressed={ui.isLoved(song)} onclick={() => ui.toggleLove('song', song)}>
+							<button
+								class="round"
+								class:on={ui.isLoved(song)}
+								aria-label="Favorite"
+								aria-pressed={ui.isLoved(song)}
+								onclick={() => ui.toggleLove("song", song)}
+							>
 								{#key ui.isLoved(song)}
-									<span class="icon-swap" in:pop={{ from: 0.3, duration: 320 }}>
-										<Icon name={ui.isLoved(song) ? 'starFill' : 'star'} size={16} />
+									<span
+										class="icon-swap"
+										in:pop={{ from: 0.3, duration: 320 }}
+									>
+										<Icon
+											name={ui.isLoved(song)
+												? "starFill"
+												: "star"}
+											size={16}
+										/>
 									</span>
 								{/key}
 							</button>
-							<button class="round" aria-label="More options" onclick={(e) => ui.openMenu(e, songMenu(song))}>
+							<button
+								class="round"
+								aria-label="More options"
+								onclick={(e) => ui.openMenu(e, songMenu(song))}
+							>
 								<Icon name="more" size={17} />
 							</button>
 						</div>
 					{/if}
 
 					<div class="progress" data-flip="progress">
-						<Slider value={progressTime} max={player.duration} label="Seek" onchange={(v) => player.seek(v)} oninput={(v) => (scrub = v)} />
+						<Slider
+							value={progressTime}
+							max={player.duration}
+							label="Seek"
+							onchange={(v) => player.seek(v)}
+							oninput={(v) => (scrub = v)}
+						/>
 						<div class="times">
 							<span>{formattedCurrentTime}</span>
 							{#if player.muted}
 								<!-- iOS ignores volume but honours mute, and the volume row is hidden while a panel is open. -->
-								<button class="quality muted" onclick={() => player.toggleMute()}>Muted · Tap to unmute</button>
+								<button
+									class="quality muted"
+									onclick={() => player.toggleMute()}
+									>Muted · Tap to unmute</button
+								>
+							{:else if sleepTimer.isActive}
+								<button
+									class="quality active-timer-text"
+									onclick={() => (ui.sleepTimerPicker = true)}
+								>
+									<Icon
+										name="clock"
+										size={11}
+										style="margin-right: 2px; vertical-align: -1.5px; display: inline-block;"
+									/>
+									{sleepTimer.isCountdown
+										? sleepTimer.remainingLabel
+										: "End of Track"}
+								</button>
 							{:else}
 								<span class="quality">{quality}</span>
 							{/if}
@@ -348,35 +451,90 @@
 					</div>
 
 					<div class="transport" data-flip="transport">
-						<button class="skip" aria-label="Previous" onclick={() => player.previous()}><Icon name="previous" size={36} /></button>
-						<button class="pp has-ring" aria-label={player.active ? 'Pause' : 'Play'} onclick={() => player.toggle()}>
+						<button
+							class="skip"
+							aria-label="Previous"
+							onclick={() => player.previous()}
+							><Icon name="previous" size={36} /></button
+						>
+						<button
+							class="pp has-ring"
+							aria-label={player.active ? "Pause" : "Play"}
+							onclick={() => player.toggle()}
+						>
 							{#key player.active}
-								<span class="icon-swap" in:pop={{ from: 0.6, duration: 220 }}>
-									<Icon name={player.active ? 'pause' : 'play'} size={46} />
+								<span
+									class="icon-swap"
+									in:pop={{ from: 0.6, duration: 220 }}
+								>
+									<Icon
+										name={player.active ? "pause" : "play"}
+										size={46}
+									/>
 								</span>
 							{/key}
-							{#if player.buffering}<span class="loading-ring"></span>{/if}
+							{#if player.buffering}<span class="loading-ring"
+								></span>{/if}
 						</button>
-						<button class="skip" aria-label="Next" onclick={() => player.next()}><Icon name="next" size={36} /></button>
+						<button
+							class="skip"
+							aria-label="Next"
+							onclick={() => player.next()}
+							><Icon name="next" size={36} /></button
+						>
 					</div>
 
 					{#if !mobileOpen}
-						<div class="volume" data-flip="volume" in:fadeOnly={{ duration: 260 }}>
-							<button aria-label={player.muted ? 'Unmute' : 'Mute'} onclick={() => player.toggleMute()}><Icon name="speakerLow" size={15} /></button>
-							<Slider value={player.muted ? 0 : player.volume} max={1} step={0.01} label="Volume" onchange={(v) => player.setVolume(v)} oninput={(v) => v !== null && player.setVolume(v)} />
+						<div
+							class="volume"
+							data-flip="volume"
+							in:fadeOnly={{ duration: 260 }}
+						>
+							<button
+								aria-label={player.muted ? "Unmute" : "Mute"}
+								onclick={() => player.toggleMute()}
+								><Icon name="speakerLow" size={15} /></button
+							>
+							<Slider
+								value={player.muted ? 0 : player.volume}
+								max={1}
+								step={0.01}
+								label="Volume"
+								onchange={(v) => player.setVolume(v)}
+								oninput={(v) =>
+									v !== null && player.setVolume(v)}
+							/>
 							<Icon name="speaker" size={17} />
 						</div>
 					{/if}
 
 					<div class="bottom" data-flip="bottom">
-						<button class="foot" class:on={ui.panel === 'lyrics'} aria-label="Lyrics" aria-pressed={ui.panel === 'lyrics'} onclick={() => toggleMobilePanel('lyrics')}>
+						<button
+							class="foot"
+							class:on={ui.panel === "lyrics"}
+							aria-label="Lyrics"
+							aria-pressed={ui.panel === "lyrics"}
+							onclick={() => toggleMobilePanel("lyrics")}
+						>
 							<Icon name="lyrics" size={21} />
 						</button>
-						<button class="output" class:connected={player.castState === 'connected'} class:stalled={player.castStalled} aria-label="Playback device: {outputLabel}" onclick={pickOutput}>
+						<button
+							class="output"
+							class:connected={player.castState === "connected"}
+							class:stalled={player.castStalled}
+							aria-label="Playback device: {outputLabel}"
+							onclick={pickOutput}
+						>
 							<Icon name="airplay" size={21} />
 							<span>{outputLabel}</span>
 						</button>
-						<button class="foot" class:on={ui.panel === 'queue'} aria-label="Playing Next" aria-pressed={ui.panel === 'queue'} onclick={() => toggleMobilePanel('queue')}>
+						<button
+							class="foot"
+							class:on={ui.panel === "queue"}
+							aria-label="Playing Next"
+							aria-pressed={ui.panel === "queue"}
+							onclick={() => toggleMobilePanel("queue")}
+						>
 							<Icon name="queue" size={21} />
 						</button>
 					</div>
@@ -384,7 +542,11 @@
 			</div>
 
 			{#if !isMobile && ui.panel}
-				<div class="panel panel-desktop" in:textSwap={{ dx: 40, duration: 420 }} out:textSwap={{ dx: -40, duration: 280 }}>
+				<div
+					class="panel panel-desktop"
+					in:textSwap={{ dx: 40, duration: 420 }}
+					out:textSwap={{ dx: -40, duration: 280 }}
+				>
 					{@render panelBody(ui.panel)}
 				</div>
 			{/if}
@@ -426,8 +588,11 @@
 		position: absolute;
 		inset: 0;
 		z-index: 1;
-		background:
-			radial-gradient(120% 60% at 50% 0%, color-mix(in srgb, var(--top) 85%, #fff 15%), transparent 70%),
+		background: radial-gradient(
+				120% 60% at 50% 0%,
+				color-mix(in srgb, var(--top) 85%, #fff 15%),
+				transparent 70%
+			),
 			linear-gradient(180deg, var(--top) 0%, var(--bottom) 100%);
 	}
 	.backdrop canvas {
@@ -455,11 +620,15 @@
 		mix-blend-mode: soft-light;
 	}
 	.backdrop::after {
-		content: '';
+		content: "";
 		position: absolute;
 		inset: 0;
 		z-index: 3;
-		background: linear-gradient(to bottom, transparent 55%, rgb(0 0 0 / 0.18));
+		background: linear-gradient(
+			to bottom,
+			transparent 55%,
+			rgb(0 0 0 / 0.18)
+		);
 	}
 
 	@keyframes drift {
@@ -530,6 +699,7 @@
 		min-height: 0;
 		display: flex;
 		align-items: center;
+		justify-content: center;
 		gap: 12px;
 		padding-top: 18px;
 	}
@@ -566,8 +736,10 @@
 	.meta-btn {
 		transition: opacity 0.2s ease;
 	}
+	.art-row:not(.mini) .meta,
 	.art-row:not(.mini) .meta-btn {
 		width: 0;
+		flex: 0;
 		flex-shrink: 1;
 		overflow: hidden;
 		opacity: 0;
@@ -655,6 +827,9 @@
 		font-size: 11px;
 		font-weight: 600;
 		letter-spacing: 0.01em;
+	}
+	.active-timer-text {
+		color: #ffd60a;
 	}
 	.quality.muted {
 		color: #ffd60a;

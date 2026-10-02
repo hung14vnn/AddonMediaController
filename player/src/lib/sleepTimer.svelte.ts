@@ -117,7 +117,8 @@ class SleepTimer {
 		this.fired = true;
 		this.cancelCountdown();
 		getPlayer().pause();
-		ui.showToast('Sleep timer ended');
+		ui.showToast('Sleep timer ended, closing app...');
+		setTimeout(() => window.close(), 1500);
 		return true;
 	}
 
@@ -164,7 +165,8 @@ class SleepTimer {
 		this.fired = true;
 		this.cancelCountdown();
 		getPlayer().pause();
-		ui.showToast('Sleep timer ended');
+		ui.showToast('Sleep timer ended, closing app...');
+		setTimeout(() => window.close(), 1500);
 	}
 }
 

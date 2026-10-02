@@ -1,13 +1,14 @@
 const LOG_KEY = 'music.playbackLog';
 const ENABLED_KEY = 'music.playbackLogEnabled';
+const API_ERROR_LOG_KEY = 'music.apiErrorLog';
 /** Enough for several track changes; older entries drop off. */
 const MAX_ENTRIES = 400;
 
 export function isPlaybackLogEnabled(): boolean {
 	try {
-		return localStorage.getItem(ENABLED_KEY) !== 'false';
+		return localStorage.getItem(ENABLED_KEY) === 'true';
 	} catch {
-		return true;
+		return false;
 	}
 }
 
@@ -47,6 +48,34 @@ export function readPlaybackLog(): string[] {
 export function clearPlaybackLog() {
 	try {
 		localStorage.removeItem(LOG_KEY);
+	} catch {
+		/* ignore */
+	}
+}
+
+export function logApiError(endpoint: string, error: string, detail = '') {
+	try {
+		const entries = readApiErrorLog();
+		const time = new Date().toISOString().slice(11, 23);
+		entries.push(`${time} [${endpoint}] ${error}${detail ? ' ' + detail : ''}`);
+		localStorage.setItem(API_ERROR_LOG_KEY, JSON.stringify(entries.slice(-MAX_ENTRIES)));
+	} catch {
+		/* storage full or unavailable */
+	}
+}
+
+export function readApiErrorLog(): string[] {
+	try {
+		const raw = localStorage.getItem(API_ERROR_LOG_KEY);
+		return raw ? (JSON.parse(raw) as string[]) : [];
+	} catch {
+		return [];
+	}
+}
+
+export function clearApiErrorLog() {
+	try {
+		localStorage.removeItem(API_ERROR_LOG_KEY);
 	} catch {
 		/* ignore */
 	}

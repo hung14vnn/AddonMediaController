@@ -133,19 +133,41 @@ function buildUrl(s: Session, endpoint: string, params: Params = {}) {
 	return url.toString();
 }
 
+import { logApiError } from './playback/debugLog';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function call<T = any>(endpoint: string, params: Params = {}, s: Session | null = session): Promise<T> {
-	if (!s) throw new SubsonicError(10, 'Not signed in');
-	const res = await fetch(buildUrl(s, endpoint, params));
+	if (!s) {
+		const err = new SubsonicError(10, 'Not signed in');
+		logApiError(endpoint, 'Not signed in');
+		throw err;
+	}
+	let res: Response;
+	try {
+		res = await fetch(buildUrl(s, endpoint, params));
+	} catch (e) {
+		const msg = e instanceof Error ? e.message : String(e);
+		logApiError(endpoint, 'Fetch failed', msg);
+		throw e;
+	}
 	let body;
 	try {
 		body = await res.json();
 	} catch {
-		throw new SubsonicError(0, `Server returned ${res.status} (not a Subsonic endpoint?)`);
+		const msg = `Server returned ${res.status} (not a Subsonic endpoint?)`;
+		logApiError(endpoint, 'Invalid JSON response', msg);
+		throw new SubsonicError(0, msg);
 	}
 	const r = body?.['subsonic-response'];
-	if (!r) throw new SubsonicError(0, 'Unexpected response from server');
-	if (r.status !== 'ok') throw new SubsonicError(r.error?.code ?? 0, r.error?.message ?? 'Request failed');
+	if (!r) {
+		logApiError(endpoint, 'Unexpected response from server');
+		throw new SubsonicError(0, 'Unexpected response from server');
+	}
+	if (r.status !== 'ok') {
+		const msg = r.error?.message ?? 'Request failed';
+		logApiError(endpoint, `API Error ${r.error?.code ?? 0}`, msg);
+		throw new SubsonicError(r.error?.code ?? 0, msg);
+	}
 	return r as T;
 }
 
