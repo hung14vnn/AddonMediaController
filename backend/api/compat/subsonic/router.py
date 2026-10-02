@@ -934,6 +934,7 @@ async def _search(c: Ctx):
     spot_artists: list = []
     spot_albums: list = []
     spot_songs: list = []
+    spot_playlists: list = []
     if q and not local_only and source == "ytmusic" and (a_count or al_count or s_count or pl_count):
         yt_artists, yt_albums, yt_songs, yt_playlists = await _ytmusic_search(
             c, q, artists=a_count, albums=al_count, songs=s_count, playlists=pl_count
@@ -946,7 +947,6 @@ async def _search(c: Ctx):
         # Spotify leg is bounded: on timeout the local results still go out
         # on time and the upstream call keeps running in its worker thread,
         # which leaves the shared SpotAPI session warm for the next search.
-        spot_playlists: list = []
         try:
             sa_res, sl_res, st_res, sp_res = await asyncio.wait_for(
                 SpotApiClient().search_all(q, limit=5),

@@ -25,10 +25,12 @@ class FakeAudio extends EventTarget {
 	muted = false;
 	playbackRate = 1;
 	readyState = 0;
+	error: { code: number; message: string } | null = null;
 	src = '';
 	/** Like the media element load algorithm: drop the data and stop. */
 	load = vi.fn(() => {
 		this.readyState = 0;
+		this.error = null;
 		this.paused = true;
 	});
 	play = vi.fn(() => {
@@ -83,6 +85,9 @@ beforeEach(() => {
 	localStorage.clear();
 	vi.stubGlobal('Audio', FakeAudio);
 	vi.stubGlobal('fetch', vi.fn(async () => new Response('')));
+	let n = 0;
+	URL.createObjectURL = vi.fn(() => `blob:test/${++n}`);
+	URL.revokeObjectURL = vi.fn();
 	sleepTimer.onTrackEnded.mockReturnValue(false);
 });
 
@@ -140,8 +145,8 @@ describe('Player track changes', () => {
 		}
 	});
 
-	it('warms up the next track 30 seconds before the end', async () => {
-		const fetchMock = vi.fn(async () => new Response('ab'));
+	it('downloads the next track in the last 45 seconds and plays it from memory', async () => {
+		const fetchMock = vi.fn(async () => new Response('audio'));
 		vi.stubGlobal('fetch', fetchMock);
 		const { player, audio } = await freshPlayer();
 		player.playList([song('a', 200), song('b')]);
@@ -150,13 +155,46 @@ describe('Player track changes', () => {
 		audio.currentTime = 100;
 		audio.fire('timeupdate');
 		expect(fetchMock).not.toHaveBeenCalled();
-		for (const t of [171, 172, 173]) {
+		for (const t of [160, 161, 162]) {
 			audio.currentTime = t;
 			audio.fire('timeupdate');
 		}
 		expect(fetchMock).toHaveBeenCalledTimes(1);
-		expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('id=b'), { headers: { Range: 'bytes=0-1' } });
-		expect(player.current?.id).toBe('a');
+		expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('id=b'));
+		await flush();
+		await flush();
+		// The network may be gone by now: the change must not need it.
+		audio.fire('ended');
+		expect(player.current?.id).toBe('b');
+		expect(audio.src).toMatch(/^blob:test\//);
+	});
+
+	it('waits for the app to be opened when the next track fails in the background', async () => {
+		const { player, audio } = await freshPlayer();
+		player.playList([song('a'), song('b'), song('c')]);
+		await flush();
+		audio.ready();
+		const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+		try {
+			audio.fire('ended');
+			expect(player.current?.id).toBe('b');
+			audio.load.mockClear();
+			audio.error = { code: 4, message: 'Format error' };
+			audio.fire('error');
+			await flush();
+			// No skipping through the queue while the network is cut.
+			expect(player.current?.id).toBe('b');
+			expect(audio.load).not.toHaveBeenCalled();
+			expect(player.active).toBe(false);
+			hidden.mockReturnValue(false);
+			document.dispatchEvent(new Event('visibilitychange'));
+			await flush();
+			expect(player.current?.id).toBe('b');
+			expect(audio.load).toHaveBeenCalledTimes(1);
+			expect(audio.play).toHaveBeenCalled();
+		} finally {
+			vi.restoreAllMocks();
+		}
 	});
 
 	it('kicks a waiting element that already has enough data', async () => {
@@ -382,6 +420,37 @@ describe('Player platform fixes', () => {
 		} finally {
 			vi.restoreAllMocks();
 		}
+	});
+});
+
+describe('Player media errors', () => {
+	it('reloads a failed track once, then skips to the next', async () => {
+		const { player, audio } = await freshPlayer();
+		player.playList([song('a'), song('b')]);
+		await flush();
+		audio.load.mockClear();
+		audio.fire('error');
+		await flush();
+		expect(player.current?.id).toBe('a');
+		expect(audio.load).toHaveBeenCalledTimes(1);
+		audio.fire('error');
+		await flush();
+		expect(player.current?.id).toBe('b');
+		expect(audio.src).toContain('id=b');
+	});
+
+	it('stops after a few unplayable tracks in a row', async () => {
+		const { player, audio } = await freshPlayer();
+		player.repeat = 'all';
+		player.playList([song('a'), song('b')]);
+		await flush();
+		for (let i = 0; i < 20; i++) {
+			audio.fire('error');
+			await flush();
+		}
+		expect(audio.load.mock.calls.length).toBeLessThan(12);
+		expect(player.error).not.toBeNull();
+		expect(player.active).toBe(false);
 	});
 });
 

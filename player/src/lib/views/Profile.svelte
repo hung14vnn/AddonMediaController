@@ -109,6 +109,24 @@
 		}
 	}
 
+	import { clearPlaybackLog, readPlaybackLog } from '../playback/debugLog';
+	let playbackLog = $state(readPlaybackLog());
+
+	async function copyPlaybackLog() {
+		playbackLog = readPlaybackLog();
+		try {
+			await navigator.clipboard.writeText(playbackLog.join('\n'));
+			ui.showToast('Playback log copied');
+		} catch {
+			ui.showToast('Couldn’t copy — select the log below instead');
+		}
+	}
+
+	function resetPlaybackLog() {
+		clearPlaybackLog();
+		playbackLog = [];
+	}
+
 	function signOut() {
 		if (confirm('Sign out of hify? Your queue on this device will be cleared.')) onsignout();
 	}
@@ -202,6 +220,25 @@
 		</div>
 	</div>
 
+	<h3 class="group-title">Diagnostics</h3>
+	<div class="group">
+		<div class="row">
+			<span class="icon-box"><Icon name="refresh" size={18} /></span>
+			<div class="text">
+				<span class="label">Playback Log</span>
+				<span class="detail">{playbackLog.length ? plural(playbackLog.length, 'event') : 'Empty'} — what the player did.</span>
+			</div>
+			<button class="btn small secondary" disabled={!playbackLog.length} onclick={copyPlaybackLog}>Copy</button>
+			<button class="btn small secondary" disabled={!playbackLog.length} onclick={resetPlaybackLog}>Clear</button>
+		</div>
+		{#if playbackLog.length}
+			<details class="log">
+				<summary>Show</summary>
+				<pre>{playbackLog.slice(-150).join('\n')}</pre>
+			</details>
+		{/if}
+	</div>
+
 	<div class="pad signout">
 		<button class="signout-btn" onclick={signOut}><Icon name="signOut" size={18} />Sign Out</button>
 	</div>
@@ -260,6 +297,25 @@
 		background: var(--fill);
 		overflow: hidden;
 		animation: text-in 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) 0.08s both;
+	}
+	.log {
+		border-top: 0.5px solid var(--hairline);
+		padding: 10px 14px;
+	}
+	.log summary {
+		cursor: pointer;
+		color: var(--text-2);
+		font-size: 13px;
+	}
+	.log pre {
+		margin: 8px 0 0;
+		max-height: 320px;
+		overflow: auto;
+		font-size: 11px;
+		line-height: 1.45;
+		white-space: pre-wrap;
+		word-break: break-all;
+		user-select: text;
 	}
 	.row {
 		display: flex;
