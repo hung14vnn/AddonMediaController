@@ -24,6 +24,19 @@ class UI {
 
 	private toastTimer: ReturnType<typeof setTimeout> | undefined;
 
+	openNowPlaying() {
+		if (this.nowPlaying) return;
+		history.pushState({ ...history.state, nowPlaying: true }, '', location.href);
+		this.nowPlaying = true;
+	}
+
+	closeNowPlaying(fromHistory = false) {
+		if (!this.nowPlaying) return;
+		this.nowPlaying = false;
+		this.panel = null;
+		if (!fromHistory && history.state?.nowPlaying) history.back();
+	}
+
 	showToast(message: string) {
 		this.toast = message;
 		clearTimeout(this.toastTimer);
@@ -50,7 +63,7 @@ class UI {
 
 	togglePanel(panel: 'lyrics' | 'queue') {
 		this.panel = this.panel === panel ? null : panel;
-		this.nowPlaying = true;
+		this.openNowPlaying();
 	}
 
 	isLoved(item: { id: string; starred?: string }) {

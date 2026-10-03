@@ -230,12 +230,20 @@
 	}
 
 	function close() {
-		ui.nowPlaying = false;
+		ui.closeNowPlaying();
 	}
 
 	function go(path: string) {
-		close();
-		router.go(path);
+		if (history.state?.nowPlaying) {
+			const onPopState = () => {
+				removeEventListener("popstate", onPopState);
+				router.go(path);
+			};
+			addEventListener("popstate", onPopState);
+			close();
+		} else {
+			router.go(path);
+		}
 	}
 
 	function onKey(e: KeyboardEvent) {

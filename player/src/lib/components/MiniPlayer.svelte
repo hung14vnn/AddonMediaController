@@ -12,7 +12,7 @@
 
 {#if song}
 	<div class="mini" in:rise out:rise={{ duration: 220 }}>
-		<button class="open" onclick={() => (ui.nowPlaying = true)} aria-label="Open Now Playing">
+		<button class="open" onclick={() => ui.openNowPlaying()} aria-label="Open Now Playing">
 			{#key song.id}
 				<span class="art" in:artSwap={{ duration: 320 }}>
 					<Artwork id={song.coverArt} size={64} seed={song.album ?? song.title} />

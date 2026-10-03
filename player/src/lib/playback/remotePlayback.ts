@@ -16,9 +16,10 @@ export interface RemotePlaybackListener {
 const remoteOf = (audio: HTMLAudioElement) => (audio as HTMLAudioElement & { remote?: RemotePlayback }).remote;
 
 /** Remote Playback API: Chromecast etc. on Chrome/Android, AirPlay on Safari. */
-export function watchRemotePlayback(audio: HTMLAudioElement, listener: RemotePlaybackListener) {
+export function watchRemotePlayback(audio: HTMLAudioElement, listener: RemotePlaybackListener): () => void {
 	const remote = remoteOf(audio);
-	if (!remote) return;
+	if (!remote) return () => {};
+	let stopped = false;
 	remote.watchAvailability((available) => listener.availability(available)).catch(() => {
 		// Some browsers can't monitor continuously; assume a picker may exist.
 		listener.availability(true);
@@ -27,9 +28,9 @@ export function watchRemotePlayback(audio: HTMLAudioElement, listener: RemotePla
 	const sync = () => {
 		listener.state(remote.state, false);
 		clearTimeout(stallTimer);
-		if (remote.state === 'connecting') {
+		if (!stopped && remote.state === 'connecting') {
 			stallTimer = setTimeout(() => {
-				if (remote.state === 'connecting') listener.state(remote.state, true);
+				if (!stopped && remote.state === 'connecting') listener.state(remote.state, true);
 			}, CAST_STALL_MS);
 		}
 	};
@@ -38,6 +39,15 @@ export function watchRemotePlayback(audio: HTMLAudioElement, listener: RemotePla
 	remote.addEventListener('disconnect', sync);
 	// Events only report changes; a reload mid-AirPlay would otherwise show "This Device".
 	sync();
+	return () => {
+		stopped = true;
+		clearTimeout(stallTimer);
+		remote.removeEventListener('connecting', sync);
+		remote.removeEventListener('connect', sync);
+		remote.removeEventListener('disconnect', sync);
+		const cancel = (remote as RemotePlayback & { cancelWatchAvailability?: () => Promise<void> }).cancelWatchAvailability;
+		if (cancel) void cancel.call(remote).catch(() => {});
+	};
 }
 
 export async function pickOutput(audio: HTMLAudioElement): Promise<boolean> {

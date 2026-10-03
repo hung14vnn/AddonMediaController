@@ -38,6 +38,11 @@
 	});
 
 	onMount(() => {
+		const onPopState = () => {
+			if (ui.nowPlaying) ui.closeNowPlaying(true);
+		};
+		addEventListener("popstate", onPopState);
+
 		if ("serviceWorker" in navigator && import.meta.env.PROD) {
 			navigator.serviceWorker
 				.register("./service-worker.js")
@@ -45,6 +50,8 @@
 					/* offline support is optional */
 				});
 		}
+
+		return () => removeEventListener("popstate", onPopState);
 	});
 
 	function onKey(e: KeyboardEvent) {

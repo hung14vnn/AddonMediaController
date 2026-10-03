@@ -15,14 +15,16 @@ const SYSTEM_PAUSE_WINDOW_MS = 2000;
  */
 export class InterruptionGuard {
 	private session: AudioSessionLike | null;
+	private audio: HTMLAudioElement;
 	private resumeAfter = false;
 	private userPausing = false;
 	private systemPausedAt = -Infinity;
 
 	constructor(
-		private audio: HTMLAudioElement,
+		audio: HTMLAudioElement,
 		private resume: () => void
 	) {
+		this.audio = audio;
 		this.session = (navigator as Navigator & { audioSession?: AudioSessionLike }).audioSession ?? null;
 		if (!this.session) return;
 		try {
@@ -32,7 +34,15 @@ export class InterruptionGuard {
 			/* read-only on some versions */
 		}
 		this.session.addEventListener('statechange', this.onStateChange);
-		audio.addEventListener('pause', this.onPause);
+		this.audio.addEventListener('pause', this.onPause);
+	}
+
+	/** Move interruption tracking to the newly active native audio element. */
+	setAudio(audio: HTMLAudioElement) {
+		if (this.audio === audio) return;
+		this.audio.removeEventListener('pause', this.onPause);
+		this.audio = audio;
+		this.audio.addEventListener('pause', this.onPause);
 	}
 
 	/** Call just before a user-initiated pause so it isn't mistaken for the system's. */

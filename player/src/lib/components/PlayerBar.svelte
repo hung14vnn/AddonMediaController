@@ -78,7 +78,7 @@
 			<button
 				class="lcd-art"
 				aria-label="Open Now Playing"
-				onclick={() => (ui.nowPlaying = true)}
+				onclick={() => ui.openNowPlaying()}
 			>
 				{#key song.id}
 					<div in:artSwap={{ duration: 360 }}>

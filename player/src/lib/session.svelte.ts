@@ -9,7 +9,7 @@ class Auth {
 	signOut() {
 		getPlayer().reset();
 		clearSession();
-		ui.nowPlaying = false;
+		ui.closeNowPlaying();
 		ui.me = null;
 		ui.playlists = [];
 		this.signedIn = false;
