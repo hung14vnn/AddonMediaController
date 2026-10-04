@@ -73,6 +73,22 @@
 	<header>
 		<h3>Playing Next</h3>
 		<div class="toggles">
+			{#if player.queue.length > 0}
+				<button
+					class="smart-discover"
+					class:discovering={smartDiscover.discovering}
+					onclick={() => smartDiscover.run()}
+					disabled={smartDiscover.discovering}
+					aria-label="Smart Discover — add related tracks to queue"
+					title="Smart Discover"
+				>
+					{#if smartDiscover.discovering}
+						<span class="spin" aria-hidden="true"></span>
+					{:else}
+						<Icon name="sparkles" size={17} />
+					{/if}
+				</button>
+			{/if}
 			<button
 				class:on={player.shuffle}
 				aria-pressed={player.shuffle}
@@ -167,30 +183,10 @@
 				</li>
 			{/each}
 		</ol>
-		{#if player.queue.length > 0}
-			<div class="discover-dock">
-				<button
-					class="smart-discover-btn"
-					class:discovering={smartDiscover.discovering}
-					onclick={() => smartDiscover.run()}
-					disabled={smartDiscover.discovering}
-					aria-label="Smart Discover — add related tracks to queue"
-				>
-					{#if smartDiscover.discovering}
-						<span class="spin" aria-hidden="true"></span>
-						<span>Discovering…</span>
-					{:else}
-						<span>Smart Discover</span>
-					{/if}
-				</button>
-			</div>
-		{/if}
 	</div>
 </div>
 
 <style>
-	/* Flex column so the Smart Discover dock can sit at the bottom (margin-top: auto)
-	   even when the list is short; sticky keeps it pinned there once it scrolls. */
 	.queue {
 		height: 100%;
 		padding: 8px 4px 0;
@@ -244,6 +240,12 @@
 	.toggles button.on {
 		background: rgb(255 255 255 / 0.85);
 		color: #000;
+	}
+	.smart-discover {
+		position: relative;
+	}
+	.smart-discover.discovering {
+		cursor: wait;
 	}
 	.empty {
 		padding: 16px 8px;
@@ -312,43 +314,6 @@
 		.remove {
 			opacity: 1;
 		}
-	}
-	/* Floats over the list's bottom edge; sticky keeps it inside the scroller. */
-	.discover-dock {
-		position: sticky;
-		bottom: 0;
-		display: flex;
-		justify-content: center;
-		padding: 28px 0 18px;
-		margin-top: auto;
-		pointer-events: none;
-	}
-	.smart-discover-btn {
-		pointer-events: auto;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.4rem;
-		padding: 0.5rem 1.2rem;
-		border-radius: 9999px;
-		border: 0.5px solid rgb(255 255 255 / 0.18);
-		font-size: 0.85rem;
-		font-weight: 500;
-		color: #fff;
-		background: rgb(40 40 40 / 0.65);
-		box-shadow: 0 4px 14px rgb(0 0 0 / 0.4);
-		transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-	}
-	.smart-discover-btn:hover:not(:disabled) {
-		transform: scale(1.03);
-		background: rgb(60 60 60 / 0.82);
-	}
-	.smart-discover-btn:active:not(:disabled) {
-		transform: scale(0.97);
-	}
-	.smart-discover-btn:disabled {
-		opacity: 0.7;
-		cursor: not-allowed;
 	}
 	.spin {
 		width: 14px;

@@ -18,6 +18,34 @@
 	let { children }: { children: Snippet } = $props();
 
 	let main: HTMLElement | undefined = $state();
+	let compactDock = $state(false);
+	let keyboardInset = $state(0);
+	const searching = $derived(page.route.id === "/search");
+
+	$effect(() => {
+		if (searching) {
+			compactDock = false;
+			return;
+		}
+		if (!main) return;
+		const el = main;
+		let previousTop = el.scrollTop;
+
+		const onscroll = () => {
+			const currentTop = el.scrollTop;
+			const delta = currentTop - previousTop;
+			previousTop = currentTop;
+
+			if (delta < 0) {
+				compactDock = false;
+			} else if (delta > 0 && currentTop > 96) {
+				compactDock = true;
+			}
+		};
+		onscroll();
+		el.addEventListener("scroll", onscroll, { passive: true });
+		return () => el.removeEventListener("scroll", onscroll);
+	});
 
 	// Remount the view per path so each page starts fresh (search keeps its instance).
 	const viewKey = $derived(
@@ -38,10 +66,21 @@
 	});
 
 	onMount(() => {
+		const viewport = window.visualViewport;
+		const updateKeyboardInset = () => {
+			if (!viewport) return;
+			keyboardInset = Math.max(
+				0,
+				window.innerHeight - viewport.height - viewport.offsetTop,
+			);
+		};
 		const onPopState = () => {
 			if (ui.nowPlaying) ui.closeNowPlaying(true);
 		};
 		addEventListener("popstate", onPopState);
+		updateKeyboardInset();
+		viewport?.addEventListener("resize", updateKeyboardInset);
+		viewport?.addEventListener("scroll", updateKeyboardInset);
 
 		if ("serviceWorker" in navigator && import.meta.env.PROD) {
 			navigator.serviceWorker
@@ -51,7 +90,11 @@
 				});
 		}
 
-		return () => removeEventListener("popstate", onPopState);
+		return () => {
+			removeEventListener("popstate", onPopState);
+			viewport?.removeEventListener("resize", updateKeyboardInset);
+			viewport?.removeEventListener("scroll", updateKeyboardInset);
+		};
 	});
 
 	function onKey(e: KeyboardEvent) {
@@ -84,9 +127,13 @@
 				</div>
 			{/key}
 		</main>
-		<div class="dock">
-			<MiniPlayer />
-			<TabBar />
+		<div
+			class="dock"
+			class:dock-compact={compactDock}
+			style={`--keyboard-inset: ${keyboardInset}px`}
+		>
+			<MiniPlayer {compactDock} />
+			<TabBar {compactDock} onexpand={() => (compactDock = false)} />
 		</div>
 	</div>
 	{#if ui.nowPlaying}<NowPlaying />{/if}
@@ -132,18 +179,26 @@
 		}
 		main {
 			height: 100%;
-			padding-bottom: calc(64px + env(safe-area-inset-bottom));
-		}
-		.has-mini main {
-			padding-bottom: calc(128px + env(safe-area-inset-bottom));
+			padding-bottom: 0;
 		}
 		.dock {
-			display: block;
+			/* biến dùng chung cho MiniPlayer và TabBar */
+			--ease: cubic-bezier(0.32, 0.72, 0, 1);
+			--dur: 0.5s;
+			--pad: max(6px, env(safe-area-inset-bottom));
+			--tab-h: 58px;
+			--side: 12px;
+			--btn: 48px;
+			--gap: 8px;
+			--row-b: calc(var(--pad) + (var(--tab-h) - var(--btn)) / 2);
+
+			display: block; /* không đổi display khi compact nữa */
 			position: fixed;
 			left: 0;
 			right: 0;
-			bottom: 0;
+			bottom: var(--keyboard-inset, 0px);
 			z-index: 10;
+			height: calc(var(--pad) + var(--tab-h) + var(--gap) + 56px);
 			pointer-events: none;
 		}
 		.dock > :global(*) {

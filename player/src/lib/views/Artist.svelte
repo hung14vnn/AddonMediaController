@@ -13,8 +13,10 @@
 	import Shelf from "../components/Shelf.svelte";
 	import TrackList from "../components/TrackList.svelte";
 	import { stripHtml } from "../format";
-	import { startStation } from "../menus";
+	import { artistMenu, startStation } from "../menus";
+	import { artworkTint } from "../palette";
 	import { getPlayer } from "../player.svelte";
+	import { router } from "../router.svelte";
 	import type { Album } from "../types";
 	import { ui } from "../ui.svelte";
 
@@ -25,8 +27,9 @@
 		const artist = await getArtist(artistId);
 		const [info, top] = await Promise.all([
 			getArtistInfo(artistId),
-			getTopSongs(artist.name, 10),
+			getTopSongs(artist.name, 20),
 		]);
+		const tint = artist.coverArt ? (await artworkTint(artist.coverArt))?.top ?? null : null;
 		const albums = [...(artist.album ?? [])].sort(
 			(a, b) => (b.year ?? 0) - (a.year ?? 0),
 		);
@@ -41,6 +44,7 @@
 			albums: albums.filter((a) => !isSingle(a) && !a.isCompilation),
 			singles: albums.filter(isSingle),
 			compilations: albums.filter((a) => a.isCompilation && !isSingle(a)),
+			tint,
 		};
 	}
 
@@ -57,6 +61,12 @@
 		const full = await Promise.all(albums.map((a) => getAlbum(a.id)));
 		return full.flatMap((a) => a.song ?? []);
 	}
+
+	function mobilePages<T>(list: T[], size = 4): T[][] {
+		const pages: T[][] = [];
+		for (let i = 0; i < list.length; i += size) pages.push(list.slice(i, i + size));
+		return pages;
+	}
 </script>
 
 {#await data}
@@ -71,7 +81,7 @@
 	{@const image =
 		candidates[Math.min(imageErrorCount, candidates.length - 1)]}
 	{@const bio = stripHtml(d.info.biography)}
-	<div class="page artist-page">
+	<div class="page artist-page" style:--hero-bg={d.tint}>
 		<header
 			class="hero"
 			class:has-image={!!image && imageErrorCount < candidates.length}
@@ -82,9 +92,26 @@
 					decoding="async"
 					onerror={() => imageErrorCount++}
 				/>{/if}
+			<div class="topbar">
+				<button class="glass" aria-label="Back" onclick={() => (history.length > 1 ? history.back() : router.go('/'))}>
+					<Icon name="chevronLeft" size={20} />
+				</button>
+				<button class="glass" aria-label="More options" onclick={(e) => ui.openMenu(e, artistMenu(d.artist, d.top))}>
+					<Icon name="more" size={20} />
+				</button>
+			</div>
 			<div class="hero-body">
 				<h1>{d.artist.name}</h1>
 				<div class="hero-actions">
+					{#if d.top[0]}
+						<button
+							class="pill glass station"
+							aria-label="Station"
+							onclick={() => startStation(d.top[0])}
+						>
+							<Icon name="radio" size={18} />
+						</button>
+					{/if}
 					<button
 						class="play"
 						aria-label="Play {d.artist.name}"
@@ -95,29 +122,10 @@
 									: await allSongs(d.albums.slice(0, 3)),
 							)}
 					>
-						<Icon name="play" size={24} />
+						<Icon name="play" size={16} />Play
 					</button>
 					<button
-						class="pill"
-						onclick={async () =>
-							player.playList(
-								await allSongs([...d.albums, ...d.singles]),
-								0,
-								{ shuffle: true },
-							)}
-					>
-						<Icon name="shuffle" size={15} />Shuffle
-					</button>
-					{#if d.top[0]}
-						<button
-							class="pill"
-							onclick={() => startStation(d.top[0])}
-						>
-							<Icon name="radio" size={15} />Station
-						</button>
-					{/if}
-					<button
-						class="pill icon"
+						class="pill glass"
 						aria-label="Favorite"
 						onclick={() => ui.toggleLove("artist", d.artist)}
 					>
@@ -140,11 +148,18 @@
 			{#if d.top.length}
 				<section class="top">
 					<h2 class="section-title flush">Top Songs</h2>
-					<TrackList
-						songs={d.top.slice(0, 8)}
-						showAlbum={false}
-						onplay={(i) => player.playList(d.top, i)}
-					/>
+					<div class="desktop-picks">
+						<TrackList songs={d.top} showAlbum={false} onplay={(i) => player.playList(d.top, i)} />
+					</div>
+					<div class="mobile-picks">
+						<div class="mobile-picks-scroller">
+							{#each mobilePages(d.top) as songs, i}
+								<div class="mobile-picks-page" class:last={i === mobilePages(d.top).length - 1}>
+									<TrackList {songs} showAlbum={false} onplay={(index) => player.playList(d.top, i * 4 + index)} />
+								</div>
+							{/each}
+						</div>
+					</div>
 				</section>
 			{/if}
 		</div>
@@ -200,6 +215,14 @@
 <style>
 	.artist-page {
 		padding-top: 0;
+		--hero-bg: var(--bg);
+	}
+	@media (max-width: 899px) {
+		.artist-page {
+			min-height: calc(100vh + 128px + env(safe-area-inset-bottom));
+			background: var(--hero-bg);
+			transition: background-color 0.4s ease;
+		}
 	}
 	.hero {
 		position: relative;
@@ -209,6 +232,9 @@
 		margin-bottom: 26px;
 		overflow: hidden;
 		background: linear-gradient(160deg, var(--fill-strong), var(--fill));
+	}
+	.topbar {
+		display: none;
 	}
 	.hero img {
 		position: absolute;
@@ -348,6 +374,9 @@
 		display: grid;
 		grid-template-columns: 1fr;
 	}
+	.mobile-picks {
+		display: none;
+	}
 	@media (min-width: 1200px) {
 		.top :global(.tracks) {
 			grid-template-columns: 1fr 1fr;
@@ -360,6 +389,155 @@
 		}
 		.latest {
 			display: none;
+		}
+	}
+	@media (max-width: 699px) {
+		.artist-page {
+			color: #fff;
+		}
+		.artist-page :global(.section-title),
+		.artist-page :global(.shelf .title),
+		.artist-page :global(.tracks .title),
+		.artist-page :global(.tracks .artist),
+		.artist-page :global(.tracks .duration),
+		.artist-page :global(.card .title),
+		.artist-page :global(.more) {
+			color: #fff !important;
+		}
+		.artist-page :global(.tracks .title) {
+			font-weight: 500;
+		}
+		.artist-page :global(.card .subtitle) {
+			color: rgb(255 255 255 / 0.72) !important;
+		}
+		.top-row {
+			display: block;
+			padding: 0;
+			margin-bottom: 22px;
+		}
+		.top {
+			padding: 0 10px;
+		}
+		.top .section-title {
+			margin: 0 0 10px;
+		}
+		.desktop-picks {
+			display: none;
+		}
+		.mobile-picks {
+			display: block;
+			overflow: hidden;
+		}
+		.mobile-picks-scroller {
+			display: flex;
+			gap: 12px;
+			overflow-x: auto;
+			scroll-snap-type: x mandatory;
+			scrollbar-width: none;
+			overscroll-behavior-x: contain;
+		}
+		.mobile-picks-scroller::-webkit-scrollbar {
+			display: none;
+		}
+		.mobile-picks-page {
+			flex: 0 0 calc(100% - 28px);
+			scroll-snap-align: start;
+		}
+		.mobile-picks-page.last {
+			flex-basis: 100%;
+		}
+	}
+	@media (max-width: 699px) {
+		.hero {
+			position: relative;
+			gap: 0;
+			padding: 0 0 32px;
+			margin-top: calc(-1 * max(16px, env(safe-area-inset-top)));
+			margin-bottom: 8px;
+			background: linear-gradient(to bottom, var(--hero-bg) calc(100% - 32px), transparent);
+		}
+		.hero img {
+			animation: none;
+		}
+		.hero.has-image::after {
+			background: linear-gradient(to bottom, transparent 45%, var(--hero-bg));
+		}
+		.topbar {
+			position: absolute;
+			z-index: 2;
+			top: 32px;
+			left: 0;
+			right: 0;
+			display: flex;
+			justify-content: space-between;
+			padding: 0 16px;
+		}
+		.glass {
+			width: 40px;
+			height: 40px;
+			padding: 0;
+			border-radius: 50%;
+			display: grid;
+			place-items: center;
+			color: #fff;
+			background: rgba(255, 255, 255, 0.22);
+			box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.22);
+			transition: background-color 0.15s ease, transform 0.15s ease;
+		}
+		.topbar .glass {
+			background: rgb(0 0 0 / 0.32);
+		}
+		.glass:active,
+		.play:active {
+			transform: scale(0.94);
+		}
+		.hero-body {
+			position: relative;
+			z-index: 1;
+			flex-direction: column;
+			align-items: center;
+			justify-content: flex-end;
+			gap: 2px;
+			margin-top: -130px;
+			padding: 0 var(--gutter);
+			text-align: center;
+			color: #fff;
+		}
+		h1 {
+			font-size: 24px;
+			text-shadow: 0 1px 12px rgb(0 0 0 / 0.25);
+		}
+		.hero-actions {
+			justify-content: center;
+			gap: 18px;
+			margin-top: 14px;
+		}
+		.play {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			gap: 6px;
+			height: 44px;
+			min-width: 150px;
+			padding: 0 28px;
+			border-radius: 22px;
+			font-size: 17px;
+			font-weight: 600;
+			color: #000;
+			background: #fff;
+			transition: transform 0.15s ease;
+		}
+		.glass :global(svg) {
+			margin: 0;
+		}
+		.play :global(svg) {
+			margin: 0;
+		}
+		.station {
+			flex-shrink: 0;
+		}
+		.top-row {
+			padding: 0;
 		}
 	}
 	.about {

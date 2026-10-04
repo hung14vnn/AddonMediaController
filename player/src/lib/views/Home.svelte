@@ -42,9 +42,14 @@
 	// Charts come from YouTube Music / Spotify and can be slow on a cold cache, so
 	// they load on their own and never hold back (or break) the library shelves.
 	const region = /-([A-Z]{2})/.exec(navigator.language)?.[1];
-	const trending = optional(cached(`home:trending:${region ?? ""}`, () => getTrendingSongs(10, region)));
-	const hits = optional(cached("home:hits", () => getTodaysHits(10)));
+	const trending = optional(cached(`home:trending:12:${region ?? ""}`, () => getTrendingSongs(12, region)));
+	const hits = optional(cached("home:hits:12", () => getTodaysHits(12)));
 
+	function mobilePages(list: Song[]): Song[][] {
+		const pages: Song[][] = [];
+		for (let i = 0; i < list.length; i += 4) pages.push(list.slice(i, i + 4));
+		return pages;
+	}
 </script>
 
 {#snippet songs(title: string, list: Song[])}
@@ -58,8 +63,17 @@
 					><Icon name="play" size={14} />Play</button
 				>
 			</div>
-			<div class="pad picks-list">
+			<div class="pad picks-list desktop-picks">
 				<TrackList songs={list} showAlbum={false} />
+			</div>
+			<div class="pad mobile-picks">
+				<div class="mobile-picks-scroller">
+					{#each mobilePages(list) as page, i}
+						<div class="mobile-picks-page" class:last={i === mobilePages(list).length - 1}>
+							<TrackList songs={page} showAlbum={false} />
+						</div>
+					{/each}
+				</div>
 			</div>
 		</section>
 	{/if}
@@ -171,12 +185,49 @@
 		padding: 0 12px;
 		font-size: 13px;
 	}
+	.mobile-picks {
+		display: none;
+	}
 	/* two columns of rows on wide screens, like Apple Music's song shelves */
 	@media (min-width: 1100px) {
 		.picks-list :global(.tracks) {
 			display: grid;
 			grid-template-columns: 1fr 1fr;
 			column-gap: 24px;
+		}
+	}
+
+	@media (max-width: 699px) {
+		.desktop-picks {
+			display: none;
+		}
+
+		.mobile-picks {
+			display: block;
+			overflow: hidden;
+		}
+
+		.mobile-picks-scroller {
+			display: flex;
+			gap: 12px;
+			overflow-x: auto;
+			scroll-snap-type: x mandatory;
+			scrollbar-width: none;
+			overscroll-behavior-x: contain;
+		}
+
+		.mobile-picks-scroller::-webkit-scrollbar {
+			display: none;
+		}
+
+		.mobile-picks-page {
+			/* Leave a small preview of the next four-song column visible. */
+			flex: 0 0 calc(100% - 28px);
+			scroll-snap-align: start;
+		}
+
+		.mobile-picks-page.last {
+			flex-basis: 100%;
 		}
 	}
 </style>

@@ -8,7 +8,7 @@
 	import { time } from "../format";
 	import { songMenu } from "../menus";
 	import { artSwap, fadeOnly, pop, sheet, textSwap } from "../motion";
-	import { artworkTint, softArt, type Tint } from "../palette";
+	import { artworkTint, type Tint } from "../palette";
 	import { getPlayer } from "../player.svelte";
 	import { router } from "../router.svelte";
 	import { sleepTimer } from "../sleepTimer.svelte";
@@ -22,7 +22,6 @@
 
 	const player = getPlayer();
 	const song = $derived(player.current);
-	const backdrop = $derived(song?.coverArt);
 	let scrub = $state<number | null>(null);
 	const shownTime = $derived(scrub ?? player.currentTime);
 	// Whole seconds: the bar moves ~1px/s, so repainting on every timeupdate (~4/s) is wasted.
@@ -35,6 +34,9 @@
 	);
 
 	let tint: Tint | null = $state(null);
+	let controlsVisible = $state(true);
+	let controlsTimer: ReturnType<typeof setTimeout> | undefined;
+	let wakeLock: WakeLockSentinel | null = null;
 
 	$effect(() => {
 		const art = song?.coverArt;
@@ -72,6 +74,74 @@
 					? "Connecting…"
 					: "This Device",
 	);
+
+	function showControls() {
+		controlsVisible = true;
+		if (!isMobile || ui.panel !== "lyrics" || !player.playing) return;
+		clearTimeout(controlsTimer);
+		controlsTimer = setTimeout(() => (controlsVisible = false), 5000);
+	}
+
+	function onPointerDown(e: PointerEvent) {
+		if (
+			e.target instanceof Element &&
+			e.target.closest(".panel, .show-controls")
+		)
+			return;
+		showControls();
+	}
+
+	async function releaseWakeLock() {
+		if (!wakeLock) return;
+		await wakeLock.release();
+		wakeLock = null;
+	}
+
+	async function requestWakeLock() {
+		const wakeLockApi = (
+			navigator as Navigator & {
+				wakeLock?: { request(type: "screen"): Promise<WakeLockSentinel> };
+			}
+		).wakeLock;
+		if (!wakeLockApi || wakeLock) return;
+		try {
+			wakeLock = await wakeLockApi.request("screen");
+		} catch {
+			// Screen wake lock is optional and may be denied by the browser.
+		}
+	}
+
+	$effect(() => {
+		if (ui.panel !== "lyrics") {
+			clearTimeout(controlsTimer);
+			controlsVisible = true;
+			void releaseWakeLock();
+			return;
+		}
+
+		showControls();
+		const onVisibilityChange = () => {
+			if (document.visibilityState === "visible") void requestWakeLock();
+		};
+		document.addEventListener("visibilitychange", onVisibilityChange);
+		void requestWakeLock();
+
+		return () => {
+			clearTimeout(controlsTimer);
+			document.removeEventListener("visibilitychange", onVisibilityChange);
+			void releaseWakeLock();
+		};
+	});
+
+	$effect(() => {
+		if (!isMobile || player.playing) {
+			if (ui.panel === "lyrics") showControls();
+			return;
+		}
+
+		clearTimeout(controlsTimer);
+		controlsVisible = true;
+	});
 
 	// A stuck AirPlay/Cast hand-off keeps the clock running with no sound; say why.
 	$effect(() => {
@@ -263,6 +333,7 @@
 	ontouchmove={onTouchMove}
 	ontouchend={onTouchEnd}
 	ontouchcancel={onTouchEnd}
+	onpointerdown={onPointerDown}
 	role="dialog"
 	tabindex="-1"
 	aria-modal="true"
@@ -280,13 +351,6 @@
 				></div>
 			{/key}
 		{/if}
-		{#if backdrop}
-			{#key backdrop}<canvas
-					use:softArt={backdrop}
-					in:fadeOnly={{ duration: 900 }}
-					out:fadeOnly={{ duration: 900 }}
-				></canvas>{/key}
-		{/if}
 	</div>
 
 	<div class="grab" role="presentation">
@@ -297,12 +361,24 @@
 	</div>
 
 	{#if song}
+		{#if isMobile && ui.panel === "lyrics" && player.playing && !controlsVisible}
+			<button
+				class="show-controls"
+				aria-label="Show playback controls"
+				onclick={showControls}
+			>
+				<Icon name="chevronDown" size={16} />
+			</button>
+		{/if}
 		{#snippet panelBody(panel: Panel)}
 			{#key panel}
 				<div
 					class="panel-view"
 					in:textSwap={{ dx: 40, duration: 320 }}
 					out:textSwap={{ dx: -40, duration: 240 }}
+					onwheel={showControls}
+					ontouchmove={showControls}
+					onpointerdown={showControls}
 				>
 					{#if panel === "lyrics"}<Lyrics />{:else}<Queue />{/if}
 				</div>
@@ -370,7 +446,11 @@
 					</div>
 				{/if}
 
-				<div class="controls" class:panel-open={mobileOpen}>
+				<div
+					class="controls"
+					class:panel-open={mobileOpen}
+					class:controls-hidden={isMobile && ui.panel === "lyrics" && player.playing && !controlsVisible}
+				>
 					{#if !mobileOpen}
 						<div
 							class="info"
@@ -603,30 +683,6 @@
 			),
 			linear-gradient(180deg, var(--top) 0%, var(--bottom) 100%);
 	}
-	.backdrop canvas {
-		position: absolute;
-		inset: -20%;
-		width: 140%;
-		height: 140%;
-		/* Tiny canvas stretched up: the browser's smoothing stands in for blur(). */
-		image-rendering: auto;
-	}
-
-	/* Drift animation + dedicated GPU layer only on desktop: saves battery and
-	   memory on phones (a 140% x 140% layer is expensive to keep around). */
-	@media (min-width: 900px) {
-		.backdrop canvas {
-			transform: translateZ(0);
-			will-change: transform;
-			animation: drift 40s ease-in-out infinite alternate;
-		}
-	}
-
-	.tinted .backdrop canvas {
-		z-index: 2;
-		opacity: 0.18;
-		mix-blend-mode: soft-light;
-	}
 	.backdrop::after {
 		content: "";
 		position: absolute;
@@ -637,24 +693,6 @@
 			transparent 55%,
 			rgb(0 0 0 / 0.18)
 		);
-	}
-
-	@keyframes drift {
-		0% {
-			transform: scale(1) translate3d(0, 0, 0);
-		}
-		50% {
-			transform: scale(1.12) translate3d(3%, -2%, 0);
-		}
-		100% {
-			transform: scale(1.06) translate3d(-3%, 2%, 0);
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.backdrop canvas {
-			animation: none;
-		}
 	}
 
 	/* ---- header --------------------------------------------------------------- */
@@ -670,6 +708,36 @@
 		display: grid;
 		place-items: center;
 		color: rgb(255 255 255 / 0.7);
+	}
+	.show-controls {
+		position: absolute;
+		right: max(16px, env(safe-area-inset-right));
+		bottom: max(16px, env(safe-area-inset-bottom));
+		z-index: 20;
+		width: 30px;
+		height: 30px;
+		display: grid;
+		place-items: center;
+		border-radius: 50%;
+		color: rgb(255 255 255 / 0.8);
+		background: rgb(0 0 0 / 0.2);
+		animation: show-controls-in 0.35s ease both;
+	}
+	.show-controls:active {
+		transform: scale(0.88);
+	}
+	.show-controls :global(svg) {
+		transform: rotate(180deg);
+	}
+	@keyframes show-controls-in {
+		from {
+			opacity: 0;
+			transform: translateY(-6px) scale(0.85);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0) scale(1);
+		}
 	}
 	.dismiss :global(svg) {
 		display: none;
@@ -765,6 +833,17 @@
 		justify-content: space-evenly;
 		gap: 10px;
 		padding-top: 22px;
+		transition:
+			opacity 0.45s ease,
+			transform 0.45s ease,
+			max-height 0.45s ease,
+			padding 0.45s ease,
+			gap 0.45s ease;
+	}
+	.controls.controls-hidden {
+		opacity: 0;
+		transform: translateY(18px);
+		pointer-events: none;
 	}
 
 	/* ---- title row ------------------------------------------------------------ */
@@ -813,6 +892,7 @@
 	/* ---- progress ------------------------------------------------------------- */
 	.progress :global(.slider) {
 		--h: 6px;
+		contain: layout paint;
 	}
 	.progress :global(.slider:hover),
 	.progress :global(.slider.dragging) {
@@ -986,8 +1066,15 @@
 		}
 		.controls.panel-open {
 			flex: 0 0 auto;
+			max-height: 260px;
 			padding-top: 10px;
 			gap: 4px;
+		}
+		.controls.panel-open.controls-hidden {
+			max-height: 0;
+			gap: 0;
+			padding-top: 0;
+			overflow: hidden;
 		}
 	}
 

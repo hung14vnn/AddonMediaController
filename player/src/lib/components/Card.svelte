@@ -175,18 +175,24 @@
 		white-space: nowrap;
 	}
 	.subtitle {
+		display: -webkit-box;
 		font-size: 13px;
 		font-weight: 400;
 		color: var(--text-2) !important;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		white-space: nowrap;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
 	}
 	/* ArtistLinks renders the subtitle from a child component, so its class is
 	   not covered by Card's scoped selector without an explicit global part. */
-	.meta :global(.subtitle),
-	.meta :global(.subtitle) :global(a) {
+	.meta :global(.subtitle) {
+		display: -webkit-box;
 		color: var(--text-2) !important;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
 	}
 	a.subtitle:hover,
 	a.title:hover {

@@ -1,7 +1,7 @@
 import { getAlbum, getPlaylist, getSimilarSongs } from './api';
 import { getPlayer } from './player.svelte';
 import { router } from './router.svelte';
-import type { Album, Playlist, Song } from './types';
+import type { Album, Artist, Playlist, Song } from './types';
 import { ui, type MenuItem } from './ui.svelte';
 
 export async function startStation(song: Song) {
@@ -78,6 +78,16 @@ export function albumMenu(album: Album): MenuItem[] {
 		...(album.artistId
 			? [{ label: 'Go to Artist', icon: 'mic', action: () => router.go(`/artist/${album.artistId}`) }]
 			: [])
+	];
+}
+
+export function artistMenu(artist: Artist, songs: Song[] = []): MenuItem[] {
+	const player = getPlayer();
+	return [
+		{ label: 'Play', icon: 'play', action: () => player.playList(songs) },
+		{ label: 'Shuffle', icon: 'shuffle', action: () => player.playList(songs, 0, { shuffle: true }) },
+		{ label: ui.isLoved(artist) ? 'Undo Favorite' : 'Favorite', icon: ui.isLoved(artist) ? 'starFill' : 'star', action: () => ui.toggleLove('artist', artist) },
+		...(songs[0] ? [{ label: 'Create Station', icon: 'radio', action: () => startStation(songs[0]) }] : [])
 	];
 }
 

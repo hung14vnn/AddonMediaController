@@ -41,7 +41,12 @@ _EXTRACT_TIMEOUT_SECONDS = 30
 _PROXY_CHUNK_SIZE = 128 * 1024  # 128 KiB
 
 _UPSTREAM_RETRY_STATUSES = frozenset({401, 403, 410})
-_STREAM_RESPONSE_HEADERS = ("Content-Type", "Content-Range", "Accept-Ranges")
+_STREAM_RESPONSE_HEADERS = (
+    "Content-Type",
+    "Content-Length",
+    "Content-Range",
+    "Accept-Ranges",
+)
 _HEAD_RESPONSE_HEADERS = ("Content-Type", "Content-Length", "Accept-Ranges")
 
 _DEFAULT_USER_AGENT = (
@@ -300,6 +305,10 @@ class YTMusicStreamService:
     def __init__(self, http_client: httpx.AsyncClient) -> None:
         self._http = http_client
         self._cache = _StreamCache(_CACHE_MAX_ENTRIES, _URL_TTL_SECONDS)
+        # Safari can issue several probes for the same media URL with
+        # different Range headers. Share one yt-dlp extraction between them;
+        # canceling one client request must not cancel the shared extraction.
+        self._inflight_extractions: dict[str, asyncio.Task[StreamInfo]] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -645,6 +654,20 @@ class YTMusicStreamService:
         raise AssertionError("unreachable")  # pragma: no cover
 
     async def _extract_by_video_id(self, video_id: str, fmt: str) -> StreamInfo:
+        key = f"{video_id}:{fmt}"
+        task = self._inflight_extractions.get(key)
+        if task is None:
+            task = asyncio.create_task(self._extract_uncached(video_id, fmt))
+            self._inflight_extractions[key] = task
+
+            def remove_finished(done: asyncio.Task[StreamInfo]) -> None:
+                if self._inflight_extractions.get(key) is done:
+                    self._inflight_extractions.pop(key, None)
+
+            task.add_done_callback(remove_finished)
+        return await asyncio.shield(task)
+
+    async def _extract_uncached(self, video_id: str, fmt: str) -> StreamInfo:
         """Extract the audio URL for *video_id*, upgrading MV videos to studio audio."""
         result = await self._run_blocking(_YtDlp.extract_video, video_id, fmt, what="extraction")
         if result is None:

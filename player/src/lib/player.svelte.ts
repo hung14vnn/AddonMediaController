@@ -26,7 +26,7 @@ interface ObjectUrl {
 	revoke: () => void;
 }
 
-/** A downloaded track's blob URL, tagged with the song it plays. */
+/** A downloaded (or fully prefetched) track's blob URL, tagged with the song it plays. */
 interface OfflineCopy {
 	id: string;
 	copy: ObjectUrl;
@@ -37,13 +37,46 @@ interface PreloadEntry {
 	element: HTMLAudioElement;
 }
 
-/** Match the main frontend: park a native stream after 15 seconds without progress. */
+interface BlobJob {
+	id: string;
+	abort: AbortController;
+}
+
+function createManagedAudio(): HTMLAudioElement {
+	const audio = new Audio();
+	audio.setAttribute('aria-hidden', 'true');
+	audio.style.position = 'fixed';
+	audio.style.width = '1px';
+	audio.style.height = '1px';
+	audio.style.opacity = '0';
+	audio.style.pointerEvents = 'none';
+	document.body.appendChild(audio);
+	return audio;
+}
+
+function isIOSDevice(): boolean {
+	if (typeof navigator === 'undefined') return false;
+	return (
+		/iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+		(navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+	);
+}
+
+/** Park a native stream after 15 seconds without progress. */
 const STALL_TIMEOUT_MS = 15_000;
 const STALL_CHECK_MS = 2_000;
-/** Warm only the next native stream, like Monochrome's second audio element. */
+/** Warm only the next native stream (non-iOS) with a second audio element. */
 const PRELOAD_LEAD_S = 45;
+/**
+ * iOS: download the whole next track into RAM this early. The lead is larger because
+ * resolving a cold YouTube stream on the server can take tens of seconds.
+ */
+const IOS_BLOB_LEAD_S = 100;
+/** A prefetched blob smaller than this is an error page or truncated, not audio. */
+const MIN_BLOB_BYTES = 16 * 1024;
 
-/** HTMLMediaElement.HAVE_FUTURE_DATA: enough buffered to keep playing. */
+/** HTMLMediaElement.HAVE_METADATA / HAVE_FUTURE_DATA. */
+const HAVE_METADATA = 1;
 const HAVE_FUTURE_DATA = 3;
 
 /** Unplayable tracks skipped in a row before giving up. */
@@ -72,6 +105,11 @@ async function lookupOffline(id: string): Promise<ObjectUrl | null> {
  * src is swapped and load()ed on every track change, then played. The queue is the
  * play order; when shuffle is on, the original order is kept in `unshuffled` so
  * turning shuffle off restores it.
+ *
+ * iOS note: once audio stops, WebKit freezes JS, network and media loading for a
+ * hidden page. So on iOS the track change in `ended` must be fully synchronous: the
+ * next track is downloaded into a blob: URL while the current one still plays
+ * (`prefetchNextBlob`), and `load()` takes it from `nextReady` without any await.
  */
 class Player {
 	queue = $state<Song[]>([]);
@@ -103,14 +141,20 @@ class Player {
 	private pendingSeek = 0;
 	/** Invalidates a load still waiting on the offline lookup when another one starts. */
 	private loadToken = 0;
-	/** Offline copy now playing, revoked on the next change. */
+	/** Offline/prefetched copy now playing, revoked on the next change. */
 	private playingOffline: OfflineCopy | null = null;
 	/**
-	 * The upcoming track, ready to start without the network when it was explicitly
-	 * downloaded for offline use.
+	 * The upcoming track, ready to start without the network: either explicitly
+	 * downloaded for offline use, or (iOS) prefetched into a blob while the current
+	 * track plays.
 	 */
 	private nextReady: OfflineCopy | null = null;
-	/** Stream descriptors and their warmed native element, keyed like Monochrome. */
+	/** Track id for which the offline lookup already came back empty (skips an await in load). */
+	private offlineMissFor: string | null = null;
+	/** In-flight whole-track prefetch (iOS) and the id that last failed, to avoid hammering. */
+	private blobJob: BlobJob | null = null;
+	private blobFailedFor: string | null = null;
+	/** Stream descriptors and their warmed native element (non-iOS). */
 	private preloadCache = new Map<string, PreloadEntry>();
 	/**
 	 * Server length that playback ends at, or 0. iOS Safari misreads fragmented m4a
@@ -135,17 +179,39 @@ class Player {
 	private stopRemoteWatch: () => void = () => {};
 
 	constructor() {
-		this.audio = new Audio();
+		// Remote Playback and audio-output selection are only exposed reliably for
+		// media elements that belong to the document, not detached `new Audio()`
+		// elements.
+		this.audio = createManagedAudio();
 		this.audio.preload = 'auto';
-		this.preloadAudio = new Audio();
+		this.preloadAudio = createManagedAudio();
 		this.preloadAudio.preload = 'auto';
-		const a = this.audio;
 		this.singleTab = new SingleTab(() => this.pause());
-		this.interruptions = new InterruptionGuard(a, () => this.resumeAfterInterruption());
+		this.interruptions = new InterruptionGuard(this.audio, () => this.resumeAfterInterruption());
 
-		// Event flow follows Navidrome's player: a track change sets src and load()s,
-		// `canplay` (re)starts playback that is wanted, and a `waiting` element that
-		// already has enough buffered is kicked with play() again.
+		this.bindElement(this.audio);
+		this.bindElement(this.preloadAudio);
+		this.bindActiveAudio(this.audio);
+
+		// Have the offline chunk loaded before the page can be hidden, so a background
+		// track change never has to fetch a JS chunk.
+		void import('./offline').catch(() => {});
+
+		window.addEventListener('pagehide', this.onPageHide);
+		document.addEventListener('visibilitychange', this.onVisibilityChange);
+		this.restore();
+	}
+
+	/**
+	 * Listeners for one of the two audio elements. Every handler ignores events from
+	 * the element that is not currently active, so the same binding serves both and
+	 * keeps working after the two elements swap roles.
+	 *
+	 * Event flow follows Navidrome's player: a track change sets src and load()s,
+	 * `canplay` (re)starts playback that is wanted, and a `waiting` element that
+	 * already has enough buffered is kicked with play() again.
+	 */
+	private bindElement(a: HTMLAudioElement) {
 		a.addEventListener('play', () => {
 			if (this.audio !== a) return;
 			this.playing = true;
@@ -166,7 +232,9 @@ class Player {
 			if (this.playRequested && a.readyState >= HAVE_FUTURE_DATA) this.play();
 		});
 		a.addEventListener('playing', () => {
-			if (this.audio === a) this.buffering = false;
+			if (this.audio !== a) return;
+			this.buffering = false;
+			this.errorSkips = 0;
 		});
 		a.addEventListener('canplay', () => {
 			if (this.audio !== a) return;
@@ -191,10 +259,17 @@ class Player {
 			if (this.audio === a) this.onEnded();
 		});
 		a.addEventListener('error', () => {
-			if (this.audio === a) this.onError();
-		});
-		a.addEventListener('playing', () => {
-			if (this.audio === a) this.errorSkips = 0;
+			if (this.audio === a) {
+				this.onError();
+				return;
+			}
+			// The standby element failed while preloading: drop it now, so it is never
+			// promoted to the active element in a broken state.
+			const entry = [...this.preloadCache.values()].find((p) => p.element === a);
+			if (entry) {
+				logPlayback('preload-error', `code=${a.error?.code} ${a.error?.message ?? ''}`);
+				this.clearPreload();
+			}
 		});
 		for (const type of LOGGED_EVENTS) {
 			a.addEventListener(type, () => {
@@ -208,12 +283,6 @@ class Player {
 			this.volume = a.volume;
 			this.muted = a.muted;
 		});
-		this.bindPreloadAudio(this.preloadAudio);
-
-		this.bindActiveAudio(a);
-		window.addEventListener('pagehide', this.onPageHide);
-		document.addEventListener('visibilitychange', this.onVisibilityChange);
-		this.restore();
 	}
 
 	/** Rebind platform playback integrations whenever the active audio changes. */
@@ -234,70 +303,6 @@ class Player {
 			next: () => this.next(),
 			seek: (seconds) => this.seek(seconds),
 			currentTime: () => this.currentTime
-		});
-	}
-
-	/** Keep the standby element observable so it can become the active element. */
-	private bindPreloadAudio(a: HTMLAudioElement) {
-		a.addEventListener('play', () => {
-			if (this.audio !== a) return;
-			this.playing = true;
-			this.resumeWhenVisible = false;
-			this.singleTab.announcePlaying();
-		});
-		a.addEventListener('pause', () => {
-			if (this.audio !== a) return;
-			this.playing = false;
-			if (!this.buffering) this.playRequested = false;
-			this.persist(true);
-		});
-		a.addEventListener('waiting', () => {
-			if (this.audio !== a) return;
-			this.buffering = true;
-			if (this.playRequested && a.readyState >= HAVE_FUTURE_DATA) this.play();
-		});
-		a.addEventListener('playing', () => {
-			if (this.audio === a) this.buffering = false;
-		});
-		a.addEventListener('canplay', () => {
-			if (this.audio !== a) return;
-			this.buffering = false;
-			if (this.playRequested && a.paused) this.play();
-		});
-		a.addEventListener('loadedmetadata', () => {
-			if (this.audio !== a) return;
-			if (this.pendingSeek) {
-				a.currentTime = this.pendingSeek;
-				this.pendingSeek = 0;
-			}
-			this.applyDuration();
-		});
-		a.addEventListener('durationchange', () => {
-			if (this.audio === a) this.applyDuration();
-		});
-		a.addEventListener('timeupdate', () => {
-			if (this.audio === a) this.onTime();
-		});
-		a.addEventListener('ended', () => {
-			if (this.audio === a) this.onEnded();
-		});
-		a.addEventListener('error', () => {
-			if (this.audio === a) this.onError();
-		});
-		a.addEventListener('playing', () => {
-			if (this.audio === a) this.errorSkips = 0;
-		});
-		for (const type of LOGGED_EVENTS) {
-			a.addEventListener(type, () => {
-				if (this.audio === a) {
-					logPlayback(type, `t=${a.currentTime.toFixed(1)} rs=${a.readyState} ns=${a.networkState} paused=${a.paused} vol=${a.volume} muted=${a.muted}`);
-				}
-			});
-		}
-		a.addEventListener('volumechange', () => {
-			if (this.audio !== a) return;
-			this.volume = a.volume;
-			this.muted = a.muted;
 		});
 	}
 
@@ -331,7 +336,7 @@ class Player {
 		if (!songs.length) return;
 		if (!this.current) return this.playList(songs);
 		const start = this.index + 1;
-		
+
 		let targetSection: Song[];
 		let restSection: Song[];
 		if (limit) {
@@ -459,7 +464,14 @@ class Player {
 
 	// ---- track changes -------------------------------------------------------
 
-	/** Start track `i`, from a downloaded copy when there is one. */
+	/**
+	 * Start track `i`, from a downloaded/prefetched copy when there is one.
+	 *
+	 * Everything up to the first `await` runs synchronously. When the track is
+	 * `playingOffline`, `nextReady`, or known to have no offline copy, there is no
+	 * await at all, which is what lets a track change from `ended` work on a hidden
+	 * iOS page.
+	 */
 	private async load(i: number, autoplay: boolean, startAt = 0) {
 		const song = this.queue[i];
 		if (!song) return;
@@ -483,6 +495,12 @@ class Player {
 		this.playRequested = autoplay;
 		this.buffering = autoplay;
 		if (autoplay) this.armStallCheck();
+		// Publish the next track before any IndexedDB lookup or stream setup.
+		// Those awaits may be suspended by iOS in the background; leaving the
+		// previous metadata active makes the lock screen show the wrong song and
+		// duration even after the queue has advanced.
+		setMediaMetadata(song);
+		setMediaPosition(this.duration, startAt, this.audio.playbackRate);
 
 		let offline: OfflineCopy | null = null;
 		if (this.playingOffline?.id === song.id) {
@@ -492,6 +510,9 @@ class Player {
 		} else if (this.nextReady?.id === song.id) {
 			offline = this.nextReady;
 			this.nextReady = null;
+		} else if (this.offlineMissFor === song.id) {
+			// prepareNextOffline already checked IndexedDB: no copy. Don't await again.
+			this.offlineMissFor = null;
 		} else {
 			// IndexedDB is local and safe to read in the background. If there is no
 			// explicitly downloaded copy, native <audio> remains the fallback.
@@ -505,8 +526,27 @@ class Player {
 		}
 		this.releaseOffline();
 		this.playingOffline = offline;
+
 		const preload = this.preloadCache.get(song.id);
-		const useWarmedAudio = Boolean(preload && preload.element === this.preloadAudio && preload.element.src && !offline);
+		if (preload?.element.error) {
+			// The standby element failed while preloading. Never promote it.
+			logPlayback('preload-discarded', `id=${song.id} code=${preload.element.error.code}`);
+			this.clearPreload();
+		}
+		// iOS ties background playback to the media element that received the
+		// original user activation. Promoting a second, preloaded element at the
+		// end of a track can leave it waiting forever until the page is visible.
+		const ios = isIOSDevice();
+		const warmed = this.preloadCache.get(song.id);
+		const useWarmedAudio = Boolean(
+			!ios &&
+				warmed &&
+				warmed.element === this.preloadAudio &&
+				warmed.element.src &&
+				!warmed.element.error &&
+				warmed.element.readyState >= HAVE_METADATA &&
+				!offline
+		);
 		if (useWarmedAudio) {
 			const oldAudio = this.audio;
 			this.preloadAudio.volume = oldAudio.volume;
@@ -528,7 +568,10 @@ class Player {
 			if (this.audio.readyState >= HAVE_FUTURE_DATA) this.buffering = false;
 		}
 
-		logPlayback('load', `id=${song.id} "${song.title}" at=${startAt.toFixed(1)} ${offline ? 'ready (offline/prefetched)' : 'stream'}`);
+		logPlayback(
+			'load',
+			`id=${song.id} "${song.title}" at=${startAt.toFixed(1)} ${offline ? 'ready (offline/prefetched)' : 'stream'} ios=${ios} warmed=${useWarmedAudio}`
+		);
 		this.audio.autoplay = autoplay;
 		this.audio.volume = this.volume;
 		this.audio.muted = this.muted;
@@ -545,7 +588,6 @@ class Player {
 			this.play();
 			scrobble(song.id, false);
 		}
-		setMediaMetadata(this.current);
 		this.persist();
 		this.prepareNextOffline();
 	}
@@ -559,8 +601,15 @@ class Player {
 		const next = this.upcoming();
 		if (!next || next.id === this.current?.id || this.nextReady?.id === next.id) return;
 		void lookupOffline(next.id).then((copy) => {
-			if (!copy) return;
-			if (this.destroyed || this.upcoming()?.id !== next.id || this.nextReady?.id === next.id) {
+			if (this.destroyed || this.upcoming()?.id !== next.id) {
+				copy?.revoke();
+				return;
+			}
+			if (!copy) {
+				this.offlineMissFor = next.id;
+				return;
+			}
+			if (this.nextReady?.id === next.id) {
 				copy.revoke();
 				return;
 			}
@@ -569,7 +618,48 @@ class Player {
 		});
 	}
 
-	/** Warm only the next stream with a second native audio element. */
+	/**
+	 * iOS: download the whole next track into memory while the current one still plays
+	 * and JS is still running, so the `ended` handler can start it with no await and
+	 * no network.
+	 */
+	private async prefetchNextBlob() {
+		const next = this.upcoming();
+		if (
+			!next ||
+			next.id === this.current?.id ||
+			this.nextReady?.id === next.id ||
+			this.blobJob?.id === next.id ||
+			this.blobFailedFor === next.id
+		) {
+			return;
+		}
+		this.blobJob?.abort.abort();
+		const job: BlobJob = { id: next.id, abort: new AbortController() };
+		this.blobJob = job;
+		logPlayback('blob-start', `id=${next.id} "${next.title}"`);
+		try {
+			const res = await fetch(streamUrl(next.id), { signal: job.abort.signal });
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const blob = await res.blob();
+			if (this.destroyed || this.upcoming()?.id !== next.id) return;
+			if (blob.size < MIN_BLOB_BYTES) throw new Error(`too small (${blob.size} bytes)`);
+			// A stale offline copy could have landed while we downloaded.
+			if (this.nextReady?.id === next.id) return;
+			const url = URL.createObjectURL(blob);
+			this.nextReady?.copy.revoke();
+			this.nextReady = { id: next.id, copy: { url, revoke: () => URL.revokeObjectURL(url) } };
+			logPlayback('blob-ready', `id=${next.id} bytes=${blob.size} type=${blob.type}`);
+		} catch (e) {
+			if (job.abort.signal.aborted) return;
+			this.blobFailedFor = next.id;
+			logPlayback('blob-failed', `id=${next.id} ${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			if (this.blobJob === job) this.blobJob = null;
+		}
+	}
+
+	/** Warm only the next stream with a second native audio element (non-iOS). */
 	private preloadNextStream() {
 		const next = this.upcoming();
 		if (
@@ -621,6 +711,13 @@ class Player {
 			logPlayback('play-rejected', e instanceof DOMException ? `${e.name}: ${e.message}` : String(e));
 			// A track change interrupted this play(); the new source's `canplay` owns it now.
 			if (token !== this.loadToken) return;
+			// The source itself is unplayable: that is a track error, not a refused
+			// autoplay. Send it through the reload-once-then-skip flow so a queue left
+			// playing with the screen off keeps going.
+			if (e instanceof DOMException && e.name === 'NotSupportedError') {
+				this.onError();
+				return;
+			}
 			// Refused (e.g. autoplay blocked): show it as paused rather than playing in silence.
 			this.playRequested = false;
 			this.playing = false;
@@ -640,7 +737,11 @@ class Player {
 
 	private readonly onVisibilityChange = () => {
 		logPlayback('visibility', document.visibilityState);
-		if (document.hidden || !this.resumeWhenVisible || !this.current) return;
+		if (document.hidden || !this.current) return;
+		// play() rejected in the background clears playRequested but sets
+		// resumeWhenVisible, so both count as "playback was wanted".
+		if (!this.playRequested && !this.resumeWhenVisible) return;
+		this.playRequested = true;
 		this.resumeWhenVisible = false;
 		// A source that failed while the network was cut can't just be played again.
 		if (this.audio.error || !this.audio.src) {
@@ -664,7 +765,14 @@ class Player {
 			this.lastProgressAt = performance.now();
 		}
 		if (Math.floor(a.currentTime) % 5 === 0) this.updatePosition();
-		if (dur > 0 && dur - a.currentTime <= PRELOAD_LEAD_S) this.preloadNextStream();
+		if (dur > 0) {
+			const left = dur - a.currentTime;
+			if (isIOSDevice()) {
+				if (left <= IOS_BLOB_LEAD_S) void this.prefetchNextBlob();
+			} else if (left <= PRELOAD_LEAD_S) {
+				this.preloadNextStream();
+			}
+		}
 		// The real audio is over; don't sit through the silence up to the misread length.
 		// Pausing first keeps the element from reaching its own `ended` and advancing twice.
 		if (this.durationCap && !a.paused && a.currentTime >= this.durationCap - 0.25) {
@@ -704,11 +812,20 @@ class Player {
 
 	private readonly checkStall = () => {
 		if (!this.playRequested || !this.current) return this.disarmStallCheck();
+		// WebKit can suspend media loading while the page is hidden. Reloading
+		// here aborts the pending play() and creates an AbortError; keep the
+		// request alive and recover on visibilitychange.
+		if (document.hidden) {
+			this.resumeWhenVisible = true;
+			// Don't count hidden time as stalled time.
+			this.lastProgressAt = performance.now();
+			return;
+		}
 		// Paused by the system (a call) rather than stuck loading: not a stall.
 		if (this.audio.paused && !this.buffering) return;
 		if (performance.now() - this.lastProgressAt < STALL_TIMEOUT_MS) return;
-		// Match frontend/NativeAudioSource: stop the dead request and let the
-		// higher-level error flow retry once, then fallback or skip the track.
+		// Stop the dead request and let the higher-level error flow retry once,
+		// then fallback or skip the track.
 		this.disarmStallCheck();
 		this.audio.pause();
 		logPlayback('stall-timeout', `t=${this.currentTime.toFixed(1)} rs=${this.audio.readyState}`);
@@ -725,6 +842,10 @@ class Player {
 		const song = this.current;
 		if (!a.src || !song) return;
 		logPlayback('media-error', `id=${song.id} code=${a.error?.code} ${a.error?.message ?? ''}`);
+		// A prefetched blob that fails to play is bad: forget it so the retry uses the stream.
+		if (this.playingOffline?.id === song.id && this.playingOffline.copy.url === a.src) {
+			this.releaseOffline();
+		}
 		if (this.playRequested && this.errorRetriedFor !== song.id) {
 			this.errorRetriedFor = song.id;
 			this.load(this.index, true, this.currentTime);
@@ -765,6 +886,7 @@ class Player {
 	private unload() {
 		this.loadToken++;
 		this.playRequested = false;
+		this.resumeWhenVisible = false;
 		this.buffering = false;
 		this.audio.pause();
 		this.audio.removeAttribute('src');
@@ -774,6 +896,10 @@ class Player {
 		this.preloadAudio.load();
 		this.preloadCache.clear();
 		this.disarmStallCheck();
+		this.blobJob?.abort.abort();
+		this.blobJob = null;
+		this.blobFailedFor = null;
+		this.offlineMissFor = null;
 		this.releaseOffline();
 		this.nextReady?.copy.revoke();
 		this.nextReady = null;
@@ -848,6 +974,8 @@ class Player {
 		this.stopRemoteWatch();
 		this.stopRemoteWatch = () => {};
 		this.interruptions.dispose();
+		this.audio.remove();
+		this.preloadAudio.remove();
 		window.removeEventListener('pagehide', this.onPageHide);
 		document.removeEventListener('visibilitychange', this.onVisibilityChange);
 		clearTimeout(this.saveTimer);

@@ -15,6 +15,14 @@ export interface RemotePlaybackListener {
 
 const remoteOf = (audio: HTMLAudioElement) => (audio as HTMLAudioElement & { remote?: RemotePlayback }).remote;
 
+interface AudioOutputMediaDevices extends MediaDevices {
+	selectAudioOutput?: () => Promise<MediaDeviceInfo>;
+}
+
+interface SinkableAudioElement extends HTMLAudioElement {
+	setSinkId?: (sinkId: string) => Promise<void>;
+}
+
 /** Remote Playback API: Chromecast etc. on Chrome/Android, AirPlay on Safari. */
 export function watchRemotePlayback(audio: HTMLAudioElement, listener: RemotePlaybackListener): () => void {
 	const remote = remoteOf(audio);
@@ -50,27 +58,57 @@ export function watchRemotePlayback(audio: HTMLAudioElement, listener: RemotePla
 	};
 }
 
+async function pickLocalOutput(audio: HTMLAudioElement): Promise<boolean | null> {
+	const mediaDevices = navigator.mediaDevices as AudioOutputMediaDevices | undefined;
+	const sinkableAudio = audio as SinkableAudioElement;
+	if (!mediaDevices?.selectAudioOutput || !sinkableAudio.setSinkId) return null;
+
+	try {
+		const device = await mediaDevices.selectAudioOutput();
+		await sinkableAudio.setSinkId(device.deviceId);
+		return true;
+	} catch (e) {
+		// NotAllowedError means the user closed the native picker.
+		if (e instanceof DOMException && e.name === 'NotAllowedError') return true;
+		return false;
+	}
+}
+
 export async function pickOutput(audio: HTMLAudioElement): Promise<boolean> {
-	// Try local device picker first (Chrome/Edge on Windows/Android).
-	if ('setSinkId' in audio && navigator.mediaDevices && 'selectAudioOutput' in navigator.mediaDevices) {
+	const remote = remoteOf(audio);
+	const isAndroid = /Android/i.test(navigator.userAgent);
+	let remoteAttempted = false;
+
+	// Android Chromium exposes Remote Playback but not the local output picker.
+	// Calling another async API first consumes the click's user activation and
+	// makes remote.prompt() fail with NotAllowedError.
+	if (isAndroid && remote) {
+		remoteAttempted = true;
 		try {
-			const device = await (navigator.mediaDevices as any).selectAudioOutput();
-			await (audio as any).setSinkId(device.deviceId);
+			await remote.prompt();
 			return true;
 		} catch (e) {
-			// NotAllowedError = user dismissed the picker, which still counts as shown.
+			// The picker was shown and closed; do not start another async picker
+			// after the click's user activation has already been consumed.
 			if (e instanceof DOMException && e.name === 'NotAllowedError') return true;
-			// For other errors, fall through to Remote Playback.
 		}
 	}
 
-	const remote = remoteOf(audio);
-	if (!remote) return false;
-	try {
-		await remote.prompt();
-		return true;
-	} catch (e) {
-		// NotAllowedError = user dismissed the picker, which still counts as shown.
-		return e instanceof DOMException && e.name === 'NotAllowedError';
+	// Windows Chromium supports selecting an audio output directly. Keep this
+	// as the first async operation on desktop so the native picker retains the
+	// activation from the button click.
+	const localResult = await pickLocalOutput(audio);
+	if (localResult !== null) return localResult;
+
+	if (remote && !remoteAttempted) {
+		try {
+			await remote.prompt();
+			return true;
+		} catch (e) {
+			// NotAllowedError means the user closed the native picker.
+			return e instanceof DOMException && e.name === 'NotAllowedError';
+		}
 	}
+
+	return false;
 }

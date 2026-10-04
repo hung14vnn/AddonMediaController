@@ -3,23 +3,29 @@
 	import AlbumCard from '../components/AlbumCard.svelte';
 	import ArtistCard from '../components/ArtistCard.svelte';
 	import GenreTiles from '../components/GenreTiles.svelte';
-	import Icon from '../components/Icon.svelte';
 	import PlaylistCard from '../components/PlaylistCard.svelte';
 	import Shelf from '../components/Shelf.svelte';
 	import TrackList from '../components/TrackList.svelte';
-	import { router } from '../router.svelte';
+	import { search as dockSearch } from '../search.svelte';
 
 	let { query }: { query: string } = $props();
 
-	let input = $state('');
 	let results = $state<Awaited<ReturnType<typeof search>> | null>(null);
 	let loading = $state(false);
 	const genres = getGenres().catch(() => []);
-	let timer: ReturnType<typeof setTimeout> | undefined;
 	let seq = 0;
 	let shownSource: SearchSource | undefined;
+	let syncedQuery: string | undefined;
 
-	let field: HTMLInputElement | undefined = $state();
+	const effectiveQuery = $derived(dockSearch.q);
+
+	$effect(() => {
+		// Sync URL changes without overwriting text typed into the still-mounted field.
+		if (query !== syncedQuery) {
+			syncedQuery = query;
+			dockSearch.q = query;
+		}
+	});
 
 	const SOURCE_KEY = 'search:source';
 	const sources: { id: SearchSource; label: string }[] = [
@@ -45,15 +51,8 @@
 		}
 	}
 
-	// Keep the field in sync when the query arrives from the sidebar search box,
-	// but never clobber what the user is typing while the debounce is pending.
 	$effect(() => {
-		const q = query;
-		if (document.activeElement !== field) input = q;
-	});
-
-	$effect(() => {
-		const q = query.trim();
+		const q = effectiveQuery.trim();
 		const from = source;
 		if (!q) {
 			results = null;
@@ -70,21 +69,12 @@
 			.finally(() => mine === seq && (loading = false));
 	});
 
-	function onInput() {
-		clearTimeout(timer);
-		timer = setTimeout(() => router.go(`/search?q=${encodeURIComponent(input)}`, true), 300);
-	}
-
 	const empty = $derived(results && !results.artists.length && !results.albums.length && !results.songs.length && !results.playlists?.length);
 </script>
 
 <div class="page">
 	<div class="top">
 		<h1 class="page-title">Search</h1>
-		<label class="field">
-			<Icon name="search" size={18} />
-			<input bind:this={field} type="search" placeholder="Artists, Songs, Albums, Playlists…" bind:value={input} oninput={onInput} autocapitalize="none" autocomplete="off" />
-		</label>
 		<div class="seg" role="tablist" aria-label="Search source">
 			{#each sources as s (s.id)}
 				<button role="tab" aria-selected={source === s.id} class:on={source === s.id} onclick={() => pickSource(s.id)}>{s.label}</button>
@@ -92,7 +82,7 @@
 		</div>
 	</div>
 
-	{#if !query.trim()}
+	{#if !effectiveQuery.trim()}
 		{#await genres then list}
 			{#if list.length}
 				<h2 class="section-title">Browse Categories</h2>
@@ -130,27 +120,6 @@
 </div>
 
 <style>
-	.field {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		height: 38px;
-		margin: 0 var(--gutter) 12px;
-		padding: 0 12px;
-		border-radius: 10px;
-		color: var(--text-2);
-		background: var(--fill);
-	}
-	.field input {
-		flex: 1;
-		min-width: 0;
-		border: 0;
-		outline: none;
-		background: none;
-		font: inherit;
-		font-size: 16px;
-		color: var(--text);
-	}
 	.seg {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
@@ -177,8 +146,7 @@
 		margin-bottom: 30px;
 	}
 	@media (min-width: 900px) {
-		/* Title on the left, source switch on the right; the sidebar has its
-		   own search box on desktop. */
+		/* Title on the left, source switch on the right. */
 		.top {
 			display: flex;
 			align-items: center;
@@ -188,9 +156,6 @@
 		}
 		.top .page-title {
 			margin-bottom: 0;
-		}
-		.field {
-			display: none;
 		}
 		.seg {
 			margin: 0 var(--gutter) 0 0;

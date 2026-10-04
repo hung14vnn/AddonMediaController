@@ -65,9 +65,13 @@ export async function getOfflineTrackBlob(userId: string, trackId: string): Prom
 	return record?.blob ?? null;
 }
 
-export async function createOfflineTrackUrl(userId: string, trackId: string): Promise<{ url: string; revoke: () => void } | null> {
-	const blob = await getOfflineTrackBlob(userId, trackId);
-	if (!blob) return null;
+export async function createOfflineTrackUrl(
+	userId: string,
+	trackId: string
+): Promise<{ url: string; revoke: () => void } | null> {
+	const stored = await getOfflineTrackBlob(userId, trackId);
+	if (!stored) return null;
+	const blob = new Blob([await stored.arrayBuffer()], { type: stored.type });
 	const url = URL.createObjectURL(blob);
 	return { url, revoke: () => URL.revokeObjectURL(url) };
 }

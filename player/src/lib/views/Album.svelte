@@ -8,6 +8,7 @@
 	import TrackList from '../components/TrackList.svelte';
 	import { artistName, plural, totalDuration } from '../format';
 	import { albumMenu } from '../menus';
+	import { artworkTint } from '../palette';
 	import { getPlayer } from '../player.svelte';
 	import { href } from '../router.svelte';
 	import { ui } from '../ui.svelte';
@@ -24,7 +25,8 @@
 			: album.genre
 				? getAlbumList('byGenre', 12, 0, { genre: album.genre }).then((l) => l.filter((x) => x.id !== album.id))
 				: Promise.resolve([]);
-		return { album, more };
+		const tint = album.coverArt ? (await artworkTint(album.coverArt))?.top ?? null : null;
+		return { album, more, tint };
 	}
 
 	let data = $derived(load(id));
@@ -32,9 +34,9 @@
 
 {#await data}
 	<div class="spinner"></div>
-{:then { album, more }}
+{:then { album, more, tint }}
 	{@const songs = album.song ?? []}
-	<div class="page">
+	<div class="page album-page" style:--hero-bg={tint}>
 		<DetailHeader
 			coverArt={album.coverArt}
 			title={album.name}
@@ -79,9 +81,38 @@
 {/await}
 
 <style>
+	.album-page {
+		--hero-bg: var(--bg);
+	}
+	@media (max-width: 899px) {
+		.album-page {
+			min-height: calc(100vh + 128px + env(safe-area-inset-bottom));
+			background: var(--hero-bg);
+			transition: background-color 0.4s ease;
+		}
+	}
 	.footer {
 		margin: 16px 10px 36px;
 		font-size: 13px;
 		line-height: 1.6;
+	}
+	@media (max-width: 699px) {
+		.album-page {
+			color: #fff;
+		}
+		.album-page :global(.section-title),
+		.album-page :global(.shelf .title),
+		.album-page :global(.tracks .title),
+		.album-page :global(.tracks .artist),
+		.album-page :global(.tracks .duration),
+		.album-page :global(.tracks .num),
+		.album-page :global(.card .title),
+		.album-page :global(.muted),
+		.album-page :global(.more) {
+			color: #fff !important;
+		}
+		.album-page :global(.card .subtitle) {
+			color: rgb(255 255 255 / 0.72) !important;
+		}
 	}
 </style>
