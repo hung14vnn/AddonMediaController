@@ -1,4 +1,4 @@
-import { getAlbum, getPlaylist, getSimilarSongs } from './api';
+import { getAlbum, getPlaylist, getSimilarSongs, requestSpotifyDownload } from './api';
 import { getPlayer } from './player.svelte';
 import { router } from './router.svelte';
 import type { Album, Artist, Playlist, Song } from './types';
@@ -16,6 +16,26 @@ export async function startStation(song: Song) {
 
 import { getSession } from './api';
 import { deleteOfflineTrack, downloadOfflineTrack, downloadOfflineTracks, getOfflineTrackMetadata } from './offline';
+
+/**
+ * Asks the server to download a song into the library. Spotify songs carry their
+ * own metadata and go straight away; a YouTube result first needs a Spotify
+ * match picked (see the picker in Overlays), whose metadata the server uses.
+ */
+export function addToLibrary(song: Song) {
+	if (song.id.startsWith('yt-')) ui.spotifyPicker = song;
+	else if (song.id.startsWith('st-')) void requestDownload(song.id);
+}
+
+export async function requestDownload(spotifyId: string) {
+	ui.showToast('Requesting download…');
+	try {
+		const r = await requestSpotifyDownload(spotifyId);
+		ui.showToast(r.status === 'already_in_library' ? 'Already in your library' : 'Added to downloads');
+	} catch (e) {
+		ui.showToast(e instanceof Error && e.message ? e.message : 'Couldn’t request download');
+	}
+}
 
 export async function songMenu(song: Song, extra: MenuItem[] = []): Promise<MenuItem[]> {
 	const player = getPlayer();
@@ -45,6 +65,9 @@ export async function songMenu(song: Song, extra: MenuItem[] = []): Promise<Menu
 				}
 			}
 		},
+		...(song.id.startsWith('yt-') || song.id.startsWith('st-')
+			? [{ label: 'Request track to Library', icon: 'server', action: () => addToLibrary(song) }]
+			: []),
 		{
 			label: ui.isLoved(song) ? 'Undo Favorite' : 'Favorite',
 			icon: ui.isLoved(song) ? 'starFill' : 'star',

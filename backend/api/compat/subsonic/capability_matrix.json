@@ -42,6 +42,8 @@
     "getArtist": {"state": "full", "response_key": "artist", "service": "library view", "parameters": ["id"]},
     "getAlbum": {"state": "full", "response_key": "album", "service": "library view", "parameters": ["id"]},
     "getSong": {"state": "full", "response_key": "song", "service": "library view", "parameters": ["id"]},
+    "searchSpotifyTracks": {"state": "full", "response_key": "spotifyTracks", "service": "spotify catalog (player extension)", "parameters": ["query", "count?"]},
+    "requestSpotifyDownload": {"state": "full", "response_key": "spotifyDownload", "service": "native acquisition (player extension)", "parameters": ["id"]},
     "getAlbumList2": {"state": "partial", "response_key": "albumList2", "service": "library view and play history", "parameters": ["type", "size?", "offset?", "fromYear?", "toYear?", "genre?", "musicFolderId?"], "deviation": "byYear accepts 0 as an unbounded lower endpoint and preserves parameter-order direction"},
     "getAlbumList": {"state": "partial", "response_key": "albumList", "service": "library view and play history", "parameters": ["type", "size?", "offset?", "fromYear?", "toYear?", "genre?", "musicFolderId?"], "deviation": "byYear accepts 0 as an unbounded lower endpoint and preserves parameter-order direction"},
     "getRandomSongs": {"state": "partial", "response_key": "randomSongs", "service": "library view", "parameters": ["size?", "genre?", "fromYear?", "toYear?", "musicFolderId?"]},

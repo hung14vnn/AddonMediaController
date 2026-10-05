@@ -24,7 +24,7 @@ from middleware import CurrentUserDep
 from services.spotify_import_service import SpotifyImportService, SpotifyNotLinkedError
 from services.local_files_service import LocalFilesService
 from services.playlist_service import PlaylistService
-from services.native.download_service import ALREADY_IN_LIBRARY
+from services.spotify_track_request import request_spotify_track as queue_spotify_track
 
 _LINK_SOURCE_PRIORITY = ["local", "jellyfin", "navidrome", "plex"]
 
@@ -205,40 +205,23 @@ async def request_spotify_track(
     quota=Depends(get_quota_service),
 ) -> SpotifyTrackRequestResponse:
     """Resolve a Spotify catalog result to MusicBrainz, then use native acquisition."""
-    await quota.check_request_quota(current_user.id, current_user.role)
     try:
-        resolved = await svc.resolve_track_for_download(
-            body.spotify_id
-        )
-        duration_seconds = resolved.get("duration_seconds")
-        if not duration_seconds:
-            # Keep the task metadata populated even if an older resolver path
-            # returned the track identity without carrying its duration through.
-            catalog_track = await svc.get_catalog_track(body.spotify_id)
-            duration_ms = catalog_track.get("duration_ms")
-            if duration_ms:
-                duration_seconds = round(float(duration_ms) / 1000)
-        task_id = await acquisition.request_track(
+        result = await queue_spotify_track(
             user_id=current_user.id,
-            recording_mbid=resolved["recording_mbid"],
-            release_group_mbid=resolved["release_group_mbid"],
-            artist_name=resolved["artist_name"],
-            track_title=resolved["track_title"],
-            album_title=resolved["album_title"],
-            duration_seconds=duration_seconds,
-            artist_mbid=resolved.get("artist_mbid"),
-            cover_url=resolved.get("cover_url"),
+            user_role=current_user.role,
+            spotify_id=body.spotify_id,
+            svc=svc,
+            acquisition=acquisition,
+            quota=quota,
         )
     except SpotifyNotLinkedError:
         raise HTTPException(status_code=400, detail="Spotify account not linked")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    if task_id == ALREADY_IN_LIBRARY:
-        return SpotifyTrackRequestResponse(
-            status="already_in_library", duration_seconds=duration_seconds
-        )
     return SpotifyTrackRequestResponse(
-        status="queued", task_id=task_id, duration_seconds=duration_seconds
+        status=result.status,
+        task_id=result.task_id,
+        duration_seconds=result.duration_seconds,
     )
 
 

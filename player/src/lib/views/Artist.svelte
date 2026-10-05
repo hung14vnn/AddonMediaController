@@ -17,11 +17,36 @@
 	import { artworkTint } from "../palette";
 	import { getPlayer } from "../player.svelte";
 	import { router } from "../router.svelte";
-	import type { Album } from "../types";
+	import type { Album, Song } from "../types";
 	import { ui } from "../ui.svelte";
 
 	let { id }: { id: string } = $props();
 	const player = getPlayer();
+
+	/** Comparable form of a title: case, accents and punctuation ignored. */
+	function titleKey(title: string) {
+		return title
+			.normalize('NFD')
+			.replace(/[\u0300-\u036f]/g, '')
+			.toLowerCase()
+			.replace(/[^\p{L}\p{N}]+/gu, ' ')
+			.trim();
+	}
+
+	/**
+	 * Top songs often list the same song several times (single, album, deluxe…
+	 * releases have different ids): keep only its first, highest-ranked copy.
+	 * Fewer than the requested count is fine; nothing is fetched to fill up.
+	 */
+	function uniqueSongs(songs: Song[]) {
+		const seen = new Set<string>();
+		return songs.filter((song) => {
+			const key = titleKey(song.title);
+			if (seen.has(key)) return false;
+			seen.add(key);
+			return true;
+		});
+	}
 
 	async function load(artistId: string) {
 		const artist = await getArtist(artistId);
@@ -39,7 +64,7 @@
 		return {
 			artist,
 			info,
-			top,
+			top: uniqueSongs(top),
 			latest: albums[0],
 			albums: albums.filter((a) => !isSingle(a) && !a.isCompilation),
 			singles: albums.filter(isSingle),

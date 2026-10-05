@@ -5,6 +5,9 @@
 	import Artwork from "./Artwork.svelte";
 	import Icon from "./Icon.svelte";
 	import { sleepTimer } from "../sleepTimer.svelte";
+	import { searchSpotifyTracks, type SpotifyMatch } from "../api";
+	import { artistName, time } from "../format";
+	import { requestDownload } from "../menus";
 
 	let menuEl = $state<HTMLDivElement | null>(null);
 	let pos = $state({ x: 0, y: 0 });
@@ -31,9 +34,65 @@
 		}
 	});
 
+	// ---- Spotify match picker ("Add to Library" on a YouTube song) ----
+	let matchQuery = $state("");
+	let matches = $state<SpotifyMatch[]>([]);
+	let matchState = $state<"idle" | "loading" | "error">("idle");
+	let matchRun = 0;
+
+	// YouTube titles carry video noise ("(Official Video)", "[Lyrics]",
+	// "Artist | Title | OFFICIAL MV"…) that only hurts the catalog search.
+	const NOISE = /\b(official|video|audio|lyrics?|mv|m\/v|visuali[sz]er|hd|4k)\b/i;
+	function cleanTitle(title: string) {
+		return title
+			.replace(/[([][^)\]]*[)\]]/g, (part) => (NOISE.test(part) ? "" : part))
+			.split(/\s+[|•]\s+/)
+			.filter((part) => !NOISE.test(part))
+			.join(" ")
+			.replace(/\s{2,}/g, " ")
+			.trim();
+	}
+
+	$effect(() => {
+		const song = ui.spotifyPicker;
+		if (!song) return;
+		const artist = artistName(song);
+		const title = cleanTitle(song.title);
+		matchQuery = artist && !title.toLowerCase().includes(artist.toLowerCase()) ? `${artist} ${title}` : title;
+	});
+
+	// Search as the query is edited, debounced; a stale response is dropped.
+	$effect(() => {
+		const q = matchQuery.trim();
+		if (!ui.spotifyPicker || !q) {
+			matches = [];
+			matchState = "idle";
+			return;
+		}
+		const run = ++matchRun;
+		matchState = "loading";
+		const timer = setTimeout(async () => {
+			try {
+				const found = await searchSpotifyTracks(q);
+				if (run !== matchRun) return;
+				matches = found;
+				matchState = "idle";
+			} catch {
+				if (run === matchRun) matchState = "error";
+			}
+		}, 300);
+		return () => clearTimeout(timer);
+	});
+
+	function pickMatch(match: SpotifyMatch) {
+		ui.spotifyPicker = null;
+		void requestDownload(match.id);
+	}
+
 	function onKey(e: KeyboardEvent) {
 		if (e.key !== "Escape") return;
 		if (ui.menu) ui.menu = null;
+		else if (ui.spotifyPicker) ui.spotifyPicker = null;
 		else if (ui.playlistPicker) ui.playlistPicker = null;
 		else if (ui.sleepTimerPicker) ui.sleepTimerPicker = false;
 	}
@@ -139,6 +198,68 @@
 							<small>{pl.songCount ?? 0} songs</small>
 						</span>
 					</button>
+				</li>
+			{/each}
+		</ul>
+	</div>
+{/if}
+
+{#if ui.spotifyPicker}
+	{@const song = ui.spotifyPicker}
+	<div
+		class="sheet-scrim"
+		role="presentation"
+		transition:fadeOnly
+		onclick={() => (ui.spotifyPicker = null)}
+	></div>
+	<div
+		class="sheet"
+		role="dialog"
+		in:dialog
+		out:fadeOnly={{ duration: 150 }}
+		aria-modal="true"
+		aria-label="Request track to Library"
+	>
+		<header>
+			<div class="title-wrap">
+				<h3>Request track to Library</h3>
+				<p class="subtitle ellipsis">Pick the Spotify match for “{song.title}”</p>
+			</div>
+			<button class="x" aria-label="Close" onclick={() => (ui.spotifyPicker = null)}>
+				<Icon name="close" size={18} />
+			</button>
+		</header>
+		<form class="new" onsubmit={(e) => e.preventDefault()}>
+			<span class="plus"><Icon name="search" size={20} /></span>
+			<input placeholder="Search Spotify…" bind:value={matchQuery} enterkeyhint="search" />
+		</form>
+		<ul>
+			{#each matches as match (match.id)}
+				<li>
+					<button onclick={() => pickMatch(match)}>
+						<span class="art">
+							{#if match.coverUrl}
+								<img src={match.coverUrl} alt="" loading="lazy" decoding="async" />
+							{:else}
+								<span class="art-empty"><Icon name="note" size={18} /></span>
+							{/if}
+						</span>
+						<span class="text">
+							<span class="ellipsis">{match.title}</span>
+							<small class="ellipsis">{match.artist}{match.album ? ` · ${match.album}` : ""}</small>
+						</span>
+						{#if match.duration}<small class="dur">{time(match.duration)}</small>{/if}
+					</button>
+				</li>
+			{:else}
+				<li class="status">
+					{#if matchState === "loading"}
+						Searching…
+					{:else if matchState === "error"}
+						Couldn’t search Spotify
+					{:else if matchQuery.trim()}
+						No matches
+					{/if}
 				</li>
 			{/each}
 		</ul>
@@ -338,6 +459,7 @@
 	.title-wrap {
 		display: flex;
 		flex-direction: column;
+		min-width: 0;
 	}
 	.sheet h3 {
 		margin: 0;
@@ -428,6 +550,32 @@
 	.text small {
 		color: var(--text-2);
 		font-size: 12px;
+	}
+	.art img,
+	.art-empty {
+		display: grid;
+		place-items: center;
+		width: 48px;
+		height: 48px;
+		border-radius: var(--art-radius);
+		object-fit: cover;
+		background: var(--fill);
+		color: var(--text-2);
+	}
+	.dur {
+		flex-shrink: 0;
+		color: var(--text-2);
+		font-size: 12px;
+		font-variant-numeric: tabular-nums;
+	}
+	.sheet li.status {
+		padding: 16px 12px;
+		color: var(--text-2);
+		font-size: 14px;
+		text-align: center;
+	}
+	.sheet li.status:empty {
+		display: none;
 	}
 
 	.toast {

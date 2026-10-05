@@ -481,6 +481,35 @@ export async function startScan(): Promise<ScanStatus> {
 	return r.scanStatus as ScanStatus;
 }
 
+// ---- Server downloads (into the library) ------------------------------------
+
+/** A Spotify catalog track, offered as the metadata for a server download. */
+export interface SpotifyMatch {
+	id: string;
+	title: string;
+	artist: string;
+	album: string;
+	coverUrl?: string;
+	/** Seconds. */
+	duration?: number;
+}
+
+export async function searchSpotifyTracks(query: string, count = 8): Promise<SpotifyMatch[]> {
+	const r = await call('searchSpotifyTracks', { query, count });
+	return (r.spotifyTracks?.track ?? []) as SpotifyMatch[];
+}
+
+/**
+ * Asks the server to download a Spotify track into the library. `id` is a
+ * Spotify track id, bare or as an `st-` song id.
+ */
+export async function requestSpotifyDownload(
+	id: string
+): Promise<{ status: 'queued' | 'already_in_library'; taskId?: string }> {
+	const r = await call('requestSpotifyDownload', { id });
+	return r.spotifyDownload;
+}
+
 // ---- Playback ---------------------------------------------------------------
 
 /**

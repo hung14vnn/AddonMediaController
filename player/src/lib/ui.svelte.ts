@@ -17,6 +17,8 @@ class UI {
 	toast = $state<string | null>(null);
 	sleepTimerPicker = $state(false);
 	playlistPicker = $state<Song[] | null>(null);
+	/** A YouTube song waiting for the Spotify match whose metadata the server downloads it with. */
+	spotifyPicker = $state<Song | null>(null);
 	playlists = $state<Playlist[]>([]);
 	/** Optimistic love state keyed by id, layered over what the server returned. */
 	loved = $state<Record<string, boolean>>({});

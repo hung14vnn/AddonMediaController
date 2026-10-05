@@ -61,6 +61,7 @@ _PLAYBACK_REPORT_JSON_FIELDS = frozenset(
 )
 
 _HANDLERS: dict[str, "Handler"] = {}
+_PREFIX_SPOTIFY_TRACK = encode("spotify_track", "")
 
 
 @dataclass
@@ -2908,6 +2909,80 @@ async def _get_ytmusic_new_releases(c: Ctx) -> Response:
             break
             
     return c.render("albumList2", {"album": albums})
+
+
+@endpoint("searchSpotifyTracks")
+async def _search_spotify_tracks(c: Ctx) -> Response:
+    """Spotify catalog matches for a track, so the player can pick the metadata
+    to send with ``requestSpotifyDownload`` (e.g. for a YouTube search result)."""
+    q = (c.p("query") or "").strip()
+    if not q:
+        raise SubsonicError(10, "Required parameter is missing: query")
+    count = c.pint("count", 8, minimum=1, maximum=20) or 8
+    from core.dependencies import get_spotify_import_service
+
+    try:
+        tracks = await get_spotify_import_service().search_catalog_tracks(
+            q[:200], limit=count
+        )
+    except Exception as exc:  # noqa: BLE001 - provider failure, not a client error
+        logger.warning("Spotify catalog search failed: %s", exc)
+        raise SubsonicError(0, "Failed to search Spotify") from exc
+    return c.render(
+        "spotifyTracks",
+        {
+            "track": [
+                {
+                    "id": t["id"],
+                    "title": t["title"],
+                    "artist": t["artist"],
+                    "album": t["album"],
+                    "coverUrl": t["cover_url"],
+                    "duration": round(t["duration_ms"] / 1000)
+                    if t["duration_ms"]
+                    else None,
+                }
+                for t in tracks
+            ]
+        },
+    )
+
+
+@endpoint("requestSpotifyDownload")
+async def _request_spotify_download(c: Ctx) -> Response:
+    """Queue one Spotify track for download into the library.
+
+    ``id`` is a Spotify track id, bare or as the player's ``st-`` song id.
+    """
+    sid = (c.p("id") or "").strip()
+    spotify_id = sid.removeprefix(_PREFIX_SPOTIFY_TRACK)
+    if not spotify_id:
+        raise SubsonicError(10, "Required parameter is missing: id")
+    from core.dependencies import (
+        get_acquisition_dispatcher,
+        get_quota_service,
+        get_spotify_import_service,
+    )
+    from services.spotify_import_service import SpotifyNotLinkedError
+    from services.spotify_track_request import request_spotify_track
+
+    try:
+        result = await request_spotify_track(
+            user_id=c.user.id,
+            user_role=getattr(c.user, "role", None),
+            spotify_id=spotify_id,
+            svc=get_spotify_import_service(),
+            acquisition=get_acquisition_dispatcher(),
+            quota=get_quota_service(),
+        )
+    except SpotifyNotLinkedError as exc:
+        raise SubsonicError(0, "Spotify account not linked") from exc
+    except ValueError as exc:
+        raise SubsonicError(70, str(exc) or "Track not found") from exc
+    return c.render(
+        "spotifyDownload",
+        {"status": result.status, "taskId": result.task_id},
+    )
 
 
 @endpoint("getTodaysHits")
