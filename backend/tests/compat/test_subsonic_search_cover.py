@@ -4,6 +4,9 @@ import json
 
 import pytest
 
+from api.compat.subsonic import models as m
+from api.compat.subsonic.router import _prefer_library_songs
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -23,6 +26,20 @@ async def test_search3_finds_artist_album_song(compat_env):
     assert any(a["name"] == "Radiohead" for a in res.get("artist", []))
     assert any(a["name"] == "OK Computer" for a in res.get("album", []))
     assert res.get("song")  # tracks by Radiohead
+
+
+async def test_search_prefers_a_matching_library_song_over_catalog_stream():
+    local = m.SChild(id="tr-local", title="Fame Is a Gun", artist="Addison Rae")
+    catalog = m.SChild(id="st-remote", title="Fame is a gun", artist="ADDISON RAE")
+
+    assert _prefer_library_songs([local], [catalog]) == []
+
+
+async def test_search_keeps_catalog_song_when_artist_does_not_match():
+    local = m.SChild(id="tr-local", title="Fame Is a Gun", artist="Addison Rae")
+    catalog = m.SChild(id="st-remote", title="Fame Is a Gun", artist="Another Artist")
+
+    assert _prefer_library_songs([local], [catalog]) == [catalog]
 
 
 async def test_search3_empty_query_pages_everything(compat_env):

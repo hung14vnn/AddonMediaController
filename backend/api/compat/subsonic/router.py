@@ -7,6 +7,7 @@ import logging
 import random
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, replace
 from typing import Awaitable, Callable
 
@@ -1186,6 +1187,35 @@ def _spotapi_to_child(st: dict) -> m.SChild:
     )
 
 
+def _song_match_key(title: str | None, artist: str | None) -> tuple[str, str] | None:
+    """Return a conservative, formatting-insensitive song identity.
+
+    Search catalogs disagree on punctuation, case, and accents.  We only use
+    this for an exact title *and* artist match, so a catalog hit can safely be
+    represented by the already-owned library file instead of a yt-dlp stream.
+    """
+    def normalize(value: str | None) -> str:
+        decomposed = unicodedata.normalize("NFKD", value or "")
+        return "".join(char for char in decomposed.casefold() if char.isalnum())
+
+    normalized = normalize(title), normalize(artist)
+    return normalized if all(normalized) else None
+
+
+def _prefer_library_songs(local: list[m.SChild], remote: list[m.SChild]) -> list[m.SChild]:
+    """Drop remote search hits whose title and artist are already in the library."""
+    local_keys = {
+        key
+        for song in local
+        if (key := _song_match_key(song.title, song.artist)) is not None
+    }
+    return [
+        song
+        for song in remote
+        if _song_match_key(song.title, song.artist) not in local_keys
+    ]
+
+
 def _ytmusic_to_playlist(p: dict) -> m.SPlaylist:
     browse_id = p["browseId"]
     _remember_cover("ytmusic", browse_id, _ytmusic_thumbnail_url(p.get("thumbnails")))
@@ -1223,7 +1253,9 @@ async def _search3(c: Ctx) -> Response:
     to_playlist = _ytmusic_to_playlist if yt else _spotapi_to_playlist
     out_artists = [m.to_artist_id3(a) for a in artists] + [to_artist(a) for a in sa]
     out_albums = [m.to_album_id3(a) for a in albums] + [to_album(al) for al in sl]
-    out_songs = [c.child(t) for t in songs] + [x for t in st if (x := to_song(t))]
+    local_songs = [c.child(t) for t in songs]
+    remote_songs = [x for t in st if (x := to_song(t))]
+    out_songs = local_songs + _prefer_library_songs(local_songs, remote_songs)
     out_playlists = [p for p in playlists] + [to_playlist(p) for p in sp]
     return c.render(
         "searchResult3",
@@ -1240,7 +1272,9 @@ async def _search2(c: Ctx) -> Response:
     to_song = _ytmusic_to_child if yt else _spotapi_to_child
     out_artists = [m.to_artist_file(a) for a in artists] + [to_artist(a) for a in sa]
     out_albums = [m.to_album_child(a) for a in albums] + [to_album(al) for al in sl]
-    out_songs = [c.child(t) for t in songs] + [x for t in st if (x := to_song(t))]
+    local_songs = [c.child(t) for t in songs]
+    remote_songs = [x for t in st if (x := to_song(t))]
+    out_songs = local_songs + _prefer_library_songs(local_songs, remote_songs)
     return c.render(
         "searchResult2",
         {"artist": out_artists, "album": out_albums, "song": out_songs},

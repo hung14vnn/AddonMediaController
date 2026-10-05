@@ -444,6 +444,39 @@ describe('Player platform fixes', () => {
 		}
 	});
 
+	it('ignores a stall callback iOS queued before the app was hidden', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
+		const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+		const nativeSetTimeout = globalThis.setTimeout;
+		const stalledCallbacks: (() => void)[] = [];
+		const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
+			if (delay === 15_000 && typeof callback === 'function') stalledCallbacks.push(callback as () => void);
+			return nativeSetTimeout(callback, delay, ...args);
+		}) as typeof setTimeout);
+		try {
+			const { player, audio } = await freshPlayer();
+			player.playList([song('a')]);
+			await vi.advanceTimersByTimeAsync(0);
+			audio.ready();
+			expect(stalledCallbacks).toHaveLength(1);
+
+			hidden.mockReturnValue(true);
+			document.dispatchEvent(new Event('visibilitychange'));
+			hidden.mockReturnValue(false);
+			document.dispatchEvent(new Event('visibilitychange'));
+			audio.pause.mockClear();
+			// Safari may deliver this callback even after clearTimeout() if it had
+			// already queued it while the app was being backgrounded.
+			stalledCallbacks[0]();
+			expect(audio.pause).not.toHaveBeenCalled();
+			expect(player.current?.id).toBe('a');
+		} finally {
+			setTimeoutSpy.mockRestore();
+			hidden.mockRestore();
+			vi.useRealTimers();
+		}
+	});
+
 	it('reloads a next track that never reaches canplay', async () => {
 		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
 		try {

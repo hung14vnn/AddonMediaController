@@ -64,12 +64,23 @@ function createManagedAudio(): HTMLAudioElement {
 const STALL_TIMEOUT_MS = 15_000;
 /** Shortest wait between two stall checks (also the re-check while system-paused). */
 const STALL_CHECK_MS = 2_000;
+/**
+ * A stall check that fires this much later than due was held by the OS (iOS releases
+ * timers held in the background the moment the page is shown again), so its idea of
+ * "no progress" is meaningless and it must not act on it.
+ */
+const STALL_LATE_MS = 5_000;
 
 /**
  * Download the whole next track into RAM this early. Resolving a cold YouTube stream
  * on the server can take a minute (an 87 s download was observed), so start early.
  */
 const BLOB_LEAD_S = 150;
+/**
+ * Same, for YouTube tracks (`yt-` ids), whose cold resolve is slow and whose first
+ * attempt may fail at a proxy timeout (~80 s observed), so they need room for retries.
+ */
+const BLOB_LEAD_YT_S = 300;
 /** A prefetched blob smaller than this is an error page or truncated, not audio. */
 const MIN_BLOB_BYTES = 16 * 1024;
 /** Longer files (lossless, long mixes) just stream instead of filling RAM. */
@@ -77,8 +88,8 @@ const MAX_BLOB_BYTES = 60 * 1024 * 1024;
 /** A prefetch that takes longer than this is treated as failed. */
 const BLOB_FETCH_TIMEOUT_MS = 150_000;
 /** A failed prefetch is retried after this pause, up to MAX_BLOB_ATTEMPTS times. */
-const BLOB_RETRY_GAP_MS = 15_000;
-const MAX_BLOB_ATTEMPTS = 3;
+const BLOB_RETRY_GAP_MS = 4_000;
+const MAX_BLOB_ATTEMPTS = 4;
 
 /** HTMLMediaElement.HAVE_FUTURE_DATA. */
 const HAVE_FUTURE_DATA = 3;
@@ -115,6 +126,11 @@ const STREAM_STANDBY_LEAD_S = 45;
 /** A pause the page didn't ask for this soon after a track started is the system refusing it. */
 const SYSTEM_PAUSE_WINDOW_MS = 2_000;
 
+/** Lead time (seconds before the end) at which the whole-track prefetch of `id` starts. */
+function blobLeadFor(id: string): number {
+	return id.startsWith('yt-') ? BLOB_LEAD_YT_S : BLOB_LEAD_S;
+}
+
 /** iPadOS reports a Mac user agent; touch support tells them apart. */
 function isIOSDevice(): boolean {
 	return (
@@ -145,7 +161,10 @@ async function lookupOffline(id: string): Promise<ObjectUrl | null> {
  * stops, the page may be frozen or throttled. So the track change in `ended` must be
  * fully synchronous: the next track is downloaded into a blob: URL while the current
  * one still plays (`prefetchNextBlob`), and `load()` takes it from `nextReady`
- * without any await.
+ * without any await. A cold server-side resolve (YouTube) is additionally triggered
+ * as soon as the current track starts (`warmNext`), so that even if the blob is not
+ * ready in time, the stream request at `ended` is answered quickly instead of leaving
+ * a silent gap in which iOS suspends the page.
  *
  * Android: Chrome gives up audio focus while no element is playing, and after a few
  * minutes in the background Android refuses to grant it again, so a track started from
@@ -190,8 +209,10 @@ class Player {
 	private standby: HTMLAudioElement | null = null;
 	/** URL loaded into `standby`, or null when it holds nothing usable. */
 	private standbyFor: string | null = null;
-	/** The previous element after a handoff, still playing its last moments until the new one plays. */
-	/** `listeners` aborts the two one-shot handoff listeners once either has fired. */
+	/**
+	 * The previous element after a handoff, still playing its last moments until the new
+	 * one plays. `listeners` aborts the two one-shot handoff listeners once either has fired.
+	 */
 	private retiring: { el: HTMLAudioElement; copy: OfflineCopy | null; listeners: AbortController } | null = null;
 	/** When the current element last fired `playing`. */
 	private playingSince = -Infinity;
@@ -215,6 +236,11 @@ class Player {
 	private blobJob: BlobJob | null = null;
 	private blobFailure: BlobFailure | null = null;
 	/**
+	 * Track ids whose server-side resolve was already triggered by `warmNext`. Not
+	 * aborted on track change: the server keeps (and caches) the work either way.
+	 */
+	private warmed = new Set<string>();
+	/**
 	 * Server length that playback ends at, or 0. iOS Safari misreads fragmented m4a
 	 * (YouTube Music streams), often at about double, then plays silence up to it.
 	 */
@@ -235,6 +261,10 @@ class Player {
 	private lastProbeAt = 0;
 	private stopDiagnostics: () => void = () => {};
 	private stallTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Bumped whenever the watchdog is disarmed; a callback from an older generation is void. */
+	private stallGen = 0;
+	/** When the pending stall check is due (performance.now() scale), to detect late callbacks. */
+	private stallDueAt = 0;
 	private lastProgressAt = 0;
 	private lastProgressTime = -1;
 	/** 5 s slot of the last MediaSession position sync (see onTime). */
@@ -793,6 +823,9 @@ class Player {
 			}
 			if (!copy) {
 				this.offlineMissFor = next.id;
+				// No downloaded copy: the server will have to resolve it. Start that now,
+				// while the current track is still playing and the page is not suspended.
+				void this.warmNext();
 				return;
 			}
 			if (this.nextReady?.id === next.id) {
@@ -803,6 +836,33 @@ class Player {
 			this.nextReady = { id: next.id, copy };
 			this.primeStandby();
 		});
+	}
+
+	/**
+	 * Ask the server for two bytes of the next track as soon as the current one starts.
+	 * A cold YouTube track can take over a minute to resolve on the server; doing it here,
+	 * while audio is playing and the page is still running, means the later whole-track
+	 * download or stream request is answered from the server's cache. Deliberately not
+	 * aborted on track change or by `load()`: finishing the resolve is the whole point.
+	 */
+	private async warmNext() {
+		const next = this.upcoming();
+		if (!next || next.id === this.current?.id) return;
+		if (this.nextReady?.id === next.id || this.warmed.has(next.id)) return;
+		this.warmed.add(next.id);
+		const started = performance.now();
+		logPlayback('warm-start', `id=${next.id}`);
+		try {
+			const res = await fetch(streamUrl(next.id), { headers: { Range: 'bytes=0-1' }, cache: 'no-store' });
+			if (res.ok) void res.body?.cancel();
+			logPlayback('warm-done', `id=${next.id} status=${res.status} ${Math.round(performance.now() - started)}ms`);
+			// A non-2xx answer did not resolve anything: allow another attempt.
+			if (!res.ok) this.warmed.delete(next.id);
+		} catch (e) {
+			// Allow a later retry (e.g. a proxy timeout cut the request short).
+			this.warmed.delete(next.id);
+			logPlayback('warm-failed', `id=${next.id} ${Math.round(performance.now() - started)}ms ${e instanceof Error ? e.message : String(e)}`);
+		}
 	}
 
 	/**
@@ -920,9 +980,17 @@ class Player {
 
 	private readonly onVisibilityChange = () => {
 		logPlayback('visibility', document.visibilityState);
-		if (document.hidden) return;
+		if (document.hidden) {
+			// Invalidate the watchdog now, including a callback iOS may hold and release
+			// on the next foreground.
+			this.disarmStallCheck();
+			return;
+		}
 		this.currentTime = this.time; // the UI copy was frozen while hidden
 		if (!this.current) return;
+		// Background time is not stalled time: the 15 s window starts now. (The play()
+		// or load() below arms the watchdog again.)
+		this.lastProgressAt = performance.now();
 		// play() rejected in the background clears playRequested but sets
 		// resumeWhenVisible, so both count as "playback was wanted".
 		if (!this.playRequested && !this.resumeWhenVisible) return;
@@ -970,7 +1038,8 @@ class Player {
 			this.lastPositionSlot = slot;
 			this.updatePosition();
 		}
-		if (dur > 0 && dur - a.currentTime <= BLOB_LEAD_S) void this.prefetchNextBlob();
+		const upcoming = this.upcoming();
+		if (dur > 0 && upcoming && dur - a.currentTime <= blobLeadFor(upcoming.id)) void this.prefetchNextBlob();
 		// The real audio is over; don't sit through the silence up to the misread length.
 		// Switch straight to the next track without pausing: on a hidden iOS page a pause
 		// ends the audio session, and the next track then never gets past its metadata.
@@ -1016,29 +1085,46 @@ class Player {
 	// progressing it only wakes about once per STALL_TIMEOUT_MS (instead of ~30
 	// times a minute for the whole session, screen off included). `onTime` keeps
 	// `lastProgressAt` fresh, so nothing has to be re-armed per timeupdate.
+	//
+	// The watchdog never runs while the page is hidden: it can't recover anything there
+	// (reloading a stream in the background aborts play() with an AbortError), and iOS
+	// may hold its timer and release it the instant the page is shown again, when "no
+	// progress for 15 s" is just the background time. It is disarmed on `hidden` and
+	// re-armed (with a fresh progress clock) when playback is resumed on `visible`.
 	private armStallCheck() {
 		this.lastProgressAt = performance.now();
+		if (document.hidden) return;
 		if (this.stallTimer === undefined) this.scheduleStallCheck(STALL_TIMEOUT_MS);
 	}
 
 	private scheduleStallCheck(ms: number) {
-		this.stallTimer = setTimeout(this.checkStall, Math.max(STALL_CHECK_MS, ms));
+		const delay = Math.max(STALL_CHECK_MS, ms);
+		const gen = this.stallGen;
+		this.stallDueAt = performance.now() + delay;
+		this.stallTimer = setTimeout(() => this.checkStall(gen), delay);
 	}
 
 	private disarmStallCheck() {
 		clearTimeout(this.stallTimer);
 		this.stallTimer = undefined;
+		// Void a callback the browser may already have queued (clearTimeout can't recall it).
+		this.stallGen++;
 	}
 
-	private readonly checkStall = () => {
+	private readonly checkStall = (gen: number) => {
+		if (gen !== this.stallGen) return;
 		this.stallTimer = undefined;
 		if (!this.playRequested || !this.current) return;
-		// WebKit can suspend media loading while the page is hidden. Reloading
-		// here aborts the pending play() and creates an AbortError; keep the
-		// request alive and recover on visibilitychange.
+		// Belt and braces: armed while visible but the page was hidden since.
 		if (document.hidden) {
 			this.resumeWhenVisible = true;
-			// Don't count hidden time as stalled time.
+			return;
+		}
+		// Held by the OS and released late: no information about real progress. Start a
+		// fresh window instead of treating the held time as a stall.
+		const late = performance.now() - this.stallDueAt;
+		if (late > STALL_LATE_MS) {
+			logPlayback('stall-check-late', `${Math.round(late)}ms, ignored`);
 			this.lastProgressAt = performance.now();
 			return this.scheduleStallCheck(STALL_TIMEOUT_MS);
 		}
@@ -1177,6 +1263,7 @@ class Player {
 		this.blobJob?.abort.abort();
 		this.blobJob = null;
 		this.blobFailure = null;
+		this.warmed.clear();
 		this.offlineMissFor = null;
 		this.releaseOffline();
 		this.nextReady?.copy.revoke();
