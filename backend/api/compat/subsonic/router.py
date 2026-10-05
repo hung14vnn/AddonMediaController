@@ -580,6 +580,9 @@ async def _get_spotify_album(c: Ctx, album_id: str) -> Response:
         # album so each song keeps its parent/albumId/coverArt linkage.
         own = st.get("album") or {}
         songs.append(_spotapi_to_child({**st, "album": own if own.get("id") else al}))
+    songs = await _replace_remote_songs_with_library(
+        c, songs, query=str(al.get("name") or "")
+    )
     s = _spotapi_to_album_id3(al)
     s.song = songs
     s.songCount = len(songs)
@@ -711,6 +714,9 @@ async def _get_album(c: Ctx) -> Response:
             for t in (album.get("tracks") or [])
             if isinstance(t, dict) and (child := _ytmusic_to_child(t))
         ]
+        tracks = await _replace_remote_songs_with_library(
+            c, tracks, query=str(album.get("title") or "")
+        )
         cover = _ytmusic_thumbnail_url(album.get("thumbnails"))
         if cover:
             _remember_cover("ytmusic", browse_id, cover)
@@ -1214,6 +1220,52 @@ def _prefer_library_songs(local: list[m.SChild], remote: list[m.SChild]) -> list
         for song in remote
         if _song_match_key(song.title, song.artist) not in local_keys
     ]
+
+
+async def _replace_remote_songs_with_library(
+    c: Ctx,
+    remote: list[m.SChild],
+    *,
+    query: str,
+    matches_cache: dict[str, dict[tuple[str, str], m.SChild]] | None = None,
+) -> list[m.SChild]:
+    """Use local children for exact metadata matches in a remote track list."""
+    if not remote or not query.strip():
+        return remote
+    by_key = matches_cache.get(query) if matches_cache is not None else None
+    if by_key is None:
+        local, _ = await c.services.view.get_tracks_page(
+            limit=500, q=query, user=c.user
+        )
+        by_key = {
+            key: c.child(track)
+            for track in local
+            if (key := _song_match_key(track.title, track.artist_name)) is not None
+        }
+        if matches_cache is not None:
+            matches_cache[query] = by_key
+    return [
+        by_key.get(_song_match_key(song.title, song.artist), song)
+        for song in remote
+    ]
+
+
+async def _replace_remote_playlist_songs_with_library(
+    c: Ctx, remote: list[m.SChild]
+) -> list[m.SChild]:
+    """Resolve a remote playlist with one library lookup per distinct artist."""
+    matches_cache: dict[str, dict[tuple[str, str], m.SChild]] = {}
+    resolved = []
+    for song in remote:
+        resolved.extend(
+            await _replace_remote_songs_with_library(
+                c,
+                [song],
+                query=song.artist or song.title,
+                matches_cache=matches_cache,
+            )
+        )
+    return resolved
 
 
 def _ytmusic_to_playlist(p: dict) -> m.SPlaylist:
@@ -1813,6 +1865,10 @@ async def _build_playlist_detail(c: Ctx, pid: str):
     r = detail.record
     songs, total = [], 0
     ytmusic_format = _ytmusic_format(c.request, None)
+    # One indexed lookup per distinct artist, rather than one broad scan per
+    # entry.  Most playlists repeat artists, and exact title+artist matching
+    # below still prevents a same-named track from being substituted.
+    playlist_library_matches: dict[str, dict[tuple[str, str], m.SChild]] = {}
     for entry in detail.tracks:
         # Older downloader entries may have the library file in
         # track_source_id while library_file_id was never backfilled.
@@ -1851,24 +1907,29 @@ async def _build_playlist_detail(c: Ctx, pid: str):
         ):
             yt_id = encode("ytmusic", ytmusic_source_id)
             duration_sec = int(entry.duration or 0)
-            songs.append(
-                m.SChild(
-                    id=yt_id,
-                    isDir=False,
-                    title=entry.track_name or "YouTube Track",
-                    album=entry.album_name or "YouTube",
-                    artist=entry.artist_name or "YouTube",
-                    duration=duration_sec,
-                    type="music",
-                    mediaType="song",
-                    coverArt=yt_id,
-                    contentType=(
-                        "audio/ogg" if ytmusic_format == "opus" else "audio/mp4"
-                    ),
-                    suffix=ytmusic_format,
-                )
+            remote = m.SChild(
+                id=yt_id,
+                isDir=False,
+                title=entry.track_name or "YouTube Track",
+                album=entry.album_name or "YouTube",
+                artist=entry.artist_name or "YouTube",
+                duration=duration_sec,
+                type="music",
+                mediaType="song",
+                coverArt=yt_id,
+                contentType=(
+                    "audio/ogg" if ytmusic_format == "opus" else "audio/mp4"
+                ),
+                suffix=ytmusic_format,
             )
-            total += duration_sec
+            song = (await _replace_remote_songs_with_library(
+                c,
+                [remote],
+                query=remote.artist or remote.title,
+                matches_cache=playlist_library_matches,
+            ))[0]
+            songs.append(song)
+            total += song.duration or duration_sec
     owner = c.user.username if detail.is_owner else detail.owner_name
     return m.SPlaylist(
         id=encode("playlist", r.id),
@@ -1929,6 +1990,7 @@ async def _get_playlist(c: Ctx) -> Response:
             
         pl = await ytmusic._run_blocking(_fetch, what="yt playlist")
         songs = [child for t in pl.get("tracks", []) if (child := _ytmusic_to_child(t))]
+        songs = await _replace_remote_playlist_songs_with_library(c, songs)
         
         tid = encode("ytmusic", playlist_id)
         url = pl.get("thumbnails", [{}])[-1].get("url") if pl.get("thumbnails") else ""
@@ -1968,6 +2030,7 @@ async def _get_playlist(c: Ctx) -> Response:
             names = [str(a["name"]) for a in (st.get("artists") or [])[:2] if a.get("name")]
             if st.get("name") and len(_SPOTIFY_TRACK_META) < _SPOTIFY_TRACK_META_MAX:
                 _SPOTIFY_TRACK_META[st["id"]] = (", ".join(names), str(st["name"]))
+        songs = await _replace_remote_playlist_songs_with_library(c, songs)
                 
         tid = encode("spotify_playlist", playlist_id)
         images = pl.get("images") or []
@@ -2002,6 +2065,7 @@ async def _get_playlist(c: Ctx) -> Response:
             
         pl = await ytmusic._run_blocking(_fetch_radio, what="yt radio mix")
         songs = [child for t in pl.get("tracks", []) if (child := _ytmusic_to_child(t))]
+        songs = await _replace_remote_playlist_songs_with_library(c, songs)
         
         detail = m.SPlaylist(
             id=raw_id,

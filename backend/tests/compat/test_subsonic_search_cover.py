@@ -1,11 +1,16 @@
 """T1.4 - Subsonic search3/search2 + getCoverArt prefix resolution."""
 
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from api.compat.subsonic import models as m
-from api.compat.subsonic.router import _prefer_library_songs
+from api.compat.subsonic.router import (
+    _prefer_library_songs,
+    _replace_remote_songs_with_library,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -40,6 +45,26 @@ async def test_search_keeps_catalog_song_when_artist_does_not_match():
     catalog = m.SChild(id="st-remote", title="Fame Is a Gun", artist="Another Artist")
 
     assert _prefer_library_songs([local], [catalog]) == [catalog]
+
+
+async def test_remote_album_tracklist_reuses_matching_library_song():
+    local = m.SChild(id="tr-local", title="Fame Is a Gun", artist="Addison Rae")
+    remote = m.SChild(id="yt-remote", title="Fame is a gun", artist="ADDISON RAE")
+    view = SimpleNamespace(
+        get_tracks_page=AsyncMock(
+            return_value=([SimpleNamespace(title=local.title, artist_name=local.artist)], 1)
+        )
+    )
+    context = SimpleNamespace(
+        services=SimpleNamespace(view=view), user=None, child=lambda _track: local
+    )
+
+    assert await _replace_remote_songs_with_library(
+        context, [remote], query="Addison Rae"
+    ) == [local]
+    view.get_tracks_page.assert_awaited_once_with(
+        limit=500, q="Addison Rae", user=None
+    )
 
 
 async def test_search3_empty_query_pages_everything(compat_env):
