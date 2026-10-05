@@ -304,11 +304,14 @@
 		gap: 10px;
 	}
 	.play {
-		width: 50px;
-		height: 50px;
-		border-radius: 50%;
-		display: grid;
-		place-items: center;
+		width: 78px;
+		height: 34px;
+		border-radius: 999px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 5px;
+		padding: 0;
 		color: #fff;
 		background: var(--accent);
 		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);

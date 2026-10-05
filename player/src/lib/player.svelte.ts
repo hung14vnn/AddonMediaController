@@ -32,14 +32,19 @@ interface OfflineCopy {
 	copy: ObjectUrl;
 }
 
-interface PreloadEntry {
-	url: string;
-	element: HTMLAudioElement;
-}
-
 interface BlobJob {
 	id: string;
 	abort: AbortController;
+	/** Aborted by our own timeout (a failure), as opposed to superseded or unloaded. */
+	timedOut: boolean;
+}
+
+interface BlobFailure {
+	id: string;
+	count: number;
+	at: number;
+	/** Not worth retrying (e.g. the file is too big to hold in memory). */
+	final: boolean;
 }
 
 function createManagedAudio(): HTMLAudioElement {
@@ -54,33 +59,36 @@ function createManagedAudio(): HTMLAudioElement {
 	return audio;
 }
 
-function isIOSDevice(): boolean {
-	if (typeof navigator === 'undefined') return false;
-	return (
-		/iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-		(navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-	);
-}
-
 /** Park a native stream after 15 seconds without progress. */
 const STALL_TIMEOUT_MS = 15_000;
 const STALL_CHECK_MS = 2_000;
-/** Warm only the next native stream (non-iOS) with a second audio element. */
-const PRELOAD_LEAD_S = 45;
+
 /**
- * iOS: download the whole next track into RAM this early. The lead is larger because
- * resolving a cold YouTube stream on the server can take tens of seconds.
+ * Download the whole next track into RAM this early. Resolving a cold YouTube stream
+ * on the server can take a minute (an 87 s download was observed), so start early.
  */
-const IOS_BLOB_LEAD_S = 100;
+const BLOB_LEAD_S = 150;
 /** A prefetched blob smaller than this is an error page or truncated, not audio. */
 const MIN_BLOB_BYTES = 16 * 1024;
+/** Longer files (lossless, long mixes) just stream instead of filling RAM. */
+const MAX_BLOB_BYTES = 60 * 1024 * 1024;
+/** A prefetch that takes longer than this is treated as failed. */
+const BLOB_FETCH_TIMEOUT_MS = 150_000;
+/** A failed prefetch is retried after this pause, up to MAX_BLOB_ATTEMPTS times. */
+const BLOB_RETRY_GAP_MS = 15_000;
+const MAX_BLOB_ATTEMPTS = 3;
 
-/** HTMLMediaElement.HAVE_METADATA / HAVE_FUTURE_DATA. */
-const HAVE_METADATA = 1;
+/** HTMLMediaElement.HAVE_FUTURE_DATA. */
 const HAVE_FUTURE_DATA = 3;
 
 /** Unplayable tracks skipped in a row before giving up. */
-const MAX_ERROR_SKIPS = 3;
+const MAX_ERROR_SKIPS = 2;
+/** Pause before retrying or skipping a failed track, so a dead server isn't hammered. */
+const ERROR_RETRY_DELAY_MS = 2_000;
+/** Minimum gap between diagnostic probes of a failing source. */
+const PROBE_MIN_GAP_MS = 10_000;
+/** After this much successful playback, a later error counts as a new incident. */
+const ERROR_REARM_AFTER_S = 10;
 
 /** Media element events written to the playback log (timeupdate is too chatty). */
 const LOGGED_EVENTS = ['play', 'pause', 'waiting', 'playing', 'canplay', 'stalled', 'ended', 'error', 'emptied', 'abort'];
@@ -106,10 +114,11 @@ async function lookupOffline(id: string): Promise<ObjectUrl | null> {
  * play order; when shuffle is on, the original order is kept in `unshuffled` so
  * turning shuffle off restores it.
  *
- * iOS note: once audio stops, WebKit freezes JS, network and media loading for a
- * hidden page. So on iOS the track change in `ended` must be fully synchronous: the
- * next track is downloaded into a blob: URL while the current one still plays
- * (`prefetchNextBlob`), and `load()` takes it from `nextReady` without any await.
+ * Background note (iOS, and Android Chrome for slow YouTube streams): once audio
+ * stops, the page may be frozen or throttled. So the track change in `ended` must be
+ * fully synchronous: the next track is downloaded into a blob: URL while the current
+ * one still plays (`prefetchNextBlob`), and `load()` takes it from `nextReady`
+ * without any await.
  */
 class Player {
 	queue = $state<Song[]>([]);
@@ -135,7 +144,6 @@ class Player {
 	upNext = $derived(this.queue.slice(this.index + 1));
 
 	private audio: HTMLAudioElement;
-	private preloadAudio: HTMLAudioElement;
 	private unshuffled: Song[] | null = null;
 	private scrobbled = false;
 	private pendingSeek = 0;
@@ -145,17 +153,14 @@ class Player {
 	private playingOffline: OfflineCopy | null = null;
 	/**
 	 * The upcoming track, ready to start without the network: either explicitly
-	 * downloaded for offline use, or (iOS) prefetched into a blob while the current
-	 * track plays.
+	 * downloaded for offline use, or prefetched into a blob while the current track plays.
 	 */
 	private nextReady: OfflineCopy | null = null;
 	/** Track id for which the offline lookup already came back empty (skips an await in load). */
 	private offlineMissFor: string | null = null;
-	/** In-flight whole-track prefetch (iOS) and the id that last failed, to avoid hammering. */
+	/** In-flight whole-track prefetch, and the last failure (for bounded retries). */
 	private blobJob: BlobJob | null = null;
-	private blobFailedFor: string | null = null;
-	/** Stream descriptors and their warmed native element (non-iOS). */
-	private preloadCache = new Map<string, PreloadEntry>();
+	private blobFailure: BlobFailure | null = null;
 	/**
 	 * Server length that playback ends at, or 0. iOS Safari misreads fragmented m4a
 	 * (YouTube Music streams), often at about double, then plays silence up to it.
@@ -169,6 +174,13 @@ class Player {
 	private errorRetriedFor: string | null = null;
 	/** Tracks skipped in a row for errors; stops a dead server from cycling the queue. */
 	private errorSkips = 0;
+	private errorTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Queue index where the current run of errors started, to return to when giving up. */
+	private errorOriginIndex = -1;
+	/** loadToken whose error was already handled (one failure can raise several signals). */
+	private errorHandledToken = -1;
+	private lastProbeAt = 0;
+	private stopDiagnostics: () => void = () => {};
 	private stallTimer: ReturnType<typeof setInterval> | undefined;
 	private lastProgressAt = 0;
 	private lastProgressTime = -1;
@@ -184,18 +196,17 @@ class Player {
 		// elements.
 		this.audio = createManagedAudio();
 		this.audio.preload = 'auto';
-		this.preloadAudio = createManagedAudio();
-		this.preloadAudio.preload = 'auto';
 		this.singleTab = new SingleTab(() => this.pause());
 		this.interruptions = new InterruptionGuard(this.audio, () => this.resumeAfterInterruption());
 
 		this.bindElement(this.audio);
-		this.bindElement(this.preloadAudio);
 		this.bindActiveAudio(this.audio);
 
 		// Have the offline chunk loaded before the page can be hidden, so a background
 		// track change never has to fetch a JS chunk.
 		void import('./offline').catch(() => {});
+
+		this.stopDiagnostics = this.startDiagnostics();
 
 		window.addEventListener('pagehide', this.onPageHide);
 		document.addEventListener('visibilitychange', this.onVisibilityChange);
@@ -203,10 +214,40 @@ class Player {
 	}
 
 	/**
-	 * Listeners for one of the two audio elements. Every handler ignores events from
-	 * the element that is not currently active, so the same binding serves both and
-	 * keeps working after the two elements swap roles.
-	 *
+	 * Playback log lines that show what the OS does to the page in the background:
+	 * `freeze`/`resume` (Chrome freezing the tab), `net` (offline/online), and
+	 * `timer-gap` (a 5 s timer that fired much later than due, i.e. timers were throttled).
+	 * Together with the `probe` line on a media error they tell apart a throttled page
+	 * or a cut network from a server/credential rejection. Returns a cleanup function.
+	 */
+	private startDiagnostics(): () => void {
+		const onFreeze = () => logPlayback('lifecycle', 'freeze');
+		const onResume = () => logPlayback('lifecycle', 'resume');
+		const onOffline = () => logPlayback('net', 'offline');
+		const onOnline = () => logPlayback('net', 'online');
+		document.addEventListener('freeze', onFreeze);
+		document.addEventListener('resume', onResume);
+		window.addEventListener('offline', onOffline);
+		window.addEventListener('online', onOnline);
+		let lastBeat = performance.now();
+		const beat = setInterval(() => {
+			const now = performance.now();
+			const gap = now - lastBeat;
+			lastBeat = now;
+			if (gap > 15_000) {
+				logPlayback('timer-gap', `${Math.round(gap / 1000)}s hidden=${document.hidden} playing=${this.playing}`);
+			}
+		}, 5_000);
+		return () => {
+			document.removeEventListener('freeze', onFreeze);
+			document.removeEventListener('resume', onResume);
+			window.removeEventListener('offline', onOffline);
+			window.removeEventListener('online', onOnline);
+			clearInterval(beat);
+		};
+	}
+
+	/**
 	 * Event flow follows Navidrome's player: a track change sets src and load()s,
 	 * `canplay` (re)starts playback that is wanted, and a `waiting` element that
 	 * already has enough buffered is kicked with play() again.
@@ -235,6 +276,7 @@ class Player {
 			if (this.audio !== a) return;
 			this.buffering = false;
 			this.errorSkips = 0;
+			this.errorOriginIndex = -1;
 		});
 		a.addEventListener('canplay', () => {
 			if (this.audio !== a) return;
@@ -259,17 +301,7 @@ class Player {
 			if (this.audio === a) this.onEnded();
 		});
 		a.addEventListener('error', () => {
-			if (this.audio === a) {
-				this.onError();
-				return;
-			}
-			// The standby element failed while preloading: drop it now, so it is never
-			// promoted to the active element in a broken state.
-			const entry = [...this.preloadCache.values()].find((p) => p.element === a);
-			if (entry) {
-				logPlayback('preload-error', `code=${a.error?.code} ${a.error?.message ?? ''}`);
-				this.clearPreload();
-			}
+			if (this.audio === a) this.onError();
 		});
 		for (const type of LOGGED_EVENTS) {
 			a.addEventListener(type, () => {
@@ -387,8 +419,14 @@ class Player {
 	}
 
 	resume() {
-		if (!this.audio.src && this.current) this.load(this.index, true, this.currentTime);
-		else this.play();
+		if (!this.current) return;
+		// A source that errored can't just be played again; reload it. This is also
+		// how the user restarts playback after the player gave up on a dead server.
+		if (!this.audio.src || this.audio.error) {
+			this.errorRetriedFor = null;
+			this.errorSkips = 0;
+			this.load(this.index, true, this.currentTime);
+		} else this.play();
 	}
 
 	pause() {
@@ -469,18 +507,11 @@ class Player {
 	 *
 	 * Everything up to the first `await` runs synchronously. When the track is
 	 * `playingOffline`, `nextReady`, or known to have no offline copy, there is no
-	 * await at all, which is what lets a track change from `ended` work on a hidden
-	 * iOS page.
+	 * await at all, which is what lets a track change from `ended` work on a hidden page.
 	 */
 	private async load(i: number, autoplay: boolean, startAt = 0) {
 		const song = this.queue[i];
 		if (!song) return;
-		// A manual selection (or a queue advance) can make the warmed next track
-		// obsolete. Keep it only when the selected song is exactly that track;
-		// otherwise stop the standby request so it cannot consume resources or
-		// accidentally become part of the new playback session.
-		if (!this.preloadCache.has(song.id)) this.clearPreload();
-
 		const token = ++this.loadToken;
 		this.index = i;
 		this.error = null;
@@ -527,60 +558,16 @@ class Player {
 		this.releaseOffline();
 		this.playingOffline = offline;
 
-		const preload = this.preloadCache.get(song.id);
-		if (preload?.element.error) {
-			// The standby element failed while preloading. Never promote it.
-			logPlayback('preload-discarded', `id=${song.id} code=${preload.element.error.code}`);
-			this.clearPreload();
-		}
-		// iOS ties background playback to the media element that received the
-		// original user activation. Promoting a second, preloaded element at the
-		// end of a track can leave it waiting forever until the page is visible.
-		const ios = isIOSDevice();
-		const warmed = this.preloadCache.get(song.id);
-		const useWarmedAudio = Boolean(
-			!ios &&
-				warmed &&
-				warmed.element === this.preloadAudio &&
-				warmed.element.src &&
-				!warmed.element.error &&
-				warmed.element.readyState >= HAVE_METADATA &&
-				!offline
-		);
-		if (useWarmedAudio) {
-			const oldAudio = this.audio;
-			this.preloadAudio.volume = oldAudio.volume;
-			this.preloadAudio.muted = oldAudio.muted;
-			this.preloadAudio.playbackRate = oldAudio.playbackRate;
-			this.audio = this.preloadAudio;
-			this.preloadAudio = oldAudio;
-			this.bindActiveAudio(this.audio);
-			// The old active element may have autoplay=true. It is now the
-			// standby element, so it must never start a newly preloaded source.
-			this.preloadAudio.autoplay = false;
-			oldAudio.pause();
-			oldAudio.removeAttribute('src');
-			oldAudio.load();
-			this.preloadCache.delete(song.id);
-			// The standby element may have emitted `canplay` before it became
-			// active. Do not leave the UI in buffering state waiting for an event
-			// that has already happened.
-			if (this.audio.readyState >= HAVE_FUTURE_DATA) this.buffering = false;
-		}
-
 		logPlayback(
 			'load',
-			`id=${song.id} "${song.title}" at=${startAt.toFixed(1)} ${offline ? 'ready (offline/prefetched)' : 'stream'} ios=${ios} warmed=${useWarmedAudio}`
+			`id=${song.id} "${song.title}" at=${startAt.toFixed(1)} ${offline ? 'ready (offline/prefetched)' : 'stream'}`
 		);
 		this.audio.autoplay = autoplay;
 		this.audio.volume = this.volume;
 		this.audio.muted = this.muted;
-		if (!useWarmedAudio) {
-			this.audio.src = offline?.copy.url ?? streamUrl(song.id);
-			this.audio.load();
-		} else if (startAt > 0) {
-			this.audio.currentTime = startAt;
-		}
+		this.audio.src = offline?.copy.url ?? streamUrl(song.id);
+		this.audio.load();
+		if (startAt > 0) this.audio.currentTime = startAt;
 		if (autoplay) {
 			// Unlike Navidrome, play() right away rather than waiting for `canplay`: a cold
 			// YouTube track takes seconds to arrive, and Android/iOS refuse to start audio
@@ -619,80 +606,73 @@ class Player {
 	}
 
 	/**
-	 * iOS: download the whole next track into memory while the current one still plays
-	 * and JS is still running, so the `ended` handler can start it with no await and
-	 * no network.
+	 * Download the whole next track into memory while the current one still plays,
+	 * so the `ended` handler can start it with no await and no network.
+	 *
+	 * Failures are retried a few times, spaced out, because the lead is long enough
+	 * for a flaky or slow server to recover before the track ends.
 	 */
 	private async prefetchNextBlob() {
 		const next = this.upcoming();
+		if (!next || next.id === this.current?.id) return;
+		// A copy for a track that is no longer next (the queue changed) is dead weight.
+		if (this.nextReady && this.nextReady.id !== next.id) {
+			this.nextReady.copy.revoke();
+			this.nextReady = null;
+		}
+		if (this.nextReady?.id === next.id || this.blobJob?.id === next.id) return;
+
+		const failure = this.blobFailure?.id === next.id ? this.blobFailure : null;
 		if (
-			!next ||
-			next.id === this.current?.id ||
-			this.nextReady?.id === next.id ||
-			this.blobJob?.id === next.id ||
-			this.blobFailedFor === next.id
+			failure &&
+			(failure.final ||
+				failure.count >= MAX_BLOB_ATTEMPTS ||
+				performance.now() - failure.at < BLOB_RETRY_GAP_MS)
 		) {
 			return;
 		}
+
 		this.blobJob?.abort.abort();
-		const job: BlobJob = { id: next.id, abort: new AbortController() };
+		const job: BlobJob = { id: next.id, abort: new AbortController(), timedOut: false };
 		this.blobJob = job;
-		logPlayback('blob-start', `id=${next.id} "${next.title}"`);
+		const timeout = setTimeout(() => {
+			job.timedOut = true;
+			job.abort.abort();
+		}, BLOB_FETCH_TIMEOUT_MS);
+		const attempt = (failure?.count ?? 0) + 1;
+		logPlayback('blob-start', `id=${next.id} "${next.title}" attempt=${attempt}`);
 		try {
 			const res = await fetch(streamUrl(next.id), { signal: job.abort.signal });
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const length = Number(res.headers.get('content-length') ?? 0);
+			if (length > MAX_BLOB_BYTES) {
+				void res.body?.cancel();
+				this.blobFailure = { id: next.id, count: attempt, at: performance.now(), final: true };
+				logPlayback('blob-skipped', `id=${next.id} too large (${length} bytes), will stream`);
+				return;
+			}
 			const blob = await res.blob();
 			if (this.destroyed || this.upcoming()?.id !== next.id) return;
 			if (blob.size < MIN_BLOB_BYTES) throw new Error(`too small (${blob.size} bytes)`);
-			// A stale offline copy could have landed while we downloaded.
+			// An offline copy could have landed while we downloaded.
 			if (this.nextReady?.id === next.id) return;
 			const url = URL.createObjectURL(blob);
 			this.nextReady?.copy.revoke();
 			this.nextReady = { id: next.id, copy: { url, revoke: () => URL.revokeObjectURL(url) } };
+			this.blobFailure = null;
 			logPlayback('blob-ready', `id=${next.id} bytes=${blob.size} type=${blob.type}`);
 		} catch (e) {
-			if (job.abort.signal.aborted) return;
-			this.blobFailedFor = next.id;
-			logPlayback('blob-failed', `id=${next.id} ${e instanceof Error ? e.message : String(e)}`);
+			// Superseded by a newer job or by unload(): not a failure.
+			if (job.abort.signal.aborted && !job.timedOut) return;
+			this.blobFailure = { id: next.id, count: attempt, at: performance.now(), final: false };
+			logPlayback(
+				'blob-failed',
+				`id=${next.id} attempt=${attempt} ${job.timedOut ? 'timeout' : e instanceof Error ? e.message : String(e)}`
+			);
 		} finally {
+			clearTimeout(timeout);
 			if (this.blobJob === job) this.blobJob = null;
 		}
-	}
-
-	/** Warm only the next stream with a second native audio element (non-iOS). */
-	private preloadNextStream() {
-		const next = this.upcoming();
-		if (
-			!next ||
-			next.id === this.current?.id ||
-			this.preloadCache.has(next.id) ||
-			this.nextReady?.id === next.id
-		) {
-			return;
-		}
-
-		const url = streamUrl(next.id);
-		if (!url) return;
-		// A previous handoff can leave this native element with autoplay=true.
-		// Preloading must never be allowed to start playback by itself.
-		this.preloadAudio.autoplay = false;
-		this.preloadAudio.pause();
-		this.preloadAudio.removeAttribute('src');
-		this.preloadAudio.load();
-		this.preloadAudio.preload = 'auto';
-		this.preloadAudio.src = url;
-		this.preloadAudio.load();
-		this.preloadCache.clear();
-		this.preloadCache.set(next.id, { url, element: this.preloadAudio });
-		logPlayback('preload-next', `id=${next.id} "${next.title}"`);
-	}
-
-	private clearPreload() {
-		this.preloadAudio.pause();
-		this.preloadAudio.autoplay = false;
-		this.preloadAudio.removeAttribute('src');
-		this.preloadAudio.load();
-		this.preloadCache.clear();
 	}
 
 	private play() {
@@ -700,9 +680,8 @@ class Player {
 		this.armStallCheck();
 		const token = this.loadToken;
 		this.audio.play().then(() => {
-			// A warmed element can resolve play() without emitting a new
-			// canplay/playing event after the handoff. The resolved promise means
-			// playback was accepted; reflect that immediately in the controls.
+			// A resolved promise means playback was accepted; reflect that immediately
+			// in the controls even if no new canplay/playing event follows.
 			if (token === this.loadToken && !this.audio.paused) {
 				this.playing = true;
 				this.buffering = false;
@@ -712,8 +691,8 @@ class Player {
 			// A track change interrupted this play(); the new source's `canplay` owns it now.
 			if (token !== this.loadToken) return;
 			// The source itself is unplayable: that is a track error, not a refused
-			// autoplay. Send it through the reload-once-then-skip flow so a queue left
-			// playing with the screen off keeps going.
+			// autoplay. Send it through the retry/skip flow so a queue left playing with
+			// the screen off keeps going.
 			if (e instanceof DOMException && e.name === 'NotSupportedError') {
 				this.onError();
 				return;
@@ -746,6 +725,7 @@ class Player {
 		// A source that failed while the network was cut can't just be played again.
 		if (this.audio.error || !this.audio.src) {
 			this.errorRetriedFor = null;
+			this.errorSkips = 0;
 			this.load(this.index, true, this.currentTime);
 		} else this.play();
 	};
@@ -764,15 +744,10 @@ class Player {
 			this.lastProgressTime = a.currentTime;
 			this.lastProgressAt = performance.now();
 		}
+		// It has played for a while: a later failure is a new incident and gets its own retry.
+		if (a.currentTime > ERROR_REARM_AFTER_S) this.errorRetriedFor = null;
 		if (Math.floor(a.currentTime) % 5 === 0) this.updatePosition();
-		if (dur > 0) {
-			const left = dur - a.currentTime;
-			if (isIOSDevice()) {
-				if (left <= IOS_BLOB_LEAD_S) void this.prefetchNextBlob();
-			} else if (left <= PRELOAD_LEAD_S) {
-				this.preloadNextStream();
-			}
-		}
+		if (dur > 0 && dur - a.currentTime <= BLOB_LEAD_S) void this.prefetchNextBlob();
 		// The real audio is over; don't sit through the silence up to the misread length.
 		// Pausing first keeps the element from reaching its own `ended` and advancing twice.
 		if (this.durationCap && !a.paused && a.currentTime >= this.durationCap - 0.25) {
@@ -833,33 +808,87 @@ class Player {
 	};
 
 	/**
-	 * The source failed (often the server couldn't resolve a YouTube track). Unlike
-	 * Navidrome, which stops there, reload it once, then skip to the next track so a
-	 * queue left playing with the screen off keeps going.
+	 * The source failed (often the server couldn't resolve a YouTube track). Reload it
+	 * once, then skip to the next track so a queue left playing with the screen off
+	 * keeps going. Every step waits a moment, and if several different tracks fail in
+	 * a row the player gives up on the first failed one instead of cycling the queue.
 	 */
 	private onError() {
 		const a = this.audio;
 		const song = this.current;
 		if (!a.src || !song) return;
+		// One failure can arrive as an `error` event, a rejected play() and a stall
+		// timeout. Handle it once per load, or retry and skip would both fire.
+		if (this.errorHandledToken === this.loadToken) return;
+		this.errorHandledToken = this.loadToken;
 		logPlayback('media-error', `id=${song.id} code=${a.error?.code} ${a.error?.message ?? ''}`);
+		void this.probeSource(a.src);
 		// A prefetched blob that fails to play is bad: forget it so the retry uses the stream.
 		if (this.playingOffline?.id === song.id && this.playingOffline.copy.url === a.src) {
 			this.releaseOffline();
 		}
 		if (this.playRequested && this.errorRetriedFor !== song.id) {
 			this.errorRetriedFor = song.id;
-			this.load(this.index, true, this.currentTime);
+			this.afterErrorDelay(() => this.load(this.index, true, this.currentTime));
 			return;
 		}
 		this.error = `Couldn't play “${song.title}”`;
 		if (this.playRequested && this.upcoming() && this.errorSkips < MAX_ERROR_SKIPS) {
+			if (this.errorSkips === 0) this.errorOriginIndex = this.index;
 			this.errorSkips++;
-			this.next();
+			this.afterErrorDelay(() => this.next());
 			return;
 		}
+		// Several different tracks failed in a row: that is the connection or the
+		// session, not the tracks. Go back to the first failed track instead of
+		// burning through the queue, and resume it when the app is visible again.
+		if (this.errorOriginIndex >= 0 && this.errorOriginIndex !== this.index && this.queue[this.errorOriginIndex]) {
+			this.index = this.errorOriginIndex;
+			this.currentTime = 0;
+			this.duration = this.current?.duration ?? 0;
+			setMediaMetadata(this.current);
+		}
+		this.errorOriginIndex = -1;
+		const wanted = this.playRequested;
 		// A failed element can still report "not paused": stop it so the button shows play.
 		this.pause();
 		this.playing = false;
+		// pause() clears the flag; set it afterwards so onVisibilityChange can recover.
+		this.resumeWhenVisible = wanted;
+	}
+
+	/** Run a retry/skip after a short pause, unless the user moved on in the meantime. */
+	private afterErrorDelay(fn: () => void) {
+		clearTimeout(this.errorTimer);
+		const token = this.loadToken;
+		this.errorTimer = setTimeout(() => {
+			if (this.destroyed || token !== this.loadToken || !this.playRequested) return;
+			fn();
+		}, ERROR_RETRY_DELAY_MS);
+	}
+
+	/**
+	 * <audio> only says "Format error" for any HTTP failure. Ask the same URL for two
+	 * bytes and log the status (and the start of an error body), so 401/403 (expired
+	 * credential), 429 (rate limit) and 5xx (server) can be told apart in the log.
+	 */
+	private async probeSource(src: string) {
+		if (src.startsWith('blob:')) return;
+		const now = performance.now();
+		if (now - this.lastProbeAt < PROBE_MIN_GAP_MS) return;
+		this.lastProbeAt = now;
+		try {
+			const res = await fetch(src, { headers: { Range: 'bytes=0-1' }, cache: 'no-store' });
+			let detail = '';
+			if (res.ok) void res.body?.cancel();
+			else detail = ` body=${(await res.text()).slice(0, 160).replace(/\s+/g, ' ')}`;
+			logPlayback(
+				'probe',
+				`status=${res.status} type=${res.headers.get('content-type')} len=${res.headers.get('content-length')} range=${res.headers.get('content-range')}${detail}`
+			);
+		} catch (e) {
+			logPlayback('probe-failed', e instanceof Error ? e.message : String(e));
+		}
 	}
 
 	private onEnded() {
@@ -891,14 +920,12 @@ class Player {
 		this.audio.pause();
 		this.audio.removeAttribute('src');
 		this.audio.load();
-		this.preloadAudio.pause();
-		this.preloadAudio.removeAttribute('src');
-		this.preloadAudio.load();
-		this.preloadCache.clear();
 		this.disarmStallCheck();
+		clearTimeout(this.errorTimer);
+		this.errorOriginIndex = -1;
 		this.blobJob?.abort.abort();
 		this.blobJob = null;
-		this.blobFailedFor = null;
+		this.blobFailure = null;
 		this.offlineMissFor = null;
 		this.releaseOffline();
 		this.nextReady?.copy.revoke();
@@ -974,8 +1001,9 @@ class Player {
 		this.stopRemoteWatch();
 		this.stopRemoteWatch = () => {};
 		this.interruptions.dispose();
+		this.stopDiagnostics();
+		this.stopDiagnostics = () => {};
 		this.audio.remove();
-		this.preloadAudio.remove();
 		window.removeEventListener('pagehide', this.onPageHide);
 		document.removeEventListener('visibilitychange', this.onVisibilityChange);
 		clearTimeout(this.saveTimer);
