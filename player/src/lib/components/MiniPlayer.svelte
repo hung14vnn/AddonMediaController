@@ -140,7 +140,7 @@
 					</span>
 				{/key}
 			</button>
-			<button class="ctl has-ring" data-flip="pp" aria-label={player.active ? 'Pause' : 'Play'} onclick={() => player.toggle()}>
+			<button class="ctl has-ring" data-flip="pp" data-np-keep aria-label={player.active ? 'Pause' : 'Play'} onclick={() => player.toggle()}>
 				{#key player.active}
 					<span class="icon-swap" in:pop={{ from: 0.5, duration: 200 }}>
 						<Icon name={player.active ? 'pause' : 'play'} size={24} />

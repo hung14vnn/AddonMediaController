@@ -358,6 +358,40 @@ describe('Player platform fixes', () => {
 		}
 	});
 
+	it('freezes the UI clock while hidden but keeps the real position for recovery', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
+		const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+		try {
+			const { player, audio } = await freshPlayer();
+			player.playList([song('a')]);
+			await vi.advanceTimersByTimeAsync(0);
+			audio.ready();
+			audio.currentTime = 5;
+			audio.fire('timeupdate');
+			expect(player.currentTime).toBe(5);
+
+			hidden.mockReturnValue(true);
+			document.dispatchEvent(new Event('visibilitychange'));
+			audio.currentTime = 30;
+			audio.fire('timeupdate');
+			// No reactive UI work with the screen off...
+			expect(player.currentTime).toBe(5);
+			// ...but the engine still knows where playback is, e.g. for the snapshot
+			// written when the hidden page is closed.
+			expect(player.position).toBe(30);
+			window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false }));
+			expect(JSON.parse(localStorage.getItem('music.queue')!).time).toBe(30);
+
+			hidden.mockReturnValue(false);
+			document.dispatchEvent(new Event('visibilitychange'));
+			expect(player.currentTime).toBe(30);
+
+		} finally {
+			hidden.mockRestore();
+			vi.useRealTimers();
+		}
+	});
+
 	it('keeps playing through long steady progress, then still catches a freeze', async () => {
 		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
 		try {

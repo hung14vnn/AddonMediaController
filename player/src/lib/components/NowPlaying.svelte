@@ -383,9 +383,15 @@
 
 			// Measured against the sheet's own box so a swipe-down offset is respected.
 			const box = node.getBoundingClientRect();
+			// The sheet shrinks into the pill only up to the mini player's buttons, so
+			// those stay uncovered (full opacity) instead of popping in at the end.
+			const keep = document
+				.querySelector<HTMLElement>("[data-np-keep]")
+				?.getBoundingClientRect();
+			const right = keep?.width ? Math.min(anchor.right, keep.left - 2) : anchor.right;
 			const inset = [
 				anchor.top - box.top,
-				box.right - anchor.right,
+				box.right - right,
 				box.bottom - anchor.bottom,
 				anchor.left - box.left,
 			];
@@ -499,13 +505,16 @@
 			}
 
 			// Keep the pill's round corners for most of the grow; square up at the end.
-			const clip = (p: number, r: number) =>
-				`inset(${inset.map((v) => `${v * (1 - p)}px`).join(" ")} round ${r}px)`;
+			// At the pill size the right edge is square: it sits over the pill's own
+			// (same-coloured) background, just before the buttons.
+			const clip = (p: number, left: number, right: number) =>
+				`inset(${inset.map((v) => `${v * (1 - p)}px`).join(" ")} round ${left}px ${right}px ${right}px ${left}px)`;
 			const radius = anchor.height / 2;
+			const pillRight = right < anchor.right ? 0 : radius;
 			play(node, [
-				{ offset: 0, backgroundColor: pill, clipPath: clip(0, radius) },
-				{ offset: 0.8, backgroundColor: pill, clipPath: clip(0.8, radius) },
-				{ offset: 1, backgroundColor: pill, clipPath: clip(1, 0) },
+				{ offset: 0, backgroundColor: pill, clipPath: clip(0, radius, pillRight) },
+				{ offset: 0.8, backgroundColor: pill, clipPath: clip(0.8, radius, radius) },
+				{ offset: 1, backgroundColor: pill, clipPath: clip(1, 0, 0) },
 			]);
 
 			const backdrop = node.querySelector(".backdrop");
@@ -1322,10 +1331,12 @@
 			margin: 0 -12px;
 			padding: 28px 12px 0;
 		}
-		/* Clipped to the controls' box, with a static top fade (painted once). */
+		/* The controls' box down to the bottom of the screen (through the layout's
+		   bottom padding, where overflowing lyrics would otherwise show), with a
+		   static top fade (painted once). */
 		.overlay-bg {
 			position: absolute;
-			inset: 0;
+			inset: 0 0 calc(-1 * max(12px, env(safe-area-inset-bottom))) 0;
 			z-index: -1;
 			overflow: hidden;
 			pointer-events: none;
@@ -1333,13 +1344,13 @@
 			mask-image: linear-gradient(to bottom, transparent, #000 28px);
 		}
 		/* Full-screen sized and placed where the real backdrop is: the controls
-		   sit 16px from the screen edges (28px layout padding − 12px margin) and
-		   end at the layout's bottom padding. */
+		   sit 16px from the screen edges (28px layout padding − 12px margin), and
+		   .overlay-bg ends at the bottom of the screen. */
 		.overlay-tint {
 			position: absolute;
 			left: -16px;
 			right: -16px;
-			bottom: calc(-1 * max(12px, env(safe-area-inset-bottom)));
+			bottom: 0;
 			height: var(--np-h, 100vh);
 			background: #3a3a3c;
 		}

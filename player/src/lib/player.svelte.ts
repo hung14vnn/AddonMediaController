@@ -159,7 +159,14 @@ class Player {
 	index = $state(-1);
 	playing = $state(false);
 	buffering = $state(false);
+	/**
+	 * Playback position for the UI. While the page is hidden it is left alone (the
+	 * reactive graph would otherwise re-run ~4×/s with the screen off) and caught
+	 * up on `visibilitychange`. Engine logic uses `time`, which is always current.
+	 */
 	currentTime = $state(0);
+	/** Always-current position (recovery reloads, snapshots, lock screen, seeking). */
+	private time = 0;
 	duration = $state(0);
 	volume = $state(1);
 	muted = $state(false);
@@ -401,7 +408,7 @@ class Player {
 			previous: () => this.previous(),
 			next: () => this.next(),
 			seek: (seconds) => this.seek(seconds),
-			currentTime: () => this.currentTime
+			currentTime: () => this.time
 		});
 	}
 
@@ -492,7 +499,7 @@ class Player {
 		if (!this.audio.src || this.audio.error) {
 			this.errorRetriedFor = null;
 			this.errorSkips = 0;
-			this.load(this.index, true, this.currentTime);
+			this.load(this.index, true, this.time);
 		} else this.play();
 	}
 
@@ -521,7 +528,7 @@ class Player {
 	}
 
 	seek(seconds: number) {
-		this.currentTime = seconds;
+		this.setTime(seconds);
 		if (this.audio.src) this.audio.currentTime = seconds;
 		else this.pendingSeek = seconds;
 		this.updatePosition();
@@ -592,7 +599,7 @@ class Player {
 		this.error = null;
 		this.scrobbled = false;
 		this.durationCap = 0;
-		this.currentTime = startAt;
+		this.setTime(startAt);
 		this.duration = song.duration ?? 0;
 		this.pendingSeek = startAt;
 		this.lastProgressAt = performance.now();
@@ -913,7 +920,9 @@ class Player {
 
 	private readonly onVisibilityChange = () => {
 		logPlayback('visibility', document.visibilityState);
-		if (document.hidden || !this.current) return;
+		if (document.hidden) return;
+		this.currentTime = this.time; // the UI copy was frozen while hidden
+		if (!this.current) return;
 		// play() rejected in the background clears playRequested but sets
 		// resumeWhenVisible, so both count as "playback was wanted".
 		if (!this.playRequested && !this.resumeWhenVisible) return;
@@ -923,13 +932,24 @@ class Player {
 		if (this.audio.error || !this.audio.src) {
 			this.errorRetriedFor = null;
 			this.errorSkips = 0;
-			this.load(this.index, true, this.currentTime);
+			this.load(this.index, true, this.time);
 		} else this.play();
 	};
 
+	/** Current playback position, even while the page is hidden. */
+	get position() {
+		return this.time;
+	}
+
+	private setTime(seconds: number) {
+		this.time = seconds;
+		this.currentTime = seconds;
+	}
+
 	private onTime() {
 		const a = this.audio;
-		this.currentTime = a.currentTime;
+		this.time = a.currentTime;
+		if (!document.hidden) this.currentTime = this.time;
 		const song = this.current;
 		const dur = this.duration || song?.duration || 0;
 		// Last.fm rule: scrobble after half the track or 4 minutes, whichever first.
@@ -1034,7 +1054,7 @@ class Player {
 		// playRequested while buffering, so the retry below isn't cancelled.
 		this.buffering = true;
 		this.audio.pause();
-		logPlayback('stall-timeout', `t=${this.currentTime.toFixed(1)} rs=${this.audio.readyState}`);
+		logPlayback('stall-timeout', `t=${this.time.toFixed(1)} rs=${this.audio.readyState}`);
 		this.onError();
 	};
 
@@ -1060,7 +1080,7 @@ class Player {
 		}
 		if (this.playRequested && this.errorRetriedFor !== song.id) {
 			this.errorRetriedFor = song.id;
-			this.afterErrorDelay(() => this.load(this.index, true, this.currentTime));
+			this.afterErrorDelay(() => this.load(this.index, true, this.time));
 			return;
 		}
 		this.error = `Couldn't play “${song.title}”`;
@@ -1075,7 +1095,7 @@ class Player {
 		// burning through the queue, and resume it when the app is visible again.
 		if (this.errorOriginIndex >= 0 && this.errorOriginIndex !== this.index && this.queue[this.errorOriginIndex]) {
 			this.index = this.errorOriginIndex;
-			this.currentTime = 0;
+			this.setTime(0);
 			this.duration = this.current?.duration ?? 0;
 			setMediaMetadata(this.current);
 		}
@@ -1134,7 +1154,7 @@ class Player {
 	}
 
 	private updatePosition() {
-		setMediaPosition(this.duration, this.currentTime, this.audio.playbackRate);
+		setMediaPosition(this.duration, this.time, this.audio.playbackRate);
 	}
 
 	private releaseOffline() {
@@ -1187,7 +1207,7 @@ class Player {
 		writeSnapshot({
 			queue: this.queue,
 			index: this.index,
-			time: this.currentTime,
+			time: this.time,
 			shuffle: this.shuffle,
 			repeat: this.repeat,
 			unshuffled: this.unshuffled
@@ -1204,7 +1224,7 @@ class Player {
 			savePlayQueue(
 				this.queue.map((s) => s.id),
 				this.current?.id,
-				Math.floor(this.currentTime * 1000)
+				Math.floor(this.time * 1000)
 			);
 		}
 	}
@@ -1214,7 +1234,7 @@ class Player {
 		if (saved) {
 			this.queue = saved.queue;
 			this.index = saved.index;
-			this.currentTime = saved.time;
+			this.setTime(saved.time);
 			this.duration = this.current?.duration ?? 0;
 			this.shuffle = saved.shuffle;
 			this.repeat = saved.repeat;
@@ -1226,7 +1246,7 @@ class Player {
 		if (remote && !this.queue.length) {
 			this.queue = remote.songs;
 			this.index = Math.max(0, remote.songs.findIndex((s) => s.id === remote.current));
-			this.currentTime = remote.position / 1000;
+			this.setTime(remote.position / 1000);
 			this.duration = this.current?.duration ?? 0;
 			setMediaMetadata(this.current);
 		}
@@ -1257,7 +1277,7 @@ class Player {
 		this.unload();
 		this.queue = [];
 		this.index = -1;
-		this.currentTime = 0;
+		this.setTime(0);
 		this.duration = 0;
 		this.error = null;
 		this.buffering = false;
@@ -1278,7 +1298,8 @@ const registry = globalThis as { __musicPlayer?: Player };
 export function getPlayer() {
 	if (!instance) {
 		const prev = registry.__musicPlayer;
-		const handoff = prev ? { time: prev.currentTime, playing: prev.playing } : null;
+		// (An instance from an older module version may predate `position`.)
+		const handoff = prev ? { time: prev.position ?? prev.currentTime, playing: prev.playing } : null;
 		// Destroy first: it writes the queue snapshot the new instance restores from.
 		prev?.destroy();
 		instance = new Player();
