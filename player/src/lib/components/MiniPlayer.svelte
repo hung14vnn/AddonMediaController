@@ -2,7 +2,7 @@
 	// Floating mini player above the tab bar (iOS 26-style pill).
 	import { artistName } from '../format';
 	import { getPlayer } from '../player.svelte';
-	import { artSwap, pop, rise, textSwap } from '../motion';
+	import { artSwap, fadeOnly, pop, rise, textSwap } from '../motion';
 	import { ui } from '../ui.svelte';
 	import Artwork from './Artwork.svelte';
 	import Icon from './Icon.svelte';
@@ -111,6 +111,13 @@
 		}
 		ui.openNowPlaying();
 	}
+
+	function artIntro(node: Element, options: { duration?: number }) {
+		// `artSwap` writes a scale transform.  In the compact dock the artwork
+		// already has a permanent CSS scale, so use an opacity-only swap instead
+		// of briefly overriding that scale and snapping back to it.
+		return compactDock ? fadeOnly(node, { duration: 160 }) : artSwap(node, options);
+	}
 </script>
 
 {#if song}
@@ -131,7 +138,13 @@
 		<div class="content" bind:this={contentEl}>
 			<button class="open" onclick={openNowPlaying} aria-label="Open Now Playing">
 				{#key song.id}
-					<span class="art" data-np-art data-flip="art" data-flip-scale in:artSwap={{ duration: 320 }}>
+					<span
+						class="art"
+						data-np-art
+						data-flip="art"
+						data-flip-scale
+						in:artIntro={{ duration: 320 }}
+					>
 						<Artwork id={song.coverArt} size={64} seed={song.album ?? song.title} />
 					</span>
 					<span class="meta" data-flip="meta" in:textSwap>

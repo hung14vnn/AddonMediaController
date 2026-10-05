@@ -2747,12 +2747,22 @@ async def _get_top_songs(c: Ctx) -> Response:
     if c.services.ytmusic_stream:
         yt_tracks = await c.services.ytmusic_stream.get_artist_top_songs(artist, limit=count)
         if yt_tracks:
-            return c.render("topSongs", {"song": [_ytmusic_to_child(t) for t in yt_tracks] + spot_songs})
+            remote = [
+                child for track in yt_tracks if (child := _ytmusic_to_child(track))
+            ] + spot_songs
+            songs = await _replace_remote_songs_with_library(
+                c, remote, query=artist
+            )
+            return c.render("topSongs", {"song": songs})
             
     tracks = await c.services.discover.get_top_songs(
         artist, user_id=c.user.id, count=count, user=c.user
     )
-    return c.render("topSongs", {"song": [c.child(t) for t in tracks] + spot_songs})
+    local_songs = [c.child(track) for track in tracks]
+    return c.render(
+        "topSongs",
+        {"song": local_songs + _prefer_library_songs(local_songs, spot_songs)},
+    )
 
 
 def _parse_length(t: dict) -> int | None:
