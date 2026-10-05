@@ -2911,6 +2911,14 @@ async def _get_ytmusic_new_releases(c: Ctx) -> Response:
     return c.render("albumList2", {"album": albums})
 
 
+def _provider(c: Ctx, getter: Callable[[], object]):
+    """``getter()`` as the running app wires it. The target app swaps legacy
+    providers for their target versions through ``dependency_overrides``, which
+    only applies to ``Depends()``; a handler calling a provider directly must
+    resolve the override itself or it gets the legacy (wrong-library) service."""
+    return c.request.app.dependency_overrides.get(getter, getter)()
+
+
 @endpoint("searchSpotifyTracks")
 async def _search_spotify_tracks(c: Ctx) -> Response:
     """Spotify catalog matches for a track, so the player can pick the metadata
@@ -2922,7 +2930,7 @@ async def _search_spotify_tracks(c: Ctx) -> Response:
     from core.dependencies import get_spotify_import_service
 
     try:
-        tracks = await get_spotify_import_service().search_catalog_tracks(
+        tracks = await _provider(c, get_spotify_import_service).search_catalog_tracks(
             q[:200], limit=count
         )
     except Exception as exc:  # noqa: BLE001 - provider failure, not a client error
@@ -2971,9 +2979,9 @@ async def _request_spotify_download(c: Ctx) -> Response:
             user_id=c.user.id,
             user_role=getattr(c.user, "role", None),
             spotify_id=spotify_id,
-            svc=get_spotify_import_service(),
-            acquisition=get_acquisition_dispatcher(),
-            quota=get_quota_service(),
+            svc=_provider(c, get_spotify_import_service),
+            acquisition=_provider(c, get_acquisition_dispatcher),
+            quota=_provider(c, get_quota_service),
         )
     except SpotifyNotLinkedError as exc:
         raise SubsonicError(0, "Spotify account not linked") from exc

@@ -12,7 +12,7 @@ from api.compat.subsonic.router import _HANDLERS, Ctx
 from services.native.download_service import ALREADY_IN_LIBRARY
 
 
-def _ctx(params: dict[str, str]) -> Ctx:
+def _ctx(params: dict[str, str], overrides: dict | None = None) -> Ctx:
     values = {k: [v] for k, v in params.items()}
     services = SimpleNamespace(
         preferences=SimpleNamespace(
@@ -25,7 +25,9 @@ def _ctx(params: dict[str, str]) -> Ctx:
         ),
     )
     return Ctx(
-        request=None,  # type: ignore[arg-type]
+        request=SimpleNamespace(  # type: ignore[arg-type]
+            app=SimpleNamespace(dependency_overrides=overrides or {})
+        ),
         endpoint_name="test",
         params=values,
         decoded=SubsonicParameters(values),
@@ -112,3 +114,18 @@ async def test_request_spotify_download_reports_already_in_library(spotify):
     spotify.acquisition.request_track.return_value = ALREADY_IN_LIBRARY
     response = await _HANDLERS["requestspotifydownload"](_ctx({"id": "sp1"}))
     assert _body(response)["spotifyDownload"] == {"status": "already_in_library"}
+
+
+@pytest.mark.asyncio
+async def test_request_spotify_download_uses_app_provider_overrides(spotify):
+    """The target app overrides the legacy acquisition dispatcher; a direct call
+    to the legacy getter would import into the wrong library."""
+    target = SimpleNamespace(request_track=AsyncMock(return_value="task-target"))
+    response = await _HANDLERS["requestspotifydownload"](
+        _ctx(
+            {"id": "sp1"},
+            overrides={deps.get_acquisition_dispatcher: lambda: target},
+        )
+    )
+    assert _body(response)["spotifyDownload"]["taskId"] == "task-target"
+    spotify.acquisition.request_track.assert_not_awaited()
