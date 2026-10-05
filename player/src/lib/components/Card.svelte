@@ -15,7 +15,8 @@
 		explicit = false,
 		icon = 'note',
 		onplay,
-		onmenu
+		onmenu,
+		onprefetch
 	}: {
 		href: string;
 		coverArt?: string;
@@ -27,10 +28,49 @@
 		icon?: string;
 		onplay?: () => void;
 		onmenu?: (e: MouseEvent) => void;
+		/** Pressed (before the click lands): warm up what the linked page needs. */
+		onprefetch?: () => void;
 	} = $props();
+
+	// A mouse press is always meant for the card, so it prefetches at once. A touch
+	// may just be the start of a scroll: prefetch only once the finger has rested
+	// briefly or lifted without moving, so swiping through a grid of cards doesn't
+	// fire a request (and wake the radio) for every card it starts on.
+	const HOLD_MS = 90;
+	const SLOP_PX = 10;
+	let press: { x: number; y: number; timer: number } | null = null;
+
+	function fire() {
+		cancel();
+		onprefetch?.();
+	}
+	function cancel() {
+		if (press) clearTimeout(press.timer);
+		press = null;
+	}
+	function onpointerdown(e: PointerEvent) {
+		if (!onprefetch) return;
+		if (e.pointerType === 'mouse') return onprefetch();
+		cancel();
+		press = { x: e.clientX, y: e.clientY, timer: window.setTimeout(fire, HOLD_MS) };
+	}
+	function onpointermove(e: PointerEvent) {
+		if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > SLOP_PX) cancel();
+	}
+	function onpointerup() {
+		if (press) fire();
+	}
 </script>
 
-<div class="card" oncontextmenu={onmenu} role="group">
+<div
+	class="card"
+	oncontextmenu={onmenu}
+	{onpointerdown}
+	{onpointermove}
+	{onpointerup}
+	onpointercancel={cancel}
+	role="group"
+>
 	<a class="cover" {href} aria-label={title}>
 		<Artwork id={coverArt} seed={title} alt="" {icon} />
 		<div class="overlay">

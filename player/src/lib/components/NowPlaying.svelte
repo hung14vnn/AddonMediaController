@@ -311,12 +311,27 @@
 		ui.closeNowPlaying();
 	}
 
+	// ---- open/close morph ------------------------------------------------------
+	// On phones the sheet grows out of the floating mini player and shrinks back
+	// into it: the visible area is clipped from the mini pill's box to the full
+	// screen, while the artwork, title/artist and play/next buttons fly between
+	// their mini and full positions, and everything else fades in on top.
+	// Desktop (no mini player) keeps the slide-up sheet. It all runs through the
+	// Web Animations API, mostly transform/opacity (compositor) plus the one
+	// clip-path, so a busy main thread while the sheet mounts can't stall it.
+	// The curve is gentler than the dock's so the pill visibly grows instead of
+	// jumping most of the way in the first frames.
 	const MORPH_EASE = "cubic-bezier(0.3, 0.7, 0.2, 1)";
 	// Title/artist are not in this list: they fly from the mini player instead.
 	const MORPH_FADE =
-		".grab, .info .round, .progress, .transport, .volume, .bottom, .panel, .nothing, .art-row.mini .meta-btn";
+		".grab, .info .round, .progress, .transport .skip:first-child, .volume, .bottom, .panel, .nothing, .art-row.mini .meta-btn";
 	// Mini player text → its Now Playing counterpart (full layout, or compact
 	// row when a panel is open on mobile).
+	// Mini player buttons → their Now Playing counterparts.
+	const MORPH_BUTTONS = [
+		{ from: "[data-np-play]", to: ".transport .pp" },
+		{ from: "[data-np-next]", to: ".transport .skip:last-child" },
+	];
 	const MORPH_TEXT = [
 		{ from: "[data-np-title]", to: ".info .title, .art-row.mini .c-title" },
 		{ from: "[data-np-artist]", to: ".info .artist, .art-row.mini .c-artist" },
@@ -334,7 +349,7 @@
 		// (Svelte's types declare no argument, but the runtime passes `{ direction }`.)
 		return (opts?: { direction?: "in" | "out" }): TransitionConfig => {
 			const dir = opts?.direction === "out" ? "out" : "in";
-			const duration = dir === "out" ? 560 : 720;
+			const duration = dir === "out" ? 480 : 620;
 			morphDir = dir;
 
 			// Reversed mid-flight: turn the running animations around so they continue
@@ -383,15 +398,9 @@
 
 			// Measured against the sheet's own box so a swipe-down offset is respected.
 			const box = node.getBoundingClientRect();
-			// The sheet shrinks into the pill only up to the mini player's buttons, so
-			// those stay uncovered (full opacity) instead of popping in at the end.
-			const keep = document
-				.querySelector<HTMLElement>("[data-np-keep]")
-				?.getBoundingClientRect();
-			const right = keep?.width ? Math.min(anchor.right, keep.left - 2) : anchor.right;
 			const inset = [
 				anchor.top - box.top,
-				box.right - right,
+				box.right - anchor.right,
 				box.bottom - anchor.bottom,
 				anchor.left - box.left,
 			];
@@ -487,35 +496,96 @@
 				// pill just covered) and recoloured from the mini's colour to its own.
 				const fromColor = getComputedStyle(source).color;
 				const toColor = getComputedStyle(target).color;
+				// Typography (weight, letter spacing): closing uses the mini's from the
+				// very first frame, so the line doesn't change weight or width when the
+				// real mini text takes over; opening switches to its own once, halfway
+				// (either change re-lays out the text, so it isn't interpolated).
+				// The mini's spacing is converted to this element's (scaled) units.
+				const src = getComputedStyle(source);
+				const tgt = getComputedStyle(target);
+				const spacing = (cs: CSSStyleDeclaration) =>
+					cs.letterSpacing === "normal" ? 0 : parseFloat(cs.letterSpacing) || 0;
+				const fromType = {
+					fontWeight: src.fontWeight,
+					letterSpacing: `${spacing(src) / s}px`,
+				};
+				const toType = { fontWeight: tgt.fontWeight, letterSpacing: `${spacing(tgt)}px` };
+				if (
+					fromType.fontWeight !== toType.fontWeight ||
+					fromType.letterSpacing !== toType.letterSpacing
+				) {
+					const end = dir === "out" ? fromType : toType;
+					play(target, [
+						{ offset: 0, ...fromType, easing: "step-end" },
+						{ offset: 0.5, ...end },
+						{ offset: 1, ...end },
+					]);
+				}
+				// Transform in its own animation (compositor); colour separately and
+				// only when the two differ (light theme).
 				play(target, [
-					{
-						offset: 0,
-						color: fromColor,
-						transformOrigin: "0 0",
-						transform: `translate3d(${dx}px, ${dy}px, 0) scale(${s})`,
-					},
-					{ offset: 0.5, color: toColor },
-					{
-						offset: 1,
-						color: toColor,
-						transformOrigin: "0 0",
-						transform: "translate3d(0, 0, 0) scale(1)",
-					},
+					{ offset: 0, transformOrigin: "0 0", transform: `translate3d(${dx}px, ${dy}px, 0) scale(${s})` },
+					{ offset: 1, transformOrigin: "0 0", transform: "translate3d(0, 0, 0) scale(1)" },
 				]);
+				if (fromColor !== toColor)
+					play(target, [
+						{ offset: 0, color: fromColor },
+						{ offset: 0.5, color: toColor },
+						{ offset: 1, color: toColor },
+					]);
 			}
 
 			// Keep the pill's round corners for most of the grow; square up at the end.
-			// At the pill size the right edge is square: it sits over the pill's own
-			// (same-coloured) background, just before the buttons.
-			const clip = (p: number, left: number, right: number) =>
-				`inset(${inset.map((v) => `${v * (1 - p)}px`).join(" ")} round ${left}px ${right}px ${right}px ${left}px)`;
+			const clip = (p: number, r: number) =>
+				`inset(${inset.map((v) => `${v * (1 - p)}px`).join(" ")} round ${r}px)`;
 			const radius = anchor.height / 2;
-			const pillRight = right < anchor.right ? 0 : radius;
 			play(node, [
-				{ offset: 0, backgroundColor: pill, clipPath: clip(0, radius, pillRight) },
-				{ offset: 0.8, backgroundColor: pill, clipPath: clip(0.8, radius, radius) },
-				{ offset: 1, backgroundColor: pill, clipPath: clip(1, 0, 0) },
+				{ offset: 0, backgroundColor: pill, clipPath: clip(0, radius) },
+				{ offset: 0.8, backgroundColor: pill, clipPath: clip(0.8, radius) },
+				{ offset: 1, backgroundColor: pill, clipPath: clip(1, 0) },
 			]);
+
+			// Play/pause and next fly onto the mini player's buttons (scaled by icon
+			// size, recoloured), like the title does, so the mini's own buttons simply
+			// take over when the sheet is removed. A button with no visible
+			// counterpart (next, in the compact dock) just fades.
+			for (const pair of MORPH_BUTTONS) {
+				const target = node.querySelector<HTMLElement>(pair.to);
+				if (!target) continue;
+				const source = document.querySelector<HTMLElement>(pair.from);
+				const a = source?.querySelector("svg")?.getBoundingClientRect();
+				const b = target.querySelector("svg")?.getBoundingClientRect();
+				if (!source || !a?.width || !b?.width || getComputedStyle(source).opacity === "0") {
+					play(target, [
+						{ offset: 0, opacity: 0 },
+						{ offset: 0.55, opacity: 0 },
+						{ offset: 1, opacity: 1 },
+					]);
+					continue;
+				}
+				const s = a.width / b.width;
+				const dx = a.left + a.width / 2 - (b.left + b.width / 2);
+				const dy = a.top + a.height / 2 - (b.top + b.height / 2);
+				// Scale about the icon's centre, wherever it sits in the button.
+				const t = target.getBoundingClientRect();
+				const origin = `${b.left + b.width / 2 - t.left}px ${b.top + b.height / 2 - t.top}px`;
+				// Transform only, so this stays a compositor animation.
+				play(target, [
+					{ offset: 0, transformOrigin: origin, transform: `translate3d(${dx}px, ${dy}px, 0) scale(${s})` },
+					{ offset: 1, transformOrigin: origin, transform: "translate3d(0, 0, 0) scale(1)" },
+				]);
+				// Colour (a repaint) separately, on the icon, and only when it differs
+				// (light theme); in dark mode both are white and nothing runs.
+				const fromColor = getComputedStyle(source).color;
+				const toColor = getComputedStyle(target).color;
+				const icon = target.querySelector("svg");
+				if (icon && fromColor !== toColor)
+					play(icon, [
+						{ offset: 0, color: fromColor },
+						{ offset: 0.5, color: toColor },
+						{ offset: 1, color: toColor },
+					]);
+			}
 
 			const backdrop = node.querySelector(".backdrop");
 			if (backdrop)

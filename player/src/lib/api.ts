@@ -231,9 +231,20 @@ export async function getYtMusicNewReleases(count = 20) {
 	return (r.albumList2?.album ?? []) as Album[];
 }
 
-export async function getAlbum(id: string) {
-	const r = await call('getAlbum', { id });
-	return r.album as Album;
+// Album requests are kept briefly so a press on a card can start the fetch before
+// the album page opens (see AlbumCard), and opening it again is instant.
+const ALBUM_MEMO_MS = 2 * 60_000;
+const albumRequests = new Map<string, { at: number; request: Promise<Album> }>();
+
+export function getAlbum(id: string): Promise<Album> {
+	const key = `${session?.base}|${session?.username ?? ''}|${id}`;
+	const hit = albumRequests.get(key);
+	if (hit && Date.now() - hit.at < ALBUM_MEMO_MS) return hit.request;
+	const request = call('getAlbum', { id }).then((r) => r.album as Album);
+	albumRequests.set(key, { at: Date.now(), request });
+	request.catch(() => albumRequests.delete(key));
+	if (albumRequests.size > 50) albumRequests.delete(albumRequests.keys().next().value!);
+	return request;
 }
 
 export async function getArtists() {
@@ -477,7 +488,7 @@ export async function startScan(): Promise<ScanStatus> {
  * subsonic `ids.py`. They aren't library files, so they are neither scrobbled
  * nor saved as the server play queue.
  */
-export function isRemoteTrack(id: string | undefined): boolean {
+function isRemoteTrack(id: string | undefined): boolean {
 	return !!id && (id.startsWith('yt-') || id.startsWith('st-'));
 }
 

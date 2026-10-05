@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { afterNavigate } from "$app/navigation";
+	import { afterNavigate, beforeNavigate } from "$app/navigation";
 	import { page } from "$app/state";
 	import { onMount, type Snippet } from "svelte";
 	import "../app.css";
@@ -10,7 +10,7 @@
 	import Sidebar from "$lib/components/Sidebar.svelte";
 	import TabBar from "$lib/components/TabBar.svelte";
 	import { getPlayer } from "$lib/player.svelte";
-	import { pageIn } from "$lib/motion";
+	import { pageIn, pageOut, type PageMotion } from "$lib/motion";
 	import { auth } from "$lib/session.svelte";
 	import { ui } from "$lib/ui.svelte";
 	import Login from "$lib/views/Login.svelte";
@@ -57,6 +57,23 @@
 			ui.refreshPlaylists();
 			ui.loadMe();
 		}
+	});
+
+	// Page transition, decided before the navigation happens (see PageMotion):
+	// on phones, back = pop, opening a tab's root = tab switch, anything else = push.
+	const TAB_ROOTS = new Set(["/", "/browse", "/library", "/search"]);
+	// Plain (non-reactive) holder: the transitions read it when they start.
+	const nav: { motion: PageMotion } = { motion: { kind: "rise" } };
+	beforeNavigate((navigation) => {
+		const scroll = main?.scrollTop ?? 0;
+		const height = main?.clientHeight;
+		if (!matchMedia("(max-width: 899px)").matches) {
+			nav.motion = { kind: "rise", scroll, height };
+			return;
+		}
+		const back = navigation.type === "popstate" && (navigation.delta ?? 0) < 0;
+		const toTab = TAB_ROOTS.has(navigation.to?.route.id ?? "");
+		nav.motion = { kind: back ? "pop" : toTab ? "tab" : "push", scroll, height };
 	});
 
 	// <main> is the scroll container, so SvelteKit's window scroll handling doesn't apply.
@@ -122,7 +139,7 @@
 		<div class="bar"><PlayerBar /></div>
 		<main bind:this={main}>
 			{#key viewKey}
-				<div class="view" in:pageIn>
+				<div class="view" in:pageIn={nav.motion} out:pageOut={nav.motion}>
 					{@render children()}
 				</div>
 			{/key}
@@ -160,10 +177,22 @@
 	}
 	main {
 		grid-area: main;
+		position: relative; /* the leaving page is pinned inside it while sliding out */
 		overflow-y: auto;
 		overflow-x: hidden;
 		min-height: 0;
 		scrollbar-gutter: stable;
+	}
+	/* At least a screen tall, so a page sliding in (opaque while it slides)
+	   covers the one underneath even while it only shows a spinner. */
+	.view {
+		position: relative;
+		z-index: 1; /* see lift() in motion.ts: pushed-away page 0, popped page 2 */
+		min-height: 100%;
+		/* Contain children's margins: a loading page is just a spinner with a 40px
+		   top margin, which would otherwise collapse through and push the whole
+		   (opaque, sliding) page box down, leaving the old page showing above it. */
+		display: flow-root;
 	}
 	.dock {
 		display: none;

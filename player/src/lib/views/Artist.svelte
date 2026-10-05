@@ -496,7 +496,7 @@
 			align-items: center;
 			justify-content: flex-end;
 			gap: 2px;
-			margin-top: -130px;
+			margin-top: -100px;
 			padding: 0 var(--gutter);
 			text-align: center;
 			color: #fff;

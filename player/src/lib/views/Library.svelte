@@ -3,7 +3,6 @@
 	import { getAlbumList } from '../api';
 	import AlbumCard from '../components/AlbumCard.svelte';
 	import Icon from '../components/Icon.svelte';
-	import ProfileButton from '../components/ProfileButton.svelte';
 
 	const rows = [
 		{ path: '/playlists', label: 'Playlists', icon: 'playlist' },
@@ -20,7 +19,6 @@
 <div class="page">
 	<div class="head">
 		<h1 class="page-title">Library</h1>
-		<ProfileButton />
 	</div>
 	<ul class="rows">
 		{#each rows as row}

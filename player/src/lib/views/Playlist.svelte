@@ -6,6 +6,7 @@
 	import TrackList from '../components/TrackList.svelte';
 	import { plural, totalDuration } from '../format';
 	import { playlistMenu } from '../menus';
+	import { artworkTint } from '../palette';
 	import { getPlayer } from '../player.svelte';
 	import { router } from '../router.svelte';
 	import type { Playlist, Song } from '../types';
@@ -14,13 +15,20 @@
 	let { id }: { id: string } = $props();
 	const player = getPlayer();
 
-	let data = $derived(getPlaylist(id));
+	// Like the album page: the cover's tint colours the whole page on phones.
+	async function load(playlistId: string) {
+		const playlist = await getPlaylist(playlistId);
+		const tint = playlist.coverArt ? (await artworkTint(playlist.coverArt))?.top ?? null : null;
+		return { playlist, tint };
+	}
+
+	let data = $derived(load(id));
 
 	async function remove(song: Song, index: number) {
 		try {
 			await removeFromPlaylist(id, [index]);
 			ui.showToast(`Removed “${song.title}”`);
-			data = getPlaylist(id);
+			data = load(id);
 			ui.refreshPlaylists();
 		} catch {
 			ui.showToast('Couldn’t remove song');
@@ -47,9 +55,9 @@
 
 {#await data}
 	<div class="spinner"></div>
-{:then playlist}
+{:then { playlist, tint }}
 	{@const songs = playlist.entry ?? []}
-	<div class="page">
+	<div class="page playlist-page" style:--hero-bg={tint}>
 		<DetailHeader
 			coverArt={playlist.coverArt}
 			title={playlist.name}
@@ -93,5 +101,33 @@
 		{/if}
 	</div>
 {:catch error}
-	<ErrorState {error} retry={() => (data = getPlaylist(id))} />
+	<ErrorState {error} retry={() => (data = load(id))} />
 {/await}
+
+<style>
+	/* Same page background and text colours as the album page. */
+	.playlist-page {
+		--hero-bg: var(--bg);
+	}
+	@media (max-width: 899px) {
+		.playlist-page {
+			min-height: calc(100vh + 128px + env(safe-area-inset-bottom));
+			background: var(--hero-bg);
+			transition: background-color 0.4s ease;
+		}
+	}
+	@media (max-width: 699px) {
+		.playlist-page {
+			color: #fff;
+		}
+		.playlist-page :global(.tracks .title),
+		.playlist-page :global(.tracks .artist),
+		.playlist-page :global(.tracks .duration),
+		.playlist-page :global(.tracks .num),
+		.playlist-page :global(.muted),
+		.playlist-page :global(.more),
+		.playlist-page :global(.empty-state) {
+			color: #fff !important;
+		}
+	}
+</style>

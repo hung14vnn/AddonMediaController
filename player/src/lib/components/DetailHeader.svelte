@@ -244,7 +244,7 @@
 		.hero .info {
 			position: relative;
 			z-index: 1;
-			margin-top: -130px;
+			margin-top: -100px;
 			padding: 0 var(--gutter);
 			gap: 2px;
 			color: #fff;

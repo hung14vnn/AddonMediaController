@@ -680,6 +680,11 @@ async def _get_album(c: Ctx) -> Response:
     sid = c.p("id") or ""
     if _kind_of(sid) == "spotify_album":
         return await _get_spotify_album(c, decode(sid)[1])
+    # Legacy id from getYtMusicNewReleases (clients may still have it cached).
+    # Without this it fell through to a Spotify *search* for the raw id string,
+    # which returned the same unrelated album for every release.
+    if sid.startswith("spotify-album-"):
+        return await _get_spotify_album(c, sid.removeprefix("spotify-album-"))
     if sid.startswith("ytmusic-album-"):
         browse_id = sid.removeprefix("ytmusic-album-")
         ytmusic = c.services.ytmusic_stream
@@ -2892,7 +2897,7 @@ async def _get_ytmusic_new_releases(c: Ctx) -> Response:
             
         albums.append(
             m.SAlbumID3(
-                id=f"spotify-album-{al['id']}",
+                id=encode("spotify_album", al["id"]),
                 name=al.get("name") or "Spotify Release",
                 artist=artist_name,
                 coverArt=encode("spotify_album", al["id"]),

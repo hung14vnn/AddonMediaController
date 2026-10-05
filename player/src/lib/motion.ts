@@ -12,12 +12,91 @@ export const easeBack = (t: number) => {
 	return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2);
 };
 
-/** Page content rising in on navigation. */
-export function pageIn(_node: Element, { duration = 320 } = {}): TransitionConfig {
+/**
+ * How a navigation animates (decided in the layout before it happens):
+ * - `rise`: desktop — the new page rises in, the old one goes at once.
+ * - `push` / `pop`: phones, iOS navigation style — the new page slides over the
+ *   full width from the right while the old one drifts 30% left (push), and the
+ *   reverse going back (pop).
+ * - `tab`: phones, switching tabs — no slide, a quick fade (iOS swaps instantly).
+ * `scroll` is the leaving page's scroll offset and `height` the visible height
+ * of the scroll container, so the leaving page can be pinned in place.
+ */
+export interface PageMotion {
+	kind: 'rise' | 'push' | 'pop' | 'tab';
+	scroll?: number;
+	height?: number;
+}
+
+const PAGE_MS = 420;
+
+/**
+ * Static styles for the page on top while it slides: opaque, with an edge
+ * shadow. Set inline for the duration, NOT inside the keyframes: any
+ * non-transform property in them would keep the whole animation off the
+ * compositor, and the slide would stutter whenever the main thread is busy
+ * (e.g. the incoming page mounting its content).
+ *
+ * Stacking is fixed so nothing flips mid-way: pages sit at z-index 1 (layout
+ * CSS), a page pushed away drops to 0, a page popped off rises to 2.
+ */
+function lift(node: HTMLElement) {
+	node.style.background = 'var(--bg)';
+	node.style.boxShadow = '-8px 0 28px rgb(0 0 0 / 0.18)';
+}
+
+export function pageIn(node: HTMLElement, motion: PageMotion = { kind: 'rise' }): TransitionConfig {
+	if (reduced()) return { duration: 0 };
+	switch (motion.kind) {
+		case 'push':
+			lift(node);
+			// Only once the slide has really finished (it starts a little after this
+			// call), never on a timer that could fire while it is still moving.
+			node.addEventListener(
+				'introend',
+				() => {
+					node.style.background = node.style.boxShadow = '';
+				},
+				{ once: true }
+			);
+			return { duration: PAGE_MS, easing: easeOut, css: (_t, u) => `transform:translateX(${u * 100}%)` };
+		case 'pop':
+			return { duration: PAGE_MS, easing: easeOut, css: (_t, u) => `transform:translateX(${u * -30}%)` };
+		case 'tab':
+			return { duration: 150, css: (t) => `opacity:${t}` };
+		default:
+			return {
+				duration: 320,
+				easing: easeOut,
+				css: (t) => `opacity:${t};transform:translateY(${(1 - t) * 14}px)`
+			};
+	}
+}
+
+/** The leaving page: pinned where it was (out of the flow), then slid away. */
+export function pageOut(node: HTMLElement, motion: PageMotion = { kind: 'rise' }): TransitionConfig {
+	if (reduced() || (motion.kind !== 'push' && motion.kind !== 'pop')) return { duration: 0 };
+	// The scroll container jumps to the top for the new page; keep this one showing
+	// the part that was on screen. It is cut to one screen and scrolled inside
+	// itself, so the sliding layer (and its shadow) is only a viewport in size
+	// instead of the full length of a long page.
+	Object.assign(node.style, {
+		position: 'absolute',
+		top: '0',
+		left: '0',
+		right: '0',
+		pointerEvents: 'none',
+		zIndex: motion.kind === 'push' ? '0' : '2'
+	});
+	if (motion.height) {
+		Object.assign(node.style, { height: `${motion.height}px`, minHeight: '0', overflow: 'hidden' });
+		node.scrollTop = motion.scroll ?? 0;
+	} else node.style.top = `${-(motion.scroll ?? 0)}px`;
+	if (motion.kind === 'pop') lift(node);
 	return {
-		duration: reduced() ? 0 : duration,
+		duration: PAGE_MS,
 		easing: easeOut,
-		css: (t) => `opacity:${t};transform:translateY(${(1 - t) * 14}px)`
+		css: (_t, u) => `transform:translateX(${motion.kind === 'push' ? u * -30 : u * 100}%)`
 	};
 }
 
