@@ -157,7 +157,7 @@ class SleepTimer {
 			if (this.mode !== 'countdown' || this.endAt === null) return;
 			this.remainingSeconds = Math.max(0, Math.ceil((this.endAt - Date.now()) / 1000));
 			if (this.remainingSeconds <= 0) this.fireTimer();
-		}, 250);
+		}, 1000); // the label only shows whole seconds; a faster tick just burns battery
 	}
 
 	private fireTimer(): void {

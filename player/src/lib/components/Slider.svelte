@@ -88,7 +88,10 @@
 	onpointercancel={endDrag}
 	onkeydown={onKeydown}
 >
-	<span class="fill" style:transform={`scaleX(${percentage})`}></span>
+	<!-- The fill slides in rather than scaling, so its rounded end keeps its shape. -->
+	<span class="track">
+		<span class="fill" style:transform={`translateX(${(percentage - 1) * 100}%)`}></span>
+	</span>
 </div>
 
 <style>
@@ -98,13 +101,6 @@
 		width: 100%;
 		height: 16px;
 		margin: 0;
-		background: linear-gradient(
-			to bottom,
-			transparent calc(50% - var(--h) / 2),
-			var(--slider-track, var(--fill-strong)) calc(50% - var(--h) / 2),
-			var(--slider-track, var(--fill-strong)) calc(50% + var(--h) / 2),
-			transparent calc(50% + var(--h) / 2)
-		);
 		cursor: pointer;
 		touch-action: none;
 	}
@@ -112,15 +108,21 @@
 	.slider.dragging {
 		--h: 7px;
 	}
-	.fill {
+	.track {
 		position: absolute;
 		top: calc(50% - var(--h) / 2);
 		left: 0;
-		width: 100%;
+		right: 0;
 		height: var(--h);
 		border-radius: 99px;
+		background: var(--slider-track, var(--fill-strong));
+		overflow: hidden;
+	}
+	.fill {
+		position: absolute;
+		inset: 0;
+		border-radius: 99px;
 		background: var(--slider-fill, var(--text-2));
-		transform-origin: left center;
 		will-change: transform;
 	}
 	.slider:focus-visible {

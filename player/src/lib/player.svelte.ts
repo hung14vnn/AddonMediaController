@@ -1,5 +1,6 @@
 import { getPlayQueue, getSession, savePlayQueue, scrobble, streamUrl } from './api';
-import { logPlayback } from './playback/debugLog';
+import { build, buildLabel } from './build';
+import { isPlaybackLogEnabled, logPlayback } from './playback/debugLog';
 import { InterruptionGuard } from './playback/interruptions';
 import { clearMediaSession, setMediaMetadata, setMediaPosition, setupMediaSession } from './playback/mediaSession';
 import {
@@ -61,6 +62,7 @@ function createManagedAudio(): HTMLAudioElement {
 
 /** Park a native stream after 15 seconds without progress. */
 const STALL_TIMEOUT_MS = 15_000;
+/** Shortest wait between two stall checks (also the re-check while system-paused). */
 const STALL_CHECK_MS = 2_000;
 
 /**
@@ -96,6 +98,31 @@ const LOGGED_EVENTS = ['play', 'pause', 'waiting', 'playing', 'canplay', 'stalle
 /** A browser-reported length this much over the server's means the browser misread it. */
 const DURATION_MISMATCH_RATIO = 1.25;
 
+/**
+ * Non-iOS: start the next track on the standby element this close to the end of the
+ * current one, so some element is playing at every moment (see `swapToStandby`).
+ */
+const HANDOFF_LEAD_S = 0.6;
+
+/**
+ * Non-iOS: when the next track isn't downloaded this close to the end (YouTube can
+ * deliver a whole file slower than real time), load its stream into the standby element
+ * instead, so the handoff still happens. The server has already resolved it for the
+ * download, so buffering starts quickly.
+ */
+const STREAM_STANDBY_LEAD_S = 45;
+
+/** A pause the page didn't ask for this soon after a track started is the system refusing it. */
+const SYSTEM_PAUSE_WINDOW_MS = 2_000;
+
+/** iPadOS reports a Mac user agent; touch support tells them apart. */
+function isIOSDevice(): boolean {
+	return (
+		/iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+		(navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+	);
+}
+
 /** The downloaded copy of `id`, if the signed-in user has one. */
 async function lookupOffline(id: string): Promise<ObjectUrl | null> {
 	const session = getSession();
@@ -119,6 +146,13 @@ async function lookupOffline(id: string): Promise<ObjectUrl | null> {
  * fully synchronous: the next track is downloaded into a blob: URL while the current
  * one still plays (`prefetchNextBlob`), and `load()` takes it from `nextReady`
  * without any await.
+ *
+ * Android: Chrome gives up audio focus while no element is playing, and after a few
+ * minutes in the background Android refuses to grant it again, so a track started from
+ * `ended` is paused by the system right away. So off iOS the prefetched next track is
+ * loaded into a second, standby element and started just before the current one ends
+ * (`swapToStandby`). iOS keeps the single element: it ties background playback to the
+ * element that got the user's tap.
  */
 class Player {
 	queue = $state<Song[]>([]);
@@ -144,6 +178,18 @@ class Player {
 	upNext = $derived(this.queue.slice(this.index + 1));
 
 	private audio: HTMLAudioElement;
+	private readonly ios = isIOSDevice();
+	/** Non-iOS: second element with the next track (`nextReady`) loaded and paused. */
+	private standby: HTMLAudioElement | null = null;
+	/** URL loaded into `standby`, or null when it holds nothing usable. */
+	private standbyFor: string | null = null;
+	/** The previous element after a handoff, still playing its last moments until the new one plays. */
+	/** `listeners` aborts the two one-shot handoff listeners once either has fired. */
+	private retiring: { el: HTMLAudioElement; copy: OfflineCopy | null; listeners: AbortController } | null = null;
+	/** When the current element last fired `playing`. */
+	private playingSince = -Infinity;
+	/** Non-iOS: next track whose stream (not a downloaded copy) goes into the standby element. */
+	private standbyStreamId: string | null = null;
 	private unshuffled: Song[] | null = null;
 	private scrobbled = false;
 	private pendingSeek = 0;
@@ -181,9 +227,11 @@ class Player {
 	private errorHandledToken = -1;
 	private lastProbeAt = 0;
 	private stopDiagnostics: () => void = () => {};
-	private stallTimer: ReturnType<typeof setInterval> | undefined;
+	private stallTimer: ReturnType<typeof setTimeout> | undefined;
 	private lastProgressAt = 0;
 	private lastProgressTime = -1;
+	/** 5 s slot of the last MediaSession position sync (see onTime). */
+	private lastPositionSlot = -1;
 	private saveTimer: ReturnType<typeof setTimeout> | undefined;
 	private destroyed = false;
 	private singleTab: SingleTab;
@@ -191,6 +239,8 @@ class Player {
 	private stopRemoteWatch: () => void = () => {};
 
 	constructor() {
+		// Marks where each page load starts in the log, and which build it ran.
+		logPlayback('app-start', `build=${buildLabel} built=${build.time} ua=${navigator.userAgent}`);
 		// Remote Playback and audio-output selection are only exposed reliably for
 		// media elements that belong to the document, not detached `new Audio()`
 		// elements.
@@ -230,14 +280,17 @@ class Player {
 		window.addEventListener('offline', onOffline);
 		window.addEventListener('online', onOnline);
 		let lastBeat = performance.now();
-		const beat = setInterval(() => {
+		// The heartbeat only feeds the log, so don't wake the CPU every 5 s (audible
+		// pages are exempt from background timer throttling) when logging is off.
+		// Turning the log on takes effect from the next app start.
+		const beat = isPlaybackLogEnabled() ? setInterval(() => {
 			const now = performance.now();
 			const gap = now - lastBeat;
 			lastBeat = now;
 			if (gap > 15_000) {
 				logPlayback('timer-gap', `${Math.round(gap / 1000)}s hidden=${document.hidden} playing=${this.playing}`);
 			}
-		}, 5_000);
+		}, 5_000) : undefined;
 		return () => {
 			document.removeEventListener('freeze', onFreeze);
 			document.removeEventListener('resume', onResume);
@@ -262,6 +315,19 @@ class Player {
 		a.addEventListener('pause', () => {
 			if (this.audio !== a) return;
 			this.playing = false;
+			// Paused by the system right after a track started in the background, not by
+			// us (our pauses clear playRequested first) and not a natural end: Android
+			// refusing audio focus. Remember the request so opening the app resumes it.
+			// Later pauses (headphones out, a call) are left alone.
+			if (
+				this.playRequested &&
+				!a.ended &&
+				document.hidden &&
+				performance.now() - this.playingSince < SYSTEM_PAUSE_WINDOW_MS
+			) {
+				logPlayback('system-pause', `${Math.round(performance.now() - this.playingSince)}ms after start`);
+				this.resumeWhenVisible = true;
+			}
 			// A pause that isn't part of a track change (end of track, headphones out)
 			// drops the request, so a later `canplay` won't start playback by itself.
 			if (!this.buffering) this.playRequested = false;
@@ -274,6 +340,7 @@ class Player {
 		});
 		a.addEventListener('playing', () => {
 			if (this.audio !== a) return;
+			this.playingSince = performance.now();
 			this.buffering = false;
 			this.errorSkips = 0;
 			this.errorOriginIndex = -1;
@@ -514,6 +581,14 @@ class Player {
 		if (!song) return;
 		const token = ++this.loadToken;
 		this.index = i;
+		this.standbyStreamId = null;
+		// A whole-track download for a song that is no longer next (most often the one
+		// starting now, which will stream instead) would only compete with the stream.
+		if (this.blobJob && this.blobJob.id !== this.upcoming()?.id) {
+			logPlayback('blob-cancel', `id=${this.blobJob.id}`);
+			this.blobJob.abort.abort();
+			this.blobJob = null;
+		}
 		this.error = null;
 		this.scrobbled = false;
 		this.durationCap = 0;
@@ -522,6 +597,7 @@ class Player {
 		this.pendingSeek = startAt;
 		this.lastProgressAt = performance.now();
 		this.lastProgressTime = -1;
+		this.lastPositionSlot = -1;
 		this.playing = false;
 		this.playRequested = autoplay;
 		this.buffering = autoplay;
@@ -555,19 +631,29 @@ class Player {
 			}
 			if (copy) offline = { id: song.id, copy };
 		}
-		this.releaseOffline();
+		const outgoing = this.playingOffline;
 		this.playingOffline = offline;
+		const src = offline?.copy.url ?? streamUrl(song.id);
+		const handoff = autoplay && startAt === 0 && this.standbyHolds(src);
 
 		logPlayback(
 			'load',
-			`id=${song.id} "${song.title}" at=${startAt.toFixed(1)} ${offline ? 'ready (offline/prefetched)' : 'stream'}`
+			`id=${song.id} "${song.title}" at=${startAt.toFixed(1)} ${offline ? 'ready (offline/prefetched)' : 'stream'}${handoff ? ' handoff' : ''}`
 		);
-		this.audio.autoplay = autoplay;
-		this.audio.volume = this.volume;
-		this.audio.muted = this.muted;
-		this.audio.src = offline?.copy.url ?? streamUrl(song.id);
-		this.audio.load();
-		if (startAt > 0) this.audio.currentTime = startAt;
+		if (handoff) {
+			// The outgoing copy stays valid while its element finishes; it is revoked on retire.
+			this.swapToStandby(outgoing);
+		} else {
+			outgoing?.copy.revoke();
+			this.audio.autoplay = autoplay;
+			this.audio.volume = this.volume;
+			this.audio.muted = this.muted;
+			this.audio.src = src;
+			this.audio.load();
+			if (startAt > 0) this.audio.currentTime = startAt;
+		}
+		// The standby copy was either just promoted or no longer matches `nextReady`.
+		this.primeStandby();
 		if (autoplay) {
 			// Unlike Navidrome, play() right away rather than waiting for `canplay`: a cold
 			// YouTube track takes seconds to arrive, and Android/iOS refuse to start audio
@@ -582,6 +668,112 @@ class Player {
 	/** The track `next()` would load when the current one ends. */
 	private upcoming(): Song | undefined {
 		return this.queue[this.index + 1] ?? (this.repeat === 'all' ? this.queue[0] : undefined);
+	}
+
+	/** The standby element has `url` loaded and can take over playback now. */
+	private standbyHolds(url: string): boolean {
+		return (
+			!!this.standby &&
+			this.standbyFor === url &&
+			!this.retiring &&
+			// Casting follows the element that started it; a swap would drop the session.
+			this.castState === 'disconnected'
+		);
+	}
+
+	/**
+	 * What the standby element should hold for the upcoming track: its downloaded copy
+	 * when there is one, else its stream once `standbyStreamId` asks for it.
+	 */
+	private standbySource(): { id: string; url: string; kind: 'copy' | 'stream' } | null {
+		const next = this.upcoming();
+		if (!next || next.id === this.current?.id) return null;
+		if (this.nextReady?.id === next.id) return { id: next.id, url: this.nextReady.copy.url, kind: 'copy' };
+		if (this.standbyStreamId === next.id) return { id: next.id, url: streamUrl(next.id), kind: 'stream' };
+		return null;
+	}
+
+	/**
+	 * Non-iOS: load the next track into the standby element, paused, so the handoff
+	 * needs no fresh element (and, for a downloaded copy, no network). Clears it when the
+	 * next track changes. Waits while a handoff is still finishing on that element.
+	 */
+	private primeStandby() {
+		if (this.ios || this.retiring || this.destroyed) return;
+		const source = this.standbySource();
+		const url = source?.url ?? null;
+		if (url === this.standbyFor) return;
+		this.standbyFor = url;
+		if (!source) {
+			if (this.standby?.getAttribute('src')) {
+				this.standby.removeAttribute('src');
+				this.standby.load();
+			}
+			return;
+		}
+		if (!this.standby) {
+			this.standby = createManagedAudio();
+			this.bindElement(this.standby);
+		}
+		this.standby.autoplay = false;
+		this.standby.preload = 'auto';
+		this.standby.src = source.url;
+		this.standby.load();
+		logPlayback('standby-ready', `id=${source.id} ${source.kind}`);
+	}
+
+	/**
+	 * Non-iOS, near the end of a track whose successor isn't downloaded: put the
+	 * successor's stream on standby, and drop the download, which would now only compete
+	 * with both streams for bandwidth.
+	 */
+	private standbyNextStream() {
+		const next = this.upcoming();
+		if (this.ios || !next || next.id === this.current?.id) return;
+		if (this.nextReady?.id === next.id || this.standbyStreamId === next.id) return;
+		this.standbyStreamId = next.id;
+		if (this.blobJob?.id === next.id) {
+			logPlayback('blob-cancel', `id=${next.id} streaming on standby instead`);
+			this.blobJob.abort.abort();
+			this.blobJob = null;
+		}
+		this.primeStandby();
+	}
+
+	/**
+	 * Make the standby element (already holding the track being loaded) the active one.
+	 * The old element is left to play its last moments and is only stopped once the new
+	 * one is playing, so there is never a moment without a playing element.
+	 */
+	private swapToStandby(outgoing: OfflineCopy | null) {
+		const old = this.audio;
+		const next = this.standby!;
+		this.audio = next;
+		this.standby = old;
+		this.standbyFor = null;
+		this.bindActiveAudio(next);
+		next.volume = this.volume;
+		next.muted = this.muted;
+		// Whichever fires first finishes the handoff; the abort then removes the other,
+		// which `once` alone would leave attached for good (one per track change).
+		const listeners = new AbortController();
+		this.retiring = { el: old, copy: outgoing, listeners };
+		const finish = () => this.finishRetire(old);
+		next.addEventListener('playing', finish, { once: true, signal: listeners.signal });
+		old.addEventListener('ended', finish, { once: true, signal: listeners.signal });
+	}
+
+	private finishRetire(old: HTMLAudioElement) {
+		const retiring = this.retiring;
+		if (!retiring || retiring.el !== old) return;
+		this.retiring = null;
+		retiring.listeners.abort();
+		old.autoplay = false;
+		old.pause();
+		old.removeAttribute('src');
+		old.load();
+		retiring.copy?.copy.revoke();
+		this.primeStandby();
 	}
 
 	private prepareNextOffline() {
@@ -602,6 +794,7 @@ class Player {
 			}
 			this.nextReady?.copy.revoke();
 			this.nextReady = { id: next.id, copy };
+			this.primeStandby();
 		});
 	}
 
@@ -615,10 +808,13 @@ class Player {
 	private async prefetchNextBlob() {
 		const next = this.upcoming();
 		if (!next || next.id === this.current?.id) return;
+		// Already streaming into the standby element: a download would only compete with it.
+		if (this.standbyStreamId === next.id) return;
 		// A copy for a track that is no longer next (the queue changed) is dead weight.
 		if (this.nextReady && this.nextReady.id !== next.id) {
 			this.nextReady.copy.revoke();
 			this.nextReady = null;
+			this.primeStandby();
 		}
 		if (this.nextReady?.id === next.id || this.blobJob?.id === next.id) return;
 
@@ -659,6 +855,7 @@ class Player {
 			const url = URL.createObjectURL(blob);
 			this.nextReady?.copy.revoke();
 			this.nextReady = { id: next.id, copy: { url, revoke: () => URL.revokeObjectURL(url) } };
+			this.primeStandby();
 			this.blobFailure = null;
 			logPlayback('blob-ready', `id=${next.id} bytes=${blob.size} type=${blob.type}`);
 		} catch (e) {
@@ -746,13 +943,33 @@ class Player {
 		}
 		// It has played for a while: a later failure is a new incident and gets its own retry.
 		if (a.currentTime > ERROR_REARM_AFTER_S) this.errorRetriedFor = null;
-		if (Math.floor(a.currentTime) % 5 === 0) this.updatePosition();
+		// Resync the lock-screen position once per 5 s slot. (A `% 5` check stays true
+		// for a whole second, i.e. ~4 timeupdates, each a round trip to the OS.)
+		const slot = Math.floor(a.currentTime / 5);
+		if (slot !== this.lastPositionSlot) {
+			this.lastPositionSlot = slot;
+			this.updatePosition();
+		}
 		if (dur > 0 && dur - a.currentTime <= BLOB_LEAD_S) void this.prefetchNextBlob();
 		// The real audio is over; don't sit through the silence up to the misread length.
-		// Pausing first keeps the element from reaching its own `ended` and advancing twice.
+		// Switch straight to the next track without pausing: on a hidden iOS page a pause
+		// ends the audio session, and the next track then never gets past its metadata.
+		// load() clears durationCap synchronously, so this can't fire twice.
 		if (this.durationCap && !a.paused && a.currentTime >= this.durationCap - 0.25) {
 			logPlayback('capped-end', `cap=${this.durationCap} media=${a.duration}`);
-			a.pause();
+			this.onEnded();
+			return;
+		}
+		if (dur <= 0 || a.paused || this.repeat === 'one') return;
+		const remaining = dur - a.currentTime;
+		if (remaining <= STREAM_STANDBY_LEAD_S) this.standbyNextStream();
+		// Hand over to the standby element just before the end, while this one still plays.
+		const source = this.standbySource();
+		if (remaining <= HANDOFF_LEAD_S && source && this.standbyHolds(source.url)) {
+			logPlayback(
+				'handoff-early',
+				`t=${a.currentTime.toFixed(2)} dur=${dur.toFixed(2)} ${source.kind} standby rs=${this.standby?.readyState}`
+			);
 			this.onEnded();
 		}
 	}
@@ -775,18 +992,27 @@ class Player {
 	// reaches `canplay`) leaves playback wanted but the clock frozen; only a fresh
 	// request at the current position recovers it.
 
+	// A self-rescheduling timeout, not a fixed 2 s interval: while playback is
+	// progressing it only wakes about once per STALL_TIMEOUT_MS (instead of ~30
+	// times a minute for the whole session, screen off included). `onTime` keeps
+	// `lastProgressAt` fresh, so nothing has to be re-armed per timeupdate.
 	private armStallCheck() {
 		this.lastProgressAt = performance.now();
-		this.stallTimer ??= setInterval(this.checkStall, STALL_CHECK_MS);
+		if (this.stallTimer === undefined) this.scheduleStallCheck(STALL_TIMEOUT_MS);
+	}
+
+	private scheduleStallCheck(ms: number) {
+		this.stallTimer = setTimeout(this.checkStall, Math.max(STALL_CHECK_MS, ms));
 	}
 
 	private disarmStallCheck() {
-		clearInterval(this.stallTimer);
+		clearTimeout(this.stallTimer);
 		this.stallTimer = undefined;
 	}
 
 	private readonly checkStall = () => {
-		if (!this.playRequested || !this.current) return this.disarmStallCheck();
+		this.stallTimer = undefined;
+		if (!this.playRequested || !this.current) return;
 		// WebKit can suspend media loading while the page is hidden. Reloading
 		// here aborts the pending play() and creates an AbortError; keep the
 		// request alive and recover on visibilitychange.
@@ -794,14 +1020,19 @@ class Player {
 			this.resumeWhenVisible = true;
 			// Don't count hidden time as stalled time.
 			this.lastProgressAt = performance.now();
-			return;
+			return this.scheduleStallCheck(STALL_TIMEOUT_MS);
 		}
 		// Paused by the system (a call) rather than stuck loading: not a stall.
-		if (this.audio.paused && !this.buffering) return;
-		if (performance.now() - this.lastProgressAt < STALL_TIMEOUT_MS) return;
+		// Keep the old 2 s cadence so a stall right after it resumes is still caught.
+		if (this.audio.paused && !this.buffering) return this.scheduleStallCheck(STALL_CHECK_MS);
+		const quiet = performance.now() - this.lastProgressAt;
+		// Still progressing: check again when the timeout could next be reached.
+		if (quiet < STALL_TIMEOUT_MS) return this.scheduleStallCheck(STALL_TIMEOUT_MS - quiet);
 		// Stop the dead request and let the higher-level error flow retry once,
 		// then fallback or skip the track.
-		this.disarmStallCheck();
+		// Still loading as far as the request goes: the `pause` handler keeps
+		// playRequested while buffering, so the retry below isn't cancelled.
+		this.buffering = true;
 		this.audio.pause();
 		logPlayback('stall-timeout', `t=${this.currentTime.toFixed(1)} rs=${this.audio.readyState}`);
 		this.onError();
@@ -930,6 +1161,17 @@ class Player {
 		this.releaseOffline();
 		this.nextReady?.copy.revoke();
 		this.nextReady = null;
+		this.retiring?.copy?.copy.revoke();
+		this.retiring?.listeners.abort();
+		this.retiring = null;
+		this.standbyFor = null;
+		this.standbyStreamId = null;
+		if (this.standby) {
+			this.standby.autoplay = false;
+			this.standby.pause();
+			this.standby.removeAttribute('src');
+			this.standby.load();
+		}
 	}
 
 	private readonly onPageHide = (e: PageTransitionEvent) => {
@@ -1004,6 +1246,7 @@ class Player {
 		this.stopDiagnostics();
 		this.stopDiagnostics = () => {};
 		this.audio.remove();
+		this.standby?.remove();
 		window.removeEventListener('pagehide', this.onPageHide);
 		document.removeEventListener('visibilitychange', this.onVisibilityChange);
 		clearTimeout(this.saveTimer);

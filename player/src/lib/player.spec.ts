@@ -44,9 +44,19 @@ class FakeAudio extends EventTarget {
 		this.paused = true;
 		this.dispatchEvent(new Event('pause'));
 	});
+	autoplay = false;
+	ended = false;
+	style: Record<string, string> = {};
+	remove = vi.fn();
+	static all: FakeAudio[] = [];
 	constructor() {
 		super();
 		FakeAudio.last = this;
+		FakeAudio.all.push(this);
+	}
+	setAttribute() {}
+	getAttribute(name: string) {
+		return name === 'src' && this.src ? this.src : null;
 	}
 	removeAttribute(name: string) {
 		if (name === 'src') this.src = '';
@@ -72,6 +82,14 @@ class FakeAudioSession extends EventTarget {
 
 const song = (id: string, duration = 200) => ({ id, title: id, duration }) as Song;
 const flush = () => new Promise((r) => setTimeout(r, 0));
+/** A response big enough to pass the prefetch's "not an error page" check. */
+const audioResponse = () => new Response(new Uint8Array(20_000));
+
+/** Play to `t` seconds on `audio`, as the element's clock would report it. */
+function playTo(audio: FakeAudio, t: number) {
+	audio.currentTime = t;
+	audio.fire('timeupdate');
+}
 
 async function freshPlayer() {
 	vi.resetModules();
@@ -83,7 +101,10 @@ async function freshPlayer() {
 
 beforeEach(() => {
 	localStorage.clear();
+	FakeAudio.all = [];
 	vi.stubGlobal('Audio', FakeAudio);
+	// The player mounts its elements in the document; the fake is not a DOM node.
+	vi.spyOn(document.body, 'appendChild').mockImplementation((n) => n);
 	vi.stubGlobal('fetch', vi.fn(async () => new Response('')));
 	let n = 0;
 	URL.createObjectURL = vi.fn(() => `blob:test/${++n}`);
@@ -99,6 +120,13 @@ afterEach(() => {
 describe('Player track changes', () => {
 	it('starts the tapped song: set src, load(), play(), spinner until canplay', async () => {
 		const { player, audio } = await freshPlayer();
+		// A play() that hasn't settled yet: the source is still loading.
+		audio.play.mockImplementationOnce(() => {
+			audio.paused = false;
+			audio.fire('play');
+			audio.fire('waiting');
+			return new Promise(() => {});
+		});
 		player.playList([song('a'), song('b'), song('c')], 1);
 		await flush();
 		expect(player.current?.id).toBe('b');
@@ -145,55 +173,49 @@ describe('Player track changes', () => {
 		}
 	});
 
-	it('downloads the next track in the last 45 seconds and plays it from memory', async () => {
-		const fetchMock = vi.fn(async () => new Response('audio'));
+	it('downloads the next track in the last 150 seconds and plays it from memory', async () => {
+		const fetchMock = vi.fn(async () => audioResponse());
 		vi.stubGlobal('fetch', fetchMock);
 		const { player, audio } = await freshPlayer();
 		player.playList([song('a', 200), song('b')]);
 		await flush();
 		audio.ready();
-		audio.currentTime = 100;
-		audio.fire('timeupdate');
+		playTo(audio, 40);
 		expect(fetchMock).not.toHaveBeenCalled();
-		for (const t of [160, 161, 162]) {
-			audio.currentTime = t;
-			audio.fire('timeupdate');
-		}
+		for (const t of [60, 61, 62]) playTo(audio, t);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
-		expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('id=b'));
+		expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('id=b'), expect.anything());
 		await flush();
 		await flush();
 		// The network may be gone by now: the change must not need it.
 		audio.fire('ended');
 		expect(player.current?.id).toBe('b');
-		expect(audio.src).toMatch(/^blob:test\//);
+		const active = FakeAudio.all.find((a) => a.src.startsWith('blob:') && !a.paused);
+		expect(active).toBeDefined();
 	});
 
-	it('waits for the app to be opened when the next track fails in the background', async () => {
-		const { player, audio } = await freshPlayer();
-		player.playList([song('a'), song('b'), song('c')]);
-		await flush();
-		audio.ready();
+	it('retries a track that fails in the background after a pause, not at once', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
 		const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
 		try {
+			const { player, audio } = await freshPlayer();
+			player.playList([song('a'), song('b'), song('c')]);
+			await vi.advanceTimersByTimeAsync(0);
+			audio.ready();
 			audio.fire('ended');
+			await vi.advanceTimersByTimeAsync(0);
 			expect(player.current?.id).toBe('b');
 			audio.load.mockClear();
 			audio.error = { code: 4, message: 'Format error' };
 			audio.fire('error');
-			await flush();
-			// No skipping through the queue while the network is cut.
-			expect(player.current?.id).toBe('b');
+			await vi.advanceTimersByTimeAsync(0);
 			expect(audio.load).not.toHaveBeenCalled();
-			expect(player.active).toBe(false);
-			hidden.mockReturnValue(false);
-			document.dispatchEvent(new Event('visibilitychange'));
-			await flush();
+			await vi.advanceTimersByTimeAsync(2_000);
 			expect(player.current?.id).toBe('b');
 			expect(audio.load).toHaveBeenCalledTimes(1);
-			expect(audio.play).toHaveBeenCalled();
 		} finally {
-			vi.restoreAllMocks();
+			hidden.mockRestore();
+			vi.useRealTimers();
 		}
 	});
 
@@ -305,6 +327,9 @@ describe('Player platform fixes', () => {
 		audio.fire('timeupdate');
 		await flush();
 		expect(player.current?.id).toBe('b');
+		// No pause in between: on a hidden iOS page it ends the audio session and the
+		// next track never loads.
+		expect(audio.pause).not.toHaveBeenCalled();
 		// A stale native ended for the old source must not skip 'b'.
 		audio.fire('ended');
 		await flush();
@@ -312,7 +337,7 @@ describe('Player platform fixes', () => {
 	});
 
 	it('reloads at the current position when the clock freezes while playing', async () => {
-		vi.useFakeTimers();
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
 		try {
 			const { player, audio } = await freshPlayer();
 			player.playList([song('a')]);
@@ -322,6 +347,9 @@ describe('Player platform fixes', () => {
 			audio.fire('timeupdate');
 			audio.load.mockClear();
 			await vi.advanceTimersByTimeAsync(10_000);
+			expect(audio.load).not.toHaveBeenCalled();
+			// 15 s without progress, then the 2 s error delay.
+			await vi.advanceTimersByTimeAsync(10_000);
 			expect(audio.load).toHaveBeenCalled();
 			expect(player.current?.id).toBe('a');
 			expect(player.currentTime).toBe(42);
@@ -330,8 +358,60 @@ describe('Player platform fixes', () => {
 		}
 	});
 
+	it('keeps playing through long steady progress, then still catches a freeze', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
+		try {
+			const { player, audio } = await freshPlayer();
+			player.playList([song('a')]);
+			await vi.advanceTimersByTimeAsync(0);
+			audio.ready();
+			audio.load.mockClear();
+			// A minute of normal playback: the self-rescheduling watchdog must not fire.
+			for (let t = 1; t <= 60; t++) {
+				audio.currentTime = t;
+				audio.fire('timeupdate');
+				await vi.advanceTimersByTimeAsync(1_000);
+			}
+			expect(audio.load).not.toHaveBeenCalled();
+			// Then the clock freezes: 15 s quiet (+ up to one 2 s re-check) + the 2 s error delay.
+			await vi.advanceTimersByTimeAsync(20_000);
+			expect(audio.load).toHaveBeenCalled();
+			expect(player.currentTime).toBe(60);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('does not count hidden time as a stall when the app comes back', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
+		const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+		try {
+			const { player, audio } = await freshPlayer();
+			player.playList([song('a')]);
+			await vi.advanceTimersByTimeAsync(0);
+			audio.ready();
+			audio.currentTime = 10;
+			audio.fire('timeupdate');
+			audio.load.mockClear();
+			// No progress while hidden (WebKit may suspend loading), shown again just
+			// before the watchdog's next check: resuming re-arms it (play() resets the
+			// clock), so the hidden stretch must not count towards the 15 s.
+			hidden.mockReturnValue(true);
+			document.dispatchEvent(new Event('visibilitychange'));
+			await vi.advanceTimersByTimeAsync(14_000);
+			hidden.mockReturnValue(false);
+			document.dispatchEvent(new Event('visibilitychange'));
+			await vi.advanceTimersByTimeAsync(5_000);
+			expect(audio.load).not.toHaveBeenCalled();
+			expect(player.current?.id).toBe('a');
+		} finally {
+			hidden.mockRestore();
+			vi.useRealTimers();
+		}
+	});
+
 	it('reloads a next track that never reaches canplay', async () => {
-		vi.useFakeTimers();
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
 		try {
 			const { player, audio } = await freshPlayer();
 			player.playList([song('a'), song('b')]);
@@ -351,7 +431,7 @@ describe('Player platform fixes', () => {
 	});
 
 	it('does not reload while paused for a call', async () => {
-		vi.useFakeTimers();
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
 		const session = new FakeAudioSession();
 		Object.defineProperty(navigator, 'audioSession', { value: session, configurable: true });
 		try {
@@ -423,34 +503,209 @@ describe('Player platform fixes', () => {
 	});
 });
 
-describe('Player media errors', () => {
-	it('reloads a failed track once, then skips to the next', async () => {
+describe('Player background track changes', () => {
+	/** Plays 'a' until the next track 'b' is downloaded and loaded into the standby element. */
+	async function withStandby() {
+		vi.stubGlobal('fetch', vi.fn(async () => audioResponse()));
 		const { player, audio } = await freshPlayer();
-		player.playList([song('a'), song('b')]);
+		player.playList([song('a', 200), song('b'), song('c')]);
 		await flush();
-		audio.load.mockClear();
-		audio.fire('error');
+		audio.ready();
+		audio.fire('playing');
+		playTo(audio, 100);
 		await flush();
-		expect(player.current?.id).toBe('a');
-		expect(audio.load).toHaveBeenCalledTimes(1);
-		audio.fire('error');
+		await flush();
+		return { player, audio };
+	}
+
+	it('Android: starts the next track on a standby element before the current one ends', async () => {
+		const { player, audio } = await withStandby();
+		expect(FakeAudio.all).toHaveLength(2);
+		const standby = FakeAudio.all[1];
+		expect(standby.src).toMatch(/^blob:test\//);
+		expect(standby.paused).toBe(true);
+
+		playTo(audio, 199.6);
+		expect(player.current?.id).toBe('b');
+		expect(standby.play).toHaveBeenCalled();
+		// The old element plays on until the new one actually plays: never a silent moment.
+		expect(audio.paused).toBe(false);
+		standby.ready();
+		standby.fire('playing');
+		expect(audio.paused).toBe(true);
+		expect(audio.src).toBe('');
+	});
+
+	it('Android: ignores the old element after the handoff', async () => {
+		const { player, audio } = await withStandby();
+		playTo(audio, 199.6);
+		// Its own late `ended` must not skip 'b'.
+		audio.fire('ended');
 		await flush();
 		expect(player.current?.id).toBe('b');
-		expect(audio.src).toContain('id=b');
+	});
+
+	it('iOS: keeps a single element and swaps its source', async () => {
+		vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)');
+		try {
+			const { player, audio } = await withStandby();
+			expect(FakeAudio.all).toHaveLength(1);
+			audio.fire('ended');
+			expect(player.current?.id).toBe('b');
+			expect(audio.src).toMatch(/^blob:test\//);
+		} finally {
+			vi.restoreAllMocks();
+		}
+	});
+
+	it('Android: streams the next track on standby when its download is too slow', async () => {
+		let signal: AbortSignal | undefined;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((_url: string, init?: RequestInit) => {
+				signal = init?.signal ?? undefined;
+				return new Promise<Response>(() => {});
+			})
+		);
+		const { player, audio } = await freshPlayer();
+		player.playList([song('a', 200), song('b'), song('c')]);
+		await flush();
+		audio.ready();
+		playTo(audio, 100);
+		expect(FakeAudio.all).toHaveLength(1);
+		playTo(audio, 160);
+		// The download is dropped and the stream goes on standby instead.
+		expect(signal?.aborted).toBe(true);
+		const standby = FakeAudio.all[1];
+		expect(standby.src).toContain('id=b');
+		expect(standby.paused).toBe(true);
+		playTo(audio, 199.5);
+		expect(player.current?.id).toBe('b');
+		expect(standby.play).toHaveBeenCalled();
+		expect(audio.paused).toBe(false);
+		standby.ready();
+		standby.fire('playing');
+		expect(audio.paused).toBe(true);
+	});
+
+	it('iOS: never streams on standby', async () => {
+		vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)');
+		vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+		try {
+			const { player, audio } = await freshPlayer();
+			player.playList([song('a', 200), song('b')]);
+			await flush();
+			audio.ready();
+			playTo(audio, 199.5);
+			expect(FakeAudio.all).toHaveLength(1);
+		} finally {
+			vi.restoreAllMocks();
+		}
+	});
+
+	it('cancels the next-track download when that track starts streaming first', async () => {
+		let signal: AbortSignal | undefined;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((_url: string, init?: RequestInit) => {
+				signal = init?.signal ?? undefined;
+				return new Promise<Response>(() => {});
+			})
+		);
+		const { player, audio } = await freshPlayer();
+		player.playList([song('a', 200), song('b')]);
+		await flush();
+		audio.ready();
+		playTo(audio, 100);
+		expect(signal?.aborted).toBe(false);
+		audio.fire('ended');
+		expect(player.current?.id).toBe('b');
+		expect(signal?.aborted).toBe(true);
+	});
+
+	it('resumes when the app is opened after the system paused a track that just started', async () => {
+		const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+		try {
+			const { player, audio } = await freshPlayer();
+			player.playList([song('a'), song('b')]);
+			await flush();
+			audio.ready();
+			audio.fire('playing');
+			// Not requested by the page: Android refusing audio focus.
+			audio.pause();
+			expect(player.playing).toBe(false);
+			audio.play.mockClear();
+			hidden.mockReturnValue(false);
+			document.dispatchEvent(new Event('visibilitychange'));
+			expect(audio.play).toHaveBeenCalledTimes(1);
+		} finally {
+			hidden.mockRestore();
+		}
+	});
+
+	it('stays paused after a later system pause, like headphones unplugged', async () => {
+		const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+		const now = vi.spyOn(performance, 'now');
+		try {
+			const { player, audio } = await freshPlayer();
+			player.playList([song('a'), song('b')]);
+			await flush();
+			audio.ready();
+			now.mockReturnValue(1_000);
+			audio.fire('playing');
+			now.mockReturnValue(61_000);
+			audio.pause();
+			audio.play.mockClear();
+			hidden.mockReturnValue(false);
+			document.dispatchEvent(new Event('visibilitychange'));
+			expect(audio.play).not.toHaveBeenCalled();
+			expect(player.playing).toBe(false);
+		} finally {
+			hidden.mockRestore();
+			now.mockRestore();
+		}
+	});
+});
+
+describe('Player media errors', () => {
+	it('reloads a failed track once, then skips to the next', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
+		try {
+			const { player, audio } = await freshPlayer();
+			player.playList([song('a'), song('b')]);
+			await vi.advanceTimersByTimeAsync(0);
+			audio.load.mockClear();
+			audio.fire('error');
+			await vi.advanceTimersByTimeAsync(2_000);
+			expect(player.current?.id).toBe('a');
+			expect(audio.load).toHaveBeenCalledTimes(1);
+			audio.fire('error');
+			await vi.advanceTimersByTimeAsync(2_000);
+			expect(player.current?.id).toBe('b');
+			expect(audio.src).toContain('id=b');
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('stops after a few unplayable tracks in a row', async () => {
-		const { player, audio } = await freshPlayer();
-		player.repeat = 'all';
-		player.playList([song('a'), song('b')]);
-		await flush();
-		for (let i = 0; i < 20; i++) {
-			audio.fire('error');
-			await flush();
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
+		try {
+			const { player, audio } = await freshPlayer();
+			player.repeat = 'all';
+			player.playList([song('a'), song('b')]);
+			await vi.advanceTimersByTimeAsync(0);
+			for (let i = 0; i < 20; i++) {
+				audio.error = { code: 4, message: 'Format error' };
+				audio.fire('error');
+				await vi.advanceTimersByTimeAsync(2_500);
+			}
+			expect(audio.load.mock.calls.length).toBeLessThan(12);
+			expect(player.error).not.toBeNull();
+			expect(player.active).toBe(false);
+		} finally {
+			vi.useRealTimers();
 		}
-		expect(audio.load.mock.calls.length).toBeLessThan(12);
-		expect(player.error).not.toBeNull();
-		expect(player.active).toBe(false);
 	});
 });
 

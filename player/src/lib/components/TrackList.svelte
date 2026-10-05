@@ -1,3 +1,18 @@
+<script lang="ts" module>
+	// Pause the "now playing" bars while they're scrolled out of view, so a list
+	// left open during playback doesn't keep animating rows nobody can see.
+	// One observer is shared by every bars element on the page.
+	let observer: IntersectionObserver | undefined;
+
+	function pauseOffscreen(node: HTMLElement) {
+		observer ??= new IntersectionObserver((entries) => {
+			for (const e of entries) e.target.classList.toggle('offscreen', !e.isIntersecting);
+		});
+		observer.observe(node);
+		return { destroy: () => observer?.unobserve(node) };
+	}
+</script>
+
 <script lang="ts">
 	import { artistName, time } from '../format';
 	import { songMenu } from '../menus';
@@ -29,6 +44,17 @@
 	} = $props();
 
 	const player = getPlayer();
+	// Stable row keys: the song id, plus a counter for repeats (a playlist can hold
+	// the same song twice). Keying by position instead would remount almost every
+	// row whenever the list is filtered or re-sorted.
+	const keys = $derived.by(() => {
+		const seen = new Map<string, number>();
+		return songs.map((s) => {
+			const n = seen.get(s.id) ?? 0;
+			seen.set(s.id, n + 1);
+			return n ? `${s.id}#${n}` : s.id;
+		});
+	});
 	const multiDisc = $derived(variant === 'album' && new Set(songs.map((s) => s.discNumber ?? 1)).size > 1);
 
 	function play(i: number) {
@@ -42,7 +68,7 @@
 </script>
 
 <div class="tracks v-{variant}" class:no-album={!showAlbum} role="list">
-	{#each songs as song, i (song.id + ':' + i)}
+	{#each songs as song, i (keys[i])}
 		{#if multiDisc && (i === 0 || (songs[i - 1].discNumber ?? 1) !== (song.discNumber ?? 1))}
 			<div class="disc">Disc {song.discNumber ?? 1}</div>
 		{/if}
@@ -61,12 +87,12 @@
 						<Artwork id={song.coverArt} size={64} seed={song.album ?? song.title} />
 						{#if current}
 							<span class="thumb-overlay">
-								<span class="bars" class:paused={!player.playing || ui.nowPlaying}><i></i><i></i><i></i></span>
+								<span class="bars" class:paused={!player.playing || ui.nowPlaying} use:pauseOffscreen><i></i><i></i><i></i></span>
 							</span>
 						{/if}
 					</span>
 				{:else if current}
-					<span class="bars" class:paused={!player.playing || ui.nowPlaying}><i></i><i></i><i></i></span>
+					<span class="bars" class:paused={!player.playing || ui.nowPlaying} use:pauseOffscreen><i></i><i></i><i></i></span>
 				{:else}
 					<!-- TỐI ƯU 1: Bọc nút Play và số thứ tự vào cùng 1 wrapper tĩnh để chống Reflow -->
 					<span class="lead-stack">
@@ -302,7 +328,7 @@
 		height: 100%;
 		border-radius: 1px;
 		background: var(--bar, var(--accent));
-		animation: eq 0.9s ease-in-out infinite alternate;
+		animation: eq 1s steps(10) infinite alternate;
 		transform-origin: bottom;
 	}
 	.bars i:nth-child(2) {
@@ -311,7 +337,8 @@
 	.bars i:nth-child(3) {
 		animation-delay: -0.6s;
 	}
-	.bars.paused i {
+	.bars.paused i,
+	.bars:global(.offscreen) i {
 		animation-play-state: paused;
 	}
 	@keyframes eq {

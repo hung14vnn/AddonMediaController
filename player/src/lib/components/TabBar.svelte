@@ -380,6 +380,29 @@
 		color: var(--text-2);
 	}
 
+	/* Compacting on scroll: the mini player drops into this row at the dock's pace
+	   (--dur), so the pill must get out of its way first. Collapse in ~half the
+	   time and drop the other tabs/labels almost at once. These durations only
+	   apply while entering the compact state; expanding keeps the base timing,
+	   and the search transition is untouched. */
+	@media (prefers-reduced-motion: no-preference) {
+		.tabbar.collapsed:not(.searching) {
+			--collapse-dur: calc(var(--dur, 0.5s) * 0.5);
+		}
+		.tabbar.collapsed:not(.searching) .bg {
+			transition-duration: var(--collapse-dur);
+		}
+		.tabbar.collapsed:not(.searching) .indicator {
+			transition-duration: var(--collapse-dur), calc(var(--dur, 0.5s) * 0.2);
+		}
+		.tabbar.collapsed:not(.searching) .tabs a {
+			transition-duration: var(--collapse-dur), calc(var(--dur, 0.5s) * 0.2), 0.25s;
+		}
+		.tabbar.collapsed:not(.searching) .label {
+			transition-duration: calc(var(--dur, 0.5s) * 0.15);
+		}
+	}
+
 	@keyframes tab-bounce {
 		0% {
 			transform: scale(0.8);

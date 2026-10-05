@@ -345,11 +345,6 @@
 	.pill:hover {
 		transform: translateY(-1px);
 	}
-	.pill.icon {
-		width: 34px;
-		padding: 0;
-		justify-content: center;
-	}
 	.has-image .pill {
 		color: #fff;
 		background: rgba(255, 255, 255, 0.22);

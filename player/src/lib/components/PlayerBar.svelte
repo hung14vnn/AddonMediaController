@@ -17,6 +17,9 @@
 
 	let scrub: number | null = $state(null);
 	const shownTime = $derived(scrub ?? player.currentTime);
+	// Whole seconds: the bar barely moves per second, and this stays mounted (hidden)
+	// on phones, so don't repaint it on every timeupdate (~4/s).
+	const progressTime = $derived(Math.floor(player.currentTime));
 
 	const formattedCurrentTime = $derived(time(Math.floor(shownTime)));
 	const formattedRemainingTime = $derived(
@@ -117,7 +120,7 @@
 				<div class="lcd-progress">
 					<span class="t">{formattedCurrentTime}</span>
 					<Slider
-						value={player.currentTime}
+						value={progressTime}
 						max={player.duration}
 						label="Seek"
 						onchange={(v) => player.seek(v)}

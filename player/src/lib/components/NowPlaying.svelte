@@ -7,6 +7,7 @@
 	import { cubicOut } from "svelte/easing";
 	import { time } from "../format";
 	import { songMenu } from "../menus";
+	import type { TransitionConfig } from "svelte/transition";
 	import { artSwap, fadeOnly, pop, sheet, textSwap } from "../motion";
 	import { artworkTint, type Tint } from "../palette";
 	import { getPlayer } from "../player.svelte";
@@ -34,6 +35,7 @@
 	);
 
 	let tint: Tint | null = $state(null);
+	let npHeight = $state(0);
 	let controlsVisible = $state(true);
 	let controlsTimer: ReturnType<typeof setTimeout> | undefined;
 	let wakeLock: WakeLockSentinel | null = null;
@@ -120,6 +122,12 @@
 		}
 
 		showControls();
+		// Keep the screen on only while music is actually playing: a paused song
+		// with lyrics open should let the display sleep.
+		if (!player.playing) {
+			void releaseWakeLock();
+			return;
+		}
 		const onVisibilityChange = () => {
 			if (document.visibilityState === "visible") void requestWakeLock();
 		};
@@ -303,6 +311,223 @@
 		ui.closeNowPlaying();
 	}
 
+	const MORPH_EASE = "cubic-bezier(0.3, 0.7, 0.2, 1)";
+	// Title/artist are not in this list: they fly from the mini player instead.
+	const MORPH_FADE =
+		".grab, .info .round, .progress, .transport, .volume, .bottom, .panel, .nothing, .art-row.mini .meta-btn";
+	// Mini player text → its Now Playing counterpart (full layout, or compact
+	// row when a panel is open on mobile).
+	const MORPH_TEXT = [
+		{ from: "[data-np-title]", to: ".info .title, .art-row.mini .c-title" },
+		{ from: "[data-np-artist]", to: ".info .artist, .art-row.mini .c-artist" },
+	];
+	const ART_RADIUS = 10; // matches .art --art-radius
+	let morphAnims: Animation[] = [];
+	/** Direction the current animations' keyframes were built for. */
+	let morphBuiltFor: "in" | "out" = "in";
+	/** Direction the sheet is heading now (changes when reversed mid-flight). */
+	let morphDir: "in" | "out" = "in";
+
+	// Returns a deferred config: Svelte calls it on every start *and* reversal with
+	// the current direction, so open↔close interruptions can be handled here.
+	function morph(node: HTMLElement) {
+		// (Svelte's types declare no argument, but the runtime passes `{ direction }`.)
+		return (opts?: { direction?: "in" | "out" }): TransitionConfig => {
+			const dir = opts?.direction === "out" ? "out" : "in";
+			const duration = dir === "out" ? 560 : 720;
+			morphDir = dir;
+
+			// Reversed mid-flight: turn the running animations around so they continue
+			// from where they are and land when Svelte's (shortened) timer does.
+			if (morphAnims.some((a) => a.playState === "running")) {
+				for (const a of morphAnims) {
+					const own = Number(a.effect?.getTiming().duration) || duration;
+					a.playbackRate = ((dir === morphBuiltFor ? 1 : -1) * own) / duration;
+				}
+				return { duration };
+			}
+			morphAnims.forEach((a) => a.cancel());
+			morphAnims = [];
+			morphBuiltFor = dir;
+
+			const anchorEl = document.querySelector<HTMLElement>("[data-np-anchor]");
+			const anchor = anchorEl?.getBoundingClientRect();
+			if (
+				!anchor?.width ||
+				matchMedia("(prefers-reduced-motion: reduce)").matches
+			)
+				return sheet(node, { offset: dragY });
+
+			// Frames are written for opening; closing plays them backwards on the same curve.
+			const play = (el: Element, frames: Keyframe[]) => {
+				const keyframes =
+					dir === "out"
+						? frames
+								.map((f) => ({ ...f, offset: 1 - (f.offset as number) }))
+								.reverse()
+						: frames;
+				const anim = el.animate(keyframes, {
+					duration,
+					easing: MORPH_EASE,
+					fill: "both",
+				});
+				// Once fully open, hand the elements back to their normal styles.
+				// (Fully closed needs nothing: Svelte removes the sheet.)
+				anim.onfinish = () => {
+					if (morphDir !== "in") return;
+					morphAnims.forEach((a) => a.cancel());
+					morphAnims = [];
+				};
+				morphAnims.push(anim);
+			};
+
+			// Measured against the sheet's own box so a swipe-down offset is respected.
+			const box = node.getBoundingClientRect();
+			const inset = [
+				anchor.top - box.top,
+				box.right - anchor.right,
+				box.bottom - anchor.bottom,
+				anchor.left - box.left,
+			];
+
+			// Artwork: transform the wrapper (origin 0 0) so the inner art lands
+			// exactly on the mini player's artwork.
+			const wrap = node.querySelector<HTMLElement>(".art-wrap");
+			const art = wrap?.querySelector<HTMLElement>(".art");
+			const from = document
+				.querySelector<HTMLElement>("[data-np-art]")
+				?.getBoundingClientRect();
+			if (wrap && art && from?.width) {
+				wrap.getAnimations().forEach((a) => a.cancel());
+				const w = wrap.getBoundingClientRect();
+				const b = art.getBoundingClientRect();
+				const s = from.width / b.width;
+				const dx = from.left - w.left - s * (b.left - w.left);
+				const dy = from.top - w.top - s * (b.top - w.top);
+				play(wrap, [
+					{ offset: 0, transform: `translate3d(${dx}px, ${dy}px, 0) scale(${s})` },
+					{ offset: 1, transform: "translate3d(0, 0, 0) scale(1)" },
+				]);
+
+				// Counter the scale on the corner radius so the art keeps rounded
+				// corners while small (sampled, since scale and radius are inverse).
+				const img = art.querySelector(".art");
+				if (img) {
+					const k = b.width / w.width; // the paused shrink, if any
+					const frames: Keyframe[] = [];
+					for (let i = 0; i <= 8; i++) {
+						const p = i / 8;
+						const scale = s + (1 - s) * p;
+						const visible = ART_RADIUS + (ART_RADIUS * k - ART_RADIUS) * p;
+						frames.push({ offset: p, borderRadius: `${visible / (k * scale)}px` });
+					}
+					play(img, frames);
+				}
+			}
+
+			// The sheet starts as a solid copy of the mini pill (same box, radius and
+			// colour) and grows to full screen; the tinted backdrop fades in over it.
+			const pill = anchorEl ? getComputedStyle(anchorEl).backgroundColor : "";
+			// Title and artist: move and scale (by font size) from the mini player's
+			// text onto the big text, so they read as the same line.
+			// The title's flight, so a line with no visible source (the artist, hidden
+			// in the compact dock) can ride along under it instead of being crossed.
+			let lead: { dx: number; dy: number; s: number; box: DOMRect } | null = null;
+			for (const pair of MORPH_TEXT) {
+				const source = document.querySelector<HTMLElement>(pair.from);
+				const target = node.querySelector<HTMLElement>(pair.to);
+				if (!target) continue;
+				const a = source?.getBoundingClientRect();
+				const visible =
+					source && a?.height && getComputedStyle(source).opacity !== "0";
+				const t = target.getBoundingClientRect();
+				if (!visible) {
+					if (!lead) {
+						play(target, [
+							{ offset: 0, opacity: 0 },
+							{ offset: 0.55, opacity: 0 },
+							{ offset: 1, opacity: 1 },
+						]);
+						continue;
+					}
+					// Same transform as the title, re-based on this element's origin so
+					// both move as one block (d = d_lead + (s - 1)(origin - lead origin)).
+					const gx = lead.dx + (lead.s - 1) * (t.left - lead.box.left);
+					const gy = lead.dy + (lead.s - 1) * (t.top - lead.box.top);
+					play(target, [
+						{
+							offset: 0,
+							opacity: 0,
+							transformOrigin: "0 0",
+							transform: `translate3d(${gx}px, ${gy}px, 0) scale(${lead.s})`,
+						},
+						{ offset: 0.3, opacity: 0 },
+						{
+							offset: 1,
+							opacity: 1,
+							transformOrigin: "0 0",
+							transform: "translate3d(0, 0, 0) scale(1)",
+						},
+					]);
+					continue;
+				}
+				const s =
+					parseFloat(getComputedStyle(source).fontSize) /
+					parseFloat(getComputedStyle(target).fontSize);
+				const dx = a.left - t.left;
+				const dy = a.top + a.height / 2 - (t.top + (t.height * s) / 2);
+				lead ??= { dx, dy, s, box: t };
+				// Fully visible from the first frame (it sits exactly over the mini text the
+				// pill just covered) and recoloured from the mini's colour to its own.
+				const fromColor = getComputedStyle(source).color;
+				const toColor = getComputedStyle(target).color;
+				play(target, [
+					{
+						offset: 0,
+						color: fromColor,
+						transformOrigin: "0 0",
+						transform: `translate3d(${dx}px, ${dy}px, 0) scale(${s})`,
+					},
+					{ offset: 0.5, color: toColor },
+					{
+						offset: 1,
+						color: toColor,
+						transformOrigin: "0 0",
+						transform: "translate3d(0, 0, 0) scale(1)",
+					},
+				]);
+			}
+
+			// Keep the pill's round corners for most of the grow; square up at the end.
+			const clip = (p: number, r: number) =>
+				`inset(${inset.map((v) => `${v * (1 - p)}px`).join(" ")} round ${r}px)`;
+			const radius = anchor.height / 2;
+			play(node, [
+				{ offset: 0, backgroundColor: pill, clipPath: clip(0, radius) },
+				{ offset: 0.8, backgroundColor: pill, clipPath: clip(0.8, radius) },
+				{ offset: 1, backgroundColor: pill, clipPath: clip(1, 0) },
+			]);
+
+			const backdrop = node.querySelector(".backdrop");
+			if (backdrop)
+				play(backdrop, [
+					{ offset: 0, opacity: 0 },
+					{ offset: 0.15, opacity: 0 },
+					{ offset: 0.6, opacity: 1 },
+					{ offset: 1, opacity: 1 },
+				]);
+			for (const el of node.querySelectorAll(MORPH_FADE))
+				play(el, [
+					{ offset: 0, opacity: 0 },
+					{ offset: 0.55, opacity: 0 },
+					{ offset: 1, opacity: 1 },
+				]);
+
+			// Svelte only needs the length (to keep the node mounted while closing).
+			return { duration };
+		};
+	}
+
 	function go(path: string) {
 		if (history.state?.nowPlaying) {
 			const onPopState = () => {
@@ -324,9 +549,13 @@
 <svelte:window onkeydown={onKey} />
 
 <div
-	transition:sheet={{ offset: dragY }}
+	transition:morph
 	class="np"
 	class:tinted={!!tint}
+	style:--np-top={tint?.top}
+	style:--np-bottom={tint?.bottom}
+	style:--np-h="{npHeight}px"
+	bind:clientHeight={npHeight}
 	style:transform={dragY ? `translateY(${dragY}px)` : undefined}
 	style:transition={dragY && ui.nowPlaying ? "none" : undefined}
 	ontouchstart={onTouchStart}
@@ -372,8 +601,10 @@
 		{/if}
 		{#snippet panelBody(panel: Panel)}
 			{#key panel}
+				<!-- Any touch or scroll here only brings the controls back; it is not a control itself. -->
 				<div
 					class="panel-view"
+					role="presentation"
 					in:textSwap={{ dx: 40, duration: 320 }}
 					out:textSwap={{ dx: -40, duration: 240 }}
 					onwheel={showControls}
@@ -449,8 +680,16 @@
 				<div
 					class="controls"
 					class:panel-open={mobileOpen}
+					class:overlay={mobileOpen && ui.panel === "lyrics"}
 					class:controls-hidden={isMobile && ui.panel === "lyrics" && player.playing && !controlsVisible}
 				>
+					{#if mobileOpen && ui.panel === "lyrics"}
+						<!-- A copy of the screen backdrop, lined up with it, so lyrics passing
+						     under the floating controls fade out into the real background. -->
+						<div class="overlay-bg" aria-hidden="true">
+							<div class="overlay-tint" class:tinted={!!tint}></div>
+						</div>
+					{/if}
 					{#if !mobileOpen}
 						<div
 							class="info"
@@ -522,11 +761,7 @@
 									class="quality active-timer-text"
 									onclick={() => (ui.sleepTimerPicker = true)}
 								>
-									<Icon
-										name="clock"
-										size={11}
-										style="margin-right: 2px; vertical-align: -1.5px; display: inline-block;"
-									/>
+									<Icon name="clock" size={11} />
 									{sleepTimer.isCountdown
 										? sleepTimer.remainingLabel
 										: "End of Track"}
@@ -765,10 +1000,11 @@
 		min-height: 0;
 	}
 	/* Layout changes are NOT transitioned in CSS: the FLIP in the script animates
-	   [data-flip] elements with transforms instead (compositor only). */
+	   [data-flip] elements with transforms instead (compositor only). No permanent
+	   will-change: running animations get their own layer anyway, and keeping six
+	   (the art is ~7MB at 3x) promoted all the time just wastes GPU memory. */
 	[data-flip] {
 		transform-origin: 0 0;
-		will-change: transform;
 	}
 	.art-row {
 		flex: 0 1 auto;
@@ -833,12 +1069,11 @@
 		justify-content: space-evenly;
 		gap: 10px;
 		padding-top: 22px;
+		/* Only compositor properties: hiding/showing never re-lays out the page.
+		   (Layout changes when a panel opens are animated by the FLIP instead.) */
 		transition:
 			opacity 0.45s ease,
-			transform 0.45s ease,
-			max-height 0.45s ease,
-			padding 0.45s ease,
-			gap 0.45s ease;
+			transform 0.45s ease;
 	}
 	.controls.controls-hidden {
 		opacity: 0;
@@ -918,6 +1153,11 @@
 	}
 	.active-timer-text {
 		color: #ffd60a;
+	}
+	.active-timer-text :global(svg) {
+		display: inline-block;
+		margin-right: 2px;
+		vertical-align: -1.5px;
 	}
 	.quality.muted {
 		color: #ffd60a;
@@ -1070,11 +1310,59 @@
 			padding-top: 10px;
 			gap: 4px;
 		}
-		.controls.panel-open.controls-hidden {
-			max-height: 0;
-			gap: 0;
-			padding-top: 0;
+		/* With lyrics open the controls float over the bottom of the panel, so
+		   auto-hiding them is a pure fade/slide: the lyrics area keeps its size
+		   instead of re-laying out (and re-scrolling) every frame. */
+		.controls.overlay {
+			position: absolute;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			z-index: 2;
+			margin: 0 -12px;
+			padding: 28px 12px 0;
+		}
+		/* Clipped to the controls' box, with a static top fade (painted once). */
+		.overlay-bg {
+			position: absolute;
+			inset: 0;
+			z-index: -1;
 			overflow: hidden;
+			pointer-events: none;
+			-webkit-mask-image: linear-gradient(to bottom, transparent, #000 28px);
+			mask-image: linear-gradient(to bottom, transparent, #000 28px);
+		}
+		/* Full-screen sized and placed where the real backdrop is: the controls
+		   sit 16px from the screen edges (28px layout padding − 12px margin) and
+		   end at the layout's bottom padding. */
+		.overlay-tint {
+			position: absolute;
+			left: -16px;
+			right: -16px;
+			bottom: calc(-1 * max(12px, env(safe-area-inset-bottom)));
+			height: var(--np-h, 100vh);
+			background: #3a3a3c;
+		}
+		.overlay-tint.tinted {
+			background: radial-gradient(
+					120% 60% at 50% 0%,
+					color-mix(in srgb, var(--np-top) 85%, #fff 15%),
+					transparent 70%
+				),
+				linear-gradient(180deg, var(--np-top) 0%, var(--np-bottom) 100%);
+		}
+		.overlay-tint::after {
+			content: "";
+			position: absolute;
+			inset: 0;
+			background: linear-gradient(
+				to bottom,
+				transparent 55%,
+				rgb(0 0 0 / 0.18)
+			);
+		}
+		.mobile-panel:has(.controls.overlay) .panel-mobile {
+			margin-bottom: 0;
 		}
 	}
 

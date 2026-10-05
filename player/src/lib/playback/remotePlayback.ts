@@ -19,9 +19,10 @@ interface AudioOutputMediaDevices extends MediaDevices {
 	selectAudioOutput?: () => Promise<MediaDeviceInfo>;
 }
 
-interface SinkableAudioElement extends HTMLAudioElement {
+/** Newer DOM typings declare setSinkId, but Safari and older browsers still lack it. */
+type SinkableAudioElement = Omit<HTMLAudioElement, 'setSinkId'> & {
 	setSinkId?: (sinkId: string) => Promise<void>;
-}
+};
 
 /** Remote Playback API: Chromecast etc. on Chrome/Android, AirPlay on Safari. */
 export function watchRemotePlayback(audio: HTMLAudioElement, listener: RemotePlaybackListener): () => void {

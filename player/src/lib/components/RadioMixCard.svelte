@@ -13,7 +13,12 @@
 	let loading = $state(true);
 
 	$effect(() => {
-		if (skeleton || !playlist.id) return;
+		if (skeleton) return;
+		// Nothing to load: drop the placeholder rows (they animate forever otherwise).
+		if (!playlist.id) {
+			loading = false;
+			return;
+		}
 		getPlaylist(playlist.id)
 			.then((p) => {
 				if (p.entry) songs = p.entry;
@@ -296,6 +301,13 @@
 	}
 	.more-btn:hover {
 		color: var(--text);
+	}
+
+	/* The global .skeleton shimmer would also run here, invisibly (the card and row
+	   backgrounds override its gradient), costing a repaint every frame. */
+	.radio-card.skeleton,
+	.track.skeleton {
+		animation: none;
 	}
 
 	.skeleton .track-cover-skeleton {

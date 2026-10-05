@@ -17,12 +17,13 @@
 	let width = $state(0);
 	const scaleX = $derived(width > 0 ? (width - 112) / width : 0.7);
 
+	// No setPointerCapture here: with a mouse, capturing on the wrapper makes
+	// Chrome/Edge send the click to the wrapper instead of the button under the
+	// cursor, so the mini player couldn't be opened. Touch and pen are implicitly
+	// captured to the touched element anyway, and pointerup still bubbles up here.
 	function onPointerDown(event: PointerEvent) {
 		if (!event.isPrimary) return;
-		const target = event.currentTarget;
-		if (!(target instanceof HTMLElement)) return;
 		swipeStart = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
-		target.setPointerCapture(event.pointerId);
 	}
 
 	function onPointerUp(event: PointerEvent) {
@@ -41,15 +42,67 @@
 		}
 
 		swipeStart = null;
-		const target = event.currentTarget;
-		if (target instanceof HTMLElement && target.hasPointerCapture(event.pointerId)) {
-			target.releasePointerCapture(event.pointerId);
-		}
 	}
 
 	function onPointerCancel(event: PointerEvent) {
 		if (swipeStart?.pointerId === event.pointerId) swipeStart = null;
 	}
+
+	// ---- compact dock FLIP ----------------------------------------------------
+	// Compacting changes the layout once, instantly (padding, artist/next taken out
+	// of the flow); the moved pieces are then animated from where they were with
+	// transforms only, instead of transitioning left/right/width/max-height (which
+	// re-lays out the row every frame, on every scroll-direction flip).
+	const FLIP_MS = 500;
+	const FLIP_EASE = 'cubic-bezier(0.32, 0.72, 0, 1)'; // = the dock's --ease
+	let contentEl = $state<HTMLElement>();
+	let before: Map<string, DOMRect> | null = null;
+
+	function measure(root: HTMLElement) {
+		const box = root.getBoundingClientRect();
+		const rects = new Map<string, DOMRect>();
+		for (const el of root.querySelectorAll<HTMLElement>('[data-flip]')) {
+			const r = el.getBoundingClientRect();
+			// Relative to the row, so the dock's own slide doesn't count as movement.
+			rects.set(el.dataset.flip!, new DOMRect(r.left - box.left, r.top - box.top, r.width, r.height));
+		}
+		return rects;
+	}
+
+	$effect.pre(() => {
+		void compactDock;
+		// Before the DOM update: where things are now (mid-animation included).
+		if (contentEl) before = measure(contentEl);
+	});
+
+	$effect(() => {
+		void compactDock;
+		const root = contentEl;
+		const first = before;
+		before = null;
+		if (!root || !first || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+		for (const el of root.querySelectorAll<HTMLElement>('[data-flip]')) {
+			el.getAnimations().forEach((a) => a.cancel());
+		}
+		const last = measure(root);
+		for (const el of root.querySelectorAll<HTMLElement>('[data-flip]')) {
+			const a = first.get(el.dataset.flip!);
+			const b = last.get(el.dataset.flip!);
+			if (!a || !b) continue;
+			// transform-origin is left center (see CSS): left edge and vertical centre
+			// stay put under scaling, so those are what we line up.
+			const dx = a.left - b.left;
+			const dy = a.top + a.height / 2 - (b.top + b.height / 2);
+			const k = 'flipScale' in el.dataset && b.width ? a.width / b.width : 1;
+			if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(k - 1) < 0.005) continue;
+			const end = getComputedStyle(el).transform;
+			const rest = end === 'none' ? '' : end;
+			el.animate(
+				[{ transform: `translate(${dx}px, ${dy}px) scale(${k}) ${rest}` }, { transform: rest || 'none' }],
+				{ duration: FLIP_MS, easing: FLIP_EASE }
+			);
+		}
+	});
 
 	function openNowPlaying(event: MouseEvent) {
 		if (Date.now() < suppressOpenClickUntil) {
@@ -73,21 +126,21 @@
 		onpointerup={onPointerUp}
 		onpointercancel={onPointerCancel}
 	>
-		<span class="bg" aria-hidden="true"></span>
+		<span class="bg" aria-hidden="true" data-np-anchor></span>
 
-		<div class="content">
+		<div class="content" bind:this={contentEl}>
 			<button class="open" onclick={openNowPlaying} aria-label="Open Now Playing">
 				{#key song.id}
-					<span class="art" in:artSwap={{ duration: 320 }}>
+					<span class="art" data-np-art data-flip="art" data-flip-scale in:artSwap={{ duration: 320 }}>
 						<Artwork id={song.coverArt} size={64} seed={song.album ?? song.title} />
 					</span>
-					<span class="meta" in:textSwap>
-						<span class="title ellipsis">{song.title}</span>
-						<span class="artist ellipsis">{artistName(song)}</span>
+					<span class="meta" data-flip="meta" in:textSwap>
+						<span class="title ellipsis" data-np-title>{song.title}</span>
+						<span class="artist ellipsis" data-np-artist>{artistName(song)}</span>
 					</span>
 				{/key}
 			</button>
-			<button class="ctl has-ring" aria-label={player.active ? 'Pause' : 'Play'} onclick={() => player.toggle()}>
+			<button class="ctl has-ring" data-flip="pp" aria-label={player.active ? 'Pause' : 'Play'} onclick={() => player.toggle()}>
 				{#key player.active}
 					<span class="icon-swap" in:pop={{ from: 0.5, duration: 200 }}>
 						<Icon name={player.active ? 'pause' : 'play'} size={24} />
@@ -145,7 +198,11 @@
 		transform: scale(var(--sx, 0.7), 0.857);
 	}
 
+	/* The row keeps its full box; compacting narrows the visible part with a
+	   clip-path (a cheap repaint of a 56px strip) and moves the contents in with
+	   padding, changed instantly and animated by the FLIP in the script. */
 	.content {
+		--inset-x: calc(var(--btn, 48px) + var(--gap, 8px));
 		position: absolute;
 		inset: 0;
 		display: flex;
@@ -154,20 +211,13 @@
 		box-sizing: border-box;
 		padding: 0 8px 0 6px;
 		overflow: hidden;
-		border-radius: 28px;
+		clip-path: inset(0 round 28px);
 		contain: strict;
-		transition:
-			left var(--dur, 0.5s) var(--ease, ease),
-			right var(--dur, 0.5s) var(--ease, ease),
-			top var(--dur, 0.5s) var(--ease, ease),
-			bottom var(--dur, 0.5s) var(--ease, ease);
+		transition: clip-path var(--dur, 0.5s) var(--ease, ease);
 	}
 	.mini.compact .content {
-		left: calc(var(--btn, 48px) + var(--gap, 8px));
-		right: calc(var(--btn, 48px) + var(--gap, 8px));
-		top: 4px;
-		bottom: 4px;
-		border-radius: 24px;
+		padding: 0 calc(var(--inset-x) + 8px) 0 calc(var(--inset-x) + 6px);
+		clip-path: inset(4px var(--inset-x) round 24px);
 	}
 
 	.open {
@@ -186,10 +236,10 @@
 		margin-left: 8px;
 		--art-radius: 10px;
 		--art-shadow: 0 2px 8px rgb(0 0 0 / 0.18);
+	}
+	/* The FLIP lines elements up by their left edge and vertical centre. */
+	[data-flip] {
 		transform-origin: left center;
-		transition:
-			transform var(--dur, 0.5s) var(--ease, ease),
-			margin var(--dur, 0.5s) var(--ease, ease);
 	}
 	.mini.compact .art {
 		transform: scale(0.75);
@@ -198,6 +248,7 @@
 	}
 
 	.meta {
+		position: relative; /* anchors the artist line while it fades out */
 		flex: 1;
 		min-width: 0;
 		overflow: hidden;
@@ -226,12 +277,13 @@
 		font-size: 12px;
 		font-weight: 400;
 		color: var(--text-2);
-		transition:
-			max-height var(--dur, 0.5s) var(--ease, ease),
-			opacity calc(var(--dur, 0.5s) * 0.5) var(--ease, ease);
+		transition: opacity calc(var(--dur, 0.5s) * 0.5) var(--ease, ease);
 	}
+	/* Out of the flow (so the title re-centres in one layout) and faded. */
 	.mini.compact .artist {
-		max-height: 0;
+		position: absolute;
+		top: 100%;
+		left: 0;
 		opacity: 0;
 	}
 
@@ -245,19 +297,17 @@
 	}
 	.ctl.next {
 		transition:
-			flex-basis var(--dur, 0.5s) var(--ease, ease),
-			width var(--dur, 0.5s) var(--ease, ease),
-			margin var(--dur, 0.5s) var(--ease, ease),
 			opacity calc(var(--dur, 0.5s) * 0.5) var(--ease, ease),
 			transform var(--dur, 0.5s) var(--ease, ease);
 	}
+	/* Taken out of the flow where it stood; the clip and the fade hide it. */
 	.mini.compact .ctl.next {
-		flex-basis: 0;
-		width: 0;
-		margin-left: -4px;
+		position: absolute;
+		right: 8px;
+		top: 6px;
 		opacity: 0;
 		transform: scale(0.6);
-		overflow: hidden;
+		transform-origin: center;
 		pointer-events: none;
 	}
 
@@ -265,7 +315,6 @@
 		.mini,
 		.bg,
 		.content,
-		.art,
 		.artist,
 		.ctl.next {
 			transition-duration: 0.01ms;

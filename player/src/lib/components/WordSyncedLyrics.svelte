@@ -76,8 +76,6 @@
 		onseek = () => {},
 	}: Props = $props();
 
-	/** Dung sai cho jitter của rAF, tránh bỏ frame oan trên màn 60Hz. */
-	const FRAME_TOLERANCE_MS = 2;
 	/**
 	 * Nếu thời gian player báo về lệch ít hơn ngưỡng này so với clock nội bộ
 	 * thì chỉ chỉnh mốc, không publish ngay → không phá giới hạn maxFps.
@@ -97,7 +95,7 @@
 	);
 
 	// Clock: không cần reactive, chỉ dùng nội bộ
-	let clockFrame: number | null = null;
+	let clockFrame: ReturnType<typeof setInterval> | null = null;
 	let anchorMediaTimeMs = 0;
 	let anchorWallClockMs = 0;
 
@@ -125,51 +123,28 @@
 
 	function stopClock() {
 		if (clockFrame !== null) {
-			cancelAnimationFrame(clockFrame);
+			clearInterval(clockFrame);
 			clockFrame = null;
 		}
 	}
 
 	/**
-	 * Chạy theo rAF, giới hạn tối đa `maxFps`.
-	 * - Có dung sai để jitter không làm rớt frame trên màn 60Hz.
-	 * - Giữ nhịp cố định (trừ phần dư) để trung bình đúng target FPS,
-	 *   kể cả trên màn 144Hz không chia hết cho 60.
+	 * Chạy bằng setInterval với nhịp `maxFps` thay vì rAF: rAF thức dậy ở mọi
+	 * vsync (60–120Hz) dù chỉ publish 15 lần/giây, tốn pin trên điện thoại.
 	 */
 	function runClock() {
 		stopClock();
 
-		let lastFrameTime = -Infinity; // frame đầu luôn được chạy
-
-		const frame = (now: DOMHighResTimeStamp) => {
-			if (!element || !isPlaying) {
-				clockFrame = null;
-				return;
-			}
-
-			clockFrame = requestAnimationFrame(frame);
-
-			// Đọc mỗi frame để đổi maxFps lúc đang phát cũng có hiệu lực ngay
-			const frameInterval = maxFps > 0 ? 1000 / maxFps : 0;
-
-			if (frameInterval > 0) {
-				const delta = now - lastFrameTime;
-				if (delta < frameInterval - FRAME_TOLERANCE_MS) return;
-
-				// Lệch quá xa (frame đầu, tab vừa active lại) → reset nhịp
-				lastFrameTime =
-					delta > frameInterval * 2
-						? now
-						: now - (delta % frameInterval);
-			}
-
-			// Timestamp của rAF có thể nhỏ hơn anchorWallClockMs một chút
-			// (thời điểm bắt đầu frame) → chặn để thời gian không chạy lùi.
-			const elapsed = Math.max(0, now - anchorWallClockMs);
+		const tick = () => {
+			if (!element || !isPlaying) return stopClock();
+			// performance.now() có thể nhỉnh hơn mốc một chút → chặn để không chạy lùi.
+			const elapsed = Math.max(0, performance.now() - anchorWallClockMs);
 			publishCurrentTime(anchorMediaTimeMs + elapsed);
 		};
 
-		clockFrame = requestAnimationFrame(frame);
+		tick(); // frame đầu luôn được chạy
+		if (!element || !isPlaying) return;
+		clockFrame = setInterval(tick, 1000 / (maxFps > 0 ? maxFps : 60));
 	}
 
 	function anchorClock(mediaTimeMs: number, playing: boolean) {
@@ -269,7 +244,9 @@
 	});
 
 	$effect(() => {
-		const mq = window.matchMedia("(max-width: 899px)");
+		// Phones and tablets (iPad): per-line filter: blur is re-rasterised on every
+		// publish, too costly on mobile GPUs.
+		const mq = window.matchMedia("(max-width: 899px), (pointer: coarse)");
 		const update = () => (isPhone = mq.matches);
 		update();
 		mq.addEventListener("change", update);

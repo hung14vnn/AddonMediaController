@@ -1,5 +1,6 @@
 <script lang="ts">
 import { getAllSongs, getSongsByGenre, getSession } from '../api';
+	import { untrack } from 'svelte';
 	import ErrorState from '../components/ErrorState.svelte';
 	import Icon from '../components/Icon.svelte';
 	import Sentinel from '../components/Sentinel.svelte';
@@ -70,21 +71,87 @@ import { listOfflineTrackMetadata } from '../offline';
 		return score >= threshold;
 	}
 
-	const visibleSongs = $derived.by(() => {
-		const term = fold(query);
-		let filtered = songs;
-		if (term) {
-			const exact = songs.filter((song) =>
-				fold(`${song.title} ${song.artist ?? ''} ${song.album ?? ''}`).includes(term)
-			);
-			filtered = exact.length ? exact : songs.filter((song) => fuzzyMatch(song, term));
+	// The filter runs on a debounced, pre-folded term, so typing doesn't re-filter
+	// (and possibly fuzzy-match) the whole library on every keystroke.
+	const FILTER_DEBOUNCE_MS = 200;
+	let term = $state('');
+	$effect(() => {
+		const next = fold(query);
+		if (!next) return void (term = ''); // clearing the box is instant
+		const timer = setTimeout(() => (term = next), FILTER_DEBOUNCE_MS);
+		return () => clearTimeout(timer);
+	});
+
+	const foldedText = new WeakMap<Song, string>();
+	function searchText(song: Song): string {
+		let text = foldedText.get(song);
+		if (text === undefined) {
+			text = fold(`${song.title} ${song.artist ?? ''} ${song.album ?? ''}`);
+			foldedText.set(song, text);
 		}
-		return [...filtered].sort((a, b) => {
-				if (sort === 'artist') return (a.artist ?? '').localeCompare(b.artist ?? '');
-				if (sort === 'album') return (a.album ?? '').localeCompare(b.album ?? '');
-				if (sort === 'added' || sort === 'played') return String((b as any)[sort === 'added' ? 'created' : 'lastPlayed'] ?? '').localeCompare(String((a as any)[sort === 'added' ? 'created' : 'lastPlayed'] ?? ''));
-				return a.title.localeCompare(b.title);
-		});
+		return text;
+	}
+
+	// Sorting only depends on the songs and the sort key, not on the filter;
+	// filtering a sorted list keeps its order.
+	const sortedSongs = $derived(
+		[...songs].sort((a, b) => {
+			if (sort === 'artist') return (a.artist ?? '').localeCompare(b.artist ?? '');
+			if (sort === 'album') return (a.album ?? '').localeCompare(b.album ?? '');
+			if (sort === 'added' || sort === 'played') return String((b as any)[sort === 'added' ? 'created' : 'lastPlayed'] ?? '').localeCompare(String((a as any)[sort === 'added' ? 'created' : 'lastPlayed'] ?? ''));
+			return a.title.localeCompare(b.title);
+		})
+	);
+
+	const visibleSongs = $derived.by(() => {
+		if (!term) return sortedSongs;
+		const exact = sortedSongs.filter((song) => searchText(song).includes(term));
+		return exact.length ? exact : sortedSongs.filter((song) => fuzzyMatch(song, term));
+	});
+
+	// ---- windowing --------------------------------------------------------------
+	// Only rows near the viewport are in the DOM; spacers stand in for the rest, so
+	// a long scroll through the library doesn't pile up thousands of rows/images.
+	const OVERSCAN = 20; // rows rendered beyond each edge of the viewport
+	const CHUNK = 10; // move the window in steps, not on every scrolled row
+	let listEl = $state<HTMLElement>();
+	let rowHeight = $state(56);
+	let windowStart = $state(0);
+	let windowEnd = $state(80);
+	// Once the window has moved, rows mounted by scrolling shouldn't replay the
+	// staggered reveal animation.
+	let scrolled = $state(false);
+	const windowSongs = $derived(visibleSongs.slice(windowStart, windowEnd));
+
+	$effect(() => {
+		const el = listEl;
+		void visibleSongs.length; // re-measure when the list grows or is filtered
+		if (!el) return;
+		const scroller = el.closest('main') ?? document.documentElement;
+		let frame = 0;
+		const update = () => {
+			frame = 0;
+			const row = el.querySelector<HTMLElement>('.row');
+			if (row?.offsetHeight) rowHeight = row.offsetHeight;
+			const top = el.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+			const first = Math.floor(-top / rowHeight);
+			const start = Math.max(0, Math.floor((first - OVERSCAN) / CHUNK) * CHUNK);
+			const end = start + Math.ceil(scroller.clientHeight / rowHeight) + 2 * OVERSCAN + CHUNK;
+			if (start !== windowStart || end !== windowEnd) {
+				if (start !== windowStart) scrolled = true;
+				windowStart = start;
+				windowEnd = end;
+			}
+		};
+		const schedule = () => (frame ||= requestAnimationFrame(update));
+		scroller.addEventListener('scroll', schedule, { passive: true });
+		addEventListener('resize', schedule);
+		untrack(update); // reads/writes window state; must not subscribe to it
+		return () => {
+			cancelAnimationFrame(frame);
+			scroller.removeEventListener('scroll', schedule);
+			removeEventListener('resize', schedule);
+		};
 	});
 
 	async function more() {
@@ -139,7 +206,19 @@ import { listOfflineTrackMetadata } from '../offline';
 			<button class="btn" disabled={!visibleSongs.length} onclick={() => player.playList(visibleSongs)}><Icon name="play" size={16} />Play</button>
 			<button class="btn" disabled={!visibleSongs.length} onclick={shuffle}><Icon name="shuffle" size={16} />Shuffle</button>
 		</div>
-		<div class="pad"><TrackList songs={visibleSongs} {downloadedIds} /></div>
+		<div
+			class="pad"
+			class:scrolled
+			bind:this={listEl}
+			style:padding-top="{Math.min(windowStart, visibleSongs.length) * rowHeight}px"
+			style:padding-bottom="{Math.max(0, visibleSongs.length - windowEnd) * rowHeight}px"
+		>
+			<TrackList
+				songs={windowSongs}
+				{downloadedIds}
+				onplay={(i) => player.playList(visibleSongs, windowStart + i)}
+			/>
+		</div>
 		{#if !done}<Sentinel onvisible={more} {loading} />{/if}
 	{/if}
 </div>
@@ -147,6 +226,9 @@ import { listOfflineTrackMetadata } from '../offline';
 <style>
 	.bar {
 		margin-bottom: 16px;
+	}
+	.scrolled :global(.tracks > .row) {
+		animation: none;
 	}
 	.head { display: flex; align-items: center; gap: 12px; padding: 0 var(--gutter); margin-bottom: 8px; }
 	.back { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 14px; }

@@ -8,6 +8,7 @@
 		type ScanStatus,
 		type ServerInfo,
 	} from "../api";
+	import { build, buildLabel } from "../build";
 	import Avatar from "../components/Avatar.svelte";
 	import Icon from "../components/Icon.svelte";
 	import { plural } from "../format";
@@ -290,6 +291,27 @@
 			case "pagehide":
 				name = "App Closed/Hidden";
 				break;
+			case "app-start":
+				name = "App Started";
+				break;
+			case "standby-ready":
+				name = "Next Track Ready (Standby)";
+				break;
+			case "handoff-early":
+				name = "Handing Over to Next Track";
+				break;
+			case "capped-end":
+				name = "Track Ended at Real Length";
+				break;
+			case "system-pause":
+				name = "Paused by System, Will Resume";
+				break;
+			case "blob-cancel":
+				name = "Next-Track Download Cancelled";
+				break;
+			case "stall-timeout":
+				name = "Stream Stalled, Retrying";
+				break;
 			case "sleep-timer-stop":
 				name = "Sleep Timer: Playback Stopped";
 				break;
@@ -340,7 +362,9 @@
 	async function copyPlaybackLog() {
 		playbackLog = readPlaybackLog();
 		try {
-			await navigator.clipboard.writeText(playbackLog.join("\n"));
+			await navigator.clipboard.writeText(
+				[`# copied from build ${buildLabel}`, ...playbackLog].join("\n"),
+			);
 			ui.showToast("Playback log copied");
 		} catch {
 			ui.showToast("Couldn’t copy — select the log below instead");
@@ -380,6 +404,10 @@
 		ui.me?.username ?? session?.username ?? "Account",
 	);
 	const isAdmin = $derived(!!ui.me?.adminRole);
+	/** Home-screen app vs browser tab: background playback differs between them. */
+	const installed =
+		matchMedia("(display-mode: standalone)").matches ||
+		(navigator as Navigator & { standalone?: boolean }).standalone === true;
 
 	let logEntriesContainer = $state<HTMLDivElement>();
 	let apiErrorLogEntriesContainer = $state<HTMLDivElement>();
@@ -480,6 +508,31 @@
 			<div>
 				<dt>Scrobbling</dt>
 				<dd>{ui.me?.scrobblingEnabled === false ? "Off" : "On"}</dd>
+			</div>
+		</dl>
+	</div>
+
+	<h3 class="group-title">App</h3>
+	<div class="group">
+		<div class="row">
+			<span class="icon-box" style="background: var(--accent);"
+				><Icon name="note" size={18} /></span
+			>
+			<div class="text">
+				<span class="label">hify</span>
+				<span class="detail"
+					>{installed ? "Installed app" : "Running in the browser"}</span
+				>
+			</div>
+		</div>
+		<dl>
+			<div>
+				<dt>Version</dt>
+				<dd>{buildLabel}</dd>
+			</div>
+			<div>
+				<dt>Built</dt>
+				<dd>{new Date(build.time).toLocaleString()}</dd>
 			</div>
 		</dl>
 	</div>

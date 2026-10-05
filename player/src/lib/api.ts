@@ -472,7 +472,17 @@ export async function startScan(): Promise<ScanStatus> {
 
 // ---- Playback ---------------------------------------------------------------
 
+/**
+ * Streamed YouTube (`yt-`) and Spotify (`st-`) tracks — see the backend's
+ * subsonic `ids.py`. They aren't library files, so they are neither scrobbled
+ * nor saved as the server play queue.
+ */
+export function isRemoteTrack(id: string | undefined): boolean {
+	return !!id && (id.startsWith('yt-') || id.startsWith('st-'));
+}
+
 export async function scrobble(id: string, submission: boolean) {
+	if (isRemoteTrack(id)) return;
 	try {
 		await call('scrobble', { id, submission, time: Date.now() });
 	} catch {
@@ -493,6 +503,7 @@ export async function getLyrics(song: Song): Promise<Lyrics | null> {
 }
 
 export async function savePlayQueue(ids: string[], current?: string, position?: number) {
+	if (isRemoteTrack(current)) return;
 	try {
 		if (ids.length) await call('savePlayQueue', { id: ids, current, position });
 	} catch {

@@ -18,6 +18,8 @@
 	let syncedQuery: string | undefined;
 
 	const effectiveQuery = $derived(dockSearch.q);
+	const SEARCH_DEBOUNCE_MS = 250;
+	let lastQuery = '';
 
 	$effect(() => {
 		// Sync URL changes without overwriting text typed into the still-mounted field.
@@ -63,10 +65,18 @@
 		// Keep showing old results while typing, but not another catalog's.
 		if (from !== shownSource) results = null;
 		shownSource = from;
-		search(q, { artist: 12, album: 20, song: 10, playlist: 10 }, 0, false, from)
-			.then((r) => mine === seq && (results = r))
-			.catch(() => mine === seq && (results = { artists: [], albums: [], songs: [], playlists: [] }))
-			.finally(() => mine === seq && (loading = false));
+		// The mobile dock writes the query on every keystroke: wait for a pause in
+		// typing instead of firing a remote search (and re-rendering) per character.
+		// Switching catalogs with the same query searches right away.
+		const delay = q === lastQuery ? 0 : SEARCH_DEBOUNCE_MS;
+		lastQuery = q;
+		const timer = setTimeout(() => {
+			search(q, { artist: 12, album: 20, song: 10, playlist: 10 }, 0, false, from)
+				.then((r) => mine === seq && (results = r))
+				.catch(() => mine === seq && (results = { artists: [], albums: [], songs: [], playlists: [] }))
+				.finally(() => mine === seq && (loading = false));
+		}, delay);
+		return () => clearTimeout(timer);
 	});
 
 	const empty = $derived(results && !results.artists.length && !results.albums.length && !results.songs.length && !results.playlists?.length);
