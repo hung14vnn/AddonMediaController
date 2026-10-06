@@ -27,11 +27,15 @@ logger = logging.getLogger(__name__)
 
 ShelfKind = Literal["artist", "album", "song"]
 
-_ARTIST_SEEDS = 3
-_ALBUM_SHELVES = 2
+_ARTIST_SEEDS = 10
 _TRACK_SEEDS = 4
 _ARTISTS_PER_SHELF = 15
-_ALBUMS_PER_SHELF = 10
+_ALBUM_SHELVES = 2
+_ALBUMS_PER_SHELF = 12
+_ALBUM_ARTISTS_PER_SEED = 8
+_TAG_ALBUMS_PER_SEED = 5
+# Last.fm tags that say nothing about the music.
+_NOISE_TAGS = {"seen live", "favorites", "favourite", "favorite", "albums i own"}
 _SONGS_PER_SHELF = 20
 
 
@@ -55,6 +59,11 @@ class Shelf:
 
 def _norm(name: str) -> str:
     return " ".join(name.casefold().split())
+
+
+def _similar_to(seeds: list[str]) -> str:
+    """Last.fm's own wording: "Similar to A", "Similar to A and B"."""
+    return "Similar to " + " and ".join(seeds[:2])
 
 
 def _round_robin(lists: list[list[Pick]], limit: int, seen: set[str]) -> list[Pick]:
@@ -85,32 +94,50 @@ async def build_recommendations(
 ) -> list[Shelf]:
     rng = random.Random(f"{username}:{(day or date.today()).isoformat()}")
 
-    recent_top, long_top, recent_tracks, loved = await asyncio.gather(
+    recent_top, long_top, recent_tracks, loved, played_albums = await asyncio.gather(
         _safe(lastfm.get_user_top_artists(username, period="1month", limit=30), []),
         _safe(lastfm.get_user_top_artists(username, period="6month", limit=100), []),
         _safe(lastfm.get_user_recent_tracks(username, limit=50), []),
         _safe(lastfm.get_user_loved_tracks(username, limit=30), []),
+        _safe(lastfm.get_user_top_albums(username, period="6month", limit=100), []),
     )
     known_artists = {_norm(a.name) for a in (*recent_top, *long_top) if a.name}
 
     shelves: list[Shelf] = []
 
     # ---- artists similar to the ones in heavy rotation ---------------------
-    pool = (recent_top or long_top)[:10]
-    seeds = rng.sample(pool, min(_ARTIST_SEEDS, len(pool)))
+    # Like Last.fm's own recommendations: similar artists of every top artist
+    # are pooled, so one liked by several of them ranks first, and its reason
+    # names the seeds that contributed most. A seed counts by its play count;
+    # a small daily jitter keeps the order from being the same every day.
+    seeds = (recent_top or long_top)[:_ARTIST_SEEDS]
     similar_lists: list[list["LastFmSimilarArtist"]] = await asyncio.gather(
         *(_safe(lastfm.get_similar_artists(s.name, s.mbid, limit=30), []) for s in seeds)
     )
-    fresh_by_seed: list[list["LastFmSimilarArtist"]] = [
-        [a for a in similar if a.name and _norm(a.name) not in known_artists]
-        for similar in similar_lists
-    ]
+    top_plays = max((s.playcount for s in seeds), default=0) or 1
+    scores: dict[str, float] = {}
+    sources: dict[str, dict[str, float]] = {}
+    found: dict[str, "LastFmSimilarArtist"] = {}
+    for rank, (seed, similar) in enumerate(zip(seeds, similar_lists)):
+        # rank fallback when Last.fm sends no play counts
+        weight = seed.playcount / top_plays if seed.playcount else 1 / (rank + 1)
+        for a in similar:
+            key = _norm(a.name)
+            if not a.name or key in known_artists:
+                continue
+            gain = (a.match or 0.1) * weight
+            scores[key] = scores.get(key, 0.0) + gain
+            sources.setdefault(key, {})[seed.name] = gain
+            found.setdefault(key, a)
+    ranked = sorted(scores, key=lambda k: scores[k] * rng.uniform(0.75, 1.25), reverse=True)
 
-    artist_lists = [
-        [Pick(a.name, a.name, f"Similar to {seed.name}") for a in fresh]
-        for seed, fresh in zip(seeds, fresh_by_seed)
+    def reason(key: str) -> str:
+        by = sources[key]
+        return _similar_to(sorted(by, key=by.__getitem__, reverse=True))
+
+    artist_picks = [
+        Pick(found[k].name, found[k].name, reason(k)) for k in ranked[:_ARTISTS_PER_SHELF]
     ]
-    artist_picks = _round_robin(artist_lists, _ARTISTS_PER_SHELF, set())
     if artist_picks:
         shelves.append(
             Shelf(
@@ -122,27 +149,65 @@ async def build_recommendations(
             )
         )
 
-    # ---- "Because You Listened to <seed>": top albums of similar artists ---
-    used_albums: set[str] = set()
-    for seed, fresh in list(zip(seeds, fresh_by_seed))[:_ALBUM_SHELVES]:
-        candidates = fresh[:_ALBUMS_PER_SHELF]
-        tops = await asyncio.gather(
-            *(_safe(lastfm.get_artist_top_albums(a.name, a.mbid, limit=2), []) for a in candidates)
+    # ---- "Because You Listened to <seed>" -------------------------------
+    # Two seeds, drawn by play count so heavy rotation comes up more often.
+    # Each shelf mixes two sources so it isn't only every similar artist's
+    # biggest hit: a random pick among each similar artist's top albums, and
+    # popular albums from the seed's own genre tags. Albums the user already
+    # plays are left out.
+    played = {_norm(f"{a.artist_name}\0{a.name}") for a in played_albums if a.name}
+    used: set[str] = set()
+
+    def fresh_album(album) -> bool:
+        key = _norm(f"{album.artist_name}\0{album.name}")
+        return bool(album.name) and album.name != "(null)" and key not in played | used
+
+    album_seeds: list[int] = []
+    weights = [max(s.playcount, 1) for s in seeds]
+    while len(album_seeds) < min(_ALBUM_SHELVES, len(seeds)):
+        i = rng.choices(range(len(seeds)), weights=weights)[0]
+        if i not in album_seeds:
+            album_seeds.append(i)
+
+    for i in album_seeds:
+        seed = seeds[i]
+        similar = [
+            a for a in similar_lists[i] if a.name and _norm(a.name) not in known_artists
+        ][:_ALBUM_ARTISTS_PER_SEED]
+        tops, info = await asyncio.gather(
+            asyncio.gather(
+                *(_safe(lastfm.get_artist_top_albums(a.name, a.mbid, limit=5), []) for a in similar)
+            ),
+            _safe(lastfm.get_artist_info(seed.name, seed.mbid), None),
         )
-        picks: list[Pick] = []
+        tags = [
+            t.name
+            for t in (info.tags or [] if info else [])
+            if t.name and t.name.casefold() not in _NOISE_TAGS
+        ][:2]
+        tag_lists = await asyncio.gather(
+            *(_safe(lastfm.get_tag_top_albums(t, limit=50), []) for t in tags)
+        )
+
+        by_similar: list[Pick] = []
         for albums in tops:
-            album = next(
-                (
-                    al
-                    for al in albums
-                    if al.name and al.name != "(null)" and _norm(al.name) not in used_albums
-                ),
-                None,
-            )
-            if album is None:
-                continue
-            used_albums.add(_norm(album.name))
-            picks.append(Pick(album.name, album.artist_name, f"Similar to {seed.name}"))
+            choices = [al for al in albums if fresh_album(al)][:3]
+            if choices:
+                al = rng.choice(choices)
+                used.add(_norm(f"{al.artist_name}\0{al.name}"))
+                by_similar.append(Pick(al.name, al.artist_name, f"Similar to {seed.name}"))
+        by_tag: list[Pick] = []
+        for tag, albums in zip(tags, tag_lists):
+            pool = [
+                al
+                for al in albums
+                if fresh_album(al) and _norm(al.artist_name) not in known_artists
+            ]
+            for al in rng.sample(pool, min(_TAG_ALBUMS_PER_SEED, len(pool))):
+                used.add(_norm(f"{al.artist_name}\0{al.name}"))
+                by_tag.append(Pick(al.name, al.artist_name, f"Popular in {tag}"))
+
+        picks = _round_robin([by_similar, by_tag], _ALBUMS_PER_SHELF, set())
         if picks:
             shelves.append(
                 Shelf(
@@ -200,55 +265,67 @@ async def build_recommendations(
     return shelves
 
 
-_WEEKLY_PER_SHELF = 15
+_MIX_SIZE = 25
+_MIX_FAVORITES = 8
+_MIX_SEEDS = 6
 
 
-def _plays(count: int) -> str:
-    return f"{count} play{'' if count == 1 else 's'} this week"
+def mix_week(day: date | None = None) -> str:
+    """ISO week the mix belongs to; a new mix starts every Monday."""
+    year, week, _ = (day or date.today()).isocalendar()
+    return f"{year}-W{week:02d}"
 
 
-async def build_weekly_charts(lastfm: "LastFmRepository", username: str) -> list[Shelf]:
-    """The user's Last.fm chart for the latest finished week: top songs, albums
-    and artists, each with its play count as the reason."""
-    tracks, albums, artists = await asyncio.gather(
-        _safe(lastfm.get_user_weekly_track_chart(username), []),
-        _safe(lastfm.get_user_weekly_album_chart(username), []),
-        _safe(lastfm.get_user_weekly_artist_chart(username), []),
+async def build_weekly_mix(
+    lastfm: "LastFmRepository", username: str, *, day: date | None = None
+) -> list[Shelf]:
+    """"Your Weekly Mix": songs on repeat lately mixed with songs similar to
+    them, about two new ones for each familiar one. Seeded by ISO week, so it
+    holds for the week and changes on Monday."""
+    rng = random.Random(f"{username}:mix:{mix_week(day)}")
+    top, recent = await asyncio.gather(
+        _safe(lastfm.get_user_top_tracks(username, period="1month", limit=50), []),
+        _safe(lastfm.get_user_recent_tracks(username, limit=50), []),
     )
-    subtitle = "Your Last.fm weekly chart"
-    shelves = [
-        Shelf(
-            key="weekly:songs",
-            kind="song",
-            title="Your Top Songs This Week",
-            subtitle=subtitle,
-            picks=[
-                Pick(t.name, t.artist_name, _plays(t.playcount))
-                for t in tracks[:_WEEKLY_PER_SHELF]
-                if t.name and t.artist_name
-            ],
-        ),
-        Shelf(
-            key="weekly:albums",
-            kind="album",
-            title="Your Top Albums This Week",
-            subtitle=subtitle,
-            picks=[
-                Pick(a.name, a.artist_name, _plays(a.playcount))
-                for a in albums[:_WEEKLY_PER_SHELF]
-                if a.name and a.artist_name
-            ],
-        ),
-        Shelf(
-            key="weekly:artists",
-            kind="artist",
-            title="Your Top Artists This Week",
-            subtitle=subtitle,
-            picks=[
-                Pick(a.name, a.name, _plays(a.playcount))
-                for a in artists[:_WEEKLY_PER_SHELF]
-                if a.name
-            ],
-        ),
+    top = [t for t in top if t.name and t.artist_name]
+    if not top:
+        return []
+    heard = {_norm(f"{t.artist_name}\0{t.name}") for t in top} | {
+        _norm(f"{t.artist_name}\0{t.track_name}") for t in recent
+    }
+
+    seeds = rng.sample(top[:20], min(_MIX_SEEDS, len(top[:20])))
+    similar = await asyncio.gather(
+        *(_safe(lastfm.get_similar_tracks(t.artist_name, t.name, limit=20), []) for t in seeds)
+    )
+    new_lists = [
+        [
+            Pick(s.name, s.artist_name, f"Because you played {seed.name}")
+            for s in rng.sample(found, len(found))
+            if s.name and s.artist_name and _norm(f"{s.artist_name}\0{s.name}") not in heard
+        ]
+        for seed, found in zip(seeds, similar)
     ]
-    return [s for s in shelves if s.picks]
+    seen: set[str] = set()
+    discoveries = _round_robin(new_lists, _MIX_SIZE - _MIX_FAVORITES, seen)
+    favorites = [
+        Pick(t.name, t.artist_name, "On repeat lately")
+        for t in rng.sample(top[:30], min(_MIX_FAVORITES, len(top[:30])))
+    ]
+
+    # Two new songs, then a familiar one.
+    picks: list[Pick] = []
+    while discoveries or favorites:
+        picks.extend(discoveries[:2])
+        del discoveries[:2]
+        if favorites:
+            picks.append(favorites.pop(0))
+    return [
+        Shelf(
+            key="weekly:mix",
+            kind="song",
+            title="Your Weekly Mix",
+            subtitle="Updated every Monday",
+            picks=picks[:_MIX_SIZE],
+        )
+    ]

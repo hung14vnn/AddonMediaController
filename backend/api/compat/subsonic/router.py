@@ -3445,6 +3445,8 @@ _LASTFM_RESOLVE_CONCURRENCY = 6
 _LASTFM_RECS: dict[str, tuple[float, str, dict]] = {}
 _LASTFM_RECS_TTL = 3 * 60 * 60
 _LASTFM_RECS_INFLIGHT: dict[str, asyncio.Task] = {}
+# user id -> (ISO week, weekly mix shelves)
+_LASTFM_WEEKLY_MIX: dict[str, tuple[str, list]] = {}
 
 
 def _loose(value: str | None) -> str:
@@ -3520,7 +3522,8 @@ async def _build_lastfm_recommendations(c: Ctx) -> dict:
     from services.compat.lastfm_recommendations import (
         Pick,
         build_recommendations,
-        build_weekly_charts,
+        build_weekly_mix,
+        mix_week,
     )
 
     factory = _provider(c, get_per_user_client_factory)
@@ -3529,11 +3532,21 @@ async def _build_lastfm_recommendations(c: Ctx) -> dict:
     if lastfm is None or not username:
         return {"linked": False, "shelf": []}
 
-    picks, weekly = await asyncio.gather(
-        build_recommendations(lastfm, username),
-        build_weekly_charts(lastfm, username),
-    )
-    shelves = [*picks, *weekly]
+    # The weekly mix is kept for its whole week: Last.fm's top tracks move
+    # during the week and a mix shouldn't reshuffle every few hours.
+    week = mix_week()
+    kept = _LASTFM_WEEKLY_MIX.get(c.user.id)
+    if kept and kept[0] == week:
+        picks = await build_recommendations(lastfm, username)
+        mix = kept[1]
+    else:
+        picks, mix = await asyncio.gather(
+            build_recommendations(lastfm, username),
+            build_weekly_mix(lastfm, username),
+        )
+        if mix:
+            _LASTFM_WEEKLY_MIX[c.user.id] = (week, mix)
+    shelves = [*mix, *picks]
     gate = asyncio.Semaphore(_LASTFM_RESOLVE_CONCURRENCY)
     resolved = await asyncio.gather(
         *(
@@ -3598,9 +3611,9 @@ async def _build_lastfm_recommendations(c: Ctx) -> dict:
 
 @endpoint("getLastfmRecommendations")
 async def _get_lastfm_recommendations(c: Ctx) -> Response:
-    """Personal shelves from the user's Last.fm history - recommendations and
-    the weekly chart. Each item carries a ``reason`` (e.g. "Similar to
-    Radiohead", "12 plays this week"). A cold build costs one catalog
+    """Personal shelves from the user's Last.fm history - "Your Weekly Mix"
+    and recommendations. Each item carries a ``reason`` (e.g. "Similar to
+    Radiohead", "On repeat lately"). A cold build costs one catalog
     search per pick, so results are kept per user for a few hours (``refresh``
     forces a rebuild) and concurrent requests share one build."""
     user_id = c.user.id

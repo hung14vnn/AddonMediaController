@@ -154,17 +154,8 @@
 					{/each}
 				</Shelf>
 			{:else}
-				<!-- Play counts matter on the weekly chart; elsewhere the title says why. -->
-				{@const counts = shelf.key.startsWith("weekly:")}
 				<Shelf title={shelf.title} subtitle={shelf.subtitle}>
-					{#each shelf.album as album (album.id)}
-						{#if counts && album.reason}
-							<div class="reasoned album">
-								<AlbumCard {album} />
-								<span class="reason">{album.reason}</span>
-							</div>
-						{:else}<AlbumCard {album} />{/if}
-					{/each}
+					{#each shelf.album as album (album.id)}<AlbumCard {album} />{/each}
 				</Shelf>
 			{/if}
 		{/each}
@@ -282,19 +273,14 @@
 		color: var(--text-2);
 	}
 	/* Apple Music-style caption under a recommended artist: why it's there. */
+	/* stretch, not center: the card must fill the column or its artwork shrinks
+	   to the width of the name below it */
 	.reasoned {
 		display: flex;
 		flex-direction: column;
-		align-items: center;
+		align-items: stretch;
 		gap: 2px;
 		min-width: 0;
-	}
-	.reasoned.album {
-		align-items: stretch;
-	}
-	.reasoned.album .reason {
-		text-align: left;
-		margin-top: -2px;
 	}
 	.reason {
 		max-width: 100%;
