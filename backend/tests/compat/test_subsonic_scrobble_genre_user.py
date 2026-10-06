@@ -96,6 +96,57 @@ async def test_scrobble_rejects_malformed_timestamp(compat_env, timestamp):
     assert body["error"]["code"] == 10
 
 
+async def test_scrobble_spotify_track_uses_listed_metadata(compat_env):
+    from api.compat.subsonic import router as subsonic_router
+
+    subsonic_router._spotapi_to_child(
+        {
+            "id": "sp1",
+            "name": "Remote Song",
+            "artists": [{"id": "a1", "name": "Lead"}, {"id": "a2", "name": "Guest"}],
+            "album": {"id": "al1", "name": "Remote Album"},
+            "duration_ms": 201_000,
+        }
+    )
+    body = _sub(_get(compat_env, "scrobble", id="st-sp1", submission="true", c="hify"))
+    assert body["status"] == "ok"
+    rows = _play_rows(compat_env)
+    assert len(rows) == 1
+    assert rows[0]["track_name"] == "Remote Song"
+    assert rows[0]["artist_name"] == "Lead"
+    assert rows[0]["album_name"] == "Remote Album"
+
+
+async def test_scrobble_ytmusic_track_sends_primary_artist_and_no_radio_album(compat_env):
+    from api.compat.subsonic import router as subsonic_router
+
+    subsonic_router._ytmusic_to_child(
+        {
+            "videoId": "vid1",
+            "title": "Radio Song",
+            "artists": [{"name": "Main"}, {"name": "Feat"}],
+            "length": "3:30",
+        }
+    )
+    _sub(_get(compat_env, "scrobble", id="yt-vid1", submission="true", c="hify"))
+    rows = _play_rows(compat_env)
+    assert len(rows) == 1
+    assert rows[0]["artist_name"] == "Main"
+    assert rows[0]["album_name"] in ("", None)
+
+
+async def test_scrobble_unresolvable_remote_track_is_skipped(compat_env, monkeypatch):
+    from api.compat.subsonic import router as subsonic_router
+
+    async def fail(*_a, **_k):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(subsonic_router, "_lookup_remote_track_meta", fail)
+    body = _sub(_get(compat_env, "scrobble", id="st-unknown", submission="true"))
+    assert body["status"] == "ok"
+    assert _play_rows(compat_env) == []
+
+
 async def test_get_now_playing_lists_compat_session(compat_env):
     # a submission=false scrobble registers presence; getNowPlaying serves it
     # as a full Child with session attribution (issue #159)

@@ -592,6 +592,34 @@ class LastFmRepository:
         await self._cache.set(cache_key, albums, ttl_seconds=LASTFM_USER_CACHE_TTL)
         return albums
 
+    async def get_user_weekly_track_chart(self, username: str) -> list[LastFmTrack]:
+        cache_key = f"{LFM_PREFIX}user_weekly_tracks:{username}"
+        cached = await self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+        data = await self._request(
+            "user.getWeeklyTrackChart",
+            params={"user": username},
+            signed=self._can_sign,
+        )
+        tracks = []
+        for item in data.get("weeklytrackchart", {}).get("track", []):
+            # chart rows name the artist as {"#text": ...}, not {"name": ...}
+            artist = item.get("artist", {})
+            tracks.append(
+                LastFmTrack(
+                    name=item.get("name", ""),
+                    artist_name=(
+                        artist.get("#text", "") if isinstance(artist, dict) else str(artist)
+                    ),
+                    mbid=item.get("mbid") or None,
+                    playcount=int(item.get("playcount") or 0),
+                    url=item.get("url", ""),
+                )
+            )
+        await self._cache.set(cache_key, tracks, ttl_seconds=LASTFM_USER_CACHE_TTL)
+        return tracks
+
     async def get_artist_top_tracks(
         self, artist: str, mbid: str | None = None, limit: int = 10
     ) -> list[LastFmTrack]:
@@ -703,6 +731,32 @@ class LastFmRepository:
         ]
         await self._cache.set(cache_key, similar, ttl_seconds=LASTFM_ENTITY_CACHE_TTL)
         return similar
+
+    async def get_similar_tracks(
+        self, artist: str, track: str, limit: int = 20
+    ) -> list[LastFmTrack]:
+        cache_key = f"{LFM_PREFIX}similar_tracks:{artist}:{track}:{limit}"
+        cached = await self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            data = await self._request(
+                "track.getSimilar",
+                params={
+                    "artist": artist,
+                    "track": track,
+                    "limit": str(limit),
+                    "autocorrect": "1",
+                },
+            )
+        except ResourceNotFoundError:
+            return []
+        tracks = [
+            parse_top_track(item)
+            for item in data.get("similartracks", {}).get("track", [])
+        ]
+        await self._cache.set(cache_key, tracks, ttl_seconds=LASTFM_ENTITY_CACHE_TTL)
+        return tracks
 
     async def get_global_top_artists(self, limit: int = 50) -> list[LastFmArtist]:
         cache_key = f"{LFM_PREFIX}global_top_artists:{limit}"

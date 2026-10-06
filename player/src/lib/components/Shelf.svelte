@@ -5,12 +5,15 @@
 
 	let {
 		title,
+		subtitle,
 		seeAll,
 		size = 'md',
 		onRefresh,
 		children
 	}: {
 		title: string;
+		/** Small line under the title, e.g. why a shelf is recommended. */
+		subtitle?: string;
 		seeAll?: string;
 		size?: 'sm' | 'md' | 'lg' | 'artist';
 		onRefresh?: () => void;
@@ -54,18 +57,21 @@
 
 <section class="shelf">
 	<header>
-		{#if seeAll}
-			<a class="title" href={seeAll}>{title}<Icon name="chevronRight" size={18} /></a>
-		{:else}
-			<h2 class="title">
-				{title}
-				{#if onRefresh}
-					<button class="refresh-btn" aria-label="Refresh" onclick={onRefresh}>
-						<Icon name="refresh" size={18} />
-					</button>
-				{/if}
-			</h2>
-		{/if}
+		<div class="heading">
+			{#if seeAll}
+				<a class="title" href={seeAll}>{title}<Icon name="chevronRight" size={18} /></a>
+			{:else}
+				<h2 class="title">
+					{title}
+					{#if onRefresh}
+						<button class="refresh-btn" aria-label="Refresh" onclick={onRefresh}>
+							<Icon name="refresh" size={18} />
+						</button>
+					{/if}
+				</h2>
+			{/if}
+			{#if subtitle}<p class="subtitle">{subtitle}</p>{/if}
+		</div>
 		<div class="nav">
 			<button aria-label="Scroll left" disabled={atStart} onclick={() => page(-1)}>
 				<Icon name="chevronLeft" size={18} />
@@ -103,6 +109,19 @@
 		letter-spacing: -0.01em;
 		color: var(--text);
 		margin: 0;
+	}
+
+	.heading {
+		min-width: 0;
+	}
+
+	.subtitle {
+		margin: 2px 0 0;
+		font-size: 13px;
+		color: var(--text-2);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	a.title :global(svg) {

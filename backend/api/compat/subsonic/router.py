@@ -468,6 +468,92 @@ async def _stream_spotify_track(c: Ctx, track_id: str, stream_fmt: str) -> Respo
     )
 
 
+# Subsonic id of a streamed provider track (``yt-``/``st-``) -> what a scrobble
+# needs: (title, primary artist, album, duration seconds). The mappers record it
+# as songs are listed, so scrobbling a track the player got from this server
+# costs no provider lookup. Bounded; oldest entries go first.
+_REMOTE_TRACK_META: dict[str, tuple[str, str, str, int]] = {}
+_REMOTE_TRACK_META_MAX = 8192
+_REMOTE_SCROBBLE_KINDS = ("ytmusic", "spotify_track")
+# YouTube Music's own fallback album name for radio tracks; not a real album.
+_YTMUSIC_RADIO_ALBUM = "hify Discovery Radio"
+
+
+def _remember_remote_track(
+    sid: str, title: str, artist: str, album: str, duration: int | None
+) -> None:
+    if not title or not artist:
+        return
+    if sid not in _REMOTE_TRACK_META and len(_REMOTE_TRACK_META) >= _REMOTE_TRACK_META_MAX:
+        _REMOTE_TRACK_META.pop(next(iter(_REMOTE_TRACK_META)))
+    _REMOTE_TRACK_META[sid] = (title, artist, album, int(duration or 0))
+
+
+async def _lookup_remote_track_meta(
+    c: Ctx, kind: str, internal: str
+) -> tuple[str, str, str, int]:
+    """Provider lookup for a streamed track the mappers have not seen (e.g. a
+    queue restored after a restart)."""
+    if kind == "spotify_track":
+        from services.spotapi_client import SpotApiClient
+
+        st = await SpotApiClient().get_track(internal)
+        artists = st.get("artists") or []
+        return (
+            str(st.get("name") or ""),
+            str(artists[0].get("name") or "") if artists else "",
+            str((st.get("album") or {}).get("name") or ""),
+            int((st.get("duration_ms") or 0) / 1000),
+        )
+    ytmusic = c.services.ytmusic_stream
+    if not ytmusic:
+        raise SubsonicError(70, "YouTube Music is disabled")
+
+    def _fetch():
+        from ytmusicapi import YTMusic
+
+        yt = getattr(ytmusic, "_yt_client", None) or YTMusic()
+        return yt.get_song(internal)
+
+    song = await ytmusic._run_blocking(_fetch, what="ytmusic song")
+    details = (song or {}).get("videoDetails") or {}
+    # Auto-generated "Artist - Topic" channels name the artist with a suffix.
+    artist = str(details.get("author") or "").removesuffix(" - Topic")
+    length = str(details.get("lengthSeconds") or "")
+    return (
+        str(details.get("title") or ""),
+        artist,
+        "",
+        int(length) if length.isdigit() else 0,
+    )
+
+
+async def _remote_scrobble_track(c: Ctx, sid: str, kind: str, internal: str):
+    """A ``ViewTrack`` for scrobbling a streamed provider track, or None when
+    the provider can't name it. ``file_id`` stays empty: it is not a library file."""
+    from services.compat.view_models import ViewTrack
+
+    meta = _REMOTE_TRACK_META.get(sid)
+    if meta is None:
+        try:
+            meta = await _lookup_remote_track_meta(c, kind, internal)
+        except Exception as e:  # noqa: BLE001 - a scrobble is best-effort
+            logger.warning("No scrobble metadata for %s: %s", sid, e)
+            return None
+        _remember_remote_track(sid, *meta)
+    title, artist, album, duration = meta
+    if not title or not artist:
+        return None
+    return ViewTrack(
+        file_id="",
+        title=title,
+        album_title="" if album == _YTMUSIC_RADIO_ALBUM else album,
+        artist_name=artist,
+        duration_seconds=float(duration),
+        cover_url=_PROVIDER_COVER_URLS.get(f"{kind}:{internal}") or None,
+    )
+
+
 # "<kind>:<provider id>" -> artwork URL ("" when the provider has none).
 # Search, album and radio responses already carry artwork URLs; the mappers
 # record them here so getCoverArt can serve every row a client renders without
@@ -1181,6 +1267,10 @@ def _spotapi_to_child(st: dict) -> m.SChild:
     cover = _largest_image_url(album.get("images"))
     _remember_cover("spotify_album", album.get("id"), cover)
     _remember_cover("spotify_track", st["id"], cover)
+    _remember_remote_track(
+        tid, str(st.get("name") or ""), artist_name if st.get("artists") else "",
+        str(album.get("name") or ""), duration,
+    )
     return m.SChild(
         id=tid, isDir=False, title=st.get("name", "Unknown Track"),
         album=album_name, artist=artist_name, parent=alid, albumId=alid,
@@ -2322,24 +2412,40 @@ async def _scrobble(c: Ctx) -> Response:
     ]
     submission = c.pbool("submission", True)
     client = c.p("c")
+
+    async def target(sid: str):
+        """(adapter file id, pre-resolved track or None for a library file), or
+        None to skip. Streamed YouTube Music and Spotify tracks are not library
+        files, so their metadata comes from the provider."""
+        kind, internal = decode(sid)
+        if kind not in _REMOTE_SCROBBLE_KINDS:
+            return _decode_expect(sid, "track"), None
+        track = await _remote_scrobble_track(c, sid, kind, internal)
+        return (sid, track) if track is not None else None
+
     if not submission:
-        fid = _decode_expect(ids[0], "track")
-        await c.services.scrobble.now_playing(
-            fid,
-            user_id=c.user.id,
-            client=client,
-            user_name=getattr(c.user, "display_name", ""),
-        )
+        resolved = await target(ids[0])
+        if resolved is not None:
+            await c.services.scrobble.now_playing(
+                resolved[0],
+                user_id=c.user.id,
+                client=client,
+                user_name=getattr(c.user, "display_name", ""),
+                track=resolved[1],
+            )
         return c.render(None, None)
     for i, sid in enumerate(ids):
-        fid = _decode_expect(sid, "track")
+        resolved = await target(sid)
+        if resolved is None:
+            continue
         played_at = timestamps[i] / 1000.0 if timestamps else None
         await c.services.scrobble.scrobble(
-            fid,
+            resolved[0],
             user_id=c.user.id,
             client=client,
             played_at=played_at,
             user_name=getattr(c.user, "display_name", ""),
+            track=resolved[1],
         )
     return c.render(None, None)
 
@@ -2797,7 +2903,12 @@ def _ytmusic_to_child(t: dict) -> m.SChild | None:
     album = t.get("album") or {}
     if not isinstance(album, dict):
         album = {}
-    album_name = album.get("name") or "hify Discovery Radio"
+    album_name = album.get("name") or _YTMUSIC_RADIO_ALBUM
+    # Last.fm wants the primary artist alone, not the joined credit line.
+    _remember_remote_track(
+        tid, str(t.get("title") or ""), str(artists[0]) if artists else "",
+        str(album.get("name") or ""), _parse_length(t),
+    )
     # Radio tracks are not in any saved playlist, so getCoverArt has no stored
     # artwork for them; keep the one YouTube Music sent with the track.
     _remember_cover(
@@ -3282,3 +3393,240 @@ async def _get_trending_playlists(c: Ctx) -> Response:
         _TRENDING_PLAYLISTS_CACHE = (time.monotonic(), playlists)
         
     return c.render("playlists", {"playlist": playlists})
+
+
+# ---- Last.fm (Hify extension) ----------------------------------------------
+# Lets the player show the Last.fm link state, toggle scrobbling and show
+# personal recommendations. Linking itself stays in the web UI.
+
+
+async def _lastfm_status(c: Ctx) -> dict:
+    from core.dependencies import (
+        get_per_user_client_factory,
+        get_user_listening_prefs_store,
+    )
+
+    lf = c.services.preferences.get_lastfm_connection()
+    factory = _provider(c, get_per_user_client_factory)
+    prefs = await _provider(c, get_user_listening_prefs_store).get(c.user.id)
+    linked = await factory.is_lastfm_linked(c.user.id)
+    return {
+        # the administrator registered a Last.fm app (api key + secret)
+        "available": bool(lf.api_key and lf.shared_secret),
+        "linked": linked,
+        "username": (await factory.resolve_lastfm_username(c.user.id)) if linked else None,
+        "scrobbling": bool(prefs.scrobble_to_lastfm),
+    }
+
+
+@endpoint("getLastfmStatus")
+async def _get_lastfm_status(c: Ctx) -> Response:
+    return c.render("lastfm", await _lastfm_status(c))
+
+
+@endpoint("setLastfmScrobbling")
+async def _set_lastfm_scrobbling(c: Ctx) -> Response:
+    from core.dependencies import get_user_listening_prefs_store
+
+    await _provider(c, get_user_listening_prefs_store).upsert(
+        c.user.id, scrobble_to_lastfm=c.pbool("enabled", True)
+    )
+    return c.render("lastfm", await _lastfm_status(c))
+
+
+# Names from Last.fm resolve to YouTube Music catalog items (playable, with
+# artwork; Last.fm's own images are blank placeholders). Shared across users:
+# (kind, artist, name) -> (resolved_at, raw ytmusicapi result or None).
+_LASTFM_RESOLVED: dict[tuple[str, str, str], tuple[float, dict | None]] = {}
+_LASTFM_RESOLVED_MAX = 4096
+_LASTFM_RESOLVED_TTL = 24 * 60 * 60
+_LASTFM_RESOLVE_CONCURRENCY = 6
+# user id -> (built_at, day, payload). Seeds rotate daily, so a new day rebuilds.
+_LASTFM_RECS: dict[str, tuple[float, str, dict]] = {}
+_LASTFM_RECS_TTL = 3 * 60 * 60
+_LASTFM_RECS_INFLIGHT: dict[str, asyncio.Task] = {}
+
+
+def _loose(value: str | None) -> str:
+    decomposed = unicodedata.normalize("NFKD", value or "")
+    return "".join(ch for ch in decomposed.casefold() if ch.isalnum())
+
+
+def _ytmusic_artist_names(r: dict) -> list[str]:
+    return [
+        str(a.get("name"))
+        for a in r.get("artists") or []
+        if isinstance(a, dict) and a.get("name")
+    ]
+
+
+def _pick_ytmusic_match(kind: str, name: str, artist: str, results: list) -> dict | None:
+    """The result naming the same thing, or None: a wrong pick is worse than a gap."""
+    want_name, want_artist = _loose(name), _loose(artist)
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        if kind == "artist":
+            if r.get("browseId") and _loose(_ytmusic_artist_name(r)) == want_name:
+                return r
+            continue
+        if not (r.get("browseId") if kind == "album" else r.get("videoId")):
+            continue
+        if want_artist not in {_loose(a) for a in _ytmusic_artist_names(r)}:
+            continue
+        title = _loose(r.get("title"))
+        if title and (want_name in title or title in want_name):
+            return r
+    return None
+
+
+async def _resolve_on_ytmusic(
+    c: Ctx, kind: str, name: str, artist: str, gate: asyncio.Semaphore
+) -> dict | None:
+    key = (kind, _loose(artist), _loose(name))
+    hit = _LASTFM_RESOLVED.get(key)
+    if hit and time.monotonic() - hit[0] < _LASTFM_RESOLVED_TTL:
+        return hit[1]
+    ytmusic = c.services.ytmusic_stream
+    if not ytmusic:
+        return None
+    query = name if kind == "artist" else f"{artist} {name}"
+    search_filter = {"artist": "artists", "album": "albums", "song": "songs"}[kind]
+
+    def _fetch():
+        from ytmusicapi import YTMusic
+
+        yt = getattr(ytmusic, "_yt_client", None) or YTMusic()
+        return yt.search(query, filter=search_filter, limit=5)
+
+    async with gate:
+        try:
+            results = await asyncio.wait_for(
+                ytmusic._run_blocking(_fetch, what="search"),
+                timeout=_YTMUSIC_SEARCH_TIMEOUT_S,
+            )
+        except Exception as e:  # noqa: BLE001 - leave a gap; don't cache the miss
+            logger.debug("YTMusic lookup for %s %r failed: %s", kind, query, e)
+            return None
+    match = _pick_ytmusic_match(kind, name, artist, results or [])
+    if key not in _LASTFM_RESOLVED and len(_LASTFM_RESOLVED) >= _LASTFM_RESOLVED_MAX:
+        _LASTFM_RESOLVED.pop(next(iter(_LASTFM_RESOLVED)))
+    _LASTFM_RESOLVED[key] = (time.monotonic(), match)
+    return match
+
+
+async def _build_lastfm_recommendations(c: Ctx) -> dict:
+    from core.dependencies import get_per_user_client_factory
+    from services.compat.lastfm_recommendations import (
+        Pick,
+        build_recommendations,
+        build_weekly_charts,
+    )
+
+    factory = _provider(c, get_per_user_client_factory)
+    lastfm = await factory.resolve_lastfm(c.user.id)
+    username = await factory.resolve_lastfm_username(c.user.id)
+    if lastfm is None or not username:
+        return {"linked": False, "shelf": []}
+
+    picks, weekly = await asyncio.gather(
+        build_recommendations(lastfm, username),
+        build_weekly_charts(lastfm, username),
+    )
+    shelves = [*picks, *weekly]
+    gate = asyncio.Semaphore(_LASTFM_RESOLVE_CONCURRENCY)
+    resolved = await asyncio.gather(
+        *(
+            asyncio.gather(
+                *(_resolve_on_ytmusic(c, s.kind, p.name, p.artist, gate) for p in s.picks)
+            )
+            for s in shelves
+        )
+    )
+
+    library_matches: dict[str, dict[tuple[str, str], m.SChild]] = {}
+    out: list[dict] = []
+    for shelf, raws in zip(shelves, resolved):
+        items: list[tuple[object, Pick]] = []
+        seen: set[str] = set()
+        for pick, raw in zip(shelf.picks, raws):
+            if raw is None:
+                continue
+            if shelf.kind == "artist":
+                item: object | None = _ytmusic_to_artist_id3(raw)
+            elif shelf.kind == "album":
+                item = _ytmusic_to_album_id3(raw)
+            else:
+                item = _ytmusic_to_child(raw)
+            if item is None or item.id in seen:
+                continue
+            seen.add(item.id)
+            items.append((item, pick))
+        if shelf.kind == "song":
+            # An owned copy plays from the library instead of a YouTube stream.
+            # Matched on Last.fm's artist (like getTopSongs' query), not
+            # YouTube's joined "A, B" credit, once per artist across shelves.
+            matched: list[tuple[object, Pick]] = []
+            for song, pick in items:
+                probe = msgspec.structs.replace(song, artist=pick.artist or song.artist)
+                owned = (
+                    await _replace_remote_songs_with_library(
+                        c,
+                        [probe],
+                        query=pick.artist or song.title,
+                        matches_cache=library_matches,
+                    )
+                )[0]
+                matched.append((song if owned is probe else owned, pick))
+            items = matched
+        if len(items) < 3:  # a shelf of one or two looks broken
+            continue
+        out.append(
+            {
+                "key": shelf.key,
+                "kind": shelf.kind,
+                "title": shelf.title,
+                "subtitle": shelf.subtitle,
+                shelf.kind: [
+                    {**msgspec.to_builtins(item), "reason": pick.reason}
+                    for item, pick in items
+                ],
+            }
+        )
+    return {"linked": True, "username": username, "shelf": out}
+
+
+@endpoint("getLastfmRecommendations")
+async def _get_lastfm_recommendations(c: Ctx) -> Response:
+    """Personal shelves from the user's Last.fm history - recommendations and
+    the weekly chart. Each item carries a ``reason`` (e.g. "Similar to
+    Radiohead", "12 plays this week"). A cold build costs one catalog
+    search per pick, so results are kept per user for a few hours (``refresh``
+    forces a rebuild) and concurrent requests share one build."""
+    user_id = c.user.id
+    today = time.strftime("%Y-%m-%d")
+    hit = _LASTFM_RECS.get(user_id)
+    if (
+        not c.pbool("refresh", False)
+        and hit
+        and hit[1] == today
+        and time.monotonic() - hit[0] < _LASTFM_RECS_TTL
+    ):
+        return c.render("lastfmRecommendations", hit[2])
+
+    task = _LASTFM_RECS_INFLIGHT.get(user_id)
+    if task is None:
+        task = asyncio.create_task(_build_lastfm_recommendations(c))
+        _LASTFM_RECS_INFLIGHT[user_id] = task
+        task.add_done_callback(lambda _t: _LASTFM_RECS_INFLIGHT.pop(user_id, None))
+    try:
+        # shielded: a client giving up must not cancel the build others share
+        payload = await asyncio.shield(task)
+    except Exception as exc:  # noqa: BLE001 - Last.fm outage: keep the last shelves
+        logger.warning("Last.fm recommendations failed for %s: %s", user_id, exc)
+        if hit:
+            return c.render("lastfmRecommendations", hit[2])
+        raise SubsonicError(0, "Couldn't load Last.fm recommendations") from exc
+    if payload.get("shelf"):
+        _LASTFM_RECS[user_id] = (time.monotonic(), today, payload)
+    return c.render("lastfmRecommendations", payload)

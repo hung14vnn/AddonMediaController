@@ -662,19 +662,53 @@ export async function requestSpotifyDownload(
 	return r.spotifyDownload;
 }
 
+// ---- Last.fm (Hify extension) -----------------------------------------------
+
+export interface LastfmStatus {
+	/** The server has a Last.fm app registered; without it nobody can link. */
+	available: boolean;
+	linked: boolean;
+	username?: string;
+	/** Plays are sent to Last.fm. */
+	scrobbling: boolean;
+}
+
+export async function getLastfmStatus(): Promise<LastfmStatus> {
+	const r = await call('getLastfmStatus');
+	return r.lastfm as LastfmStatus;
+}
+
+export async function setLastfmScrobbling(enabled: boolean): Promise<LastfmStatus> {
+	const r = await call('setLastfmScrobbling', { enabled });
+	return r.lastfm as LastfmStatus;
+}
+
+/** Why an item is recommended, e.g. "Similar to Radiohead". */
+type Reasoned<T> = T & { reason?: string };
+
+export type LastfmShelf = { key: string; title: string; subtitle?: string } & (
+	| { kind: 'artist'; artist: Reasoned<Artist>[] }
+	| { kind: 'album'; album: Reasoned<Album>[] }
+	| { kind: 'song'; song: Reasoned<Song>[] }
+);
+
+export async function getLastfmRecommendations(refresh = false): Promise<LastfmShelf[]> {
+	const r = await call('getLastfmRecommendations', refresh ? { refresh } : {});
+	return (r.lastfmRecommendations?.shelf ?? []) as LastfmShelf[];
+}
+
 // ---- Playback ---------------------------------------------------------------
 
 /**
  * Streamed YouTube (`yt-`) and Spotify (`st-`) tracks — see the backend's
- * subsonic `ids.py`. They aren't library files, so they are neither scrobbled
- * nor saved as the server play queue.
+ * subsonic `ids.py`. They aren't library files, so they aren't saved as the
+ * server play queue. They are scrobbled: the server names them from the provider.
  */
 function isRemoteTrack(id: string | undefined): boolean {
 	return !!id && (id.startsWith('yt-') || id.startsWith('st-'));
 }
 
 export async function scrobble(id: string, submission: boolean) {
-	if (isRemoteTrack(id)) return;
 	try {
 		await call('scrobble', { id, submission, time: Date.now() });
 	} catch {

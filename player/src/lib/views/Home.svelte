@@ -3,12 +3,14 @@
 		allNow,
 		cachedNow,
 		getAlbumList,
+		getLastfmRecommendations,
 		getRandomSongs,
 		getTodaysHits,
 		getTrendingSongs,
 		optional,
 	} from "../api";
 	import AlbumCard from "../components/AlbumCard.svelte";
+	import ArtistCard from "../components/ArtistCard.svelte";
 	import ErrorState from "../components/ErrorState.svelte";
 	import Icon from "../components/Icon.svelte";
 	import ProfileButton from "../components/ProfileButton.svelte";
@@ -16,7 +18,7 @@
 	import TrackList from "../components/TrackList.svelte";
 	import { getPlayer } from "../player.svelte";
 	import type { Album, Song } from "../types";
-	import type { Maybe } from "../api";
+	import type { LastfmShelf, Maybe } from "../api";
 
 	const player = getPlayer();
 
@@ -89,6 +91,17 @@
 		optional(cachedNow("home:hits:12", () => getTodaysHits(12), { refresh: (list) => (hits = list) })),
 	);
 
+	// Personal picks from the user's Last.fm history (empty when not linked). A cold
+	// build takes the server a while, so the last copy paints first and swaps when ready.
+	let forYou = $state<Maybe<LastfmShelf[]>>(
+		optional(
+			cachedNow("home:lastfm", () => getLastfmRecommendations(), {
+				fresh: 30 * 60_000,
+				refresh: (list) => (forYou = list),
+			}),
+		),
+	);
+
 	function mobilePages(list: Song[]): Song[][] {
 		const pages: Song[][] = [];
 		for (let i = 0; i < list.length; i += 4) pages.push(list.slice(i, i + 4));
@@ -96,11 +109,14 @@
 	}
 </script>
 
-{#snippet songs(title: string, list: Song[])}
+{#snippet songs(title: string, list: Song[], subtitle?: string)}
 	{#if list.length}
 		<section class="picks">
 			<div class="picks-head">
-				<h2 class="section-title">{title}</h2>
+				<div class="picks-heading">
+					<h2 class="section-title">{title}</h2>
+					{#if subtitle}<p class="picks-subtitle">{subtitle}</p>{/if}
+				</div>
 				<button
 					class="btn secondary"
 					onclick={() => player.playList(list)}
@@ -123,6 +139,38 @@
 	{/if}
 {/snippet}
 
+{#snippet lastfm()}
+	{#await forYou then shelves}
+		{#each shelves as shelf (shelf.key)}
+			{#if shelf.kind === "song"}
+				{@render songs(shelf.title, shelf.song, shelf.subtitle)}
+			{:else if shelf.kind === "artist"}
+				<Shelf title={shelf.title} subtitle={shelf.subtitle} size="artist">
+					{#each shelf.artist as artist (artist.id)}
+						<div class="reasoned">
+							<ArtistCard {artist} />
+							{#if artist.reason}<span class="reason">{artist.reason}</span>{/if}
+						</div>
+					{/each}
+				</Shelf>
+			{:else}
+				<!-- Play counts matter on the weekly chart; elsewhere the title says why. -->
+				{@const counts = shelf.key.startsWith("weekly:")}
+				<Shelf title={shelf.title} subtitle={shelf.subtitle}>
+					{#each shelf.album as album (album.id)}
+						{#if counts && album.reason}
+							<div class="reasoned album">
+								<AlbumCard {album} />
+								<span class="reason">{album.reason}</span>
+							</div>
+						{:else}<AlbumCard {album} />{/if}
+					{/each}
+				</Shelf>
+			{/if}
+		{/each}
+	{/await}
+{/snippet}
+
 <div class="page">
 	<div class="head">
 		<h1 class="page-title">Home</h1>
@@ -141,6 +189,7 @@
 				<h3>Your library is empty</h3>
 				<p>Add music on the server and it will show up here.</p>
 			</div>
+			{@render lastfm()}
 			{#await hits then list}{@render songs("Today's Hits", list)}{/await}
 			{#await trending then list}{@render songs(
 					"Trending Songs",
@@ -154,6 +203,7 @@
 					</Shelf>
 				{/if}
 			{/await}
+			{@render lastfm()}
 			{#await trending then list}{@render songs(
 					"Trending Songs",
 					list,
@@ -222,6 +272,38 @@
 		align-items: center;
 		justify-content: space-between;
 		padding-right: var(--gutter);
+	}
+	.picks-heading {
+		min-width: 0;
+	}
+	.picks-subtitle {
+		margin: -6px var(--gutter) 10px;
+		font-size: 13px;
+		color: var(--text-2);
+	}
+	/* Apple Music-style caption under a recommended artist: why it's there. */
+	.reasoned {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 2px;
+		min-width: 0;
+	}
+	.reasoned.album {
+		align-items: stretch;
+	}
+	.reasoned.album .reason {
+		text-align: left;
+		margin-top: -2px;
+	}
+	.reason {
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 12px;
+		color: var(--text-2);
+		text-align: center;
 	}
 	.picks-head .btn {
 		min-width: 0;

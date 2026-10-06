@@ -91,6 +91,11 @@ class LastFmRepositoryProtocol(Protocol):
     ) -> list[LastFmAlbum]:
         ...
 
+    async def get_user_weekly_track_chart(
+        self, username: str
+    ) -> list[LastFmTrack]:
+        ...
+
     async def get_artist_top_tracks(
         self, artist: str, mbid: str | None = None, limit: int = 10
     ) -> list[LastFmTrack]:
@@ -118,6 +123,11 @@ class LastFmRepositoryProtocol(Protocol):
     async def get_similar_artists(
         self, artist: str, mbid: str | None = None, limit: int = 30
     ) -> list[LastFmSimilarArtist]:
+        ...
+
+    async def get_similar_tracks(
+        self, artist: str, track: str, limit: int = 20
+    ) -> list[LastFmTrack]:
         ...
 
     async def get_global_top_artists(self, limit: int = 50) -> list[LastFmArtist]:

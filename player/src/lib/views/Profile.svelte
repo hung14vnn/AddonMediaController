@@ -1,10 +1,13 @@
 <script lang="ts">
 	import {
+		getLastfmStatus,
 		getScanStatus,
 		getServerInfo,
 		getSession,
+		setLastfmScrobbling,
 		SubsonicError,
 		startScan,
+		type LastfmStatus,
 		type ScanStatus,
 		type ServerInfo,
 	} from "../api";
@@ -72,6 +75,28 @@
 
 	refreshScan();
 	$effect(() => () => clearTimeout(pollTimer));
+
+	// Last.fm is linked in the web app (Settings › Connections); here it is shown,
+	// and scrobbling can be switched on or off.
+	let lastfm = $state<LastfmStatus | null>(null);
+	let lastfmError = $state("");
+	let lastfmBusy = $state(false);
+
+	getLastfmStatus()
+		.then((s) => (lastfm = s))
+		.catch(() => (lastfmError = "Couldn’t check Last.fm"));
+
+	async function toggleScrobbling() {
+		if (!lastfm) return;
+		lastfmBusy = true;
+		try {
+			lastfm = await setLastfmScrobbling(!lastfm.scrobbling);
+		} catch {
+			ui.showToast("Couldn’t change scrobbling");
+		} finally {
+			lastfmBusy = false;
+		}
+	}
 
 	let cacheCleared = $state(false);
 	async function clearArtCache() {
@@ -430,6 +455,72 @@
 			<span class="muted host">{host}</span>
 		</div>
 	</section>
+
+	<h3 class="group-title">Last.fm</h3>
+	<div class="group">
+		{#if !lastfm}
+			<div class="row">
+				<span class="icon-box lastfm">fm</span>
+				<div class="text">
+					<span class="label">Last.fm</span>
+					<span class="detail">
+						{#if lastfmError}<span class="err">{lastfmError}</span
+							>{:else}Checking…{/if}
+					</span>
+				</div>
+			</div>
+		{:else if lastfm.linked}
+			<div class="row">
+				<span class="icon-box lastfm">fm</span>
+				<div class="text">
+					<span class="label">Connected as {lastfm.username}</span>
+					<span class="detail"
+						>Recommendations on Home are based on your Last.fm
+						listening.</span
+					>
+				</div>
+			</div>
+			<div class="row" style="border-top: 0.5px solid var(--hairline);">
+				<span class="icon-box" style="background: var(--accent);"
+					><Icon name="radio" size={18} /></span
+				>
+				<div class="text">
+					<span class="label">Scrobble Plays</span>
+					<span class="detail">
+						{lastfm.scrobbling
+							? "Songs you play here are added to Last.fm."
+							: "Off — plays here aren’t added to Last.fm."}
+					</span>
+				</div>
+				<button
+					class="btn small"
+					class:secondary={lastfm.scrobbling}
+					class:accent={!lastfm.scrobbling}
+					disabled={lastfmBusy}
+					onclick={toggleScrobbling}
+				>
+					{lastfm.scrobbling ? "Turn Off" : "Turn On"}
+				</button>
+			</div>
+		{:else}
+			<div class="warning" role="alert">
+				<span class="warning-mark" aria-hidden="true">!</span>
+				<div class="text">
+					<span class="label">Last.fm isn’t connected</span>
+					<span class="detail">
+						{#if lastfm.available}
+							Connect it in the web app (Settings › Connections)
+							to get personal recommendations on Home and
+							scrobble what you play.
+						{:else}
+							Last.fm hasn’t been set up on this server yet. Ask
+							your administrator to add a Last.fm API key.
+						{/if}
+					</span>
+				</div>
+			</div>
+		{/if}
+	</div>
 
 	<h3 class="group-title">Library</h3>
 	<div class="group">
@@ -898,6 +989,33 @@
 	.icon-box.scan {
 		background: var(--accent);
 	}
+	.icon-box.lastfm {
+		background: #d51007;
+		font-size: 13px;
+		font-weight: 700;
+		letter-spacing: -0.02em;
+	}
+	.warning {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 12px 14px;
+		background: color-mix(in srgb, #ff9500 14%, transparent);
+		box-shadow: inset 3px 0 0 #ff9500;
+	}
+	.warning-mark {
+		width: 32px;
+		height: 32px;
+		border-radius: 50%;
+		display: grid;
+		place-items: center;
+		flex-shrink: 0;
+		background: #ff9500;
+		color: #fff;
+		font-weight: 800;
+		font-size: 17px;
+	}
+
 	.icon-box.spinning :global(svg) {
 		animation: spin 1s linear infinite;
 	}

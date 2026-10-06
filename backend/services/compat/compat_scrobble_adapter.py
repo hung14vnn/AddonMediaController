@@ -53,12 +53,20 @@ class CompatScrobbleAdapter:
         )
 
     async def now_playing(
-        self, file_id: str, *, user_id: str, client: str | None, user_name: str = ""
+        self,
+        file_id: str,
+        *,
+        user_id: str,
+        client: str | None,
+        user_name: str = "",
+        track: "ViewTrack | None" = None,
     ) -> "ScrobbleResponse":
+        """*track* skips the library lookup: streamed provider tracks (YouTube
+        Music / Spotify) are resolved by the caller and carry an empty file_id."""
         self._recent_submissions.pop(
             (user_id, _norm_client(client) or "", file_id), None
         )
-        track = await self._resolve(file_id)
+        track = track or await self._resolve(file_id)
         req = NowPlayingRequest(
             track_name=track.title,
             artist_name=track.artist_name,
@@ -111,6 +119,7 @@ class CompatScrobbleAdapter:
         client: str | None,
         played_at: float | None = None,
         user_name: str = "",
+        track: "ViewTrack | None" = None,
     ) -> "ScrobbleResponse":
         source = _norm_client(client)
         dedup_key = (user_id, source or "", file_id)
@@ -119,7 +128,7 @@ class CompatScrobbleAdapter:
         if played_at is None and dedup_key in self._recent_submissions:
             await self._clear_presence(user_id, source)
             return ScrobbleResponse(accepted=True, services={})
-        track = await self._resolve(file_id)
+        track = track or await self._resolve(file_id)
         ts = int(played_at if played_at is not None else time.time())
         req = ScrobbleRequest(
             track_name=track.title,
@@ -179,12 +188,15 @@ class CompatScrobbleAdapter:
                 artist_name=track.artist_name,
                 album_name=track.album_title or None,
                 cover_url=(
-                    f"/api/v1/covers/release-group/{track.rg_mbid}" if track.rg_mbid else ""
+                    f"/api/v1/covers/release-group/{track.rg_mbid}"
+                    if track.rg_mbid
+                    else track.cover_url or ""
                 ),
                 is_paused=is_paused,
                 progress_ms=progress_ms,
                 duration_ms=round(track.duration_seconds * 1000) or None,
-                track_file_id=track.file_id,
+                # provider tracks have no library file for getNowPlaying to load
+                track_file_id=track.file_id or None,
             )
         except Exception as e:  # noqa: BLE001 - presence must never fail a play report
             logger.debug("compat presence update failed: %s", e)
