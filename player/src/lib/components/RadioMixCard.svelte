@@ -173,7 +173,8 @@
 
 <style>
 	.radio-card {
-		background: var(--surface, rgba(255, 255, 255, 0.04));
+		/* --fill has contrast in both schemes; translucent white disappears on light mode. */
+		background: var(--fill);
 		border-radius: 12px;
 		padding: 12px;
 		display: flex;
@@ -183,7 +184,7 @@
 		transition: background 0.2s;
 	}
 	.radio-card:hover {
-		background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+		background: var(--fill-strong);
 	}
 
 	.header {

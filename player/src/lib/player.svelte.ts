@@ -201,6 +201,8 @@ class Player {
 	/** What the play/pause button shows: playing, or loading towards it (with a spinner). */
 	active = $derived(this.playing || this.buffering);
 	current = $derived(this.index >= 0 ? (this.queue[this.index] ?? null) : null);
+	/** Tracks already passed in this play session, for the queue's History section. */
+	history = $derived(this.index > 0 ? this.queue.slice(0, this.index) : []);
 	upNext = $derived(this.queue.slice(this.index + 1));
 
 	private audio: HTMLAudioElement;
