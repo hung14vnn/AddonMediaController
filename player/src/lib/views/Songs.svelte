@@ -1,5 +1,5 @@
 <script lang="ts">
-import { getAllSongs, getSongsByGenre, getSession } from '../api';
+import { cachedNow, getAllSongs, getSongsByGenre, getSession } from '../api';
 	import { untrack } from 'svelte';
 	import ErrorState from '../components/ErrorState.svelte';
 	import Icon from '../components/Icon.svelte';
@@ -158,7 +158,17 @@ import { listOfflineTrackMetadata } from '../offline';
 		if (loading || done) return;
 		loading = true;
 		try {
-			const page = genre ? await getSongsByGenre(genre, PAGE, songs.length) : await getAllSongs(songs.length, PAGE);
+			const fetchPage = () => (genre ? getSongsByGenre(genre, PAGE, songs.length) : getAllSongs(songs.length, PAGE));
+			// First page from the on-device copy (synchronous on a revisit), replaced if the
+			// server's differs while the user is still on it.
+			const page = songs.length
+				? await fetchPage()
+				: await cachedNow(`songs:${genre ?? ''}`, fetchPage, {
+						fresh: 0,
+						refresh: (fresh) => {
+							if (songs.length <= PAGE) songs = [...fresh];
+						}
+					});
 			songs.push(...page);
 			if (page.length < PAGE) done = true;
 		} catch (e) {

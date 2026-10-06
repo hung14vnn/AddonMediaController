@@ -1,4 +1,4 @@
-import { addToPlaylist, createPlaylist, getPlaylists, getUser, setStarred, type UserInfo } from './api';
+import { addToPlaylist, cached, createPlaylist, getPlaylists, getUser, setStarred, type UserInfo } from './api';
 import type { Album, Artist, Playlist, Song } from './types';
 
 export interface MenuItem {
@@ -94,7 +94,10 @@ class UI {
 
 	async refreshPlaylists() {
 		try {
-			this.playlists = await getPlaylists();
+			this.playlists = await cached('playlists', getPlaylists, {
+				fresh: 0,
+				refresh: (p) => (this.playlists = p)
+			});
 		} catch {
 			/* keep previous list */
 		}

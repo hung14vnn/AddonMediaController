@@ -1,3 +1,4 @@
+import { clear as idbClear, createStore, get as idbGet, set as idbSet } from 'idb-keyval';
 import { md5 } from './md5';
 import type { Album, AlbumListType, Artist, ArtistInfo, Genre, Lyrics, Playlist, Song } from './types';
 
@@ -50,58 +51,122 @@ export function clearSession() {
 }
 
 const CACHE_PREFIX = 'music.cache:';
-const memo = new Map<string, { at: number; data: unknown }>();
+type CacheEntry = { at: number; data: unknown };
+const memo = new Map<string, CacheEntry>();
+// IndexedDB rather than localStorage: async, and big libraries (getArtists, getStarred2)
+// blow past the ~5 MB localStorage quota. Missing in jsdom/private mode → memory only.
+const store =
+	typeof indexedDB !== 'undefined' ? createStore('music-api-cache-v1', 'entries') : null;
 
 function clearCache() {
 	memo.clear();
+	if (store) void idbClear(store).catch(() => {});
+	purgeLegacyCache();
+}
+
+/** Entries written by the old localStorage-backed `cached()`. */
+function purgeLegacyCache() {
 	try {
 		for (const k of Object.keys(localStorage)) if (k.startsWith(CACHE_PREFIX)) localStorage.removeItem(k);
 	} catch {
 		/* storage unavailable */
 	}
 }
+purgeLegacyCache();
+
+async function readEntry(k: string): Promise<CacheEntry | undefined> {
+	const hit = memo.get(k);
+	if (hit || !store) return hit;
+	try {
+		const stored = await idbGet<CacheEntry>(k, store);
+		if (stored) remember(k, stored);
+		return stored;
+	} catch {
+		return undefined;
+	}
+}
+
+const DEFAULT_MAX_AGE = 24 * 60 * 60_000;
+
+function cacheKey(key: string) {
+	const user = session?.username ?? (session?.apiKey ? md5(session.apiKey).slice(0, 8) : '');
+	return `${CACHE_PREFIX}${session?.base}|${user}|${key}`;
+}
+
+export interface CachedOptions<T> {
+	/** Age under which the cached copy is returned without revalidating. */
+	fresh?: number;
+	/** Age under which a stale copy is still returned instantly (and revalidated). */
+	maxAge?: number;
+	/**
+	 * Called with the revalidated data when a stale copy was returned and the network
+	 * answer differs, so a view can swap in the fresh result.
+	 */
+	refresh?: (data: T) => void;
+}
 
 /**
  * Stale-while-revalidate: within `fresh` the cached copy is returned as is; up to `maxAge`
- * it's returned instantly and refreshed in the background for next time; beyond that (or
+ * it's returned instantly and refreshed in the background (see `refresh`); beyond that (or
  * with nothing cached) the network is awaited. Scoped per server + user, cleared on sign-out.
  */
-export function cached<T>(
+export async function cached<T>(
 	key: string,
 	fetcher: () => Promise<T>,
-	{ fresh = 5 * 60_000, maxAge = 24 * 60 * 60_000 } = {}
+	{ fresh = 5 * 60_000, maxAge = DEFAULT_MAX_AGE, refresh }: CachedOptions<T> = {}
 ): Promise<T> {
-	const user = session?.username ?? (session?.apiKey ? md5(session.apiKey).slice(0, 8) : '');
-	const k = `${CACHE_PREFIX}${session?.base}|${user}|${key}`;
-
-	let hit = memo.get(k);
-	if (!hit) {
-		try {
-			const raw = localStorage.getItem(k);
-			if (raw) memo.set(k, (hit = JSON.parse(raw)));
-		} catch {
-			/* storage unavailable or corrupt entry */
-		}
-	}
-
+	const k = cacheKey(key);
+	const hit = await readEntry(k);
 	const age = hit ? Date.now() - hit.at : Infinity;
-	if (hit && age < fresh) return Promise.resolve(hit.data as T);
+	if (hit && age < fresh) return hit.data as T;
 
 	const req = fetcher().then((data) => {
-		const entry = { at: Date.now(), data };
-		memo.set(k, entry);
-		try {
-			localStorage.setItem(k, JSON.stringify(entry));
-		} catch {
-			/* quota exceeded: keep the in-memory copy */
-		}
-		return data;
+		// An unchanged answer only bumps the timestamp: no IndexedDB write (structured-cloning
+		// a big getArtists payload to disk on every visit is the kind of work that warms phones)
+		// and no re-render for the caller. The stringify compare is far cheaper than that write.
+		const changed = !hit || JSON.stringify(data) !== JSON.stringify(hit.data);
+		const entry = { at: Date.now(), data: changed ? data : hit!.data };
+		remember(k, entry);
+		if (store && changed) void idbSet(k, entry, store).catch(() => {});
+		return { data, changed };
 	});
 	if (hit && age < maxAge) {
-		req.catch(() => { });
-		return Promise.resolve(hit.data as T);
+		if (refresh) req.then(({ data, changed }) => changed && refresh(data)).catch(() => {});
+		else req.catch(() => {});
+		return hit.data as T;
 	}
-	return req;
+	return req.then(({ data }) => data);
+}
+
+// Bound the in-memory copy: big libraries make each entry (artists, a songs page) sizeable.
+const MEMO_LIMIT = 60;
+function remember(k: string, entry: CacheEntry) {
+	memo.delete(k);
+	memo.set(k, entry);
+	if (memo.size > MEMO_LIMIT) memo.delete(memo.keys().next().value!);
+}
+
+/** A value, or a promise of one: `{#await}` renders a plain value synchronously. */
+export type Maybe<T> = T | Promise<T>;
+
+/**
+ * `cached()` whose in-memory hit comes back as a plain value rather than a promise, so a
+ * view revisited in the same session paints its last state in the same frame instead of
+ * flashing a spinner; the revalidation still runs (see `refresh`). Pass through otherwise.
+ */
+export function cachedNow<T>(key: string, fetcher: () => Promise<T>, opts: CachedOptions<T> = {}): Maybe<T> {
+	const hit = memo.get(cacheKey(key));
+	const request = cached(key, fetcher, opts);
+	if (hit && Date.now() - hit.at < (opts.maxAge ?? DEFAULT_MAX_AGE)) {
+		request.catch(() => {});
+		return hit.data as T;
+	}
+	return request;
+}
+
+/** `Promise.all` that stays synchronous when every input already is. */
+export function allNow<T extends readonly unknown[]>(values: { [K in keyof T]: Maybe<T[K]> }): Maybe<T> {
+	return values.some((v) => v instanceof Promise) ? (Promise.all(values) as Promise<T>) : (values as unknown as T);
 }
 
 function randomSalt() {
@@ -215,8 +280,10 @@ export function streamUrl(id: string) {
  * For secondary shelves: servers may reject optional list types (DroppedNeedle has
  * no ratings, so `highest` fails), and one failed shelf shouldn't blank the page.
  */
-export function optional<T>(p: Promise<T[]>): Promise<T[]> {
-	return p.catch(() => []);
+export function optional<T>(p: Promise<T[]>): Promise<T[]>;
+export function optional<T>(p: Maybe<T[]>): Maybe<T[]>;
+export function optional<T>(p: Maybe<T[]>): Maybe<T[]> {
+	return p instanceof Promise ? p.catch(() => []) : p;
 }
 
 // ---- Library ----------------------------------------------------------------

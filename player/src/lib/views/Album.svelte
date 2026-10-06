@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { getAlbum, getAlbumList, getArtist } from '../api';
+	import { cachedNow, getAlbum, getAlbumList, getArtist } from '../api';
+	import type { Album } from '../types';
 	import AlbumCard from '../components/AlbumCard.svelte';
 	import DetailHeader from '../components/DetailHeader.svelte';
 	import ErrorState from '../components/ErrorState.svelte';
@@ -16,17 +17,27 @@
 	let { id }: { id: string } = $props();
 	const player = getPlayer();
 
-	async function load(albumId: string) {
-		const album = await getAlbum(albumId);
+	// Revisited in the same session this is all synchronous, so the page paints its last
+	// state in the same frame; a changed album swaps in when the server answers.
+	function load(albumId: string) {
+		const album = cachedNow(`album:${albumId}`, () => getAlbum(albumId), {
+			fresh: 0,
+			refresh: (a) => (data = assemble(a))
+		});
+		return album instanceof Promise ? album.then(assemble) : assemble(album);
+	}
+
+	function assemble(album: Album) {
 		const more = album.artistId
-			? getArtist(album.artistId)
+			? Promise.resolve(cachedNow(`artist:${album.artistId}`, () => getArtist(album.artistId!)))
 					.then((a) => (a.album ?? []).filter((x) => x.id !== album.id))
 					.catch(() => [])
 			: album.genre
 				? getAlbumList('byGenre', 12, 0, { genre: album.genre }).then((l) => l.filter((x) => x.id !== album.id))
 				: Promise.resolve([]);
-		const tint = album.coverArt ? (await artworkTint(album.coverArt))?.top ?? null : null;
-		return { album, more, tint };
+		const tint = album.coverArt ? artworkTint(album.coverArt) : null;
+		const finish = (t: Awaited<typeof tint>) => ({ album, more, tint: t?.top ?? null });
+		return tint instanceof Promise ? tint.then(finish) : finish(tint);
 	}
 
 	let data = $derived(load(id));

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getArtists } from '../api';
+	import { cachedNow, getArtists } from '../api';
 	import ArtistCard from '../components/ArtistCard.svelte';
 	import ErrorState from '../components/ErrorState.svelte';
 	import Icon from '../components/Icon.svelte';
@@ -7,7 +7,9 @@
 	import { router } from '../router.svelte';
 	import type { Artist } from '../types';
 
-	let data = $state(getArtists());
+	// Shown from the on-device copy at once; the refreshed list swaps in when it differs.
+	const load = () => cachedNow('library:artists', getArtists, { fresh: 0, refresh: (a) => (data = a) });
+	let data = $state(load());
 	// Render progressively; big libraries have thousands of artists.
 	let shown = $state(120);
 	let query = $state('');
@@ -62,7 +64,7 @@
 			{/if}
 		{/if}
 	{:catch error}
-		<ErrorState {error} retry={() => (data = getArtists())} />
+		<ErrorState {error} retry={() => (data = load())} />
 	{/await}
 </div>
 

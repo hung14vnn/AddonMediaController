@@ -1,6 +1,6 @@
 <script lang="ts">
 	// Mobile Library tab landing page (desktop reaches these from the sidebar).
-	import { getAlbumList } from '../api';
+	import { cachedNow, getAlbumList, optional } from '../api';
 	import AlbumCard from '../components/AlbumCard.svelte';
 	import Icon from '../components/Icon.svelte';
 
@@ -13,7 +13,9 @@
 		{ path: '/loved', label: 'Favorites', icon: 'star' },
 		{ path: '/genres', label: 'Genres', icon: 'browse' }
 	];
-	const recent = getAlbumList('newest', 12).catch(() => []);
+	// Shares Home's "Recently Added" cache so this paints at once; the shelf is cut to 12.
+	const newest = optional(cachedNow('home:newest', () => getAlbumList('newest', 20), { fresh: 0, refresh: (l) => (recent = l.slice(0, 12)) }));
+	let recent = $state(newest instanceof Promise ? newest.then((l) => l.slice(0, 12)) : newest.slice(0, 12));
 </script>
 
 <div class="page">

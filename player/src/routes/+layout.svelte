@@ -77,9 +77,43 @@
 	});
 
 	// <main> is the scroll container, so SvelteKit's window scroll handling doesn't apply.
-	afterNavigate(({ from, to }) => {
+	// Going back restores where the page was; anything else starts at the top.
+	const scrollPositions = new Map<string, number>();
+	let restoreScroll: ResizeObserver | undefined;
+	beforeNavigate(({ from }) => {
+		if (from && main) scrollPositions.set(from.url.hash, main.scrollTop);
+	});
+	afterNavigate(({ from, to, type }) => {
 		if (from?.route.id === "/search" && to?.route.id === "/search") return;
-		main?.scrollTo({ top: 0 });
+		restoreScroll?.disconnect();
+		restoreScroll = undefined;
+		const target = type === "popstate" ? (scrollPositions.get(to?.url.hash ?? "") ?? 0) : 0;
+		if (!main || !target) {
+			main?.scrollTo({ top: 0 });
+			return;
+		}
+		// The page may still be filling in from the network, so keep trying as it grows,
+		// until the position is reachable or the user scrolls themselves.
+		const el = main;
+		const view = el.firstElementChild;
+		const attempt = () => {
+			el.scrollTop = target;
+			if (el.scrollTop >= target - 1) stop();
+		};
+		const stop = () => {
+			restoreScroll?.disconnect();
+			restoreScroll = undefined;
+			el.removeEventListener("wheel", stop);
+			el.removeEventListener("touchstart", stop);
+		};
+		el.addEventListener("wheel", stop, { passive: true, once: true });
+		el.addEventListener("touchstart", stop, { passive: true, once: true });
+		attempt();
+		if (view && el.scrollTop < target - 1) {
+			restoreScroll = new ResizeObserver(attempt);
+			restoreScroll.observe(view);
+			setTimeout(stop, 3000);
+		}
 	});
 
 	onMount(() => {

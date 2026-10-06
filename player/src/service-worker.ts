@@ -3,101 +3,128 @@
 /// <reference lib="esnext" />
 /// <reference lib="webworker" />
 
-// Service worker: network-first app shell (so updates land immediately when online),
-// cache-first hashed assets and cover art. Audio streams and API calls are never cached:
-// streams use Range requests and API responses are per-user and change constantly.
+// Service worker (Workbox): network-first app shell (so updates land immediately when online),
+// precached hashed assets and LRU-bounded caches for cover art, avatars and lyrics. Audio
+// streams and list/search API calls are never cached here: streams use Range requests and
+// list responses are per-user, change constantly and are revalidated by `cached()` in api.ts.
 import { build, files, version } from '$service-worker';
+import { CacheableResponsePlugin } from 'workbox-cacheable-response';
+import { clientsClaim } from 'workbox-core';
+import { ExpirationPlugin } from 'workbox-expiration';
+import * as navigationPreload from 'workbox-navigation-preload';
+import { precacheAndRoute } from 'workbox-precaching';
+import { NavigationRoute, registerRoute } from 'workbox-routing';
+import { CacheFirst, NetworkFirst } from 'workbox-strategies';
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
-const SHELL = `shell-${version}`;
+const NAV = 'nav-v1';
 const ART = 'art-v1';
 const ART_LIMIT = 600;
+const AVATAR = 'avatar-v1';
+const LYRICS = 'lyrics-v1';
+const DAY = 24 * 60 * 60;
 
 // `build`/`files` already include the base path; the shell is the scope root (hash routing).
 const SHELL_URL = new URL('./', sw.registration.scope).href;
-const PRECACHE = [SHELL_URL, ...build, ...files.filter((f) => !f.endsWith('/_headers'))];
 
+sw.skipWaiting();
+clientsClaim();
+// Lets the browser start fetching the shell while this worker is still booting.
+navigationPreload.enable();
+
+// Build output is content-hashed so it needs no revision; static files are keyed by the app
+// version. Workbox diffs the manifest on update, so only changed entries are re-downloaded.
+precacheAndRoute([
+	...build.map((url) => ({ url, revision: null })),
+	...files.filter((f) => !f.endsWith('/_headers')).map((url) => ({ url, revision: version }))
+]);
+
+// Warm the shell so the first offline launch after install works.
 sw.addEventListener('install', (event) => {
-	event.waitUntil(
-		caches
-			.open(SHELL)
-			.then((c) => c.addAll(PRECACHE))
-			.then(() => sw.skipWaiting())
-	);
+	event.waitUntil(caches.open(NAV).then((c) => c.add(SHELL_URL)));
 });
 
+// Drop the `shell-<version>` caches left by the pre-Workbox worker.
 sw.addEventListener('activate', (event) => {
 	event.waitUntil(
 		caches
 			.keys()
-			.then((keys) => Promise.all(keys.filter((k) => k !== SHELL && k !== ART).map((k) => caches.delete(k))))
-			.then(() => sw.clients.claim())
+			.then((keys) => Promise.all(keys.filter((k) => k.startsWith('shell-')).map((k) => caches.delete(k))))
 	);
 });
 
-async function trim(cacheName: string, max: number) {
-	const cache = await caches.open(cacheName);
-	const keys = await cache.keys();
-	for (let i = 0; i < keys.length - max; i++) await cache.delete(keys[i]);
+const okOnly = () => new CacheableResponsePlugin({ statuses: [200] });
+
+/** Cache key from a subset of query params: drops the per-session auth salt/token. */
+function keyedBy(...params: string[]) {
+	return {
+		cacheKeyWillBeUsed: async ({ request }: { request: Request }) => {
+			const url = new URL(request.url);
+			const kept = params.map((p) => `${p}=${encodeURIComponent(url.searchParams.get(p) ?? '')}`);
+			return `${url.origin}${url.pathname}?${kept.join('&')}`;
+		}
+	};
 }
+
+const rest = (endpoint: string) => (url: URL) => url.pathname.endsWith(`/rest/${endpoint}`);
 
 // Cover URLs carry a per-session salt/token; key the cache on id+size only.
-function artKey(url: URL) {
-	return `${url.origin}${url.pathname}?id=${url.searchParams.get('id')}&size=${url.searchParams.get('size')}`;
-}
+registerRoute(
+	({ url }) => rest('getCoverArt')(url) && !url.searchParams.get('id')?.startsWith('pl-'),
+	new CacheFirst({
+		cacheName: ART,
+		plugins: [
+			keyedBy('id', 'size'),
+			okOnly(),
+			new ExpirationPlugin({ maxEntries: ART_LIMIT, maxAgeSeconds: 30 * DAY, purgeOnQuotaError: true })
+		]
+	})
+);
 
-sw.addEventListener('fetch', (event) => {
-	const req = event.request;
-	if (req.method !== 'GET') return;
-	const url = new URL(req.url);
+registerRoute(
+	({ url }) => rest('getAvatar')(url),
+	new CacheFirst({
+		cacheName: AVATAR,
+		plugins: [keyedBy('username'), okOnly(), new ExpirationPlugin({ maxEntries: 5, maxAgeSeconds: DAY })]
+	})
+);
 
-	if (url.pathname.endsWith('/rest/getCoverArt')) {
-		if (url.searchParams.get('id')?.startsWith('pl-')) return;
-		const key = artKey(url);
-		event.respondWith(
-			caches.open(ART).then(async (cache) => {
-				const hit = await cache.match(key);
-				if (hit) return hit;
-				const res = await fetch(req);
-				if (res.ok) {
-					cache.put(key, res.clone());
-					trim(ART, ART_LIMIT);
-				}
-				return res;
-			})
-		);
-		return;
+// Subsonic reports API errors inside a 200 JSON body; never cache those.
+const subsonicOkOnly = {
+	cacheWillUpdate: async ({ response }: { response: Response }) => {
+		if (response.status !== 200) return null;
+		try {
+			const body = await response.clone().json();
+			return body?.['subsonic-response']?.status === 'ok' ? response : null;
+		} catch {
+			return null;
+		}
 	}
+};
 
-	if (url.origin !== location.origin || url.pathname.includes('/rest/')) return;
+// Plain lyrics for a given artist+title practically never change.
+registerRoute(
+	({ url }) => rest('getLyrics')(url),
+	new CacheFirst({
+		cacheName: LYRICS,
+		plugins: [
+			keyedBy('artist', 'title'),
+			subsonicOkOnly,
+			new ExpirationPlugin({ maxEntries: 300, maxAgeSeconds: 30 * DAY, purgeOnQuotaError: true })
+		]
+	})
+);
 
-	if (req.mode === 'navigate') {
-		event.respondWith(
-			fetch(req)
-				.then((res) => {
-					const copy = res.clone();
-					caches.open(SHELL).then((c) => c.put(SHELL_URL, copy));
-					return res;
-				})
-				.catch(async () => (await caches.match(SHELL_URL)) ?? Response.error())
-		);
-		return;
-	}
-
-	if (url.pathname.includes('/_app/immutable/') || /\.(png|svg|webmanifest)$/.test(url.pathname)) {
-		event.respondWith(
-			caches.match(req).then(
-				(hit) =>
-					hit ||
-					fetch(req).then((res) => {
-						if (res.ok) {
-							const copy = res.clone();
-							caches.open(SHELL).then((c) => c.put(req, copy));
-						}
-						return res;
-					})
-			)
-		);
-	}
-});
+// Every navigation is the shell (hash routing): fetch it fresh, fall back to the cached copy
+// when offline or the network stalls.
+registerRoute(
+	new NavigationRoute(
+		new NetworkFirst({
+			cacheName: NAV,
+			networkTimeoutSeconds: 3,
+			plugins: [okOnly(), { cacheKeyWillBeUsed: async () => SHELL_URL }]
+		}),
+		{ denylist: [/\/rest\//] }
+	)
+);

@@ -44,7 +44,7 @@
 	$effect(() => {
 		const id = coverArt;
 		tint = null;
-		artworkTint(id).then((t) => id === coverArt && (tint = t?.top ?? null));
+		Promise.resolve(artworkTint(id)).then((t) => id === coverArt && (tint = t?.top ?? null));
 	});
 
 	let offline = $state(new Set<string>());
@@ -83,7 +83,7 @@
 			{#if onmore}<button class="glass" aria-label="More options" onclick={onmore}><Icon name="more" size={20} /></button>{/if}
 		</div>
 	{/if}
-	<div class="art"><Artwork id={coverArt} size={600} seed={title} {icon} /></div>
+	<div class="art"><Artwork id={coverArt} size={600} seed={title} {icon} priority /></div>
 	<div class="info">
 		<h1>{title}</h1>
 		{#if subtitle}

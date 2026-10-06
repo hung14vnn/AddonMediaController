@@ -11,7 +11,8 @@
 		src: explicitSrc,
 		seed = '',
 		icon = 'note',
-		cropWide = false
+		cropWide = false,
+		priority = false
 	}: {
 		id?: string;
 		size?: number;
@@ -21,11 +22,23 @@
 		seed?: string;
 		icon?: string;
 		cropWide?: boolean;
+		/** Hero art (detail headers, Now Playing): load eagerly instead of lazily. */
+		priority?: boolean;
 	} = $props();
 
 	let failed = $state(false);
 	let loaded = $state(false);
+	// Set when the browser already had the image (back navigation, memory cache): it shows
+	// at once instead of fading in again.
+	let instant = $state(false);
 	let cropScale = $state(1);
+
+	function ready(image: HTMLImageElement) {
+		if (image.complete && image.naturalWidth > 0) {
+			instant = true;
+			handleLoad({ currentTarget: image } as unknown as Event);
+		}
+	}
 
 	// TỐI ƯU 1: Tính toán DPR an toàn với cả môi trường SSR / Window
 	const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio > 1 ? 2 : 1) : 1;
@@ -35,6 +48,7 @@
 		void src;
 		failed = false;
 		loaded = false;
+		instant = false;
 		cropScale = 1;
 	});
 
@@ -53,9 +67,12 @@
 		<img
 			{src}
 			{alt}
-			loading="lazy"
+			loading={priority ? 'eager' : 'lazy'}
+			fetchpriority={priority ? 'high' : 'auto'}
 			decoding="async"
 			class:loaded
+			class:instant
+			use:ready
 			class:crop-wide={cropWide && cropScale > 1}
 			style:--crop-scale={cropScale}
 			onload={handleLoad}
@@ -99,6 +116,9 @@
 	}
 	img.loaded {
 		opacity: 1;
+	}
+	img.instant {
+		transition: none;
 	}
 	img.crop-wide {
 		transform: scale(var(--crop-scale));

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { deletePlaylist, getPlaylist, removeFromPlaylist } from '../api';
+	import { cachedNow, deletePlaylist, getPlaylist, removeFromPlaylist } from '../api';
 	import DetailHeader from '../components/DetailHeader.svelte';
 	import ErrorState from '../components/ErrorState.svelte';
 	import Icon from '../components/Icon.svelte';
@@ -16,10 +16,20 @@
 	const player = getPlayer();
 
 	// Like the album page: the cover's tint colours the whole page on phones.
-	async function load(playlistId: string) {
-		const playlist = await getPlaylist(playlistId);
-		const tint = playlist.coverArt ? (await artworkTint(playlist.coverArt))?.top ?? null : null;
-		return { playlist, tint };
+	// The tint is memoised per cover, so a revisit resolves synchronously when the cover does.
+	function withTint(playlist: Playlist) {
+		const tint = playlist.coverArt ? artworkTint(playlist.coverArt) : null;
+		const assemble = (t: Awaited<typeof tint>) => ({ playlist, tint: t?.top ?? null });
+		return tint instanceof Promise ? tint.then(assemble) : assemble(tint);
+	}
+
+	// Rendered from the on-device copy in the same frame; a changed playlist swaps in when it arrives.
+	function load(playlistId: string) {
+		const playlist = cachedNow(`playlist:${playlistId}`, () => getPlaylist(playlistId), {
+			fresh: 0,
+			refresh: (p) => (data = withTint(p))
+		});
+		return playlist instanceof Promise ? playlist.then(withTint) : withTint(playlist);
 	}
 
 	let data = $derived(load(id));

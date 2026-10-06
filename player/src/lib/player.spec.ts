@@ -497,6 +497,30 @@ describe('Player platform fixes', () => {
 		}
 	});
 
+	it('does not treat a slow start as a stall the moment it starts playing', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
+		try {
+			const { player, audio } = await freshPlayer();
+			// A cold stream: play() is accepted but nothing plays for ~15 s.
+			audio.play.mockImplementation(() => {
+				audio.paused = false;
+				audio.fire('play');
+				audio.fire('waiting');
+				return new Promise(() => {});
+			});
+			player.playList([song('a')]);
+			await vi.advanceTimersByTimeAsync(14_900);
+			audio.ready();
+			audio.fire('playing');
+			audio.load.mockClear();
+			await vi.advanceTimersByTimeAsync(5_000);
+			expect(audio.load).not.toHaveBeenCalled();
+			expect(player.current?.id).toBe('a');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('does not reload while paused for a call', async () => {
 		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
 		const session = new FakeAudioSession();

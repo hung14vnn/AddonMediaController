@@ -1,6 +1,7 @@
 <script lang="ts">
 	import {
-		cached,
+		allNow,
+		cachedNow,
 		getAlbumList,
 		getYtMusicNewReleases,
 		getGenres,
@@ -19,25 +20,28 @@
 	const player = getPlayer();
 
 	// Cached so switching tabs back to Browse renders instantly (see `cached` in api.ts).
+	// Synchronous on a revisit (plain values), so the tab paints without a spinner.
 	function load() {
-		return Promise.all([
-			cached("browse:yt-new", () => getYtMusicNewReleases(20)),
-			optional(cached("browse:frequent", () => getAlbumList("frequent", 20))),
-			optional(cached("browse:random", () => getAlbumList("random", 20))),
-			optional(cached("genres", () => getGenres())),
-		]).then(([newest, frequent, random, genres]) => ({
+		const parts = allNow([
+			cachedNow("browse:yt-new", () => getYtMusicNewReleases(20)),
+			optional(cachedNow("browse:frequent", () => getAlbumList("frequent", 20))),
+			optional(cachedNow("browse:random", () => getAlbumList("random", 20))),
+			optional(cachedNow("genres", () => getGenres())),
+		]);
+		const assemble = ([newest, frequent, random, genres]: Awaited<typeof parts>) => ({
 			newest,
 			frequent,
 			random,
 			genres,
-		}));
+		});
+		return parts instanceof Promise ? parts.then(assemble) : assemble(parts);
 	}
 	let data = $state(load());
 
 	const region = /-([A-Z]{2}) /.exec(navigator.language)?.[1];
 	let radioMix = $state(optional(getRandomRadioMix(5)));
 	const trendingPlaylists = optional(
-		cached(`browse:trending:${region ?? ""}`, () => getTrendingPlaylists(region)),
+		cachedNow(`browse:trending:${region ?? ""}`, () => getTrendingPlaylists(region)),
 	);
 
 	function reloadRadioMix() {

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getStarred } from '../api';
+	import { cachedNow, getStarred } from '../api';
 	import AlbumCard from '../components/AlbumCard.svelte';
 	import ArtistCard from '../components/ArtistCard.svelte';
 	import ErrorState from '../components/ErrorState.svelte';
@@ -10,7 +10,8 @@
 import { router } from '../router.svelte';
 
 	const player = getPlayer();
-	let data = $state(getStarred());
+	const load = () => cachedNow('library:starred', getStarred, { fresh: 0, refresh: (s) => (data = s) });
+	let data = $state(load());
 </script>
 
 <div class="page">
@@ -48,7 +49,7 @@ import { router } from '../router.svelte';
 			{/if}
 		{/if}
 	{:catch error}
-		<ErrorState {error} retry={() => (data = getStarred())} />
+		<ErrorState {error} retry={() => (data = load())} />
 	{/await}
 </div>
 

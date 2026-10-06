@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Paged album grid used by Albums, Recently Added and Genre pages.
 	import { untrack } from 'svelte';
-	import { getAlbumList } from '../api';
+	import { cachedNow, getAlbumList } from '../api';
 	import AlbumCard from '../components/AlbumCard.svelte';
 	import ErrorState from '../components/ErrorState.svelte';
 	import Icon from '../components/Icon.svelte';
@@ -41,7 +41,18 @@
 		const gen = generation;
 		try {
 			const extra = genre ? { genre } : {};
-			const page = await getAlbumList(genre ? 'byGenre' : type, PAGE, albums.length, extra);
+			const listType = genre ? 'byGenre' : type;
+			const fetchPage = () => getAlbumList(listType, PAGE, albums.length, extra);
+			// The first page comes from the on-device copy (synchronously on a revisit) and is
+			// replaced if the server's differs, as long as the user hasn't paged further.
+			const page = albums.length
+				? await fetchPage()
+				: await cachedNow(`albums:${listType}:${genre ?? ''}`, fetchPage, {
+						fresh: 0,
+						refresh: (fresh) => {
+							if (gen === generation && albums.length <= PAGE) albums = [...fresh];
+						}
+					});
 			if (gen !== generation) return;
 			albums.push(...page);
 			if (page.length < PAGE || (limit && albums.length >= limit)) done = true;

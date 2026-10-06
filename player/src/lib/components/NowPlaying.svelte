@@ -43,7 +43,7 @@
 	$effect(() => {
 		const art = song?.coverArt;
 		let cancelled = false;
-		artworkTint(art).then((t) => {
+		Promise.resolve(artworkTint(art)).then((t) => {
 			if (!cancelled) tint = t;
 		});
 		return () => (cancelled = true);
@@ -711,6 +711,7 @@
 										size={600}
 										seed={song.album ?? song.title}
 										cropWide
+										priority
 									/>
 								</div>
 							{/key}

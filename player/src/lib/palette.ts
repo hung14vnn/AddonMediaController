@@ -54,11 +54,15 @@ function measure(img: HTMLImageElement): Tint | null {
 	};
 }
 
-export function artworkTint(coverArt: string | undefined): Promise<Tint | null> {
-	if (!coverArt) return Promise.resolve(null);
-	if (cache.has(coverArt)) return Promise.resolve(cache.get(coverArt)!);
+/**
+ * Resolves synchronously (a plain value) once a cover has been measured, so pages that
+ * are revisited can paint their tint in the same frame; `await` works on either form.
+ */
+export function artworkTint(coverArt: string | undefined): Tint | null | Promise<Tint | null> {
+	if (!coverArt) return null;
+	if (cache.has(coverArt)) return cache.get(coverArt)!;
 	const src = coverUrl(coverArt, 64);
-	if (!src) return Promise.resolve(null);
+	if (!src) return null;
 	return new Promise((resolve) => {
 		const img = new Image();
 		img.crossOrigin = 'anonymous';

@@ -378,6 +378,9 @@ class Player {
 		a.addEventListener('playing', () => {
 			if (this.audio !== a) return;
 			this.playingSince = performance.now();
+			// Starting to play is progress: a slow start (the clock still at the load
+			// position) mus stall the moment it finally plays.t not be taken for a
+			this.lastProgressAt = this.playingSince;
 			this.buffering = false;
 			this.errorSkips = 0;
 			this.errorOriginIndex = -1;

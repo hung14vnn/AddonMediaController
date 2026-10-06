@@ -1,5 +1,7 @@
 <script lang="ts">
 	import {
+		allNow,
+		cachedNow,
 		coverUrl,
 		getAlbum,
 		getArtist,
@@ -14,10 +16,10 @@
 	import TrackList from "../components/TrackList.svelte";
 	import { stripHtml } from "../format";
 	import { artistMenu, startStation } from "../menus";
-	import { artworkTint } from "../palette";
+	import { artworkTint, type Tint } from "../palette";
 	import { getPlayer } from "../player.svelte";
 	import { router } from "../router.svelte";
-	import type { Album, Song } from "../types";
+	import type { Album, Artist, Song } from "../types";
 	import { ui } from "../ui.svelte";
 
 	let { id }: { id: string } = $props();
@@ -48,13 +50,29 @@
 		});
 	}
 
-	async function load(artistId: string) {
-		const artist = await getArtist(artistId);
-		const [info, top] = await Promise.all([
-			getArtistInfo(artistId),
-			getTopSongs(artist.name, 20),
+	// The artist (album list) renders from the on-device copy at once and swaps in a
+	// changed one; info and top songs revalidate quietly for next time.
+	function load(artistId: string) {
+		const artist = cachedNow(`artist:${artistId}`, () => getArtist(artistId), {
+			fresh: 0,
+			refresh: (a) => (data = assemble(a)),
+		});
+		return artist instanceof Promise ? artist.then(assemble) : assemble(artist);
+	}
+
+	// Everything here is memoised, so a revisit in the same session is synchronous and the
+	// page paints its last state in the same frame.
+	function assemble(artist: Artist) {
+		const parts = allNow([
+			cachedNow(`artistInfo:${artist.id}`, () => getArtistInfo(artist.id)),
+			cachedNow(`topSongs:${artist.name}`, () => getTopSongs(artist.name, 20)),
+			artist.coverArt ? artworkTint(artist.coverArt) : null,
 		]);
-		const tint = artist.coverArt ? (await artworkTint(artist.coverArt))?.top ?? null : null;
+		return parts instanceof Promise ? parts.then((p) => finish(artist, p)) : finish(artist, parts);
+	}
+
+	function finish(artist: Artist, [info, top, tintResult]: [Awaited<ReturnType<typeof getArtistInfo>>, Song[], Tint | null]) {
+		const tint = tintResult?.top ?? null;
 		const albums = [...(artist.album ?? [])].sort(
 			(a, b) => (b.year ?? 0) - (a.year ?? 0),
 		);

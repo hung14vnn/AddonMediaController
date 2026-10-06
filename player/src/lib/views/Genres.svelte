@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { getGenres } from '../api';
+	import { cachedNow, getGenres } from '../api';
 	import ErrorState from '../components/ErrorState.svelte';
 	import GenreTiles from '../components/GenreTiles.svelte';
 import Icon from '../components/Icon.svelte';
 import { router } from '../router.svelte';
 
-	let data = $state(getGenres());
+	const load = () => cachedNow('genres', getGenres, { fresh: 0, refresh: (g) => (data = g) });
+	let data = $state(load());
 </script>
 
 <div class="page">
@@ -20,7 +21,7 @@ import { router } from '../router.svelte';
 			<div class="empty-state"><h3>No Genres</h3></div>
 		{/if}
 	{:catch error}
-		<ErrorState {error} retry={() => (data = getGenres())} />
+		<ErrorState {error} retry={() => (data = load())} />
 	{/await}
 </div>
 

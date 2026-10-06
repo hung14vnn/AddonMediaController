@@ -1,6 +1,7 @@
 <script lang="ts">
 	import {
-		cached,
+		allNow,
+		cachedNow,
 		getAlbumList,
 		getRandomSongs,
 		getTodaysHits,
@@ -14,36 +15,79 @@
 	import Shelf from "../components/Shelf.svelte";
 	import TrackList from "../components/TrackList.svelte";
 	import { getPlayer } from "../player.svelte";
-	import type { Song } from "../types";
+	import type { Album, Song } from "../types";
+	import type { Maybe } from "../api";
 
 	const player = getPlayer();
 
+	// Library shelves paint from the on-device copy without waiting on the network.
 	// frequent shares Browse's cache key; random gets its own so the two tabs differ.
-	function load() {
-		return Promise.all([
-			optional(getAlbumList("recent", 20)),
-			cached("home:newest", () => getAlbumList("newest", 20)),
-			optional(cached("browse:frequent", () => getAlbumList("frequent", 20))),
-			optional(cached("home:random", () => getAlbumList("random", 20))),
-			optional(getAlbumList("starred", 20)),
-			optional(getRandomSongs(12)),
-		]).then(([recent, newest, frequent, random, starred, picks]) => ({
-			recent,
-			newest,
-			frequent,
-			random,
-			starred,
-			picks,
-		}));
+	// Revisited in the same session, everything below is a plain value, so the page paints
+	// its last state in the same frame and only re-renders where the server differs.
+	type Shelves = { newest: Album[]; frequent: Album[]; random: Album[] };
+	function load(): Maybe<Shelves> {
+		const shelves = allNow([
+			cachedNow("home:newest", () => getAlbumList("newest", 20), {
+				fresh: 0,
+				// Patch the resolved value in place: wrapping it in a promise would re-show the spinner.
+				refresh: (newest) => {
+					const current = data;
+					if (current instanceof Promise) void current.then((d) => (data = { ...d, newest }));
+					else data = { ...current, newest };
+				},
+			}),
+			optional(cachedNow("browse:frequent", () => getAlbumList("frequent", 20))),
+			optional(cachedNow("home:random", () => getAlbumList("random", 20))),
+		]);
+		const assemble = ([newest, frequent, random]: [Album[], Album[], Album[]]) => ({ newest, frequent, random });
+		return shelves instanceof Promise ? shelves.then(assemble) : assemble(shelves);
 	}
 
 	let data = $state(load());
 
+	// Recently played and favorites change often: shown from the cached copy at once and
+	// swapped when the server differs. Picks are meant to be random every visit. None of
+	// these hold back the shelves above.
+	let recent = $state(
+		optional(
+			cachedNow("home:recent", () => getAlbumList("recent", 20), {
+				fresh: 0,
+				refresh: (list) => (recent = list),
+			}),
+		),
+	);
+	let starred = $state(
+		optional(
+			cachedNow("home:starred", () => getAlbumList("starred", 20), {
+				fresh: 0,
+				refresh: (list) => (starred = list),
+			}),
+		),
+	);
+	// Last visit's picks paint at once (so nothing below shifts when scroll is restored on
+	// back); a fresh random set swaps into the same slot once it arrives.
+	let picks = $state(
+		optional(
+			cachedNow("home:picks", () => getRandomSongs(12), {
+				fresh: 0,
+				refresh: (list) => (picks = list),
+			}),
+		),
+	);
+
 	// Charts come from YouTube Music / Spotify and can be slow on a cold cache, so
 	// they load on their own and never hold back (or break) the library shelves.
 	const region = /-([A-Z]{2})/.exec(navigator.language)?.[1];
-	const trending = optional(cached(`home:trending:12:${region ?? ""}`, () => getTrendingSongs(12, region)));
-	const hits = optional(cached("home:hits:12", () => getTodaysHits(12)));
+	let trending = $state(
+		optional(
+			cachedNow(`home:trending:12:${region ?? ""}`, () => getTrendingSongs(12, region), {
+				refresh: (list) => (trending = list),
+			}),
+		),
+	);
+	let hits = $state(
+		optional(cachedNow("home:hits:12", () => getTodaysHits(12), { refresh: (list) => (hits = list) })),
+	);
 
 	function mobilePages(list: Song[]): Song[][] {
 		const pages: Song[][] = [];
@@ -91,7 +135,7 @@
 	{#await data}
 		<div class="spinner"></div>
 	{:then d}
-		{#if !d.recent.length && !d.newest.length}
+		{#if !d.newest.length}
 			<div class="empty-state">
 				<Icon name="note" size={48} />
 				<h3>Your library is empty</h3>
@@ -103,13 +147,13 @@
 					list,
 				)}{/await}
 		{:else}
-			{#if d.recent.length}
-				<Shelf title="Recently Played" size="lg">
-					{#each d.recent as album (album.id)}<AlbumCard
-							{album}
-						/>{/each}
-				</Shelf>
-			{/if}
+			{#await recent then list}
+				{#if list.length}
+					<Shelf title="Recently Played" size="lg">
+						{#each list as album (album.id)}<AlbumCard {album} />{/each}
+					</Shelf>
+				{/if}
+			{/await}
 			{#await trending then list}{@render songs(
 					"Trending Songs",
 					list,
@@ -123,7 +167,7 @@
 				</Shelf>
 			{/if}
 			{#await hits then list}{@render songs("Today's Hits", list)}{/await}
-			{@render songs("Top Picks for You", d.picks)}
+			{#await picks then list}{@render songs("Top Picks for You", list)}{/await}
 			{#if d.frequent.length}
 				<Shelf title="Heavy Rotation">
 					{#each d.frequent as album (album.id)}<AlbumCard
@@ -131,13 +175,13 @@
 						/>{/each}
 				</Shelf>
 			{/if}
-			{#if d.starred.length}
-				<Shelf title="Favorite Albums" seeAll="#/loved">
-					{#each d.starred as album (album.id)}<AlbumCard
-							{album}
-						/>{/each}
-				</Shelf>
-			{/if}
+			{#await starred then list}
+				{#if list.length}
+					<Shelf title="Favorite Albums" seeAll="#/loved">
+						{#each list as album (album.id)}<AlbumCard {album} />{/each}
+					</Shelf>
+				{/if}
+			{/await}
 			{#if d.random.length}
 				<Shelf title="Rediscover" seeAll="#/albums">
 					{#each d.random as album (album.id)}<AlbumCard

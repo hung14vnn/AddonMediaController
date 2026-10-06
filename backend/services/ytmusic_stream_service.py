@@ -39,6 +39,13 @@ _CACHE_MAX_ENTRIES = 200
 _URL_TTL_SECONDS = 2 * 3600
 _EXTRACT_TIMEOUT_SECONDS = 30
 _PROXY_CHUNK_SIZE = 128 * 1024  # 128 KiB
+# googlevideo throttles one request for a whole file to about playback speed (31 KB/s
+# measured on the server) but serves bounded byte ranges at full speed (~4.8 MB/s), so
+# the proxy fetches upstream in ranges of at most this size, like YouTube's own clients
+# and yt-dlp's downloader. The client still sees one response.
+_UPSTREAM_RANGE_BYTES = 10 * 1024 * 1024
+_RANGE_REQUEST = re.compile(r"^bytes=(\d+)-(\d*)$")
+_CONTENT_RANGE = re.compile(r"^bytes (\d+)-(\d+)/(\d+)$")
 
 _UPSTREAM_RETRY_STATUSES = frozenset({401, 403, 410})
 _STREAM_RESPONSE_HEADERS = (
@@ -559,18 +566,66 @@ class YTMusicStreamService:
         so the caller's metadata survives a cache miss (e.g. server restart).
         """
         info = await self._resolve(video_id, title, artist, fmt)
-        upstream = await self._open_upstream("GET", info, range_header, fmt)
+        requested = _parse_range(range_header)
+        if range_header and requested is None:
+            # Suffix or multi-part ranges: rare, so pass them through as they are.
+            return await self._proxy_single(info, range_header, fmt)
 
-        resp_headers = _pick_headers(upstream.headers, _STREAM_RESPONSE_HEADERS)
+        start, end = requested or (0, None)
+        first_end = start + _UPSTREAM_RANGE_BYTES - 1
+        if end is not None:
+            first_end = min(first_end, end)
+        upstream = await self._open_upstream("GET", info, f"bytes={start}-{first_end}", fmt)
+        content_range = _CONTENT_RANGE.match(upstream.headers.get("Content-Range", ""))
+        if upstream.status_code != 206 or content_range is None:
+            # Upstream ignored the range: what it sent is already the whole answer
+            # when the client asked for everything; otherwise ask again as asked.
+            if range_header is None and upstream.status_code == 200:
+                return _relay(upstream), _pick_headers(upstream.headers, _STREAM_RESPONSE_HEADERS), 200
+            await upstream.aclose()
+            return await self._proxy_single(info, range_header, fmt)
+
+        total = int(content_range.group(3))
+        last = total - 1 if end is None else min(end, total - 1)
+        headers = {
+            "Content-Type": upstream.headers.get("Content-Type", info.content_type),
+            "Content-Length": str(last - start + 1),
+            "Accept-Ranges": "bytes",
+        }
+        if range_header is not None:
+            headers["Content-Range"] = f"bytes {start}-{last}/{total}"
 
         async def _chunks() -> AsyncIterator[bytes]:
+            response: httpx.Response | None = upstream
+            position = start
             try:
-                async for chunk in upstream.aiter_bytes(_PROXY_CHUNK_SIZE):
-                    yield chunk
+                while response is not None:
+                    received = 0
+                    async for chunk in response.aiter_bytes(_PROXY_CHUNK_SIZE):
+                        received += len(chunk)
+                        yield chunk
+                    await response.aclose()
+                    response = None
+                    position += received
+                    if position > last or received == 0:
+                        break
+                    # Re-resolve per range: a URL refreshed by _open_upstream after a
+                    # 403 is in the cache, not in this closure's `info`.
+                    current = await self._resolve(video_id, title, artist, fmt)
+                    chunk_end = min(position + _UPSTREAM_RANGE_BYTES - 1, last)
+                    response = await self._open_upstream("GET", current, f"bytes={position}-{chunk_end}", fmt)
             finally:
-                await upstream.aclose()
+                if response is not None:
+                    await response.aclose()
 
-        return _chunks(), resp_headers, upstream.status_code  # 200 or 206
+        return _chunks(), headers, 206 if range_header is not None else 200
+
+    async def _proxy_single(
+        self, info: StreamInfo, range_header: str | None, fmt: str
+    ) -> tuple[AsyncIterator[bytes], dict[str, str], int]:
+        """Relay one upstream request as is (no splitting into ranges)."""
+        upstream = await self._open_upstream("GET", info, range_header, fmt)
+        return _relay(upstream), _pick_headers(upstream.headers, _STREAM_RESPONSE_HEADERS), upstream.status_code
 
     async def proxy_head(
         self,
@@ -726,6 +781,23 @@ def _upstream_headers(info: StreamInfo, range_header: str | None = None) -> dict
     if range_header:
         headers["Range"] = range_header
     return headers
+
+
+def _parse_range(header: str | None) -> tuple[int, int | None] | None:
+    """`bytes=a-` or `bytes=a-b` as (a, b or None); None for anything else."""
+    match = _RANGE_REQUEST.match((header or "").strip())
+    if not match:
+        return None
+    start, end = int(match.group(1)), int(match.group(2)) if match.group(2) else None
+    return None if end is not None and end < start else (start, end)
+
+
+async def _relay(upstream: httpx.Response) -> AsyncIterator[bytes]:
+    try:
+        async for chunk in upstream.aiter_bytes(_PROXY_CHUNK_SIZE):
+            yield chunk
+    finally:
+        await upstream.aclose()
 
 
 def _pick_headers(source: httpx.Headers, keys: tuple[str, ...]) -> dict[str, str]:
