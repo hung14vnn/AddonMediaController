@@ -28,6 +28,7 @@
 	<ArtistLinks class="subtitle" item={album} />
 {/snippet}
 
+{#if !ui.removedAlbums.has(album.id)}
 <Card
 	href={href.album(album.id)}
 	coverArt={album.coverArt}
@@ -40,3 +41,4 @@
 	onmenu={(e) => ui.openMenu(e, albumMenu(album))}
 	onprefetch={prefetch}
 />
+{/if}

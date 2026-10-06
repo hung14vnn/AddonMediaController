@@ -1,4 +1,4 @@
-import { clear as idbClear, createStore, get as idbGet, set as idbSet } from 'idb-keyval';
+import { clear as idbClear, createStore, entries as idbEntries, get as idbGet, set as idbSet } from 'idb-keyval';
 import { md5 } from './md5';
 import type { Album, AlbumListType, Artist, ArtistInfo, Genre, Lyrics, Playlist, Song } from './types';
 
@@ -566,17 +566,62 @@ export async function startScan(): Promise<ScanStatus> {
 
 // ---- Server downloads (into the library) ------------------------------------
 
-/** The library changed on the server: drop everything cached about it. */
-function forgetLibrary() {
-	clearCache();
-	albumRequests.clear();
+/**
+ * Library items were removed on the server: take them (any object whose `id` is in
+ * `ids`) out of every cached answer - in memory, on disk and the pending album
+ * requests - so nothing needs refetching. Timestamps are kept, so freshness and
+ * revalidation work as before.
+ */
+async function dropFromCache(ids: ReadonlySet<string>) {
+	if (!ids.size) return;
+	let changed = false;
+	const prune = (value: unknown): unknown => {
+		if (Array.isArray(value)) {
+			const kept = value.filter((item) => {
+				const gone = !!item && typeof item === 'object' && ids.has((item as { id?: string }).id ?? '');
+				if (gone) changed = true;
+				return !gone;
+			});
+			return kept.map(prune);
+		}
+		if (value && typeof value === 'object') {
+			const out: Record<string, unknown> = {};
+			for (const [k, v] of Object.entries(value)) out[k] = prune(v);
+			return out;
+		}
+		return value;
+	};
+	// The pruned copy when something was removed, else the original (untouched).
+	const pruned = (data: unknown) => {
+		changed = false;
+		const next = prune(data);
+		return changed ? next : data;
+	};
+
+	for (const [k, entry] of memo) {
+		const data = pruned(entry.data);
+		if (data !== entry.data) memo.set(k, { at: entry.at, data });
+	}
+	for (const [k, hit] of albumRequests) {
+		albumRequests.set(k, { at: hit.at, request: hit.request.then((a) => pruned(a) as Album) });
+	}
+	if (!store) return;
+	try {
+		for (const [k, entry] of await idbEntries<string, CacheEntry>(store)) {
+			const data = pruned(entry.data);
+			if (data !== entry.data) await idbSet(k, { at: entry.at, data }, store);
+		}
+	} catch {
+		/* best effort: the next revalidation corrects the disk copy */
+	}
 }
 
 /** Removes a library song (`tr-` id) and its file. Returns the removed song ids. */
 export async function removeLibraryTrack(id: string): Promise<string[]> {
 	const r = await call('removeLibraryTrack', { id });
-	forgetLibrary();
-	return r.libraryRemoval?.removedSongId ?? [];
+	const removed: string[] = r.libraryRemoval?.removedSongId ?? [];
+	void dropFromCache(new Set(removed));
+	return removed;
 }
 
 /**
@@ -585,8 +630,9 @@ export async function removeLibraryTrack(id: string): Promise<string[]> {
  */
 export async function removeLibraryAlbum(id: string, stopWanted = true): Promise<string[]> {
 	const r = await call('removeLibraryAlbum', { id, stopWanted });
-	forgetLibrary();
-	return r.libraryRemoval?.removedSongId ?? [];
+	const removed: string[] = r.libraryRemoval?.removedSongId ?? [];
+	void dropFromCache(new Set([id, ...removed]));
+	return removed;
 }
 
 /** A Spotify catalog track, offered as the metadata for a server download. */

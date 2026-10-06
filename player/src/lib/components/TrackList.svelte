@@ -57,9 +57,13 @@
 	});
 	const multiDisc = $derived(variant === 'album' && new Set(songs.map((s) => s.discNumber ?? 1)).size > 1);
 
+	// Songs removed from the library are hidden in place: rows keep their index in
+	// `songs`, which `onplay`/`extraMenu` callers (e.g. playlist removal) rely on.
 	function play(i: number) {
-		if (onplay) onplay(i);
-		else player.playList(songs, i);
+		if (onplay) return onplay(i);
+		if (!ui.removedSongs.size) return player.playList(songs, i);
+		const before = songs.slice(0, i).filter((s) => ui.removedSongs.has(s.id)).length;
+		player.playList(songs.filter((s) => !ui.removedSongs.has(s.id)), i - before);
 	}
 
 	function menu(e: MouseEvent, song: Song, i: number) {
@@ -69,6 +73,7 @@
 
 <div class="tracks v-{variant}" class:no-album={!showAlbum} role="list">
 	{#each songs as song, i (keys[i])}
+		{#if !ui.removedSongs.has(song.id)}
 		{#if multiDisc && (i === 0 || (songs[i - 1].discNumber ?? 1) !== (song.discNumber ?? 1))}
 			<div class="disc">Disc {song.discNumber ?? 1}</div>
 		{/if}
@@ -131,6 +136,7 @@
 				<Icon name="more" size={20} />
 			</button>
 		</div>
+		{/if}
 	{/each}
 </div>
 

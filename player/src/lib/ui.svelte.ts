@@ -1,3 +1,4 @@
+import { SvelteSet } from 'svelte/reactivity';
 import { addToPlaylist, cached, createPlaylist, getPlaylists, getUser, setStarred, type UserInfo } from './api';
 import type { Album, Artist, Playlist, Song } from './types';
 
@@ -25,8 +26,9 @@ class UI {
 	spotifyPicker = $state<Song | null>(null);
 	/** Library item waiting for the user to confirm its removal (see Overlays). */
 	removal = $state<LibraryRemoval | null>(null);
-	/** Bumped after a library removal, so open views reload. */
-	libraryRevision = $state(0);
+	/** Removed from the library this session: lists hide them without refetching. */
+	removedSongs = new SvelteSet<string>();
+	removedAlbums = new SvelteSet<string>();
 	playlists = $state<Playlist[]>([]);
 	/** Optimistic love state keyed by id, layered over what the server returned. */
 	loved = $state<Record<string, boolean>>({});

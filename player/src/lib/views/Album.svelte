@@ -43,17 +43,13 @@
 		return tint instanceof Promise ? tint.then(finish) : finish(tint);
 	}
 
-	// Reloaded after a library removal (a song of this album may be gone).
-	let data = $derived.by(() => {
-		void ui.libraryRevision;
-		return load(id);
-	});
+	let data = $derived(load(id));
 </script>
 
 {#await data}
 	<div class="spinner"></div>
 {:then { album, more, tint }}
-	{@const songs = album.song ?? []}
+	{@const songs = (album.song ?? []).filter((s) => !ui.removedSongs.has(s.id))}
 	<div class="page album-page" style:--hero-bg={tint}>
 		<DetailHeader
 			coverArt={album.coverArt}

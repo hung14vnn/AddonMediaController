@@ -39,18 +39,20 @@ export async function requestDownload(spotifyId: string) {
 
 /**
  * Removes a confirmed library song or album on the server (deleting its files),
- * like the web UI: then drops device copies of the removed songs and reloads
- * open views; leaves an album page whose album is gone.
+ * like the web UI. On success the removed items are hidden from every list right
+ * away (no refetch), their device copies are dropped, and an album page whose
+ * album is gone is left.
  */
 export async function removeFromLibrary(target: LibraryRemoval, stopWanted = true) {
 	const removed =
 		target.kind === 'track'
 			? await removeLibraryTrack(target.song.id)
 			: await removeLibraryAlbum(target.album.id, stopWanted);
+	for (const id of removed) ui.removedSongs.add(id);
+	if (target.kind === 'album') ui.removedAlbums.add(target.album.id);
 	const username = getSession()?.username;
 	if (username)
 		await Promise.all(removed.map((id) => deleteOfflineTrack(username, id).catch(() => {})));
-	ui.libraryRevision++;
 	ui.showToast(target.kind === 'track' ? 'File removed' : 'Removed from Library');
 	const route = router.route;
 	if (target.kind === 'album' && route.name === 'album' && route.id === target.album.id) {
