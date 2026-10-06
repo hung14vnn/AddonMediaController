@@ -289,6 +289,21 @@ async def test_get_search_job_projects_current_order_with_original_pick_index():
 
 
 @pytest.mark.asyncio
+async def test_get_search_job_non_owner_raises_permission_denied():
+    service, *_ = _make_service(owner_id="someone-else")
+    with pytest.raises(PermissionDeniedError, match="Cannot view another user's search job"):
+        await service.get_search_job("u1", "job1")
+
+
+@pytest.mark.asyncio
+async def test_get_search_job_admin_allowed():
+    service, *_ = _make_service(owner_id="someone-else")
+    job, candidates = await service.get_search_job("admin1", "job1", user_role="admin")
+    assert job.id == "job1"
+    assert len(candidates) == 1
+
+
+@pytest.mark.asyncio
 async def test_run_search_failure_marks_failed():
     service, store, bus, indexer, _, _ = _make_service()
     indexer.search_album.side_effect = RuntimeError("boom")
@@ -394,6 +409,27 @@ async def test_pick_candidate_non_owner_raises_permission_denied():
     service, *_ = _make_service(owner_id="someone-else")
     with pytest.raises(PermissionDeniedError):
         await service.pick_candidate("u1", "job1", 0)
+
+
+@pytest.mark.asyncio
+async def test_pick_candidate_admin_allowed_resumes_parked():
+    service, store, bus, client, scorer, orchestrator = _make_service(owner_id="someone-else")
+    parked = DownloadTask(id="parked-1", user_id="someone-else")
+    store.get_parked_task_for_search_job.return_value = parked
+
+    task_id = await service.pick_candidate("admin1", "job1", 0, user_role="admin")
+    assert task_id == "parked-1"
+    store.link_picked_candidate.assert_awaited_once()
+    orchestrator.dispatch.assert_called_once_with("parked-1")
+
+
+@pytest.mark.asyncio
+async def test_pick_candidate_admin_allowed_creates_task_for_owner():
+    service, store, *_ = _make_service(owner_id="someone-else")
+    task_id = await service.pick_candidate("admin1", "job1", 0, user_role="admin")
+    assert task_id == "task1"
+    store.create_task.assert_awaited_once()
+    assert store.create_task.await_args.kwargs["user_id"] == "someone-else"
 
 
 @pytest.mark.asyncio
@@ -670,6 +706,13 @@ async def test_cancel_search_non_owner_raises():
     service, *_ = _make_service(owner_id="someone-else")
     with pytest.raises(PermissionDeniedError):
         await service.cancel_search("u1", "job1")
+
+
+@pytest.mark.asyncio
+async def test_cancel_search_admin_allowed():
+    service, store, *_ = _make_service(owner_id="someone-else")
+    assert await service.cancel_search("admin1", "job1", user_role="admin") is True
+    store.update_search_job_status.assert_any_await("job1", "cancelled")
 
 
 def _make_service_with_mb(owner_id="u1"):

@@ -400,6 +400,9 @@ class SUser(msgspec.Struct, kw_only=True):
     videoConversionRole: bool = False
     maxBitRate: int | None = None
     folder: list[int] = msgspec.field(default_factory=lambda: [1])
+    # Extension for the bundled player: the server role ("admin", "trusted",
+    # "user"), which gates library management beyond what adminRole covers.
+    role: str | None = None
 
 
 def to_artist_id3(v: ViewArtist) -> SArtistID3:

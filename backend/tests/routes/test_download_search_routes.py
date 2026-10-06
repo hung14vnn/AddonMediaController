@@ -15,12 +15,12 @@ from services.native.download_service import ALREADY_IN_LIBRARY
 from tests.helpers import build_test_client, mock_user
 
 
-def _app(service) -> FastAPI:
+def _app(service, role="user", user_id="u1") -> FastAPI:
     app = FastAPI()
     app.include_router(downloads_search.router)
     app.dependency_overrides[get_download_service] = lambda: service
     app.dependency_overrides[_get_current_user] = lambda: mock_user(
-        role="user", user_id="u1"
+        role=role, user_id=user_id
     )
     return app
 
@@ -115,6 +115,21 @@ def test_pick_success():
     )
     assert response.status_code == 200
     assert response.json()["task_id"] == "task1"
+    service.pick_candidate.assert_awaited_once_with(
+        "u1", "job1", 0, user_role="user"
+    )
+
+
+def test_pick_admin_success():
+    service = AsyncMock()
+    service.pick_candidate.return_value = "task1"
+    response = build_test_client(_app(service, role="admin", user_id="admin-1")).post(
+        "/downloads/search/job1/pick", json={"candidate_index": 0}
+    )
+    assert response.status_code == 200
+    service.pick_candidate.assert_awaited_once_with(
+        "admin-1", "job1", 0, user_role="admin"
+    )
 
 
 def test_pick_non_owner_forbidden():
@@ -140,7 +155,40 @@ def test_cancel_search():
     service.cancel_search.return_value = True
     response = build_test_client(_app(service)).post("/downloads/search/job1/cancel")
     assert response.status_code == 200
-    service.cancel_search.assert_awaited_once_with("u1", "job1")
+    service.cancel_search.assert_awaited_once_with("u1", "job1", user_role="user")
+
+
+def test_cancel_search_admin():
+    service = AsyncMock()
+    service.cancel_search.return_value = True
+    response = build_test_client(_app(service, role="admin", user_id="admin-1")).post(
+        "/downloads/search/job1/cancel"
+    )
+    assert response.status_code == 200
+    service.cancel_search.assert_awaited_once_with(
+        "admin-1", "job1", user_role="admin"
+    )
+
+
+def test_get_search_job_passes_role_to_service():
+    service = AsyncMock()
+    service.get_search_job.return_value = (
+        SimpleNamespace(
+            id="job1",
+            status="completed",
+            artist_name="A",
+            album_title="B",
+            quality_snapshot_summary=None,
+        ),
+        [],
+    )
+    response = build_test_client(_app(service, role="admin", user_id="admin-1")).get(
+        "/downloads/search/job1"
+    )
+    assert response.status_code == 200
+    service.get_search_job.assert_awaited_once_with(
+        "admin-1", "job1", user_role="admin"
+    )
 
 
 def test_search_stream_route_precedes_job_id_param():

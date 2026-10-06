@@ -129,3 +129,77 @@ async def test_request_spotify_download_uses_app_provider_overrides(spotify):
     )
     assert _body(response)["spotifyDownload"]["taskId"] == "task-target"
     spotify.acquisition.request_track.assert_not_awaited()
+
+
+# ---- removeLibraryTrack / removeLibraryAlbum -----------------------------------
+
+
+def _as(role: str, params: dict[str, str], overrides: dict) -> Ctx:
+    ctx = _ctx(params, overrides)
+    ctx.user = SimpleNamespace(id="u1", role=role)
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_remove_library_track_requires_curator():
+    from core.exceptions import SubsonicError
+
+    with pytest.raises(SubsonicError) as exc:
+        await _HANDLERS["removelibrarytrack"](_as("user", {"id": "tr-t1"}, {}))
+    assert exc.value.code == 50
+
+
+@pytest.mark.asyncio
+async def test_remove_library_track_removes_through_writer():
+    writer = SimpleNamespace(remove_track=AsyncMock(return_value=["t1"]))
+    response = await _HANDLERS["removelibrarytrack"](
+        _as(
+            "trusted",
+            {"id": "tr-t1"},
+            {deps.get_target_catalog_writer_service: lambda: writer},
+        )
+    )
+    assert _body(response)["libraryRemoval"] == {"removedSongId": ["tr-t1"]}
+    writer.remove_track.assert_awaited_once_with(
+        "t1", actor_user_id="u1", is_admin=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_remove_library_album_is_admin_only():
+    from core.exceptions import SubsonicError
+
+    with pytest.raises(SubsonicError) as exc:
+        await _HANDLERS["removelibraryalbum"](_as("trusted", {"id": "al-a1"}, {}))
+    assert exc.value.code == 50
+
+
+@pytest.mark.asyncio
+async def test_remove_library_album_deletes_files_and_settles_wanted():
+    writer = SimpleNamespace(
+        provider_release_group_id=AsyncMock(return_value="rg1"),
+        remove_album=AsyncMock(return_value=["t1", "t2"]),
+    )
+    wanted = SimpleNamespace(
+        stop_after_library_removal=AsyncMock(),
+        continue_after_library_removal=AsyncMock(),
+    )
+    downloads = SimpleNamespace(purge_album_downloads=AsyncMock())
+    response = await _HANDLERS["removelibraryalbum"](
+        _as(
+            "admin",
+            {"id": "al-a1", "stopWanted": "false"},
+            {
+                deps.get_target_catalog_writer_service: lambda: writer,
+                deps.get_wanted_watcher_service: lambda: wanted,
+                deps.get_download_service: lambda: downloads,
+            },
+        )
+    )
+    assert _body(response)["libraryRemoval"] == {"removedSongId": ["tr-t1", "tr-t2"]}
+    writer.remove_album.assert_awaited_once_with(
+        "a1", actor_user_id="u1", delete_files=True
+    )
+    downloads.purge_album_downloads.assert_awaited_once_with("rg1")
+    wanted.continue_after_library_removal.assert_awaited_once_with("rg1")
+    wanted.stop_after_library_removal.assert_not_awaited()

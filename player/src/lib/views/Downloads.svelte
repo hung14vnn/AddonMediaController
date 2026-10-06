@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getSession } from '../api';
-	import { listOfflineTrackMetadata, deleteOfflineTrack, type OfflineTrackMetadata } from '../offline';
+	import { listOfflineTrackMetadata, type OfflineTrackMetadata } from '../offline';
 	import ErrorState from '../components/ErrorState.svelte';
 	import Icon from '../components/Icon.svelte';
 	import TrackList from '../components/TrackList.svelte';
@@ -48,13 +48,6 @@ import { router } from '../router.svelte';
 			.filter((track) => `${track.title} ${track.artistName} ${track.albumName}`.toLowerCase().includes(query.toLowerCase()))
 			.map(toSong)
 	);
-
-	async function remove(song: Song) {
-		const username = getSession()?.username;
-		if (!username) return;
-		await deleteOfflineTrack(username, song.id);
-		tracks = tracks.filter((track) => track.trackId !== song.id);
-	}
 
 	load();
 </script>

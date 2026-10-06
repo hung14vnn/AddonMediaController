@@ -6,14 +6,12 @@
 	let {
 		item,
 		class: className = "",
-		forceName = false,
 		onclick,
 	}: {
 		item:
 			| Song
 			| { artist?: string; artistId?: string; displayArtist?: string };
 		class?: string;
-		forceName?: boolean;
 		onclick?: (e: MouseEvent) => void;
 	} = $props();
 
@@ -21,7 +19,7 @@
 		const name = artistName(item);
 		// Assuming artists are joined by ", " from the backend.
 		const parts = name.split(", ").filter(Boolean);
-		return parts.map((part, i) => {
+		return parts.map((part) => {
 			return {
 				name: part,
 				url: href.artist(part),

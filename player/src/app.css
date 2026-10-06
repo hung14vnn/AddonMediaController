@@ -453,6 +453,14 @@ a.tile:active {
   animation: reveal 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
+/* A page restored by going back reappears exactly as it was left: replaying the
+   reveal would make all its content shift up under the restored scroll position. */
+.view.restored .grid>*,
+.view.restored .shelf .row>*,
+.view.restored .tracks>.row {
+  animation: none;
+}
+
 .grid> :nth-child(2),
 .shelf .row> :nth-child(2),
 .tracks>.row:nth-child(2) {

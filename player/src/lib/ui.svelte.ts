@@ -8,6 +8,10 @@ export interface MenuItem {
 	action: () => void;
 }
 
+export type LibraryRemoval =
+	| { kind: 'track'; song: Song }
+	| { kind: 'album'; album: Album };
+
 class UI {
 	/** Full-screen Now Playing sheet. */
 	nowPlaying = $state(false);
@@ -19,6 +23,10 @@ class UI {
 	playlistPicker = $state<Song[] | null>(null);
 	/** A YouTube song waiting for the Spotify match whose metadata the server downloads it with. */
 	spotifyPicker = $state<Song | null>(null);
+	/** Library item waiting for the user to confirm its removal (see Overlays). */
+	removal = $state<LibraryRemoval | null>(null);
+	/** Bumped after a library removal, so open views reload. */
+	libraryRevision = $state(0);
 	playlists = $state<Playlist[]>([]);
 	/** Optimistic love state keyed by id, layered over what the server returned. */
 	loved = $state<Record<string, boolean>>({});
@@ -66,6 +74,17 @@ class UI {
 	togglePanel(panel: 'lyrics' | 'queue') {
 		this.panel = this.panel === panel ? null : panel;
 		this.openNowPlaying();
+	}
+
+	/** Same gates as the web UI: tracks for admin/trusted, whole albums for admin. */
+	get canRemoveTracks() {
+		const role = this.me?.role;
+		return role ? role === 'admin' || role === 'trusted' : !!this.me?.adminRole;
+	}
+
+	get canRemoveAlbums() {
+		const role = this.me?.role;
+		return role ? role === 'admin' : !!this.me?.adminRole;
 	}
 
 	isLoved(item: { id: string; starred?: string }) {

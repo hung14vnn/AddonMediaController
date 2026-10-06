@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Desktop transport bar, modelled on music.apple.com: controls left, the "LCD"
 	// (art, title, progress) centred, volume + lyrics/queue toggles right.
-	import { artistName, time } from "../format";
+	import { time } from "../format";
 	import { songMenu } from "../menus";
 	import { getPlayer } from "../player.svelte";
 	import { href } from "../router.svelte";
@@ -101,7 +101,7 @@
 					>
 						<span class="lcd-title ellipsis">{song.title}</span>
 						<span class="lcd-sub ellipsis">
-							<ArtistLinks item={song} forceName={true} />
+							<ArtistLinks item={song} />
 							{#if song.album}
 								&nbsp;—&nbsp;<a href={href.album(song.album)}
 									>{song.album}</a

@@ -19,11 +19,12 @@ export const easeBack = (t: number) => {
  *   full width from the right while the old one drifts 30% left (push), and the
  *   reverse going back (pop).
  * - `tab`: phones, switching tabs — no slide, a quick fade (iOS swaps instantly).
+ * - `none`: the browser already animated it (swipe-back gesture): swap at once.
  * `scroll` is the leaving page's scroll offset and `height` the visible height
  * of the scroll container, so the leaving page can be pinned in place.
  */
 export interface PageMotion {
-	kind: 'rise' | 'push' | 'pop' | 'tab';
+	kind: 'rise' | 'push' | 'pop' | 'tab' | 'none';
 	scroll?: number;
 	height?: number;
 }
@@ -44,9 +45,11 @@ function lift(node: HTMLElement) {
 	node.style.background = 'var(--bg)';
 	node.style.boxShadow = '-8px 0 28px rgb(0 0 0 / 0.18)';
 }
+/** How far that shadow spills past the page's left edge (offset + blur). */
+const SHADOW_REACH = 8 + 28;
 
 export function pageIn(node: HTMLElement, motion: PageMotion = { kind: 'rise' }): TransitionConfig {
-	if (reduced()) return { duration: 0 };
+	if (reduced() || motion.kind === 'none') return { duration: 0 };
 	switch (motion.kind) {
 		case 'push':
 			lift(node);
@@ -76,27 +79,36 @@ export function pageIn(node: HTMLElement, motion: PageMotion = { kind: 'rise' })
 /** The leaving page: pinned where it was (out of the flow), then slid away. */
 export function pageOut(node: HTMLElement, motion: PageMotion = { kind: 'rise' }): TransitionConfig {
 	if (reduced() || (motion.kind !== 'push' && motion.kind !== 'pop')) return { duration: 0 };
-	// The scroll container jumps to the top for the new page; keep this one showing
-	// the part that was on screen. It is cut to one screen and scrolled inside
-	// itself, so the sliding layer (and its shadow) is only a viewport in size
-	// instead of the full length of a long page.
+	// Keep this page showing the part that was on screen while the scroll container
+	// moves on to the new page (to the top, or to the restored offset going back). It is
+	// pinned to the screen over the container rather than placed inside its scrolling
+	// content: there it would stretch the scroll range until it is removed, so a restored
+	// offset that the new page can't reach on its own would hold during the slide and
+	// then snap back at the end. It is cut to one screen and scrolled inside itself, so
+	// the sliding layer (and its shadow) is only a viewport in size.
+	const box = node.parentElement?.getBoundingClientRect();
 	Object.assign(node.style, {
-		position: 'absolute',
-		top: '0',
-		left: '0',
-		right: '0',
+		position: box ? 'fixed' : 'absolute',
+		top: `${box?.top ?? 0}px`,
+		left: `${box?.left ?? 0}px`,
+		width: box ? `${node.parentElement!.clientWidth}px` : '100%',
 		pointerEvents: 'none',
 		zIndex: motion.kind === 'push' ? '0' : '2'
 	});
 	if (motion.height) {
 		Object.assign(node.style, { height: `${motion.height}px`, minHeight: '0', overflow: 'hidden' });
 		node.scrollTop = motion.scroll ?? 0;
-	} else node.style.top = `${-(motion.scroll ?? 0)}px`;
+	} else node.style.top = `${(box?.top ?? 0) - (motion.scroll ?? 0)}px`;
 	if (motion.kind === 'pop') lift(node);
 	return {
 		duration: PAGE_MS,
 		easing: easeOut,
-		css: (_t, u) => `transform:translateX(${motion.kind === 'push' ? u * -30 : u * 100}%)`
+		// Popping, the page slides out past the edge by its shadow's reach too (see lift()),
+		// or the shadow stays on screen as a strip until the page is removed.
+		css: (_t, u) =>
+			motion.kind === 'push'
+				? `transform:translateX(${u * -30}%)`
+				: `transform:translateX(calc(${u * 100}% + ${u * SHADOW_REACH}px))`
 	};
 }
 

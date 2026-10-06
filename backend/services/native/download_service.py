@@ -864,12 +864,12 @@ class DownloadService:
         return candidates
 
     async def get_search_job(
-        self, user_id: str, job_id: str
+        self, user_id: str, job_id: str, user_role: str | None = None
     ) -> tuple[SearchJob, list[ScoredCandidate]]:
         job = await self._store.get_search_job(job_id)
         if job is None:
             raise ResourceNotFoundError("Search job not found")
-        if job.user_id != user_id:
+        if user_role != "admin" and job.user_id != user_id:
             raise PermissionDeniedError("Cannot view another user's search job")
         candidates = await self._store.get_search_job_candidates(job_id)
         target = TargetAlbum(
@@ -934,7 +934,11 @@ class DownloadService:
         return acq_quality.evaluate(snapshot, evidence)
 
     async def pick_candidate(
-        self, user_id: str, job_id: str, candidate_index: int
+        self,
+        user_id: str,
+        job_id: str,
+        candidate_index: int,
+        user_role: str | None = None,
     ) -> str:
         """User picked a manual-tier candidate -> resume the parked orchestrator task
         when one exists, else create a linked queued task; dispatch either way."""
@@ -942,7 +946,7 @@ class DownloadService:
         job = await self._store.get_search_job(job_id)
         if job is None:
             raise ResourceNotFoundError("Search job not found")
-        if job.user_id != user_id:
+        if user_role != "admin" and job.user_id != user_id:
             raise PermissionDeniedError("Cannot pick on another user's search job")
         candidates = await self._store.get_search_job_candidates(job_id)
         if candidate_index < 0 or candidate_index >= len(candidates):
@@ -975,7 +979,7 @@ class DownloadService:
         # and would leave the parked task dangling forever. The 2026-07-05 incident
         # review found a force-pick re-imported the wrong file ungated this way.
         parked = await self._store.get_parked_task_for_search_job(job_id)
-        if parked is not None and parked.user_id == user_id:
+        if parked is not None and (parked.user_id == user_id or user_role == "admin"):
             await self._store.link_picked_candidate(
                 task_id=parked.id,
                 search_job_id=job_id,
@@ -1037,8 +1041,9 @@ class DownloadService:
             ) = await self._single_track_identity(job.release_group_mbid)
 
         # Route a picked Usenet candidate to SABnzbd, not the slskd default (D2/D16).
+        task_user_id = job.user_id if user_role == "admin" else user_id
         task = await self._store.create_task(
-            user_id=user_id,
+            user_id=task_user_id,
             download_type="album",
             release_group_mbid=job.release_group_mbid or "",
             artist_mbid=job.artist_mbid,
@@ -2514,11 +2519,13 @@ class DownloadService:
             retried += 1
         return retried
 
-    async def cancel_search(self, user_id: str, job_id: str) -> bool:
+    async def cancel_search(
+        self, user_id: str, job_id: str, user_role: str | None = None
+    ) -> bool:
         job = await self._store.get_search_job(job_id)
         if job is None:
             raise ResourceNotFoundError("Search job not found")
-        if job.user_id != user_id:
+        if user_role != "admin" and job.user_id != user_id:
             raise PermissionDeniedError("Cannot cancel another user's search job")
         await self._store.update_search_job_status(job_id, "cancelled")
         return True

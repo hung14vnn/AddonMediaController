@@ -15,11 +15,8 @@
 	import ErrorState from "../components/ErrorState.svelte";
 	import GenreTiles from "../components/GenreTiles.svelte";
 	import Shelf from "../components/Shelf.svelte";
-	import { getPlayer } from "../player.svelte";
 
-	const player = getPlayer();
-
-	// Cached so switching tabs back to Browse renders instantly (see `cached` in api.ts).
+	// Cached so switching tabs back to Browse renders instantly (see `cachedNow` in api.ts).
 	// Synchronous on a revisit (plain values), so the tab paints without a spinner.
 	function load() {
 		const parts = allNow([

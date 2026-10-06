@@ -11,7 +11,6 @@
 	import { artSwap, fadeOnly, pop, sheet, textSwap } from "../motion";
 	import { artworkTint, type Tint } from "../palette";
 	import { getPlayer } from "../player.svelte";
-	import { router } from "../router.svelte";
 	import { sleepTimer } from "../sleepTimer.svelte";
 	import { ui } from "../ui.svelte";
 	import Artwork from "./Artwork.svelte";
@@ -605,19 +604,6 @@
 			// Svelte only needs the length (to keep the node mounted while closing).
 			return { duration };
 		};
-	}
-
-	function go(path: string) {
-		if (history.state?.nowPlaying) {
-			const onPopState = () => {
-				removeEventListener("popstate", onPopState);
-				router.go(path);
-			};
-			addEventListener("popstate", onPopState);
-			close();
-		} else {
-			router.go(path);
-		}
 	}
 
 	function onKey(e: KeyboardEvent) {

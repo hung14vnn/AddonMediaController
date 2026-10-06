@@ -156,12 +156,26 @@ export type Maybe<T> = T | Promise<T>;
  */
 export function cachedNow<T>(key: string, fetcher: () => Promise<T>, opts: CachedOptions<T> = {}): Maybe<T> {
 	const hit = memo.get(cacheKey(key));
+	const usable = hit && Date.now() - hit.at < (opts.maxAge ?? DEFAULT_MAX_AGE);
+	// Going back to a page just seen: show it exactly as it was, with no request and so no
+	// swap (e.g. Home's random picks), the way a native back gesture behaves.
+	if (usable && performance.now() - backNavigationAt < BACK_WINDOW_MS) return hit.data as T;
 	const request = cached(key, fetcher, opts);
-	if (hit && Date.now() - hit.at < (opts.maxAge ?? DEFAULT_MAX_AGE)) {
+	if (usable) {
 		request.catch(() => {});
 		return hit.data as T;
 	}
 	return request;
+}
+
+let backNavigationAt = -Infinity;
+// Long enough for the restored view to mount and run its loaders, short enough that a
+// later action on that page (retry, sort) still revalidates.
+const BACK_WINDOW_MS = 1000;
+
+/** Called by the layout on back/forward navigation; see `cachedNow`. */
+export function markBackNavigation() {
+	backNavigationAt = performance.now();
 }
 
 /** `Promise.all` that stays synchronous when every input already is. */
@@ -507,6 +521,8 @@ export async function deletePlaylist(id: string) {
 export interface UserInfo {
 	username: string;
 	adminRole?: boolean;
+	/** DroppedNeedle extension: "admin", "trusted" or "user". */
+	role?: string;
 	scrobblingEnabled?: boolean;
 	maxBitRate?: number;
 }
@@ -549,6 +565,29 @@ export async function startScan(): Promise<ScanStatus> {
 }
 
 // ---- Server downloads (into the library) ------------------------------------
+
+/** The library changed on the server: drop everything cached about it. */
+function forgetLibrary() {
+	clearCache();
+	albumRequests.clear();
+}
+
+/** Removes a library song (`tr-` id) and its file. Returns the removed song ids. */
+export async function removeLibraryTrack(id: string): Promise<string[]> {
+	const r = await call('removeLibraryTrack', { id });
+	forgetLibrary();
+	return r.libraryRemoval?.removedSongId ?? [];
+}
+
+/**
+ * Removes a library album (`al-` id) and its files. `stopWanted` stops the Wanted
+ * watcher looking for a replacement. Returns the removed song ids.
+ */
+export async function removeLibraryAlbum(id: string, stopWanted = true): Promise<string[]> {
+	const r = await call('removeLibraryAlbum', { id, stopWanted });
+	forgetLibrary();
+	return r.libraryRemoval?.removedSongId ?? [];
+}
 
 /** A Spotify catalog track, offered as the metadata for a server download. */
 export interface SpotifyMatch {

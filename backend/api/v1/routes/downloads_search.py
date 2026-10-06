@@ -2,8 +2,8 @@
 pick a candidate, cancel, and stream live progress via SSE.
 
 Search jobs are owned by the initiating user; pick/cancel/view/stream verify
-``job.user_id == current_user.id`` in the service layer (-> 403 via the
-registered ``PermissionDeniedError`` handler).
+ownership or admin role in the service layer (-> 403 via the registered
+``PermissionDeniedError`` handler).
 """
 
 import asyncio
@@ -88,7 +88,9 @@ async def search_stream(
     # this literal /search/stream route MUST be declared before /search/{job_id}
     # below, or Starlette captures "stream" as job_id and SSE 404s
     # ownership guard before streaming (raises 404/403 via registered handlers)
-    await service.get_search_job(current_user.id, job_id)
+    await service.get_search_job(
+        current_user.id, job_id, user_role=current_user.role
+    )
 
     async def event_generator():
         try:
@@ -110,7 +112,9 @@ async def search_stream(
 async def get_search_job(
     job_id: str, current_user: CurrentUserDep, service=Depends(get_download_service)
 ):
-    job, candidates = await service.get_search_job(current_user.id, job_id)
+    job, candidates = await service.get_search_job(
+        current_user.id, job_id, user_role=current_user.role
+    )
     return SearchJobResponse(
         job_id=job.id,
         status=job.status,
@@ -132,7 +136,10 @@ async def pick_candidate(
     service=Depends(get_download_service),
 ):
     task_id = await service.pick_candidate(
-        current_user.id, job_id, body.candidate_index
+        current_user.id,
+        job_id,
+        body.candidate_index,
+        user_role=current_user.role,
     )
     return PickResponse(task_id=task_id)
 
@@ -154,5 +161,7 @@ async def dismiss_review(
 async def cancel_search(
     job_id: str, current_user: CurrentUserDep, service=Depends(get_download_service)
 ):
-    await service.cancel_search(current_user.id, job_id)
+    await service.cancel_search(
+        current_user.id, job_id, user_role=current_user.role
+    )
     return StatusMessageResponse(status="ok", message="Search cancelled")

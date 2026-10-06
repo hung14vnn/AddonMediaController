@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { coverUrl } from '../api';
 	import { hue } from '../format';
 	import Icon from './Icon.svelte';
@@ -44,8 +45,12 @@
 	const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio > 1 ? 2 : 1) : 1;
 	const src = $derived(explicitSrc || coverUrl(id, size * dpr));
 
+	// Reset only when the source actually changes: on mount this would run after `ready`
+	// and undo it, so every cached image faded in again.
+	let shownSrc = untrack(() => src);
 	$effect(() => {
-		void src;
+		if (src === shownSrc) return;
+		shownSrc = src;
 		failed = false;
 		loaded = false;
 		instant = false;

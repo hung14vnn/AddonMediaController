@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { getAlbum } from "../api";
-	import { artistName } from "../format";
 	import { albumMenu } from "../menus";
 	import { artworkTint } from "../palette";
 	import { getPlayer } from "../player.svelte";

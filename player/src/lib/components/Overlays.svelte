@@ -7,7 +7,7 @@
 	import { sleepTimer } from "../sleepTimer.svelte";
 	import { searchSpotifyTracks, type SpotifyMatch } from "../api";
 	import { artistName, time } from "../format";
-	import { requestDownload } from "../menus";
+	import { removeFromLibrary, requestDownload } from "../menus";
 
 	let menuEl = $state<HTMLDivElement | null>(null);
 	let pos = $state({ x: 0, y: 0 });
@@ -89,9 +89,45 @@
 		void requestDownload(match.id);
 	}
 
+	// ---- "Remove from Library" confirmation ----
+	let removing = $state(false);
+	let removeError = $state<string | null>(null);
+	let stopWanted = $state(true);
+
+	$effect(() => {
+		if (!ui.removal) return;
+		removeError = null;
+		stopWanted = true;
+	});
+
+	function closeRemoval() {
+		if (!removing) ui.removal = null;
+	}
+
+	async function confirmRemoval() {
+		const target = ui.removal;
+		if (!target || removing) return;
+		removing = true;
+		removeError = null;
+		try {
+			await removeFromLibrary(target, stopWanted);
+			ui.removal = null;
+		} catch (e) {
+			removeError =
+				e instanceof Error && e.message
+					? e.message
+					: target.kind === "track"
+						? "Couldn’t remove this file"
+						: "Couldn’t remove this album";
+		} finally {
+			removing = false;
+		}
+	}
+
 	function onKey(e: KeyboardEvent) {
 		if (e.key !== "Escape") return;
 		if (ui.menu) ui.menu = null;
+		else if (ui.removal) closeRemoval();
 		else if (ui.spotifyPicker) ui.spotifyPicker = null;
 		else if (ui.playlistPicker) ui.playlistPicker = null;
 		else if (ui.sleepTimerPicker) ui.sleepTimerPicker = false;
@@ -263,6 +299,49 @@
 				</li>
 			{/each}
 		</ul>
+	</div>
+{/if}
+
+{#if ui.removal}
+	{@const target = ui.removal}
+	<div class="sheet-scrim" role="presentation" transition:fadeOnly onclick={closeRemoval}></div>
+	<div
+		class="sheet confirm"
+		role="alertdialog"
+		in:dialog
+		out:fadeOnly={{ duration: 150 }}
+		aria-modal="true"
+		aria-labelledby="remove-title"
+	>
+		<header>
+			<h3 id="remove-title">{target.kind === "track" ? "Remove File" : "Remove Album"}</h3>
+		</header>
+		<p class="body">
+			{#if target.kind === "track"}
+				Remove <strong>{target.song.title}</strong> from your library? This deletes the file
+				from disk - this can’t be undone.
+			{:else}
+				Remove <strong>{target.album.name}</strong>{#if artistName(target.album)}
+					by <strong>{artistName(target.album)}</strong>{/if} from your library? The album’s local
+				files will be permanently deleted from disk - this can’t be undone.
+			{/if}
+		</p>
+		{#if target.kind === "album"}
+			<label class="option">
+				<input type="checkbox" bind:checked={stopWanted} disabled={removing} />
+				<span>
+					<span class="option-title">Stop the Wanted watcher</span>
+					<small>Uncheck this to keep looking for a replacement after the album is removed.</small>
+				</span>
+			</label>
+		{/if}
+		{#if removeError}<p class="error" role="alert">{removeError}</p>{/if}
+		<div class="buttons">
+			<button class="secondary" onclick={closeRemoval} disabled={removing}>Cancel</button>
+			<button class="destructive" onclick={confirmRemoval} disabled={removing}>
+				{removing ? "Removing…" : "Remove"}
+			</button>
+		</div>
 	</div>
 {/if}
 
@@ -578,6 +657,70 @@
 		display: none;
 	}
 
+	.confirm .body {
+		margin: 0;
+		padding: 4px 16px 12px;
+		font-size: 14px;
+		line-height: 1.45;
+		color: var(--text-2);
+	}
+	.confirm .body strong {
+		color: var(--text);
+		font-weight: 600;
+	}
+	.option {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		margin: 0 16px 12px;
+		padding: 10px 12px;
+		border-radius: 10px;
+		background: var(--fill);
+		font-size: 13px;
+		cursor: pointer;
+	}
+	.option input {
+		margin-top: 2px;
+		accent-color: var(--accent);
+	}
+	.option-title {
+		display: block;
+		font-weight: 600;
+		color: var(--text);
+	}
+	.option small {
+		display: block;
+		margin-top: 2px;
+		color: var(--text-2);
+	}
+	.confirm .error {
+		margin: 0 16px 10px;
+		font-size: 13px;
+		color: #ff3b30;
+	}
+	.buttons {
+		display: flex;
+		gap: 8px;
+		padding: 4px 16px 16px;
+	}
+	.buttons button {
+		flex: 1;
+		height: 40px;
+		border-radius: 10px;
+		font-size: 15px;
+		font-weight: 600;
+	}
+	.buttons button:disabled {
+		opacity: 0.5;
+	}
+	.secondary {
+		background: var(--fill);
+		color: var(--text);
+	}
+	.destructive {
+		background: #ff3b30;
+		color: #fff;
+	}
 	.toast {
 		position: fixed;
 		z-index: 95;

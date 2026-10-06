@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { afterNavigate, beforeNavigate } from "$app/navigation";
+	import { beforeNavigate } from "$app/navigation";
 	import { page } from "$app/state";
 	import { onMount, type Snippet } from "svelte";
 	import "../app.css";
@@ -9,6 +9,7 @@
 	import PlayerBar from "$lib/components/PlayerBar.svelte";
 	import Sidebar from "$lib/components/Sidebar.svelte";
 	import TabBar from "$lib/components/TabBar.svelte";
+	import { markBackNavigation } from "$lib/api";
 	import { getPlayer } from "$lib/player.svelte";
 	import { pageIn, pageOut, type PageMotion } from "$lib/motion";
 	import { auth } from "$lib/session.svelte";
@@ -18,6 +19,8 @@
 	let { children }: { children: Snippet } = $props();
 
 	let main: HTMLElement | undefined = $state();
+	/** Set right before navigation moves <main>'s scroll; see the dock's scroll handler. */
+	let programmaticScroll = false;
 	let compactDock = $state(false);
 	let keyboardInset = $state(0);
 	const searching = $derived(page.route.id === "/search");
@@ -35,6 +38,12 @@
 			const currentTop = el.scrollTop;
 			const delta = currentTop - previousTop;
 			previousTop = currentTop;
+			// A jump made by navigation (to the top, or to a restored offset) isn't the
+			// user scrolling: leave the dock as it is.
+			if (programmaticScroll) {
+				programmaticScroll = false;
+				return;
+			}
 
 			if (delta < 0) {
 				compactDock = false;
@@ -64,57 +73,108 @@
 	const TAB_ROOTS = new Set(["/", "/browse", "/library", "/search"]);
 	// Plain (non-reactive) holder: the transitions read it when they start.
 	const nav: { motion: PageMotion } = { motion: { kind: "rise" } };
+
+	// <main> is the scroll container, so SvelteKit's window scroll handling doesn't apply.
+	// Going back restores where the page was; anything else starts at the top. The target
+	// is decided here, before the navigation, so the arriving page can be scrolled to it
+	// as it mounts (see `placeView`), before its first frame is painted.
+	const scrollPositions = new Map<string, number>();
+	let scrollTarget = 0;
+	let restoring = false;
+
+	// Whether the browser animated the current back/forward itself (iOS Safari's edge
+	// swipe, Android's predictive back, trackpad swipes). Browsers that say so set
+	// `hasUAVisualTransition` (Safari 18+, Chrome 123+); for older ones, a popstate while
+	// a touch that began at a screen edge is still down (or was taken over by the browser,
+	// which cancels it) counts as one. A tap ends with touchend first, so an in-app back
+	// button near the edge still animates.
+	let browserAnimatedBack = false;
+	let edgeTouchAt = -Infinity;
+	const EDGE_PX = 24;
+	if (typeof window !== "undefined") {
+		addEventListener(
+			"touchstart",
+			(e) => {
+				const x = e.touches[0]?.clientX ?? EDGE_PX;
+				edgeTouchAt = x < EDGE_PX || x > innerWidth - EDGE_PX ? performance.now() : -Infinity;
+			},
+			{ capture: true, passive: true },
+		);
+		addEventListener("touchend", () => (edgeTouchAt = -Infinity), { capture: true, passive: true });
+		// Capture phase: runs before SvelteKit's own popstate listener calls beforeNavigate.
+		addEventListener(
+			"popstate",
+			(e) => {
+				browserAnimatedBack =
+					(e as PopStateEvent & { hasUAVisualTransition?: boolean }).hasUAVisualTransition === true ||
+					performance.now() - edgeTouchAt < 1500;
+				edgeTouchAt = -Infinity;
+			},
+			{ capture: true },
+		);
+	}
+
 	beforeNavigate((navigation) => {
+		const { from, to, type } = navigation;
 		const scroll = main?.scrollTop ?? 0;
+		if (from) scrollPositions.set(from.url.hash, scroll);
+		restoring = type === "popstate";
+		if (restoring) markBackNavigation();
+		scrollTarget = restoring ? (scrollPositions.get(to?.url.hash ?? "") ?? 0) : 0;
+
 		const height = main?.clientHeight;
+		// The browser already slid the pages under the finger: playing our slide on top
+		// would pull the page that just settled back to the side and slide it in again.
+		if (restoring && browserAnimatedBack) {
+			nav.motion = { kind: "none", scroll, height };
+			return;
+		}
 		if (!matchMedia("(max-width: 899px)").matches) {
 			nav.motion = { kind: "rise", scroll, height };
 			return;
 		}
-		const back = navigation.type === "popstate" && (navigation.delta ?? 0) < 0;
-		const toTab = TAB_ROOTS.has(navigation.to?.route.id ?? "");
+		const back = type === "popstate" && (navigation.delta ?? 0) < 0;
+		const toTab = TAB_ROOTS.has(to?.route.id ?? "");
 		nav.motion = { kind: back ? "pop" : toTab ? "tab" : "push", scroll, height };
 	});
 
-	// <main> is the scroll container, so SvelteKit's window scroll handling doesn't apply.
-	// Going back restores where the page was; anything else starts at the top.
-	const scrollPositions = new Map<string, number>();
-	let restoreScroll: ResizeObserver | undefined;
-	beforeNavigate(({ from }) => {
-		if (from && main) scrollPositions.set(from.url.hash, main.scrollTop);
-	});
-	afterNavigate(({ from, to, type }) => {
-		if (from?.route.id === "/search" && to?.route.id === "/search") return;
-		restoreScroll?.disconnect();
-		restoreScroll = undefined;
-		const target = type === "popstate" ? (scrollPositions.get(to?.url.hash ?? "") ?? 0) : 0;
-		if (!main || !target) {
-			main?.scrollTo({ top: 0 });
-			return;
-		}
-		// The page may still be filling in from the network, so keep trying as it grows,
-		// until the position is reachable or the user scrolls themselves.
+	/**
+	 * Runs as each view mounts, in the same frame it is first painted: cached pages are
+	 * already full height then, so the scroll lands before anything is drawn. A page still
+	 * loading gets more tries as it grows, until the offset is reachable, the user scrolls,
+	 * or 3s pass.
+	 */
+	function placeView(view: HTMLElement) {
+		// Set before the first paint, so the content's reveal animation never starts (app.css).
+		if (restoring) view.classList.add("restored");
 		const el = main;
-		const view = el.firstElementChild;
-		const attempt = () => {
+		if (!el) return;
+		const target = scrollTarget;
+		const scrollTo = () => {
+			const before = el.scrollTop;
 			el.scrollTop = target;
-			if (el.scrollTop >= target - 1) stop();
+			// Only a real change fires a scroll event to consume.
+			if (el.scrollTop !== before) programmaticScroll = true;
 		};
+		scrollTo();
+		if (el.scrollTop >= target - 1) return;
+
+		const observer = new ResizeObserver(() => {
+			scrollTo();
+			if (el.scrollTop >= target - 1) stop();
+		});
+		const timer = setTimeout(() => stop(), 3000);
 		const stop = () => {
-			restoreScroll?.disconnect();
-			restoreScroll = undefined;
+			observer.disconnect();
+			clearTimeout(timer);
 			el.removeEventListener("wheel", stop);
 			el.removeEventListener("touchstart", stop);
 		};
 		el.addEventListener("wheel", stop, { passive: true, once: true });
 		el.addEventListener("touchstart", stop, { passive: true, once: true });
-		attempt();
-		if (view && el.scrollTop < target - 1) {
-			restoreScroll = new ResizeObserver(attempt);
-			restoreScroll.observe(view);
-			setTimeout(stop, 3000);
-		}
-	});
+		observer.observe(view);
+		return { destroy: stop };
+	}
 
 	onMount(() => {
 		const viewport = window.visualViewport;
@@ -173,7 +233,7 @@
 		<div class="bar"><PlayerBar /></div>
 		<main bind:this={main}>
 			{#key viewKey}
-				<div class="view" in:pageIn={nav.motion} out:pageOut={nav.motion}>
+				<div class="view" use:placeView in:pageIn={nav.motion} out:pageOut={nav.motion}>
 					{@render children()}
 				</div>
 			{/key}

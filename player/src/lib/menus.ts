@@ -1,8 +1,8 @@
-import { getAlbum, getPlaylist, getSimilarSongs, requestSpotifyDownload } from './api';
+import { getAlbum, getPlaylist, getSimilarSongs, removeLibraryAlbum, removeLibraryTrack, requestSpotifyDownload } from './api';
 import { getPlayer } from './player.svelte';
 import { router } from './router.svelte';
 import type { Album, Artist, Playlist, Song } from './types';
-import { ui, type MenuItem } from './ui.svelte';
+import { ui, type LibraryRemoval, type MenuItem } from './ui.svelte';
 
 export async function startStation(song: Song) {
 	try {
@@ -34,6 +34,28 @@ export async function requestDownload(spotifyId: string) {
 		ui.showToast(r.status === 'already_in_library' ? 'Already in your library' : 'Added to downloads');
 	} catch (e) {
 		ui.showToast(e instanceof Error && e.message ? e.message : 'Couldn’t request download');
+	}
+}
+
+/**
+ * Removes a confirmed library song or album on the server (deleting its files),
+ * like the web UI: then drops device copies of the removed songs and reloads
+ * open views; leaves an album page whose album is gone.
+ */
+export async function removeFromLibrary(target: LibraryRemoval, stopWanted = true) {
+	const removed =
+		target.kind === 'track'
+			? await removeLibraryTrack(target.song.id)
+			: await removeLibraryAlbum(target.album.id, stopWanted);
+	const username = getSession()?.username;
+	if (username)
+		await Promise.all(removed.map((id) => deleteOfflineTrack(username, id).catch(() => {})));
+	ui.libraryRevision++;
+	ui.showToast(target.kind === 'track' ? 'File removed' : 'Removed from Library');
+	const route = router.route;
+	if (target.kind === 'album' && route.name === 'album' && route.id === target.album.id) {
+		if (history.length > 1) history.back();
+		else void router.go('/library', true);
 	}
 }
 
@@ -78,6 +100,11 @@ export async function songMenu(song: Song, extra: MenuItem[] = []): Promise<Menu
 	];
 	if (song.albumId) items.push({ label: 'Go to Album', icon: 'album', action: () => router.go(`/album/${song.albumId}`) });
 	if (song.artistId) items.push({ label: 'Go to Artist', icon: 'mic', action: () => router.go(`/artist/${song.artistId}`) });
+	if (song.id.startsWith('tr-') && ui.canRemoveTracks)
+		extra = [
+			...extra,
+			{ label: 'Remove from Library', icon: 'trash', danger: true, action: () => (ui.removal = { kind: 'track', song }) }
+		];
 	return [...items, ...extra];
 }
 
@@ -100,6 +127,9 @@ export function albumMenu(album: Album): MenuItem[] {
 		},
 		...(album.artistId
 			? [{ label: 'Go to Artist', icon: 'mic', action: () => router.go(`/artist/${album.artistId}`) }]
+			: []),
+		...(album.id.startsWith('al-') && ui.canRemoveAlbums
+			? [{ label: 'Remove from Library', icon: 'trash', danger: true, action: () => (ui.removal = { kind: 'album', album }) }]
 			: [])
 	];
 }

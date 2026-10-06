@@ -44,6 +44,8 @@
     "getSong": {"state": "full", "response_key": "song", "service": "library view", "parameters": ["id"]},
     "searchSpotifyTracks": {"state": "full", "response_key": "spotifyTracks", "service": "spotify catalog (player extension)", "parameters": ["query", "count?"]},
     "requestSpotifyDownload": {"state": "full", "response_key": "spotifyDownload", "service": "native acquisition (player extension)", "parameters": ["id"]},
+    "removeLibraryTrack": {"state": "full", "response_key": "libraryRemoval", "service": "target catalog writer (player extension)", "parameters": ["id"]},
+    "removeLibraryAlbum": {"state": "full", "response_key": "libraryRemoval", "service": "target catalog writer (player extension)", "parameters": ["id", "stopWanted?"]},
     "getAlbumList2": {"state": "partial", "response_key": "albumList2", "service": "library view and play history", "parameters": ["type", "size?", "offset?", "fromYear?", "toYear?", "genre?", "musicFolderId?"], "deviation": "byYear accepts 0 as an unbounded lower endpoint and preserves parameter-order direction"},
     "getAlbumList": {"state": "partial", "response_key": "albumList", "service": "library view and play history", "parameters": ["type", "size?", "offset?", "fromYear?", "toYear?", "genre?", "musicFolderId?"], "deviation": "byYear accepts 0 as an unbounded lower endpoint and preserves parameter-order direction"},
     "getRandomSongs": {"state": "partial", "response_key": "randomSongs", "service": "library view", "parameters": ["size?", "genre?", "fromYear?", "toYear?", "musicFolderId?"]},

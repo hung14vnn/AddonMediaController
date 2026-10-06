@@ -2710,6 +2710,7 @@ async def _get_user(c: Ctx) -> Response:
             adminRole=is_admin,
             settingsRole=is_admin,
             maxBitRate=settings.transcode_max_bitrate_kbps,
+            role=c.user.role,
         ),
     )
 
@@ -3098,6 +3099,59 @@ async def _request_spotify_download(c: Ctx) -> Response:
     return c.render(
         "spotifyDownload",
         {"status": result.status, "taskId": result.task_id},
+    )
+
+
+@endpoint("removeLibraryTrack")
+async def _remove_library_track(c: Ctx) -> Response:
+    """Remove one track (``tr-`` id) from the library, deleting its file - the
+    web UI's ``DELETE /library/tracks/{id}``. Admin or trusted only; for a
+    trusted user a track others also have is only hidden for them."""
+    if c.user.role not in ("admin", "trusted"):
+        raise SubsonicError(50, "Admin or trusted role is required to remove tracks")
+    kind, track_id = decode(c.p("id") or "")
+    if kind != "track":
+        raise SubsonicError(70, "Not a library track")
+    from core.dependencies import get_target_catalog_writer_service
+
+    removed = await _provider(c, get_target_catalog_writer_service).remove_track(
+        track_id,
+        actor_user_id=c.user.id,
+        is_admin=c.user.role == "admin",
+    )
+    return c.render(
+        "libraryRemoval", {"removedSongId": [encode("track", t) for t in removed]}
+    )
+
+
+@endpoint("removeLibraryAlbum")
+async def _remove_library_album(c: Ctx) -> Response:
+    """Remove an album (``al-`` id) and its files from the library - the web
+    UI's ``DELETE /library/album/{id}?delete_files=true``. Admin only.
+    ``stopWanted`` (default true) stops the Wanted watcher looking for it."""
+    if c.user.role != "admin":
+        raise SubsonicError(50, "Administrator role is required to remove albums")
+    kind, album_id = decode(c.p("id") or "")
+    if kind != "album":
+        raise SubsonicError(70, "Not a library album")
+    from core.dependencies import (
+        get_download_service,
+        get_target_catalog_writer_service,
+        get_wanted_watcher_service,
+    )
+    from services.native.target_library_removal import remove_album_and_cleanup
+
+    removed = await remove_album_and_cleanup(
+        album_id,
+        actor_user_id=c.user.id,
+        delete_files=True,
+        stop_wanted=c.pbool("stopWanted", True),
+        writer=_provider(c, get_target_catalog_writer_service),
+        wanted=_provider(c, get_wanted_watcher_service),
+        download_service=_provider(c, get_download_service),
+    )
+    return c.render(
+        "libraryRemoval", {"removedSongId": [encode("track", t) for t in removed]}
     )
 
 

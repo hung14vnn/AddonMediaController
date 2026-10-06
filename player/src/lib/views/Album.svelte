@@ -28,10 +28,13 @@
 	}
 
 	function assemble(album: Album) {
-		const more = album.artistId
-			? Promise.resolve(cachedNow(`artist:${album.artistId}`, () => getArtist(album.artistId!)))
-					.then((a) => (a.album ?? []).filter((x) => x.id !== album.id))
-					.catch(() => [])
+		const others = (a: Awaited<ReturnType<typeof getArtist>>) => (a.album ?? []).filter((x) => x.id !== album.id);
+		const artist = album.artistId ? cachedNow(`artist:${album.artistId}`, () => getArtist(album.artistId!)) : null;
+		// Synchronous when the artist is cached, so the shelf is there in the first frame.
+		const more = artist
+			? artist instanceof Promise
+				? artist.then(others).catch(() => [])
+				: others(artist)
 			: album.genre
 				? getAlbumList('byGenre', 12, 0, { genre: album.genre }).then((l) => l.filter((x) => x.id !== album.id))
 				: Promise.resolve([]);
@@ -40,7 +43,11 @@
 		return tint instanceof Promise ? tint.then(finish) : finish(tint);
 	}
 
-	let data = $derived(load(id));
+	// Reloaded after a library removal (a song of this album may be gone).
+	let data = $derived.by(() => {
+		void ui.libraryRevision;
+		return load(id);
+	});
 </script>
 
 {#await data}
