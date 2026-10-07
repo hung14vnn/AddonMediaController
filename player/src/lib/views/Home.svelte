@@ -194,11 +194,12 @@
 					</Shelf>
 				{/if}
 			{/await}
-			{@render lastfm()}
 			{#await trending then list}{@render songs(
 					"Trending Songs",
 					list,
 				)}{/await}
+			{@render lastfm()}
+			{#await hits then list}{@render songs("Today's Hits", list)}{/await}
 
 			{#if d.newest.length}
 				<Shelf title="Recently Added" seeAll="#/recent">
@@ -207,7 +208,6 @@
 						/>{/each}
 				</Shelf>
 			{/if}
-			{#await hits then list}{@render songs("Today's Hits", list)}{/await}
 			{#await picks then list}{@render songs("Top Picks for You", list)}{/await}
 			{#if d.frequent.length}
 				<Shelf title="Heavy Rotation">

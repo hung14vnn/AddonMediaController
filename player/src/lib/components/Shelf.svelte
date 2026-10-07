@@ -59,10 +59,10 @@
 	<header>
 		<div class="heading">
 			{#if seeAll}
-				<a class="title" href={seeAll}>{title}<Icon name="chevronRight" size={18} /></a>
+				<a class="title" href={seeAll}><span class="title-text">{title}</span><Icon name="chevronRight" size={18} /></a>
 			{:else}
 				<h2 class="title">
-					{title}
+					<span class="title-text">{title}</span>
 					{#if onRefresh}
 						<button class="refresh-btn" aria-label="Refresh" onclick={onRefresh}>
 							<Icon name="refresh" size={18} />
@@ -100,8 +100,10 @@
 		margin-bottom: 10px;
 	}
 
+	/* one line: a long title ("Because You Listened to …") ends in an ellipsis */
 	.title {
-		display: inline-flex;
+		display: flex;
+		max-width: 100%;
 		align-items: center;
 		gap: 2px;
 		font-size: 20px;
@@ -112,7 +114,20 @@
 	}
 
 	.heading {
+		flex: 1;
 		min-width: 0;
+	}
+
+	.title-text {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.title :global(svg),
+	.refresh-btn {
+		flex-shrink: 0;
 	}
 
 	.subtitle {
