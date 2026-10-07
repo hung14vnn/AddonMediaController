@@ -1,19 +1,19 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
-	import { coverUrl } from '../api';
-	import { hue } from '../format';
-	import Icon from './Icon.svelte';
+	import { untrack } from "svelte";
+	import { coverUrl } from "../api";
+	import { hue } from "../format";
+	import Icon from "./Icon.svelte";
 
 	let {
 		id,
 		size = 300,
-		alt = '',
+		alt = "",
 		round = false,
 		src: explicitSrc,
-		seed = '',
-		icon = 'note',
+		seed = "",
+		icon = "note",
 		cropWide = false,
-		priority = false
+		priority = false,
 	}: {
 		id?: string;
 		size?: number;
@@ -42,7 +42,12 @@
 	}
 
 	// TỐI ƯU 1: Tính toán DPR an toàn với cả môi trường SSR / Window
-	const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio > 1 ? 2 : 1) : 1;
+	const dpr =
+		typeof window !== "undefined"
+			? window.devicePixelRatio > 1
+				? 2
+				: 1
+			: 1;
 	const src = $derived(explicitSrc || coverUrl(id, size * dpr));
 
 	// Reset only when the source actually changes: on mount this would run after `ready`
@@ -72,8 +77,8 @@
 		<img
 			{src}
 			{alt}
-			loading={priority ? 'eager' : 'lazy'}
-			fetchpriority={priority ? 'high' : 'auto'}
+			loading={priority ? "eager" : "lazy"}
+			fetchpriority={priority ? "high" : "auto"}
 			decoding="async"
 			class:loaded
 			class:instant
@@ -85,11 +90,14 @@
 			oncontextmenu={(e) => e.preventDefault()}
 		/>
 	{/if}
-	
+
 	<!-- TỐI ƯU 2: Giữ placeholder hiển thị bên dưới mượt mà, loại bỏ điều kiện thừa -->
 	{#if !src || failed || !loaded}
 		<div class="placeholder">
-			<Icon name={icon} size={Math.max(20, Math.min(64, Math.round(size / 4)))} />
+			<Icon
+				name={icon}
+				size={Math.max(20, Math.min(64, Math.round(size / 4)))}
+			/>
 		</div>
 	{/if}
 </div>
@@ -136,6 +144,10 @@
 		display: grid;
 		place-items: center;
 		color: hsl(var(--h) 20% 60% / 0.9);
-		background: linear-gradient(145deg, hsl(var(--h) 16% var(--ph-l1, 20%)), hsl(var(--h) 12% var(--ph-l2, 12%)));
+		background: linear-gradient(
+			145deg,
+			hsl(var(--h) 16% var(--ph-l1, 20%)),
+			hsl(var(--h) 12% var(--ph-l2, 12%))
+		);
 	}
 </style>

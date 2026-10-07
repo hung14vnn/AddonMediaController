@@ -214,6 +214,8 @@ img {
 @media (max-width: 899px) {
   .page {
     padding-top: max(16px, env(safe-area-inset-top));
+    /* clear the fixed dock (mini player + tab bar, ~128px) */
+    padding-bottom: calc(76px + env(safe-area-inset-bottom));
   }
 
   .page-title {

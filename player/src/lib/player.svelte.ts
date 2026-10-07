@@ -112,6 +112,12 @@ const MAX_BLOB_ATTEMPTS = 4;
 /** HTMLMediaElement.HAVE_FUTURE_DATA. */
 const HAVE_FUTURE_DATA = 3;
 
+/**
+ * An element "playing", with data to play, whose clock hasn't moved for this long is
+ * frozen: iOS can resume one after a call (or Siri) without its sound coming back.
+ */
+const FROZEN_MS = 4_000;
+
 /** Unplayable tracks skipped in a row before giving up. */
 const MAX_ERROR_SKIPS = 2;
 /** Pause before retrying or skipping a failed track, so a dead server isn't hammered. */
@@ -134,10 +140,11 @@ const DURATION_MISMATCH_RATIO = 1.25;
 const HANDOFF_LEAD_S = 0.6;
 
 /**
- * Crossfade (Web Audio): the handoff starts this long before the end, and the two
- * songs overlap for it. Songs shorter than three times this just cut over.
+ * Crossfade (Web Audio): the next song starts this long before the end, and the two
+ * overlap for what's left once it is actually playing (see `startPreroll`). Songs
+ * shorter than three times this just cut over.
  */
-const CROSSFADE_S = 4;
+const CROSSFADE_S = 8;
 
 /**
  * Non-iOS: when the next track isn't downloaded this close to the end (YouTube can
@@ -318,8 +325,11 @@ class Player {
 	private interruptions: InterruptionGuard;
 	private stopRemoteWatch: () => void = () => {};
 	private stopAudioSettings: () => void = () => {};
-	/** Seconds the next handoff crossfades over; set by `onTime`, taken by `load`. */
-	private fadeNext = 0;
+	/**
+	 * Crossfade: the standby element already playing the next song under the end of
+	 * this one (`fading` once its fade-in has begun).
+	 */
+	private preroll: { el: HTMLAudioElement; listeners: AbortController; fading: boolean } | null = null;
 
 	constructor() {
 		// Marks where each page load starts in the log, and which build it ran.
@@ -432,6 +442,7 @@ class Player {
 			this.buffering = false;
 			this.errorSkips = 0;
 			this.errorOriginIndex = -1;
+			this.watchFrozen(a);
 		});
 		a.addEventListener('canplay', () => {
 			if (this.audio !== a) return;
@@ -591,6 +602,7 @@ class Player {
 		this.resumeWhenVisible = false;
 		this.buffering = false;
 		this.interruptions.userPause();
+		this.cancelPreroll();
 		if (this.retiring) this.finishRetire(this.retiring.el);
 		this.audio.pause();
 	}
@@ -611,6 +623,8 @@ class Player {
 	}
 
 	seek(seconds: number) {
+		// Back from the last seconds: the next song isn't due yet (onTime starts it again).
+		this.cancelPreroll();
 		this.setTime(seconds);
 		if (this.audio.src) this.audio.currentTime = seconds;
 		else this.pendingSeek = seconds;
@@ -764,10 +778,9 @@ class Player {
 		if (this.karaoke && this.queue[i]?.id !== this.karaoke.version.id) this.leaveKaraoke();
 		const song = this.queue[i];
 		if (!song) return;
-		// Only the automatic handoff `onTime` set this up for crossfades; a skip cuts.
-		const fade = this.fadeNext;
-		this.fadeNext = 0;
-		// A crossfade still playing out ends with the next change.
+		// A preroll only carries on into the song it was started for, from its start.
+		if (this.preroll && (song.id !== this.upcoming()?.id || !autoplay || startAt !== 0)) this.cancelPreroll();
+		// A handoff still finishing ends with the next change.
 		if (this.retiring) this.finishRetire(this.retiring.el);
 		const token = ++this.loadToken;
 		this.index = i;
@@ -832,8 +845,10 @@ class Player {
 		);
 		if (handoff) {
 			// The outgoing copy stays valid while its element finishes; it is revoked on retire.
-			this.swapToStandby(outgoing, fade);
+			this.swapToStandby(outgoing);
 		} else {
+			// Not taking over the prerolled element after all: stop it, or both would play.
+			this.cancelPreroll();
 			outgoing?.copy.revoke();
 			this.output?.resetFade(this.audio);
 			this.audio.autoplay = autoplay;
@@ -868,7 +883,7 @@ class Player {
 	 * keeps to the single element that got the user's tap.
 	 */
 	private standbyAllowed(): boolean {
-		return !this.ios || (this.crossfadeFor(Infinity) > 0 && !document.hidden);
+		return !this.ios || !!this.preroll || (this.crossfadeFor(Infinity) > 0 && !document.hidden);
 	}
 
 	/** Seconds to crossfade a song of `dur` seconds into the next one; 0 to cut. */
@@ -882,11 +897,68 @@ class Player {
 	private applyReplayGain(smooth = false) {
 		if (!this.output) return;
 		const song = this.current;
-		const gain = audioSettings.soundCheck
-			? replayGainFactor(song, gainModeFor(this.queue, this.index, this.shuffle))
-			: 1;
+		const gain = this.replayGainAt(this.index);
 		this.output.setTrim(this.audio, gain, smooth);
 		if (audioSettings.soundCheck && !smooth) logPlayback('replaygain', `id=${song?.id} ${(20 * Math.log10(gain)).toFixed(1)} dB`);
+	}
+
+	/** Sound Check gain for the song at `index` (unity when off). */
+	private replayGainAt(index: number): number {
+		if (!audioSettings.soundCheck) return 1;
+		return replayGainFactor(this.queue[index], gainModeFor(this.queue, index, this.shuffle));
+	}
+
+	/**
+	 * Crossfade: start the next song on the standby element, silent until it is
+	 * actually playing, then fading in under this song's last `remaining` seconds
+	 * while this one fades out. The switch itself (title, queue, lyrics, lock screen)
+	 * still waits for this song's `ended`, so what's shown is the song ending; by then
+	 * the next one is already playing and simply takes over (`swapToStandby`).
+	 */
+	private startPreroll(remaining: number) {
+		const el = this.standby;
+		const output = this.output;
+		if (!el || !output) return;
+		const nextIndex = this.queue[this.index + 1] ? this.index + 1 : 0;
+		const endsAt = performance.now() + remaining * 1000;
+		const preroll = { el, listeners: new AbortController(), fading: false };
+		this.preroll = preroll;
+		output.silenceFade(el);
+		output.setTrim(el, this.replayGainAt(nextIndex));
+		// Not before it plays: a slow start would otherwise use up the fade, leaving
+		// this song faded out and the next one jumping in near full.
+		el.addEventListener(
+			'playing',
+			() => {
+				const seconds = Math.max(0.5, (endsAt - performance.now()) / 1000);
+				preroll.fading = true;
+				logPlayback('crossfade', `${seconds.toFixed(1)}s`);
+				output.crossfade(this.audio, el, seconds);
+			},
+			{ once: true, signal: preroll.listeners.signal }
+		);
+		logPlayback('preroll', `id=${this.queue[nextIndex]?.id} ${remaining.toFixed(1)}s left`);
+		el.play().catch((e: unknown) => {
+			logPlayback('preroll-rejected', String(e));
+			if (this.preroll === preroll) this.cancelPreroll();
+		});
+	}
+
+	/** Stops a preroll that won't become the next song after all (pause, seek, skip, queue change). */
+	private cancelPreroll() {
+		const preroll = this.preroll;
+		if (!preroll) return;
+		this.preroll = null;
+		preroll.listeners.abort();
+		preroll.el.pause();
+		try {
+			preroll.el.currentTime = 0;
+		} catch {
+			/* nothing loaded yet */
+		}
+		this.output?.resetFade(preroll.el);
+		this.output?.resetFade(this.audio);
+		logPlayback('preroll-cancel');
 	}
 
 	/** The standby element has `url` loaded and can take over playback now. */
@@ -923,6 +995,8 @@ class Player {
 		const source = this.standbySource();
 		const url = source?.url ?? null;
 		if (url === this.standbyFor) return;
+		// The next song changed (queue edit) while it was prerolling.
+		this.cancelPreroll();
 		this.standbyFor = url;
 		if (!source) {
 			if (this.standby?.getAttribute('src')) {
@@ -963,11 +1037,10 @@ class Player {
 	/**
 	 * Make the standby element (already holding the track being loaded) the active one.
 	 * The old element is left to play its last moments and is only stopped once the new
-	 * one is playing, so there is never a moment without a playing element. With
-	 * `fade` seconds (crossfade) the two overlap instead: the old song fades out under
-	 * the new one until it ends.
+	 * one is playing, so there is never a moment without a playing element. After a
+	 * crossfade preroll the new one is already playing and the old one has ended.
 	 */
-	private swapToStandby(outgoing: OfflineCopy | null, fade = 0) {
+	private swapToStandby(outgoing: OfflineCopy | null) {
 		const old = this.audio;
 		const next = this.standby!;
 		this.audio = next;
@@ -975,21 +1048,29 @@ class Player {
 		this.standbyFor = null;
 		this.bindActiveAudio(next);
 		this.applyVolume(next);
+		const preroll = this.preroll;
+		if (preroll) {
+			this.preroll = null;
+			preroll.listeners.abort();
+			// It never got to play under the old song, or a skip cut the fade short:
+			// full level now.
+			if (!preroll.fading || !old.ended) this.output?.resetFade(next);
+			old.autoplay = false;
+			old.pause();
+			old.removeAttribute('src');
+			old.load();
+			this.output?.resetFade(old);
+			outgoing?.copy.revoke();
+			return;
+		}
 		// Whichever fires first finishes the handoff; the abort then removes the other,
 		// which `once` alone would leave attached for good (one per track change).
 		const listeners = new AbortController();
 		this.retiring = { el: old, copy: outgoing, listeners };
 		const finish = () => this.finishRetire(old);
 		old.addEventListener('ended', finish, { once: true, signal: listeners.signal });
-		if (fade > 0 && this.output) {
-			this.output.crossfade(old, next, fade);
-			// A misread duration (see durationCap) never reaches `ended`.
-			const timer = setTimeout(finish, fade * 1000 + 1000);
-			listeners.signal.addEventListener('abort', () => clearTimeout(timer));
-		} else {
-			this.output?.resetFade(next);
-			next.addEventListener('playing', finish, { once: true, signal: listeners.signal });
-		}
+		this.output?.resetFade(next);
+		next.addEventListener('playing', finish, { once: true, signal: listeners.signal });
 	}
 
 	private finishRetire(old: HTMLAudioElement) {
@@ -1181,6 +1262,18 @@ class Player {
 		}
 		this.currentTime = this.time; // the UI copy was frozen while hidden
 		if (!this.current) return;
+		// "Playing" but no progress for a while (timeupdates keep `lastProgressAt` fresh
+		// while hidden too): frozen, typically since a call. play() wouldn't change that.
+		if (
+			!this.audio.paused &&
+			this.audio.readyState >= HAVE_FUTURE_DATA &&
+			performance.now() - this.lastProgressAt > FROZEN_MS
+		) {
+			logPlayback('frozen', `t=${this.time.toFixed(1)} on visible`);
+			this.resumeWhenVisible = false;
+			this.recoverFrozen();
+			return;
+		}
 		// Background time is not stalled time: the 15 s window starts now. (The play()
 		// or load() below arms the watchdog again.)
 		this.lastProgressAt = performance.now();
@@ -1196,6 +1289,32 @@ class Player {
 			this.load(this.index, true, this.time);
 		} else this.play();
 	};
+
+	/**
+	 * Checks, a moment after `playing`, that the clock actually moves. After a call iOS
+	 * can resume the element into "playing" with no sound and a frozen clock, and the
+	 * stall watchdog is off in the background, so nothing else notices. Visible: reload
+	 * it where it was. Hidden: a reload there is refused, so `onVisibilityChange` does it.
+	 */
+	private watchFrozen(a: HTMLAudioElement) {
+		const from = a.currentTime;
+		const token = this.loadToken;
+		setTimeout(() => {
+			if (this.audio !== a || token !== this.loadToken || a.paused || a.currentTime !== from) return;
+			// Still waiting for data: the stall watchdog's case, not this one.
+			if (a.readyState < HAVE_FUTURE_DATA) return;
+			logPlayback('frozen', `t=${from.toFixed(1)}`);
+			if (document.hidden) this.resumeWhenVisible = true;
+			else this.recoverFrozen();
+		}, FROZEN_MS);
+	}
+
+	/** Reloads the current song where it froze and plays it. */
+	private recoverFrozen() {
+		this.errorRetriedFor = null;
+		this.errorSkips = 0;
+		void this.load(this.index, true, this.time);
+	}
 
 	/** Current playback position, even while the page is hidden. */
 	get position() {
@@ -1246,18 +1365,20 @@ class Player {
 		if (dur <= 0 || a.paused || this.repeat === 'one') return;
 		const remaining = dur - a.currentTime;
 		if (remaining <= STREAM_STANDBY_LEAD_S) this.standbyNextStream();
-		// Hand over to the standby element just before the end, while this one still
-		// plays; with crossfade on, early enough for the two to overlap.
 		const source = this.standbySource();
+		const ready = !!source && this.standbyHolds(source.url);
+		// Crossfade: start the next song under this one's last seconds. The switch to it
+		// waits for `ended`, which also keeps some element playing throughout.
 		const fade = this.crossfadeFor(dur);
-		if (remaining <= Math.max(fade, HANDOFF_LEAD_S) && source && this.standbyHolds(source.url)) {
+		if (fade && ready && !this.preroll && remaining <= fade) this.startPreroll(remaining);
+		// Otherwise hand over to the standby element just before the end, while this
+		// one still plays.
+		if (!this.preroll && ready && remaining <= HANDOFF_LEAD_S) {
 			logPlayback(
 				'handoff-early',
-				`t=${a.currentTime.toFixed(2)} dur=${dur.toFixed(2)} ${source.kind} standby rs=${this.standby?.readyState}${fade ? ` fade=${Math.min(fade, remaining).toFixed(1)}s` : ''}`
+				`t=${a.currentTime.toFixed(2)} dur=${dur.toFixed(2)} ${source!.kind} standby rs=${this.standby?.readyState}`
 			);
-			this.fadeNext = fade ? Math.min(fade, remaining) : 0;
 			this.onEnded();
-			this.fadeNext = 0;
 		}
 	}
 
@@ -1448,6 +1569,7 @@ class Player {
 
 	/** Unload the element so it stops fetching and releases the stream. */
 	private unload() {
+		this.cancelPreroll();
 		this.loadToken++;
 		this.playRequested = false;
 		this.resumeWhenVisible = false;

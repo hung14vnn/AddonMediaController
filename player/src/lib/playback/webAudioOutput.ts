@@ -21,6 +21,8 @@ import { EQ_BAND_COUNT, EQ_FREQUENCIES } from './eqPresets';
 const EQ_Q = 1.4;
 /** Seconds for volume, EQ and enhancer moves to settle: quick, without zipper noise. */
 const RAMP_S = 0.03;
+/** Crossfade curves: cos/sin raised to this (see `crossfade`). */
+const FADE_SHAPE = 1.5;
 /**
  * Paused this long, the context is suspended. A running context renders silence
  * nonstop, keeping the audio hardware open and the CPU out of deep sleep.
@@ -40,49 +42,64 @@ function hold(param: AudioParam, now: number) {
 }
 
 /**
- * Soft saturation with a little asymmetry: odd and even harmonics, like the
- * exciters behind iTunes' Sound Enhancer. Fed only highs, it adds "air" above them.
+ * x²: every frequency f in comes out at 2f (one octave up, the "warm" even
+ * harmonic of tube exciters), plus DC and difference tones the highpass after it
+ * removes. Unlike a soft clipper it has no linear part, so it adds harmonics
+ * only: an earlier tanh curve was nearly linear at music levels and mostly acted
+ * as a harsh +6 dB treble boost.
  */
 function exciterCurve(samples = 2048): Float32Array<ArrayBuffer> {
 	const curve = new Float32Array(samples);
 	for (let i = 0; i < samples; i++) {
 		const x = (i / (samples - 1)) * 2 - 1;
-		curve[i] = Math.tanh(2.5 * x) + 0.25 * x * x;
+		curve[i] = x * x;
 	}
 	return curve;
 }
 
-/** Exciter bands (highpass before / after the shaper) and strength, per mode. */
+/** Highpass Q (dB) for a flat Butterworth knee: no resonant bump at the corner. */
+const FLAT_Q_DB = -3;
+/** Into the shaper after the compressor (which settles highs around -18 dBFS). */
+const DRIVE = 4;
+
+/**
+ * Exciter bands per mode: `source`, the band whose octave-up harmonics are made;
+ * `keep`, the highpass after the shaper (only harmonics above it are added); and
+ * strength.
+ */
 function enhancerBands(source: EnhancerSource): { source: number; keep: number; amount: number } {
 	switch (enhancerMode(source)) {
 		case 'lossless':
-			return { source: 3000, keep: 5000, amount: 0 };
+			return { source: 3000, keep: 6000, amount: 0 };
 		case 'restore': {
-			// The 2nd and 3rd harmonics of the source band reach past the cutoff.
+			// The octave below the cutoff, doubled, fills the octave above it.
 			const cutoff = source.cutoff!;
 			return {
-				source: Math.max(2500, Math.min(8000, cutoff / 2.5)),
-				keep: Math.max(4000, cutoff * 0.9),
+				source: Math.max(3000, Math.min(10_000, cutoff / 2)),
+				keep: Math.max(6000, cutoff * 0.95),
 				amount: 1
 			};
 		}
 		case 'detail':
-			// Air over the coarse, noise-filled top octave.
-			return { source: 5000, keep: 10_000, amount: 0.7 };
+			// Already full-band (Opus fills its top with shaped noise): only a trace,
+			// at the very top, where more would just bring that noise forward.
+			return { source: 6000, keep: 12_000, amount: 0.3 };
 		default:
-			return { source: 3000, keep: 5000, amount: 1 };
+			return { source: 3500, keep: 7000, amount: 0.5 };
 	}
 }
 
 /**
- * Sound Enhancer (an exciter): the signal plus generated harmonics of its highs,
- * slightly widened. Compressed audio loses its top end; this brings back
- * brightness and space (synthesised, not the lost detail itself). Given the
- * track's cutoff it works right below it, so the new harmonics land where the
- * encoder removed the original ones; lossless audio is left alone.
+ * Sound Enhancer (an exciter): the signal untouched, plus generated harmonics of
+ * its highs. Compressed audio loses its top end; this brings back brightness
+ * (synthesised, not the lost detail itself). Given the track's cutoff it works
+ * right below it, so the new harmonics land where the encoder removed the
+ * original ones; lossless audio is left alone. The compressor evens out the
+ * level into the shaper, so the harmonics follow the music instead of flaring
+ * on loud cymbals and sibilants.
  *
- *   in ─→ L/R widening matrix ────────────────────────────────────┐
- *   in ─→ highpass (source) → shaper → highpass (keep) → wet gain ┴→ out
+ *   in ──────────────────────────────────────────────────────────────────────┐
+ *   in → highpass (source) → compressor → drive → x² → highpass (keep) → wet ┴→ out
  */
 class SoundEnhancer {
 	readonly input: GainNode;
@@ -92,42 +109,35 @@ class SoundEnhancer {
 	private readonly highPass: BiquadFilterNode;
 	private level = 0.5;
 	private source: EnhancerSource = { lossless: false, cutoff: null };
-	/** [L→L, R→L, R→R, L→R] gains of the widening matrix. */
-	private readonly matrix: GainNode[];
 
 	constructor(private readonly ctx: AudioContext) {
 		this.input = ctx.createGain();
-		// Up-mix mono to stereo here: the splitter would leave a mono source's right
-		// channel silent and the matrix would turn that into a one-sided image.
-		this.input.channelCount = 2;
-		this.input.channelCountMode = 'explicit';
-		this.input.channelInterpretation = 'speakers';
 		this.output = ctx.createGain();
-
-		const split = ctx.createChannelSplitter(2);
-		const merge = ctx.createChannelMerger(2);
-		this.matrix = [0, 1, 2, 3].map(() => ctx.createGain());
-		const [ll, rl, rr, lr] = this.matrix;
-		this.input.connect(split);
-		split.connect(ll, 0).connect(merge, 0, 0);
-		split.connect(rl, 1).connect(merge, 0, 0);
-		split.connect(rr, 1).connect(merge, 0, 1);
-		split.connect(lr, 0).connect(merge, 0, 1);
-		merge.connect(this.output);
+		this.input.connect(this.output);
 
 		this.lowCut = ctx.createBiquadFilter();
 		this.lowCut.type = 'highpass';
+		this.lowCut.Q.value = FLAT_Q_DB;
+		const leveler = ctx.createDynamicsCompressor();
+		leveler.threshold.value = -45;
+		leveler.knee.value = 6;
+		leveler.ratio.value = 20;
+		leveler.attack.value = 0.002;
+		leveler.release.value = 0.08;
+		const drive = ctx.createGain();
+		drive.gain.value = DRIVE;
 		const shaper = ctx.createWaveShaper();
 		shaper.curve = exciterCurve();
-		// 2x: the harmonics are quiet and high, so 4x's extra anti-aliasing isn't
-		// audible, and 2x halves the shaper's cost.
 		shaper.oversample = '2x';
-		// Keeps only what the shaper made above the band (and drops its DC offset).
+		// Keeps only the harmonics above the band (and drops x²'s DC and difference tones).
 		this.highPass = ctx.createBiquadFilter();
 		this.highPass.type = 'highpass';
+		this.highPass.Q.value = FLAT_Q_DB;
 		this.wet = ctx.createGain();
 		this.input
 			.connect(this.lowCut)
+			.connect(leveler)
+			.connect(drive)
 			.connect(shaper)
 			.connect(this.highPass)
 			.connect(this.wet)
@@ -148,22 +158,11 @@ class SoundEnhancer {
 
 	private update() {
 		const now = this.ctx.currentTime;
-		const level = this.level;
 		const bands = enhancerBands(this.source);
 		this.lowCut.frequency.setTargetAtTime(bands.source, now, RAMP_S);
 		this.highPass.frequency.setTargetAtTime(bands.keep, now, RAMP_S);
-		// Lossless audio is missing nothing: no harmonics, no widening.
-		const amount = bands.amount;
-		this.wet.gain.setTargetAtTime((0.15 + 0.45 * level) * amount, now, RAMP_S);
-		// Mid/side widening: L' = L + w(L − R), R' = R + w(R − L).
-		const width = (0.05 + 0.2 * level) * amount;
-		const [ll, rl, rr, lr] = this.matrix;
-		ll.gain.setTargetAtTime(1 + width, now, RAMP_S);
-		rr.gain.setTargetAtTime(1 + width, now, RAMP_S);
-		rl.gain.setTargetAtTime(-width, now, RAMP_S);
-		lr.gain.setTargetAtTime(-width, now, RAMP_S);
-		// The added harmonics and width make it louder; keep the level the same.
-		this.output.gain.setTargetAtTime(1 / (1 + 0.35 * level * amount), now, RAMP_S);
+		// Lossless audio is missing nothing: amount 0, the dry signal alone.
+		this.wet.gain.setTargetAtTime((0.05 + 0.25 * this.level) * bands.amount, now, RAMP_S);
 	}
 }
 
@@ -256,8 +255,10 @@ export class WebAudioOutput {
 	}
 
 	/**
-	 * Fades `from` out and `to` in over `seconds`, equal power (cos/sin), so the
-	 * overlap doesn't dip in loudness the way two straight ramps would.
+	 * Fades `from` out and `to` in over `seconds`. Equal-power curves (cos/sin)
+	 * softened by a power of 1.5: the new song comes in more gradually and the old
+	 * one holds longer, with a slight dip (about -1.5 dB) mid-way instead of the two
+	 * songs competing at near full level.
 	 */
 	crossfade(from: HTMLMediaElement, to: HTMLMediaElement, seconds: number) {
 		const out = this.channels.get(from)?.fade.gain;
@@ -269,8 +270,8 @@ export class WebAudioOutput {
 		const fadeIn = new Float32Array(steps);
 		for (let i = 0; i < steps; i++) {
 			const t = (i / (steps - 1)) * (Math.PI / 2);
-			fadeOut[i] = Math.cos(t);
-			fadeIn[i] = Math.sin(t);
+			fadeOut[i] = Math.cos(t) ** FADE_SHAPE;
+			fadeIn[i] = Math.sin(t) ** FADE_SHAPE;
 		}
 		// Start where the outgoing fade is now (it may have been mid-ramp).
 		fadeOut.forEach((v, i) => (fadeOut[i] = v * out.value));
@@ -284,6 +285,15 @@ export class WebAudioOutput {
 			out.setValueAtTime(0, now);
 			inn.setValueAtTime(1, now);
 		}
+	}
+
+	/** `el` silent until a crossfade brings it in. */
+	silenceFade(el: HTMLMediaElement) {
+		const param = this.channels.get(el)?.fade.gain;
+		if (!param) return;
+		const now = this.ctx.currentTime;
+		hold(param, now);
+		param.setValueAtTime(0, now);
 	}
 
 	/** `el` at full level right away: a track started without a crossfade. */

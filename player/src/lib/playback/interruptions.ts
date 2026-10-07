@@ -1,3 +1,5 @@
+import { logPlayback } from './debugLog';
+
 /** Safari's Audio Session API (iOS 17+); not in TypeScript's DOM lib yet. */
 type AudioSessionLike = EventTarget & {
 	type: string;
@@ -62,6 +64,7 @@ export class InterruptionGuard {
 	};
 
 	private readonly onStateChange = () => {
+		logPlayback('audio-session', `${this.session?.state} paused=${this.audio.paused}`);
 		if (this.session?.state === 'interrupted') {
 			// Some versions fire 'pause' themselves just before reporting the interruption.
 			if (!this.audio.paused || performance.now() - this.systemPausedAt < SYSTEM_PAUSE_WINDOW_MS) {

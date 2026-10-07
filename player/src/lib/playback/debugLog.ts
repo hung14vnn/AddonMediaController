@@ -2,7 +2,7 @@ const LOG_KEY = 'music.playbackLog';
 const ENABLED_KEY = 'music.playbackLogEnabled';
 const API_ERROR_LOG_KEY = 'music.apiErrorLog';
 /** Enough for several track changes; older entries drop off. */
-const MAX_ENTRIES = 400;
+const MAX_ENTRIES = 200;
 
 export function isPlaybackLogEnabled(): boolean {
 	try {

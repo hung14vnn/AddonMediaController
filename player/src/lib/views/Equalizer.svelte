@@ -452,6 +452,12 @@
 		cursor: default;
 	}
 
+	@media (max-width: 899px) {
+		.page {
+			padding-bottom: calc(108px + env(safe-area-inset-bottom));
+		}
+	}
+
 	@media (max-width: 480px) {
 		.scale {
 			display: none;

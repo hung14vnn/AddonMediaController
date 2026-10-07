@@ -66,6 +66,16 @@ class FakeContext extends EventTarget {
 	createWaveShaper() {
 		return new FakeNode('shaper');
 	}
+	createDynamicsCompressor() {
+		const n = new FakeNode('compressor');
+		return Object.assign(n, {
+			threshold: new FakeParam(),
+			knee: new FakeParam(),
+			ratio: new FakeParam(),
+			attack: new FakeParam(),
+			release: new FakeParam()
+		});
+	}
 	createChannelSplitter() {
 		return new FakeNode('splitter');
 	}
@@ -123,10 +133,10 @@ describe('WebAudioOutput', () => {
 
 	it('splices the EQ in only while it is on', async () => {
 		const { audioSettings, output, ctx, path } = await load();
-		audioSettings.setPreset('Bass Booster');
+		audioSettings.setPreset('Bass Boost');
 		const peaking = path().filter((n) => n.kind === 'biquad' && n.type === 'peaking');
 		expect(peaking).toHaveLength(10);
-		expect(peaking[0].gain.value).toBe(5.5);
+		expect(peaking[0].gain.value).toBe(8);
 		expect(path()).toContain(ctx.destination);
 
 		audioSettings.setEqEnabled(false);
@@ -172,11 +182,17 @@ describe('WebAudioOutput', () => {
 		expect(fadeA.gain.curve![0]).toBeCloseTo(1);
 		expect(fadeA.gain.value).toBeCloseTo(0);
 		expect(fadeB.gain.curve![0]).toBeCloseTo(0);
-		// Equal power: halfway, both at ~0.707 rather than 0.5.
+		// Near equal power: halfway, a slight dip (~-1.5 dB), not the -6 dB of linear ramps.
 		const mid = Math.floor(fadeB.gain.curve!.length / 2);
-		expect(fadeA.gain.curve![mid] ** 2 + fadeB.gain.curve![mid] ** 2).toBeCloseTo(1, 1);
+		const power = fadeA.gain.curve![mid] ** 2 + fadeB.gain.curve![mid] ** 2;
+		expect(power).toBeGreaterThan(0.6);
+		expect(power).toBeLessThan(1);
+		// The new song comes in gradually: still below half level a third of the way.
+		expect(fadeB.gain.curve![Math.floor(fadeB.gain.curve!.length / 3)]).toBeLessThan(0.5);
 		output.resetFade(a);
 		expect(fadeA.gain.value).toBe(1);
+		output.silenceFade(b);
+		expect(fadeB.gain.value).toBe(0);
 		output.dispose();
 	});
 

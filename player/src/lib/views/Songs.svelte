@@ -20,7 +20,7 @@ import { listOfflineTrackMetadata } from '../offline';
 	let loading = $state(false);
 	let error = $state<unknown>(null);
 	let query = $state('');
-	let sort = $state<'title' | 'artist' | 'album' | 'added' | 'played'>('title');
+	let sort = $state<'title' | 'artist' | 'album' | 'added' | 'played'>('added');
 	let downloadedIds = $state(new Set<string>());
 
 	function fold(value: string): string {
@@ -159,16 +159,10 @@ import { listOfflineTrackMetadata } from '../offline';
 		loading = true;
 		try {
 			const fetchPage = () => (genre ? getSongsByGenre(genre, PAGE, songs.length) : getAllSongs(songs.length, PAGE));
-			// First page from the on-device copy (synchronous on a revisit), replaced if the
-			// server's differs while the user is still on it.
+			// Lấy trang đầu tiên từ cache nếu có và không re-check backend để tránh bị nháy/nhảy vị trí
 			const page = songs.length
 				? await fetchPage()
-				: await cachedNow(`songs:${genre ?? ''}`, fetchPage, {
-						fresh: 0,
-						refresh: (fresh) => {
-							if (songs.length <= PAGE) songs = [...fresh];
-						}
-					});
+				: await cachedNow(`songs:${genre ?? ''}`, fetchPage, { fresh: Infinity });
 			songs.push(...page);
 			if (page.length < PAGE) done = true;
 		} catch (e) {
@@ -194,10 +188,10 @@ import { listOfflineTrackMetadata } from '../offline';
 		<SortMenu
 			value={sort}
 			options={[
+				{ value: 'added', label: 'Recently Added' },
 				{ value: 'title', label: 'Title' },
 				{ value: 'artist', label: 'Artist' },
 				{ value: 'album', label: 'Album' },
-				{ value: 'added', label: 'Recently Added' },
 				{ value: 'played', label: 'Recently Played' }
 			]}
 			onchange={(value) => (sort = value as typeof sort)}

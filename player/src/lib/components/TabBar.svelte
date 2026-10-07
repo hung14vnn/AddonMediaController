@@ -5,13 +5,13 @@
 	import Icon from './Icon.svelte';
 
 	const tabs = [
-		{ path: '/', label: 'Home', icon: 'home', match: ['home'] },
+		{ path: '/', label: 'Home', icon: 'home', match: ['home', 'profile', 'equalizer'] },
 		{ path: '/browse', label: 'Browse', icon: 'browse', match: ['browse', 'genres', 'genre'] },
 		{
 			path: '/library',
 			label: 'Library',
 			icon: 'library',
-			match: ['library', 'profile', 'recent', 'artists', 'albums', 'songs', 'playlists', 'loved', 'playlist']
+			match: ['library', 'recent', 'artists', 'albums', 'songs', 'playlists', 'loved', 'playlist', 'downloads']
 		}
 	];
 

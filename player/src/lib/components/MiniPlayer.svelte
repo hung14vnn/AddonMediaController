@@ -247,7 +247,7 @@
 		/* never shrink the artwork to make room for a long title */
 		flex: none;
 		width: 40px;
-		margin-left: 8px;
+		margin-left: 6px;
 		--art-radius: 10px;
 		--art-shadow: 0 2px 8px rgb(0 0 0 / 0.18);
 	}
@@ -257,7 +257,7 @@
 	}
 	.mini.compact .art {
 		transform: scale(0.75);
-		margin-left: 0;
+		margin-left: 4px;
 		margin-right: -10px; /* bù chỗ trống do ảnh thu nhỏ */
 	}
 

@@ -545,7 +545,7 @@
               ).toFixed(1)} kHz.
             {/if}
           {:else}
-            Adds brightness and space to compressed music.
+            Restores brightness to compressed music.
           {/if}
         </span>
       </div>
