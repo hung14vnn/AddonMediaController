@@ -696,7 +696,6 @@
 										id={song.coverArt}
 										size={600}
 										seed={song.album ?? song.title}
-										cropWide
 										priority
 									/>
 								</div>

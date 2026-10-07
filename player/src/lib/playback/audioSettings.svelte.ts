@@ -9,6 +9,8 @@ export type AudioEngine = 'element' | 'webaudio';
 export type EqPreset = EqPresetName | 'Custom';
 
 const STORAGE_KEY = 'music.audio';
+/** Saving waits for a drag (EQ band, enhancer level) to settle: one write, not one per move. */
+const SAVE_DELAY_MS = 400;
 const FLAT: readonly number[] = EQ_PRESETS.Flat;
 
 interface Stored {
@@ -50,6 +52,7 @@ class AudioSettings {
 	/** The engine this page load's player was built with. */
 	readonly activeEngine: AudioEngine;
 	private listeners = new Set<() => void>();
+	private saveTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor() {
 		const s = read();
@@ -62,6 +65,8 @@ class AudioSettings {
 		this.crossfade = s.crossfade === true;
 		this.soundCheck = s.soundCheck === true;
 		this.activeEngine = this.engine;
+		// Leaving (or a restart onto the new engine) mustn't drop a pending save.
+		if (typeof window !== 'undefined') window.addEventListener('pagehide', () => this.flush());
 	}
 
 	/** The engine was changed and the app hasn't restarted onto it yet. */
@@ -71,7 +76,7 @@ class AudioSettings {
 
 	setEngine(engine: AudioEngine) {
 		this.engine = engine;
-		this.save();
+		this.flush();
 	}
 
 	setEqEnabled(on: boolean) {
@@ -128,6 +133,13 @@ class AudioSettings {
 	}
 
 	private save() {
+		clearTimeout(this.saveTimer);
+		this.saveTimer = setTimeout(() => this.flush(), SAVE_DELAY_MS);
+	}
+
+	/** Writes the settings now. */
+	flush() {
+		clearTimeout(this.saveTimer);
 		try {
 			const stored: Stored = {
 				engine: this.engine,

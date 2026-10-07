@@ -21,6 +21,11 @@ import { EQ_BAND_COUNT, EQ_FREQUENCIES } from './eqPresets';
 const EQ_Q = 1.4;
 /** Seconds for volume, EQ and enhancer moves to settle: quick, without zipper noise. */
 const RAMP_S = 0.03;
+/**
+ * Paused this long, the context is suspended. A running context renders silence
+ * nonstop, keeping the audio hardware open and the CPU out of deep sleep.
+ */
+const IDLE_SUSPEND_MS = 10_000;
 
 type AudioContextCtor = typeof AudioContext;
 
@@ -180,6 +185,8 @@ export class WebAudioOutput {
 	private enhancerRouted: boolean | null = null;
 	private readonly stopSettings: () => void;
 	private readonly unlockEvents = ['pointerdown', 'touchend', 'keydown'] as const;
+	private readonly elements = new Set<HTMLMediaElement>();
+	private idleTimer: ReturnType<typeof setTimeout> | undefined;
 
 	/**
 	 * `wantsSound()`: the player means to be playing, so a suspended context is resumed.
@@ -233,6 +240,9 @@ export class WebAudioOutput {
 		const fade = this.ctx.createGain();
 		this.ctx.createMediaElementSource(el).connect(trim).connect(fade).connect(this.bus);
 		this.channels.set(el, { trim, fade });
+		this.elements.add(el);
+		el.addEventListener('play', this.onElementPlay);
+		for (const type of ['pause', 'ended', 'emptied']) el.addEventListener(type, this.onElementIdle);
 	}
 
 	/** ReplayGain for what `el` plays (linear); `smooth` for a change mid-song. */
@@ -292,6 +302,7 @@ export class WebAudioOutput {
 
 	/** Called next to every `audio.play()`; inside a tap this is what unlocks the context. */
 	resume() {
+		clearTimeout(this.idleTimer);
 		if (this.ctx.state === 'running') return;
 		this.ctx.resume().catch((e: unknown) => logPlayback('webaudio-resume-failed', String(e)));
 	}
@@ -316,6 +327,11 @@ export class WebAudioOutput {
 	}
 
 	dispose() {
+		clearTimeout(this.idleTimer);
+		for (const el of this.elements) {
+			el.removeEventListener('play', this.onElementPlay);
+			for (const type of ['pause', 'ended', 'emptied']) el.removeEventListener(type, this.onElementIdle);
+		}
 		this.detector.stop();
 		this.stopSettings();
 		this.ctx.removeEventListener('statechange', this.onStateChange);
@@ -333,6 +349,20 @@ export class WebAudioOutput {
 
 	// iOS suspends (or 'interrupts') the context for calls, Siri and sometimes the
 	// lock screen; the element keeps "playing" in silence. Ask for it back.
+	private onElementPlay = () => this.resume();
+
+	/** An element stopped: once none plays for a while, let the context sleep. */
+	private onElementIdle = () => {
+		clearTimeout(this.idleTimer);
+		this.idleTimer = setTimeout(() => {
+			const silent = [...this.elements].every((el) => el.paused);
+			if (!silent || this.wantsSound() || this.ctx.state !== 'running') return;
+			logPlayback('webaudio-idle', 'suspend');
+			this.detector.stop();
+			this.ctx.suspend().catch(() => {});
+		}, IDLE_SUSPEND_MS);
+	};
+
 	private onStateChange = () => {
 		logPlayback('webaudio-state', this.ctx.state);
 		if (this.ctx.state !== 'running' && this.ctx.state !== 'closed' && this.wantsSound()) this.resume();

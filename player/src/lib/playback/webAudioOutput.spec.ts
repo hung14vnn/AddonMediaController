@@ -49,6 +49,9 @@ class FakeContext extends EventTarget {
 		this.state = 'running';
 	});
 	close = vi.fn(async () => {});
+	suspend = vi.fn(async () => {
+		this.state = 'suspended';
+	});
 	constructor() {
 		super();
 		FakeContext.last = this;
@@ -95,10 +98,10 @@ describe('WebAudioOutput', () => {
 	});
 	afterEach(() => vi.unstubAllGlobals());
 
-	async function load() {
+	async function load(wantsSound = () => true) {
 		const { audioSettings } = await import('./audioSettings.svelte');
 		const { WebAudioOutput } = await import('./webAudioOutput');
-		const output = new WebAudioOutput(() => true);
+		const output = new WebAudioOutput(wantsSound);
 		const ctx = FakeContext.last;
 		output.attach(document.createElement('audio'));
 		const source = ctx.sources[0];
@@ -187,6 +190,39 @@ describe('WebAudioOutput', () => {
 		output.dispose();
 	});
 
+	it('suspends the context once nothing has played for a while, resumes on play', async () => {
+		vi.useFakeTimers();
+		const { output, ctx } = await load(() => false);
+		ctx.state = 'running';
+		const el = document.createElement('audio');
+		output.attach(el);
+		// jsdom elements report paused; a pause event starts the idle countdown.
+		el.dispatchEvent(new Event('pause'));
+		vi.advanceTimersByTime(9_000);
+		expect(ctx.suspend).not.toHaveBeenCalled();
+		vi.advanceTimersByTime(2_000);
+		expect(ctx.suspend).toHaveBeenCalled();
+		el.dispatchEvent(new Event('play'));
+		expect(ctx.resume).toHaveBeenCalled();
+		output.dispose();
+		vi.useRealTimers();
+	});
+
+	it('keeps the context awake while the player wants sound', async () => {
+		vi.useFakeTimers();
+		const { WebAudioOutput } = await import('./webAudioOutput');
+		const output = new WebAudioOutput(() => true);
+		const ctx = FakeContext.last;
+		ctx.state = 'running';
+		const el = document.createElement('audio');
+		output.attach(el);
+		el.dispatchEvent(new Event('emptied')); // a track change
+		vi.advanceTimersByTime(20_000);
+		expect(ctx.suspend).not.toHaveBeenCalled();
+		output.dispose();
+		vi.useRealTimers();
+	});
+
 	it('resumes the suspended context on the first tap', async () => {
 		const { output, ctx } = await load();
 		document.dispatchEvent(new Event('pointerdown'));
@@ -208,6 +244,7 @@ describe('audioSettings', () => {
 		audioSettings.setEngine('webaudio');
 		expect(audioSettings.restartNeeded).toBe(true);
 
+		audioSettings.flush();
 		vi.resetModules();
 		const reloaded = (await import('./audioSettings.svelte')).audioSettings;
 		expect(reloaded.activeEngine).toBe('webaudio');
@@ -221,6 +258,7 @@ describe('audioSettings', () => {
 		expect(audioSettings.preset).toBe('Custom');
 		expect(audioSettings.gains[0]).toBe(12);
 
+		audioSettings.flush();
 		vi.resetModules();
 		const reloaded = (await import('./audioSettings.svelte')).audioSettings;
 		expect(reloaded.preset).toBe('Custom');
@@ -239,6 +277,7 @@ describe('audioSettings: Sound Enhancer', () => {
 		const { audioSettings } = await import('./audioSettings.svelte');
 		audioSettings.setEnhancer(true);
 		audioSettings.setEnhancerLevel(3);
+		audioSettings.flush();
 		vi.resetModules();
 		const reloaded = (await import('./audioSettings.svelte')).audioSettings;
 		expect(reloaded.enhancer).toBe(true);
