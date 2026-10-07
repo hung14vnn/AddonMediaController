@@ -3,6 +3,8 @@
 	import { getPlayer } from "../player.svelte";
 	import { artistName } from "../format";
 	import type { Lyrics } from "../types";
+	import { toggleKaraoke } from "../karaoke";
+	import Icon from "./Icon.svelte";
 	import WordSyncedLyrics from "./WordSyncedLyrics.svelte";
 
 	const player = getPlayer();
@@ -12,18 +14,19 @@
 	let userScrolledAt = 0;
 	/** null = still trying am-lyrics, true = showing it, false = use the server's lyrics. */
 	let wordSynced = $state<boolean | null>(null);
-	const song = $derived(player.current);
+	// While a karaoke version plays, the lyrics are still the original's (and don't
+	// reload when it swaps in).
+	const song = $derived(player.lyricsSong);
 
 	// Reset per track; am-lyrics gets the first try.
 	$effect(() => {
-		void player.current;
+		void song?.id;
 		lyrics = null;
 		wordSynced = null;
 	});
 
 	// Only ask the server once am-lyrics has reported it has nothing for this track.
 	$effect(() => {
-		const song = player.current;
 		if (!song || wordSynced !== false) return;
 		let cancelled = false;
 		loading = true;
@@ -59,60 +62,138 @@
 	});
 </script>
 
-{#if song && wordSynced !== false}
-	{#key song.id}
-		<div class="word-synced">
-			<WordSyncedLyrics
-				title={song.title}
-				artist={artistName(song)}
-				album={song.album ?? ""}
-				durationSeconds={player.duration || song.duration || 0}
-				currentTimeSeconds={player.currentTime}
-				isPlaying={player.playing && !player.buffering}
-				isrc={song.isrc?.[0] ?? ""}
-				onseek={(s) => player.seek(s)}
-				maxFps={15}
-			/>
+<div class="lyrics-root">
+	{#if song && wordSynced !== false}
+		{#key song.id}
+			<div class="word-synced">
+				<WordSyncedLyrics
+					title={song.title}
+					artist={artistName(song)}
+					album={song.album ?? ""}
+					durationSeconds={(player.karaoke ? song.duration : 0) || player.duration || song.duration || 0}
+					currentTimeSeconds={player.currentTime}
+					isPlaying={player.playing && !player.buffering}
+					isrc={song.isrc?.[0] ?? ""}
+					onseek={(s) => player.seek(s)}
+					maxFps={15}
+				/>
+			</div>
+		{/key}
+	{:else}
+		<div
+			class="lyrics"
+			role="region"
+			aria-label="Lyrics"
+			bind:this={container}
+			onwheel={() => (userScrolledAt = Date.now())}
+			ontouchmove={() => (userScrolledAt = Date.now())}
+		>
+			{#if loading}
+				<p class="status">Loading lyrics…</p>
+			{:else if !lyrics}
+				<p class="status">Lyrics aren’t available for this song.</p>
+			{:else if lyrics.synced}
+				{#each lyrics.lines as line, i}
+					<button
+						class="line synced"
+						class:active={i === active}
+						class:past={i < active}
+						data-i={i}
+						onclick={() => {
+							userScrolledAt = 0;
+							player.seek((line.start ?? 0) / 1000);
+						}}
+					>
+						{line.value || "♪"}
+					</button>
+				{/each}
+				<div class="spacer"></div>
+			{:else}
+				{#each lyrics.lines as line}
+					<p class="line plain">{line.value || " "}</p>
+				{/each}
+			{/if}
 		</div>
-	{/key}
-{:else}
-	<div
-		class="lyrics"
-		role="region"
-		aria-label="Lyrics"
-		bind:this={container}
-		onwheel={() => (userScrolledAt = Date.now())}
-		ontouchmove={() => (userScrolledAt = Date.now())}
-	>
-		{#if loading}
-			<p class="status">Loading lyrics…</p>
-		{:else if !lyrics}
-			<p class="status">Lyrics aren’t available for this song.</p>
-		{:else if lyrics.synced}
-			{#each lyrics.lines as line, i}
-				<button
-					class="line synced"
-					class:active={i === active}
-					class:past={i < active}
-					data-i={i}
-					onclick={() => {
-						userScrolledAt = 0;
-						player.seek((line.start ?? 0) / 1000);
-					}}
-				>
-					{line.value || "♪"}
-				</button>
-			{/each}
-			<div class="spacer"></div>
-		{:else}
-			{#each lyrics.lines as line}
-				<p class="line plain">{line.value || " "}</p>
-			{/each}
-		{/if}
-	</div>
-{/if}
+	{/if}
+
+	<!-- Apple Music Sing's spot: bottom right of the lyrics (desktop). -->
+	{#if song}
+		<div class="lyrics-sing">
+			<button
+				class="sing-btn"
+				class:on={!!player.karaoke}
+				aria-pressed={!!player.karaoke}
+				aria-label={player.karaoke ? "Karaoke on — back to the original" : "Karaoke"}
+				title="Karaoke"
+				disabled={player.karaokeLoading}
+				onclick={toggleKaraoke}
+			>
+				{#if player.karaokeLoading}
+					<span class="spin" aria-hidden="true"></span>
+				{:else}
+					<Icon name="micSing" size={20} />
+				{/if}
+			</button>
+		</div>
+	{/if}
+</div>
 
 <style>
+	.lyrics-root {
+		position: relative;
+		height: 100%;
+		min-height: 0;
+	}
+	.lyrics-sing {
+		position: absolute;
+		right: 12px;
+		bottom: 12px;
+		z-index: 2;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	/* Phones: the floating controls cover this corner; the Now Playing header
+	   carries the button there instead. */
+	@media (max-width: 899px) {
+		.lyrics-sing {
+			display: none;
+		}
+	}
+	.sing-btn {
+		width: 40px;
+		height: 40px;
+		border-radius: 50%;
+		display: grid;
+		place-items: center;
+		color: #fff;
+		background: rgb(255 255 255 / 0.16);
+		backdrop-filter: blur(20px);
+		-webkit-backdrop-filter: blur(20px);
+		transition:
+			background-color 0.2s ease,
+			color 0.2s ease;
+	}
+	.sing-btn.on {
+		background: rgb(255 255 255 / 0.9);
+		color: #000;
+	}
+	.sing-btn:disabled {
+		cursor: wait;
+	}
+	.spin {
+		width: 16px;
+		height: 16px;
+		border-radius: 50%;
+		border: 2px solid rgb(255 255 255 / 0.3);
+		border-top-color: #fff;
+		animation: spin 0.8s linear infinite;
+	}
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
 	.word-synced {
 		height: 100%;
 		min-height: 0;

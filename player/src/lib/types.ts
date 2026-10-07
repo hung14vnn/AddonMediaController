@@ -27,6 +27,8 @@ export interface Song {
 		trackPeak?: number | null;
 		albumPeak?: number | null;
 	};
+	/** Player-side: this is the karaoke version of the song with this id. */
+	karaokeOf?: string;
 }
 
 export interface Album {

@@ -468,8 +468,8 @@
         <span class="label">Audio Engine</span>
         <span class="detail">
           {#if audioSettings.engine === "webaudio"}
-            Uses Web Audio API — a more flexible and feature-rich option
-            but can be unstable in some devices.
+            Uses Web Audio API — a more flexible and feature-rich option but can
+            be unstable in some devices.
           {:else}
             Plays straight from the audio element — the most reliable in the
             background on mobile devices.
@@ -491,7 +491,7 @@
       <div class="row" style="border-top: 0.5px solid var(--hairline);">
         <div class="text">
           <span class="detail"
-            >Restart hify to switch the audio engine. Your queue is kept.</span
+            >Restart hify to switch the audio engine</span
           >
         </div>
         <button class="btn small accent" onclick={() => location.reload()}
@@ -527,7 +527,7 @@
       style="border-top: 0.5px solid var(--hairline);"
     >
       <span class="icon-box" style="background: var(--accent);"
-        ><Icon name="sparkles" size={18} /></span
+        ><Icon name="wand" size={18} /></span
       >
       <div class="text">
         <span class="label">Sound Enhancer</span>
@@ -578,7 +578,7 @@
       class:disabled={!player.webAudio}
       style="border-top: 0.5px solid var(--hairline);"
     >
-	  <span class="icon-box" style="background: var(--accent);"
+      <span class="icon-box" style="background: var(--accent);"
         ><Icon name="speaker" size={18} /></span
       >
       <div class="text">
@@ -605,7 +605,9 @@
   <h3 class="group-title">Storage</h3>
   <div class="group">
     <div class="row">
-      <span class="icon-box" style="background: var(--accent);"><Icon name="album" size={18} /></span>
+      <span class="icon-box" style="background: var(--accent);"
+        ><Icon name="album" size={18} /></span
+      >
       <div class="text">
         <span class="label">Artwork Cache</span>
         <span class="detail"
@@ -806,9 +808,7 @@
   <h3 class="group-title">Diagnostics</h3>
   <div class="group">
     <div class="row">
-      <span class="icon-box"
-        ><Icon name="server" size={18} /></span
-      >
+      <span class="icon-box"><Icon name="server" size={18} /></span>
       <div class="text">
         <span class="label">Playback Log</span>
         <span class="detail">
@@ -1166,13 +1166,13 @@
     display: flex;
     flex-shrink: 0;
     padding: 2px;
-    border-radius: 9px;
+    border-radius: 999px;
     background: var(--fill);
   }
   .segmented button {
     height: 28px;
     padding: 0 12px;
-    border-radius: 7px;
+    border-radius: 999px;
     font-size: 13px;
     font-weight: 500;
     color: var(--text);
@@ -1180,6 +1180,10 @@
     transition:
       background-color 0.2s ease,
       box-shadow 0.2s ease;
+  }
+  /* A segmented control just moves its selection; no press-down like other buttons. */
+  .segmented button:active {
+    transform: none;
   }
   .segmented button.on {
     /* iOS: white on light, a lighter grey than the track on dark */

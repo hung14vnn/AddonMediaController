@@ -3609,6 +3609,67 @@ async def _build_lastfm_recommendations(c: Ctx) -> dict:
     return {"linked": True, "username": username, "shelf": out}
 
 
+# (artist, title) -> (looked_up_at, karaoke child as builtins, or None for none found)
+_KARAOKE: dict[tuple[str, str], tuple[float, dict | None]] = {}
+_KARAOKE_MAX = 1024
+_KARAOKE_TTL = 7 * 24 * 60 * 60
+_KARAOKE_MISS_TTL = 6 * 60 * 60
+
+
+@endpoint("getKaraoke")
+async def _get_karaoke(c: Ctx) -> Response:
+    """A karaoke (instrumental) version of a song, found on YouTube: played in
+    place of the song by the player's karaoke mode. ``song`` is absent when
+    there's none worth playing."""
+    from services.compat.karaoke import loose, pick_karaoke, search_query
+
+    title = (c.p("title") or "").strip()
+    artist = (c.p("artist") or "").strip()
+    if not title:
+        raise SubsonicError(10, "Required parameter is missing: title")
+    duration = c.pfloat("duration", None, minimum=0)
+    key = (loose(artist), loose(title))
+    hit = _KARAOKE.get(key)
+    if hit and time.monotonic() - hit[0] < (_KARAOKE_TTL if hit[1] else _KARAOKE_MISS_TTL):
+        return c.render("karaoke", {"song": hit[1]} if hit[1] else {})
+
+    ytmusic = c.services.ytmusic_stream
+    if not ytmusic:
+        return c.render("karaoke", {})
+    try:
+        candidates = await ytmusic.search_videos(search_query(title, artist))
+    except Exception as e:  # noqa: BLE001 - a failed search isn't "none exists": don't cache
+        logger.warning("Karaoke search failed for %r - %r: %s", artist, title, e)
+        return c.render("karaoke", {})
+    pick = pick_karaoke(title, artist, duration, candidates)
+    song = None
+    if pick:
+        vid = pick["id"]
+        tid = encode("ytmusic", vid)
+        _remember_cover("ytmusic", vid, f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg")
+        length = pick.get("duration")
+        song = msgspec.to_builtins(
+            m.SChild(
+                id=tid,
+                isDir=False,
+                title=title,
+                album="Karaoke",
+                artist=artist or None,
+                coverArt=tid,
+                duration=int(length) if isinstance(length, (int, float)) else None,
+                suffix="m4a",
+                contentType="audio/mp4",
+                type="music",
+                mediaType="song",
+            )
+        )
+        logger.info("Karaoke for %r - %r: %s %r", artist, title, vid, pick.get("title"))
+    if key not in _KARAOKE and len(_KARAOKE) >= _KARAOKE_MAX:
+        _KARAOKE.pop(next(iter(_KARAOKE)))
+    _KARAOKE[key] = (time.monotonic(), song)
+    return c.render("karaoke", {"song": song} if song else {})
+
+
 @endpoint("getLastfmRecommendations")
 async def _get_lastfm_recommendations(c: Ctx) -> Response:
     """Personal shelves from the user's Last.fm history - "Your Weekly Mix"

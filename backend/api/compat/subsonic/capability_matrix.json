@@ -46,6 +46,7 @@
     "requestSpotifyDownload": {"state": "full", "response_key": "spotifyDownload", "service": "native acquisition (player extension)", "parameters": ["id"]},
     "removeLibraryTrack": {"state": "full", "response_key": "libraryRemoval", "service": "target catalog writer (player extension)", "parameters": ["id"]},
     "removeLibraryAlbum": {"state": "full", "response_key": "libraryRemoval", "service": "target catalog writer (player extension)", "parameters": ["id", "stopWanted?"]},
+    "getKaraoke": {"state": "full", "response_key": "karaoke", "service": "YouTube search via yt-dlp (player extension)", "parameters": ["title", "artist?", "duration?"]},
     "getLastfmStatus": {"state": "full", "response_key": "lastfm", "service": "user connections and listening prefs (player extension)", "parameters": []},
     "setLastfmScrobbling": {"state": "full", "response_key": "lastfm", "service": "listening prefs (player extension)", "parameters": ["enabled?"]},
     "getLastfmRecommendations": {"state": "full", "response_key": "lastfmRecommendations", "service": "Last.fm and YouTube Music catalog (player extension)", "parameters": ["refresh?"]},

@@ -67,6 +67,8 @@ _MV_REGEX = re.compile(
     re.IGNORECASE,
 )
 _MV_WORDS_REGEX = re.compile(rf"\b{_MV_WORDS}\b", re.IGNORECASE)
+# A karaoke "video" is wanted for being instrumental: never swap it for the studio audio.
+_KARAOKE_REGEX = re.compile(r"karaoke|instrumental|off[\s-]*vocal|\bbeat\b|\bktv\b", re.IGNORECASE)
 _BRACKETS_REGEX = re.compile(r"[\(\[].*?[\)\]]")
 _WHITESPACE_REGEX = re.compile(r"\s+")
 
@@ -256,6 +258,28 @@ class _YtDlp:
             if isinstance(vid, str) and len(vid) == 11 and not vid.startswith(("UC", "VL", "MP")):
                 candidates.append((vid, entry.get("title") or ""))
         return candidates
+
+    @staticmethod
+    def search_videos(query: str, limit: int = 10) -> list[dict]:
+        """Flat YouTube search (not YouTube Music, which carries few karaoke
+        uploads): ``id``, ``title``, ``duration``, ``channel`` per video."""
+        with YoutubeDL(_YDL_FLAT_OPTIONS) as ydl:
+            info = ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
+        results: list[dict] = []
+        for entry in (info.get("entries") if isinstance(info, dict) else None) or []:
+            if not isinstance(entry, dict):
+                continue
+            vid = entry.get("id")
+            if isinstance(vid, str) and len(vid) == 11:
+                results.append(
+                    {
+                        "id": vid,
+                        "title": str(entry.get("title") or ""),
+                        "duration": entry.get("duration"),
+                        "channel": str(entry.get("channel") or entry.get("uploader") or ""),
+                    }
+                )
+        return results
 
     @staticmethod
     def search(query: str, fmt: str = "opus") -> StreamInfo | None:
@@ -545,6 +569,9 @@ class YTMusicStreamService:
             logger.warning("YTMusic radio playlists failed: %s", e)
             return []
 
+    async def search_videos(self, query: str, limit: int = 10) -> list[dict]:
+        return await self._run_blocking(_YtDlp.search_videos, query, limit, what="search")
+
     def evict_by_video_id(self, video_id: str) -> None:
         """Drop every cached entry for *video_id*."""
         self._cache.evict(f"{video_id}:opus")
@@ -728,7 +755,7 @@ class YTMusicStreamService:
         if result is None:
             raise ValueError(f"Could not extract audio for video {video_id}")
 
-        if _MV_REGEX.search(result.source_title):
+        if _MV_REGEX.search(result.source_title) and not _KARAOKE_REGEX.search(result.source_title):
             result = await self._upgrade_mv_to_audio(result, fmt)
         return result
 

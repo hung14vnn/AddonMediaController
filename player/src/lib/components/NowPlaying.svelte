@@ -6,6 +6,7 @@
 	import { tick } from "svelte";
 	import { cubicOut } from "svelte/easing";
 	import { time } from "../format";
+	import { toggleKaraoke } from "../karaoke";
 	import { songMenu } from "../menus";
 	import type { TransitionConfig } from "svelte/transition";
 	import { artSwap, fadeOnly, pop, sheet, textSwap } from "../motion";
@@ -805,6 +806,23 @@
 					{/if}
 
 					<div class="progress" data-flip="progress">
+						{#if mobileOpen && ui.panel === "lyrics"}
+							<!-- Karaoke, like Apple Music Sing: right above the progress bar. -->
+							<button
+								class="sing-float"
+								class:on={!!player.karaoke}
+								aria-pressed={!!player.karaoke}
+								aria-label={player.karaoke ? "Karaoke on — back to the original" : "Karaoke"}
+								disabled={player.karaokeLoading}
+								onclick={toggleKaraoke}
+							>
+								{#if player.karaokeLoading}
+									<span class="karaoke-spin" aria-hidden="true"></span>
+								{:else}
+									<Icon name="micSing" size={18} />
+								{/if}
+							</button>
+						{/if}
 						<Slider
 							value={progressTime}
 							max={player.duration}
@@ -821,6 +839,8 @@
 									onclick={() => player.toggleMute()}
 									>Muted · Tap to unmute</button
 								>
+							{:else if player.karaoke}
+								<span class="quality sing-label">Sing</span>
 							{:else if sleepTimer.isActive}
 								<button
 									class="quality active-timer-text"
@@ -919,11 +939,12 @@
 						<button
 							class="foot"
 							class:on={ui.panel === "queue"}
-							aria-label="Playing Next"
+							aria-label={player.shuffle ? "Playing Next, shuffle on" : "Playing Next"}
 							aria-pressed={ui.panel === "queue"}
 							onclick={() => toggleMobilePanel("queue")}
 						>
-							<Icon name="queue" size={21} />
+							<!-- Shuffle on: the shuffle variant of the icon, as Apple Music shows it. -->
+							<Icon name={player.shuffle ? "queueShuffle" : "queue"} size={21} />
 						</button>
 					</div>
 				</div>
@@ -1185,6 +1206,19 @@
 		color: #fff;
 		background: rgb(255 255 255 / 0.14);
 	}
+	.karaoke-spin {
+		width: 13px;
+		height: 13px;
+		border-radius: 50%;
+		border: 2px solid rgb(255 255 255 / 0.3);
+		border-top-color: #fff;
+		animation: karaoke-spin 0.8s linear infinite;
+	}
+	@keyframes karaoke-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
 	.round.on {
 		background: rgb(255 255 255 / 0.28);
 	}
@@ -1207,6 +1241,31 @@
 		font-weight: 600;
 		color: rgb(255 255 255 / 0.42);
 		font-variant-numeric: tabular-nums;
+	}
+	.sing-label {
+		color: rgb(255 255 255 / 0.75);
+	}
+	.progress {
+		position: relative;
+	}
+	.sing-float {
+		position: absolute;
+		right: 0;
+		bottom: calc(100% + 12px);
+		width: 34px;
+		height: 34px;
+		border-radius: 9px;
+		display: grid;
+		place-items: center;
+		color: #fff;
+		background: rgb(255 255 255 / 0.14);
+		transition:
+			background-color 0.2s ease,
+			color 0.2s ease;
+	}
+	.sing-float.on {
+		color: rgb(0 0 0 / 0.75);
+		background: rgb(255 255 255 / 0.85);
 	}
 	.times .right {
 		text-align: right;

@@ -728,6 +728,16 @@ export async function getLyrics(song: Song): Promise<Lyrics | null> {
 	return null;
 }
 
+/** A karaoke (instrumental) version of `song` found on YouTube, or null when there is none. */
+export async function getKaraoke(song: Song): Promise<Song | null> {
+	const r = await call('getKaraoke', {
+		title: song.title,
+		artist: song.artist,
+		duration: song.duration
+	});
+	return (r.karaoke?.song as Song | undefined) ?? null;
+}
+
 export async function savePlayQueue(ids: string[], current?: string, position?: number) {
 	if (isRemoteTrack(current)) return;
 	try {

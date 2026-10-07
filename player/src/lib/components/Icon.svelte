@@ -43,8 +43,14 @@
 		radio: 'M12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM7.1 6.4a1 1 0 0 1 1.4 1.4 6 6 0 0 0 0 8.4 1 1 0 1 1-1.4 1.4 8 8 0 0 1 0-11.2zm9.8 0a8 8 0 0 1 0 11.2 1 1 0 1 1-1.4-1.4 6 6 0 0 0 0-8.4 1 1 0 0 1 1.4-1.4zM4.3 3.6a1 1 0 0 1 1.4 1.4 10 10 0 0 0 0 14 1 1 0 1 1-1.4 1.4 12 12 0 0 1 0-16.8zM19.7 3.6a12 12 0 0 1 0 16.8 1 1 0 1 1-1.4-1.4 10 10 0 0 0 0-14 1 1 0 0 1 1.4-1.4z',
 		download: 'M12 15a1 1 0 0 1-.7-.3l-4-4a1 1 0 1 1 1.4-1.4L11 11.6V3a1 1 0 1 1 2 0v8.6l2.3-2.3a1 1 0 0 1 1.4 1.4l-4 4a1 1 0 0 1-.7.3zM21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4a1 1 0 1 1 2 0v4h14v-4a1 1 0 1 1 2 0z'
 		, sliders: 'M6 3a1 1 0 0 1 1 1v9.2a2.5 2.5 0 0 1 0 4.6V20a1 1 0 1 1-2 0v-2.2a2.5 2.5 0 0 1 0-4.6V4a1 1 0 0 1 1-1zm6 0a1 1 0 0 1 1 1v2.2a2.5 2.5 0 0 1 0 4.6V20a1 1 0 1 1-2 0v-9.2a2.5 2.5 0 0 1 0-4.6V4a1 1 0 0 1 1-1zm6 0a1 1 0 0 1 1 1v6.2a2.5 2.5 0 0 1 0 4.6V20a1 1 0 1 1-2 0v-5.2a2.5 2.5 0 0 1 0-4.6V4a1 1 0 0 1 1-1z',
+		// Karaoke: sparkles beside a handheld mic, like Apple Music Sing.
+		micSing: 'M6 3.4l.8 1.8 1.8.8-1.8.8-.8 1.8-.8-1.8-1.8-.8 1.8-.8.8-1.8zM17.5 15.9l.5 1.1 1.1.5-1.1.5-.5 1.1-.5-1.1-1.1-.5 1.1-.5.5-1.1zM10.8.9l.5 1.1 1.1.5-1.1.5-.5 1.1-.5-1.1-1.1-.5 1.1-.5.5-1.1zM16 3.4a4.6 4.6 0 1 1 0 9.2 4.6 4.6 0 0 1 0-9.2zM11 10.1l2.9 2.9-7.6 6.4a1.1 1.1 0 0 1-1.7-1.6z',
+		// Playing Next with shuffle on: the list's top row gives way to a shuffle mark.
+		queueShuffle: 'M4 6.8a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4zm0 5a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4zm0 5a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4zM8 7h3.5a1 1 0 1 1 0 2H8a1 1 0 1 1 0-2zm0 5h12a1 1 0 1 1 0 2H8a1 1 0 1 1 0-2zm0 5h12a1 1 0 1 1 0 2H8a1 1 0 1 1 0-2z',
 		// Smart Discover: a full-size magnifying glass (stroked part below) with a sparkle in it.
 		discover: 'M10 6.4l.9 2.7 2.7.9-2.7.9-.9 2.7-.9-2.7-2.7-.9 2.7-.9.9-2.7z',
+		// Sound Enhancer: sparkles around a magic wand (stroked part below).
+		wand: 'M4.5 1.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9.9-2.1zM12 1.7l.7 1.6 1.6.7-1.6.7-.7 1.6-.7-1.6-1.6-.7 1.6-.7.7-1.6zM17.5 8.2l.55 1.25 1.25.55-1.25.55-.55 1.25-.55-1.25-1.25-.55 1.25-.55.55-1.25zM4 10.2l.55 1.25 1.25.55-1.25.55-.55 1.25-.55-1.25-1.25-.55 1.25-.55.55-1.25z',
 		sparkles:'M12 2.5l1.5 5.2L18.5 9l-5 1.5L12 16l-1.5-5.5L5.5 9l5-1.3L12 2.5zm7 10 1 3.5 3.5 1-3.5 1-1 3.5-1-3.5-3.5-1 3.5-1 1-3.5zM5 14l.7 2.3L8 17l-2.3.7L5 20l-.7-2.3L2 17l2.3-.7L5 14z',
 	};
 
@@ -52,8 +58,13 @@
 	const strokes: Record<string, string> = {
 		// Two S-curves crossing: one song fading out as the next fades in.
 		crossfade: 'M4 18c8 0 8-12 16-12M4 6c8 0 8 12 16 12',
+		queueShuffle: 'M13.8 3.5h1.4l3.6 5h2M13.8 8.5h1.4l3.6-5h2M19.8 2l1.5 1.5-1.5 1.5M19.8 7l1.5 1.5-1.5 1.5',
+		// The wand, with a gap for the band below its tip.
+		wand: 'M8.5 8.5l1.4 1.4M11.6 11.6l8.9 8.9',
 		discover: 'M16.8 10a6.8 6.8 0 1 1-13.6 0 6.8 6.8 0 0 1 13.6 0zM15 15l5.5 5.5'
 	};
+	/** Stroke width when not the usual 2. */
+	const strokeWidths: Record<string, number> = { wand: 2.6, queueShuffle: 1.5 };
 </script>
 
 <script lang="ts">
@@ -77,7 +88,7 @@
 			d={strokes[name]}
 			fill="none"
 			stroke="currentColor"
-			stroke-width="2"
+			stroke-width={strokeWidths[name] ?? 2}
 			stroke-linecap="round"
 		/>
 	{/if}

@@ -1,4 +1,4 @@
-import { getPlayQueue, getSession, savePlayQueue, scrobble, streamUrl } from './api';
+import { getKaraoke, getPlayQueue, getSession, savePlayQueue, scrobble, streamUrl } from './api';
 import { build, buildLabel } from './build';
 import { isPlaybackLogEnabled, logPlayback } from './playback/debugLog';
 import { audioSettings } from './playback/audioSettings.svelte';
@@ -217,6 +217,9 @@ class Player {
 	enhancerSource = $state<EnhancerSource | null>(null);
 	shuffle = $state(false);
 	repeat = $state<Repeat>('off');
+	/** Karaoke: a karaoke version is playing in place of `original` (raw: compared by id). */
+	karaoke = $state.raw<{ original: Song; version: Song } | null>(null);
+	karaokeLoading = $state(false);
 	error = $state<string | null>(null);
 	/** Remote Playback API (Chromecast etc. on Chrome/Android; AirPlay picker on Safari). */
 	castAvailable = $state(false);
@@ -230,6 +233,10 @@ class Player {
 	/** Tracks already passed in this play session, for the queue's History section. */
 	history = $derived(this.index > 0 ? this.queue.slice(0, this.index) : []);
 	upNext = $derived(this.queue.slice(this.index + 1));
+	/** The song lyrics are for: the original while its karaoke version plays. */
+	lyricsSong = $derived(
+		this.karaoke && this.current?.id === this.karaoke.version.id ? this.karaoke.original : this.current
+	);
 
 	private audio: HTMLAudioElement;
 	private readonly ios = isIOSDevice();
@@ -680,6 +687,59 @@ class Player {
 		this.persist();
 	}
 
+	/**
+	 * Karaoke on: find the playing song's karaoke version on YouTube and play it in the
+	 * song's place, from the same moment. Off: back to the original. Returns why it
+	 * couldn't start, or null.
+	 */
+	async toggleKaraoke(): Promise<string | null> {
+		if (this.karaoke) {
+			const { original } = this.karaoke;
+			this.leaveKaraoke();
+			this.replaceCurrent(original);
+			return null;
+		}
+		const song = this.current;
+		if (!song || this.karaokeLoading) return null;
+		this.karaokeLoading = true;
+		let found: Song | null = null;
+		try {
+			found = await getKaraoke(song);
+		} catch (e) {
+			logPlayback('karaoke-failed', String(e));
+		}
+		this.karaokeLoading = false;
+		if (this.current?.id !== song.id) return null; // moved on while searching
+		if (!found) return 'No karaoke version found for this song.';
+		const version: Song = { ...found, coverArt: song.coverArt ?? found.coverArt, karaokeOf: song.id };
+		logPlayback('karaoke', `id=${song.id} → ${version.id}`);
+		this.karaoke = { original: $state.snapshot(song) as Song, version };
+		this.replaceCurrent(version);
+		return null;
+	}
+
+	/** Ends karaoke, putting the original back wherever its karaoke version sits. */
+	private leaveKaraoke() {
+		const k = this.karaoke;
+		if (!k) return;
+		this.karaoke = null;
+		const swap = (list: Song[]) => list.map((s) => (s.id === k.version.id ? k.original : s));
+		this.queue = swap(this.queue);
+		if (this.unshuffled) this.unshuffled = swap(this.unshuffled);
+	}
+
+	/** Plays `song` in the current song's place, from the same moment. */
+	private replaceCurrent(song: Song) {
+		const from = this.current;
+		if (!from) return;
+		const queue = [...this.queue];
+		queue[this.index] = song;
+		this.queue = queue;
+		if (this.unshuffled) this.unshuffled = this.unshuffled.map((s) => (s.id === from.id ? song : s));
+		const at = song.duration && this.time > song.duration - 5 ? 0 : this.time;
+		void this.load(this.index, this.playRequested || this.playing, at);
+	}
+
 	cycleRepeat() {
 		this.repeat = cycleRepeat(this.repeat);
 		this.persist();
@@ -700,6 +760,8 @@ class Player {
 	 * await at all, which is what lets a track change from `ended` work on a hidden page.
 	 */
 	private async load(i: number, autoplay: boolean, startAt = 0) {
+		// Karaoke is per song: moving to another puts the original back in the queue.
+		if (this.karaoke && this.queue[i]?.id !== this.karaoke.version.id) this.leaveKaraoke();
 		const song = this.queue[i];
 		if (!song) return;
 		// Only the automatic handoff `onTime` set this up for crossfades; a skip cuts.
@@ -789,7 +851,7 @@ class Player {
 			// YouTube track takes seconds to arrive, and Android/iOS refuse to start audio
 			// from a background page that has been silent that long. `canplay` still retries.
 			this.play();
-			scrobble(song.id, false);
+			if (!song.karaokeOf) scrobble(song.id, false);
 		}
 		this.persist();
 		this.prepareNextOffline();
@@ -1154,7 +1216,8 @@ class Player {
 		// Last.fm rule: scrobble after half the track or 4 minutes, whichever first.
 		if (song && !this.scrobbled && dur > 30 && (a.currentTime >= dur / 2 || a.currentTime >= 240)) {
 			this.scrobbled = true;
-			scrobble(song.id, true);
+			// Singing along isn't listening to the song: karaoke versions aren't scrobbled.
+			if (!song.karaokeOf) scrobble(song.id, true);
 		}
 		if (a.currentTime !== this.lastProgressTime) {
 			this.lastProgressTime = a.currentTime;
