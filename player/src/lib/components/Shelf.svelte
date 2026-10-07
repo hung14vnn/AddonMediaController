@@ -55,7 +55,7 @@
 	});
 </script>
 
-<section class="shelf">
+<section>
 	<header>
 		<div class="heading">
 			{#if seeAll}
@@ -88,10 +88,6 @@
 </section>
 
 <style>
-	.shelf {
-		margin-bottom: 30px;
-	}
-
 	header {
 		display: flex;
 		align-items: center;

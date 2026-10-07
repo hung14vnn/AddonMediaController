@@ -116,7 +116,7 @@ const HAVE_FUTURE_DATA = 3;
  * An element "playing", with data to play, whose clock hasn't moved for this long is
  * frozen: iOS can resume one after a call (or Siri) without its sound coming back.
  */
-const FROZEN_MS = 4_000;
+const FROZEN_MS = 6_000;
 
 /** Unplayable tracks skipped in a row before giving up. */
 const MAX_ERROR_SKIPS = 2;
@@ -1262,17 +1262,17 @@ class Player {
 		}
 		this.currentTime = this.time; // the UI copy was frozen while hidden
 		if (!this.current) return;
-		// "Playing" but no progress for a while (timeupdates keep `lastProgressAt` fresh
-		// while hidden too): frozen, typically since a call. play() wouldn't change that.
-		if (
+		// "Playing" with no progress for a while: frozen since a call, or WebKit just held
+		// loading in the background. Either way playback is wanted (after a call iOS
+		// restarts the element itself, without our playRequested): play() below, then
+		// make sure the clock moves (`watchFrozen` reloads it if not).
+		const stuck =
 			!this.audio.paused &&
 			this.audio.readyState >= HAVE_FUTURE_DATA &&
-			performance.now() - this.lastProgressAt > FROZEN_MS
-		) {
-			logPlayback('frozen', `t=${this.time.toFixed(1)} on visible`);
-			this.resumeWhenVisible = false;
-			this.recoverFrozen();
-			return;
+			performance.now() - this.lastProgressAt > FROZEN_MS;
+		if (stuck) {
+			logPlayback('stuck-on-visible', `t=${this.time.toFixed(1)}`);
+			this.resumeWhenVisible = true;
 		}
 		// Background time is not stalled time: the 15 s window starts now. (The play()
 		// or load() below arms the watchdog again.)
@@ -1287,7 +1287,10 @@ class Player {
 			this.errorRetriedFor = null;
 			this.errorSkips = 0;
 			this.load(this.index, true, this.time);
-		} else this.play();
+		} else {
+			this.play();
+			if (stuck) this.watchFrozen(this.audio);
+		}
 	};
 
 	/**
