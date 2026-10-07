@@ -112,6 +112,13 @@
 			},
 			{ capture: true },
 		);
+		// Prevent default browser context menu on images in the player
+		addEventListener("contextmenu", (e) => {
+			const target = e.target as HTMLElement | null;
+			if (target && (target.tagName === "IMG" || target.closest("img, .art, .avatar"))) {
+				e.preventDefault();
+			}
+		});
 	}
 
 	beforeNavigate((navigation) => {

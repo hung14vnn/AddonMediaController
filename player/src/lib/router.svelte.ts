@@ -10,6 +10,7 @@ export type Route =
 	| { name: 'search'; query: string }
 	| { name: 'library' }
 	| { name: 'profile' }
+	| { name: 'equalizer' }
 	| { name: 'recent' }
 	| { name: 'artists' }
 	| { name: 'albums' }

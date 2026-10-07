@@ -134,6 +134,7 @@
 					alt=""
 					decoding="async"
 					onerror={() => imageErrorCount++}
+					oncontextmenu={(e) => e.preventDefault()}
 				/>{/if}
 			<div class="topbar">
 				<button class="glass" aria-label="Back" onclick={() => (history.length > 1 ? history.back() : router.go('/'))}>

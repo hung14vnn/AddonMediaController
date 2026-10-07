@@ -20,6 +20,13 @@ export interface Song {
 	explicitStatus?: string;
 	/** OpenSubsonic: zero or more ISRCs. */
 	isrc?: string[];
+	/** OpenSubsonic: gains in dB, peaks as linear amplitude. */
+	replayGain?: {
+		trackGain?: number | null;
+		albumGain?: number | null;
+		trackPeak?: number | null;
+		albumPeak?: number | null;
+	};
 }
 
 export interface Album {

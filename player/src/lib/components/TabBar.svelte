@@ -41,8 +41,8 @@
 	const iconShift = $derived.by(() => {
 		if (!pw) return 0;
 		const n = tabs.length;
-		const tw = (pw - 12 - (n - 1) * 4) / n;
-		const center = 6 + activeIndex * (tw + 4) + tw / 2;
+		const tw = (pw - 8 - (n - 1) * 4) / n;
+		const center = 4 + activeIndex * (tw + 4) + tw / 2;
 		return BTN / 2 - center;
 	});
 
@@ -160,6 +160,7 @@
 		bottom: var(--pad, 6px);
 		width: calc(100% - 2 * var(--side, 12px) - var(--tab-h, 58px) - var(--gap, 8px));
 		height: var(--tab-h, 58px);
+		border-radius: 999px;
 		pointer-events: none;
 	}
 	.pill a {
@@ -199,16 +200,16 @@
 		justify-content: space-around;
 		align-items: stretch;
 		gap: 4px;
-		padding: 5px 6px;
+		padding: 4px;
 	}
 
 	.indicator {
 		position: absolute;
-		top: 5px;
-		bottom: 5px;
-		left: 6px;
-		width: calc((100% - 12px - (var(--n) - 1) * 4px) / var(--n));
-		border-radius: 22px;
+		top: 4px;
+		bottom: 4px;
+		left: 4px;
+		width: calc((100% - 8px - (var(--n) - 1) * 4px) / var(--n));
+		border-radius: 999px;
 		background: var(--fill);
 		pointer-events: none;
 		transform: translateX(calc(var(--i) * (100% + 4px)));
@@ -222,6 +223,7 @@
 	}
 
 	.tabs a {
+		--label-h: 12px;
 		position: relative;
 		z-index: 1;
 		flex: 1;
@@ -232,7 +234,7 @@
 		gap: 2px;
 		min-width: 0;
 		padding: 5px 2px 2px;
-		border-radius: 22px;
+		border-radius: 999px;
 		font-size: 10px;
 		font-weight: 500;
 		color: var(--text-3);
@@ -251,11 +253,14 @@
 	.tabbar.collapsed .tabs a:not(.active) {
 		opacity: 0;
 	}
+	/* Into the middle of the collapsed circle. Vertically: the icon sits above the
+	   (fading) label, half of label + gap above the link's centre, and the link's
+	   5px/2px padding puts its content 1.5px below that centre. */
 	.tabbar.collapsed .tabs a.active {
-		transform: translate(var(--dx, 0px), 7px);
-		color: var(--text);
+		transform: translate(var(--dx, 0px), calc((var(--label-h) + 2px) / 2 - 1.5px));
 	}
 	.label {
+		line-height: var(--label-h);
 		transition: opacity calc(var(--dur, 0.5s) * 0.35) var(--ease, ease);
 	}
 	.tabbar.collapsed .label {

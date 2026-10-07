@@ -82,6 +82,7 @@
 			style:--crop-scale={cropScale}
 			onload={handleLoad}
 			onerror={() => (failed = true)}
+			oncontextmenu={(e) => e.preventDefault()}
 		/>
 	{/if}
 	

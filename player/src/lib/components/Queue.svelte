@@ -3,6 +3,7 @@
 	import { artistName } from "../format";
 	import { fadeOnly, queueItem } from "../motion";
 	import { getPlayer } from "../player.svelte";
+	import { audioSettings } from "../playback/audioSettings.svelte";
 	import Artwork from "./Artwork.svelte";
 	import Icon from "./Icon.svelte";
 	import { flip } from "svelte/animate";
@@ -116,7 +117,7 @@
 				{#if smartDiscover.discovering}
 					<span class="spin" aria-hidden="true"></span>
 				{:else}
-					<Icon name="sparkles" size={19} />
+					<Icon name="discover" size={19} />
 				{/if}
 			</button>
 		{/if}
@@ -134,6 +135,18 @@
 			onclick={() => player.cycleRepeat()}
 		>
 			<Icon name={player.repeat === "one" ? "repeatOne" : "repeat"} size={19} />
+		</button>
+		<button
+			class:on={player.webAudio && audioSettings.crossfade}
+			aria-pressed={player.webAudio && audioSettings.crossfade}
+			disabled={!player.webAudio}
+			aria-label={player.webAudio
+				? "Crossfade"
+				: "Crossfade — requires the Web Audio engine (Account › Playback)"}
+			title={player.webAudio ? "Crossfade" : "Crossfade requires the Web Audio engine"}
+			onclick={() => audioSettings.setCrossfade(!audioSettings.crossfade)}
+		>
+			<Icon name="crossfade" size={19} />
 		</button>
 	</div>
 
@@ -315,6 +328,9 @@
 		background: rgb(255 255 255 / 0.12);
 		font-size: 13px;
 		font-weight: 600;
+	}
+	.toggles button:disabled:not(.discovering) {
+		opacity: 0.4;
 	}
 	.toggles button.on {
 		background: rgb(255 255 255 / 0.85);

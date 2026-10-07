@@ -275,7 +275,7 @@
 					<button onclick={() => pickMatch(match)}>
 						<span class="art">
 							{#if match.coverUrl}
-								<img src={match.coverUrl} alt="" loading="lazy" decoding="async" />
+								<img src={match.coverUrl} alt="" loading="lazy" decoding="async" oncontextmenu={(e) => e.preventDefault()} />
 							{:else}
 								<span class="art-empty"><Icon name="note" size={18} /></span>
 							{/if}

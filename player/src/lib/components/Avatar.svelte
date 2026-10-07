@@ -24,7 +24,7 @@
 
 <span class="avatar" style:--size="{size}px" style:--h={hue(username ?? '')}>
 	{#if src && !failed}
-		<img {src} alt="" onerror={() => (failed = true)} />
+		<img {src} alt="" onerror={() => (failed = true)} oncontextmenu={(e) => e.preventDefault()} />
 	{:else}
 		<span class="initials" aria-hidden="true">{initials}</span>
 	{/if}

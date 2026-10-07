@@ -1,6 +1,8 @@
 import { getPlayQueue, getSession, savePlayQueue, scrobble, streamUrl } from './api';
 import { build, buildLabel } from './build';
 import { isPlaybackLogEnabled, logPlayback } from './playback/debugLog';
+import { audioSettings } from './playback/audioSettings.svelte';
+import { isLossless, type EnhancerSource } from './playback/cutoffDetector';
 import { InterruptionGuard } from './playback/interruptions';
 import { clearMediaSession, setMediaMetadata, setMediaPosition, setupMediaSession } from './playback/mediaSession';
 import {
@@ -15,7 +17,9 @@ import {
 	type Repeat
 } from './playback/queue';
 import { pickOutput, watchRemotePlayback, type CastState } from './playback/remotePlayback';
+import { gainModeFor, replayGainFactor } from './playback/replayGain';
 import { SingleTab } from './playback/singleTab';
+import { WebAudioOutput } from './playback/webAudioOutput';
 import { clearSnapshot, readSnapshot, writeSnapshot } from './playback/snapshot';
 import { sleepTimer } from './sleepTimer.svelte';
 import type { Song } from './types';
@@ -46,6 +50,20 @@ interface BlobFailure {
 	at: number;
 	/** Not worth retrying (e.g. the file is too big to hold in memory). */
 	final: boolean;
+}
+
+/** The Web Audio engine when the settings ask for it; plain <audio> if it can't start. */
+function createOutput(
+	wantsSound: () => boolean,
+	onSource: (source: EnhancerSource) => void
+): WebAudioOutput | null {
+	if (audioSettings.activeEngine !== 'webaudio') return null;
+	try {
+		return new WebAudioOutput(wantsSound, onSource);
+	} catch (e) {
+		logPlayback('webaudio-unavailable', String(e));
+		return null;
+	}
 }
 
 function createManagedAudio(): HTMLAudioElement {
@@ -114,6 +132,12 @@ const DURATION_MISMATCH_RATIO = 1.25;
  * current one, so some element is playing at every moment (see `swapToStandby`).
  */
 const HANDOFF_LEAD_S = 0.6;
+
+/**
+ * Crossfade (Web Audio): the handoff starts this long before the end, and the two
+ * songs overlap for it. Songs shorter than three times this just cut over.
+ */
+const CROSSFADE_S = 4;
 
 /**
  * Non-iOS: when the next track isn't downloaded this close to the end (YouTube can
@@ -189,6 +213,8 @@ class Player {
 	duration = $state(0);
 	volume = $state(1);
 	muted = $state(false);
+	/** Web Audio: what the Sound Enhancer knows about the playing track (format, measured cutoff). */
+	enhancerSource = $state<EnhancerSource | null>(null);
 	shuffle = $state(false);
 	repeat = $state<Repeat>('off');
 	error = $state<string | null>(null);
@@ -207,6 +233,14 @@ class Player {
 
 	private audio: HTMLAudioElement;
 	private readonly ios = isIOSDevice();
+	/**
+	 * Web Audio engine (Settings › Playback), or null for plain <audio>. Chosen once per
+	 * page load: an element joined to a graph can't leave it, so a change needs a restart.
+	 */
+	private readonly output: WebAudioOutput | null = createOutput(
+		() => this.playRequested,
+		(source) => (this.enhancerSource = source)
+	);
 	/** Non-iOS: second element with the next track (`nextReady`) loaded and paused. */
 	private standby: HTMLAudioElement | null = null;
 	/** URL loaded into `standby`, or null when it holds nothing usable. */
@@ -276,6 +310,9 @@ class Player {
 	private singleTab: SingleTab;
 	private interruptions: InterruptionGuard;
 	private stopRemoteWatch: () => void = () => {};
+	private stopAudioSettings: () => void = () => {};
+	/** Seconds the next handoff crossfades over; set by `onTime`, taken by `load`. */
+	private fadeNext = 0;
 
 	constructor() {
 		// Marks where each page load starts in the log, and which build it ran.
@@ -283,7 +320,7 @@ class Player {
 		// Remote Playback and audio-output selection are only exposed reliably for
 		// media elements that belong to the document, not detached `new Audio()`
 		// elements.
-		this.audio = createManagedAudio();
+		this.audio = this.newElement();
 		this.audio.preload = 'auto';
 		this.singleTab = new SingleTab(() => this.pause());
 		this.interruptions = new InterruptionGuard(this.audio, () => this.resumeAfterInterruption());
@@ -296,6 +333,8 @@ class Player {
 		void import('./offline').catch(() => {});
 
 		this.stopDiagnostics = this.startDiagnostics();
+		// Sound Check switched mid-song: apply it to the song playing.
+		if (this.output) this.stopAudioSettings = audioSettings.onChange(() => this.applyReplayGain(true));
 
 		window.addEventListener('pagehide', this.onPageHide);
 		document.addEventListener('visibilitychange', this.onVisibilityChange);
@@ -381,7 +420,7 @@ class Player {
 			if (this.audio !== a) return;
 			this.playingSince = performance.now();
 			// Starting to play is progress: a slow start (the clock still at the load
-			// position) mus stall the moment it finally plays.t not be taken for a
+			// position) must not be taken for a stall the moment it finally plays.
 			this.lastProgressAt = this.playingSince;
 			this.buffering = false;
 			this.errorSkips = 0;
@@ -420,7 +459,8 @@ class Player {
 			});
 		}
 		a.addEventListener('volumechange', () => {
-			if (this.audio !== a) return;
+			// Web Audio: the element stays at full volume; the graph's gain is the volume.
+			if (this.audio !== a || this.output) return;
 			this.volume = a.volume;
 			this.muted = a.muted;
 		});
@@ -544,6 +584,7 @@ class Player {
 		this.resumeWhenVisible = false;
 		this.buffering = false;
 		this.interruptions.userPause();
+		if (this.retiring) this.finishRetire(this.retiring.el);
 		this.audio.pause();
 	}
 
@@ -570,12 +611,51 @@ class Player {
 	}
 
 	setVolume(v: number) {
+		if (this.output) {
+			this.volume = Math.max(0, Math.min(1, v));
+			if (v > 0) this.muted = false;
+			this.output.setVolume(this.volume, this.muted);
+			return;
+		}
 		this.audio.volume = Math.max(0, Math.min(1, v));
 		if (v > 0) this.audio.muted = false;
 	}
 
 	toggleMute() {
+		if (this.output) {
+			this.muted = !this.muted;
+			this.output.setVolume(this.volume, this.muted);
+			return;
+		}
 		this.audio.muted = !this.audio.muted;
+	}
+
+	/** Sound goes through Web Audio: volume works on iOS and the equalizer applies. */
+	get webAudio() {
+		return this.output !== null;
+	}
+
+	/** Volume onto a newly active element: its own, or (Web Audio) the graph's. */
+	private applyVolume(el: HTMLAudioElement) {
+		if (this.output) {
+			el.volume = 1;
+			el.muted = false;
+			this.output.setVolume(this.volume, this.muted);
+			return;
+		}
+		el.volume = this.volume;
+		el.muted = this.muted;
+	}
+
+	/** A document-attached element, joined to the Web Audio graph when that engine is on. */
+	private newElement(): HTMLAudioElement {
+		const el = createManagedAudio();
+		if (this.output) {
+			// Without CORS a cross-origin stream reaches the graph as silence.
+			el.crossOrigin = 'anonymous';
+			this.output.attach(el);
+		}
+		return el;
 	}
 
 	toggleShuffle() {
@@ -596,6 +676,7 @@ class Player {
 			}
 			this.unshuffled = null;
 		}
+		this.applyReplayGain(true);
 		this.persist();
 	}
 
@@ -621,6 +702,11 @@ class Player {
 	private async load(i: number, autoplay: boolean, startAt = 0) {
 		const song = this.queue[i];
 		if (!song) return;
+		// Only the automatic handoff `onTime` set this up for crossfades; a skip cuts.
+		const fade = this.fadeNext;
+		this.fadeNext = 0;
+		// A crossfade still playing out ends with the next change.
+		if (this.retiring) this.finishRetire(this.retiring.el);
 		const token = ++this.loadToken;
 		this.index = i;
 		this.standbyStreamId = null;
@@ -684,16 +770,18 @@ class Player {
 		);
 		if (handoff) {
 			// The outgoing copy stays valid while its element finishes; it is revoked on retire.
-			this.swapToStandby(outgoing);
+			this.swapToStandby(outgoing, fade);
 		} else {
 			outgoing?.copy.revoke();
+			this.output?.resetFade(this.audio);
 			this.audio.autoplay = autoplay;
-			this.audio.volume = this.volume;
-			this.audio.muted = this.muted;
+			this.applyVolume(this.audio);
 			this.audio.src = src;
 			this.audio.load();
 			if (startAt > 0) this.audio.currentTime = startAt;
 		}
+		this.output?.trackChanged(isLossless(song));
+		this.applyReplayGain();
 		// The standby copy was either just promoted or no longer matches `nextReady`.
 		this.primeStandby();
 		if (autoplay) {
@@ -712,12 +800,40 @@ class Player {
 		return this.queue[this.index + 1] ?? (this.repeat === 'all' ? this.queue[0] : undefined);
 	}
 
+	/**
+	 * Whether the standby element is used: always off iOS (see the class comment). On
+	 * iOS only to crossfade, and only while the app is on screen: in the background iOS
+	 * keeps to the single element that got the user's tap.
+	 */
+	private standbyAllowed(): boolean {
+		return !this.ios || (this.crossfadeFor(Infinity) > 0 && !document.hidden);
+	}
+
+	/** Seconds to crossfade a song of `dur` seconds into the next one; 0 to cut. */
+	private crossfadeFor(dur: number): number {
+		// An end-of-track sleep timer stops at the very end, so no early handoff.
+		if (!this.output || !audioSettings.crossfade || sleepTimer.isEndOfTrack) return 0;
+		return dur >= CROSSFADE_S * 3 ? CROSSFADE_S : 0;
+	}
+
+	/** Sound Check: the playing song's ReplayGain onto its element (unity when off). */
+	private applyReplayGain(smooth = false) {
+		if (!this.output) return;
+		const song = this.current;
+		const gain = audioSettings.soundCheck
+			? replayGainFactor(song, gainModeFor(this.queue, this.index, this.shuffle))
+			: 1;
+		this.output.setTrim(this.audio, gain, smooth);
+		if (audioSettings.soundCheck && !smooth) logPlayback('replaygain', `id=${song?.id} ${(20 * Math.log10(gain)).toFixed(1)} dB`);
+	}
+
 	/** The standby element has `url` loaded and can take over playback now. */
 	private standbyHolds(url: string): boolean {
 		return (
 			!!this.standby &&
 			this.standbyFor === url &&
 			!this.retiring &&
+			this.standbyAllowed() &&
 			// Casting follows the element that started it; a swap would drop the session.
 			this.castState === 'disconnected'
 		);
@@ -741,7 +857,7 @@ class Player {
 	 * next track changes. Waits while a handoff is still finishing on that element.
 	 */
 	private primeStandby() {
-		if (this.ios || this.retiring || this.destroyed) return;
+		if (!this.standbyAllowed() || this.retiring || this.destroyed) return;
 		const source = this.standbySource();
 		const url = source?.url ?? null;
 		if (url === this.standbyFor) return;
@@ -754,7 +870,7 @@ class Player {
 			return;
 		}
 		if (!this.standby) {
-			this.standby = createManagedAudio();
+			this.standby = this.newElement();
 			this.bindElement(this.standby);
 		}
 		this.standby.autoplay = false;
@@ -771,7 +887,7 @@ class Player {
 	 */
 	private standbyNextStream() {
 		const next = this.upcoming();
-		if (this.ios || !next || next.id === this.current?.id) return;
+		if (!this.standbyAllowed() || !next || next.id === this.current?.id) return;
 		if (this.nextReady?.id === next.id || this.standbyStreamId === next.id) return;
 		this.standbyStreamId = next.id;
 		if (this.blobJob?.id === next.id) {
@@ -785,24 +901,33 @@ class Player {
 	/**
 	 * Make the standby element (already holding the track being loaded) the active one.
 	 * The old element is left to play its last moments and is only stopped once the new
-	 * one is playing, so there is never a moment without a playing element.
+	 * one is playing, so there is never a moment without a playing element. With
+	 * `fade` seconds (crossfade) the two overlap instead: the old song fades out under
+	 * the new one until it ends.
 	 */
-	private swapToStandby(outgoing: OfflineCopy | null) {
+	private swapToStandby(outgoing: OfflineCopy | null, fade = 0) {
 		const old = this.audio;
 		const next = this.standby!;
 		this.audio = next;
 		this.standby = old;
 		this.standbyFor = null;
 		this.bindActiveAudio(next);
-		next.volume = this.volume;
-		next.muted = this.muted;
+		this.applyVolume(next);
 		// Whichever fires first finishes the handoff; the abort then removes the other,
 		// which `once` alone would leave attached for good (one per track change).
 		const listeners = new AbortController();
 		this.retiring = { el: old, copy: outgoing, listeners };
 		const finish = () => this.finishRetire(old);
-		next.addEventListener('playing', finish, { once: true, signal: listeners.signal });
 		old.addEventListener('ended', finish, { once: true, signal: listeners.signal });
+		if (fade > 0 && this.output) {
+			this.output.crossfade(old, next, fade);
+			// A misread duration (see durationCap) never reaches `ended`.
+			const timer = setTimeout(finish, fade * 1000 + 1000);
+			listeners.signal.addEventListener('abort', () => clearTimeout(timer));
+		} else {
+			this.output?.resetFade(next);
+			next.addEventListener('playing', finish, { once: true, signal: listeners.signal });
+		}
 	}
 
 	private finishRetire(old: HTMLAudioElement) {
@@ -946,6 +1071,7 @@ class Player {
 
 	private play() {
 		this.playRequested = true;
+		this.output?.resume();
 		this.armStallCheck();
 		const token = this.loadToken;
 		this.audio.play().then(() => {
@@ -1057,14 +1183,18 @@ class Player {
 		if (dur <= 0 || a.paused || this.repeat === 'one') return;
 		const remaining = dur - a.currentTime;
 		if (remaining <= STREAM_STANDBY_LEAD_S) this.standbyNextStream();
-		// Hand over to the standby element just before the end, while this one still plays.
+		// Hand over to the standby element just before the end, while this one still
+		// plays; with crossfade on, early enough for the two to overlap.
 		const source = this.standbySource();
-		if (remaining <= HANDOFF_LEAD_S && source && this.standbyHolds(source.url)) {
+		const fade = this.crossfadeFor(dur);
+		if (remaining <= Math.max(fade, HANDOFF_LEAD_S) && source && this.standbyHolds(source.url)) {
 			logPlayback(
 				'handoff-early',
-				`t=${a.currentTime.toFixed(2)} dur=${dur.toFixed(2)} ${source.kind} standby rs=${this.standby?.readyState}`
+				`t=${a.currentTime.toFixed(2)} dur=${dur.toFixed(2)} ${source.kind} standby rs=${this.standby?.readyState}${fade ? ` fade=${Math.min(fade, remaining).toFixed(1)}s` : ''}`
 			);
+			this.fadeNext = fade ? Math.min(fade, remaining) : 0;
 			this.onEnded();
+			this.fadeNext = 0;
 		}
 	}
 
@@ -1356,9 +1486,11 @@ class Player {
 		this.stopRemoteWatch = () => {};
 		this.interruptions.dispose();
 		this.stopDiagnostics();
+		this.stopAudioSettings();
 		this.stopDiagnostics = () => {};
 		this.audio.remove();
 		this.standby?.remove();
+		this.output?.dispose();
 		window.removeEventListener('pagehide', this.onPageHide);
 		document.removeEventListener('visibilitychange', this.onVisibilityChange);
 		clearTimeout(this.saveTimer);
