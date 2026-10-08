@@ -2660,16 +2660,46 @@ async def _delete_bookmark(c: Ctx) -> Response:
 
 @endpoint("getArtistInfo2", "getArtistInfo")
 async def _get_artist_info(c: Ctx) -> Response:
-    artist_mbid = _decode_expect(c.p("id") or "", "artist")
+    sid = c.p("id") or ""
     c.pint("count", 20, minimum=0, maximum=500)
     c.pbool("includeNotPresent", False)
+    key = "artistInfo2" if c.endpoint_name == "getartistinfo2" else "artistInfo"
+    # Remote search hits: getCoverArt resolves the provider artwork itself.
+    remote_cover = None
+    kind = _kind_of(sid)
+    if kind == "spotify_artist":
+        remote_cover = sid
+    elif sid.startswith("ytmusic-artist-"):
+        remote_cover = encode("ytmusic", sid.removeprefix("ytmusic-artist-"))
+    elif kind is None and sid.strip():
+        # A bare artist name, as getArtist accepts: resolve it on Spotify.
+        from services.spotapi_client import SpotApiClient
+
+        try:
+            artists, _ = await SpotApiClient().search_artists(sid, limit=1)
+        except Exception as e:
+            logger.warning("Spotapi artist search failed for %r: %s", sid, e)
+            artists = []
+        if not artists or not artists[0].get("id"):
+            raise SubsonicError(70, "Artist not found")
+        remote_cover = _spotapi_to_artist_id3(artists[0]).coverArt
+    if remote_cover:
+        return c.render(
+            key,
+            m.SArtistInfo(
+                smallImageUrl=c.cover_art_url(remote_cover, size=250),
+                mediumImageUrl=c.cover_art_url(remote_cover, size=500),
+                largeImageUrl=c.cover_art_url(remote_cover, size=1200),
+            ),
+        )
+    artist_mbid = _decode_expect(sid, "artist")
     result = await c.services.view.get_artist_with_albums(artist_mbid, user=c.user)
     if result is None:
         raise SubsonicError(70, "Artist not found")
     artist, _albums = result
     cover_id = encode("artist", artist_mbid)
     return c.render(
-        "artistInfo2" if c.endpoint_name == "getartistinfo2" else "artistInfo",
+        key,
         m.SArtistInfo(
             musicBrainzId=(
                 artist.musicbrainz_artist_id
