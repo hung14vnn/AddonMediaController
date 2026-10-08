@@ -119,7 +119,7 @@ export function sheet(_node: Element, { duration = 460, offset = 0 } = {}): Tran
 		duration: reduced() ? 0 : offset ? duration * 0.7 : duration,
 		easing: easeOut,
 		css: (t, u) =>
-			`transform:translateY(calc(${u * 100}% + ${t * offset}px));border-radius:${u * 28}px ${u * 28}px 0 0`
+			`transform:translateY(calc(${u * 100}% + ${t * offset}px));border-radius:${16 + u * 12}px ${16 + u * 12}px 0 0`
 	};
 }
 

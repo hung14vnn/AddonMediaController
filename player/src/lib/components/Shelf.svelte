@@ -55,7 +55,7 @@
 	});
 </script>
 
-<section>
+<section class="shelf">
 	<header>
 		<div class="heading">
 			{#if seeAll}

@@ -535,14 +535,16 @@
 					]);
 			}
 
-			// Keep the pill's round corners for most of the grow; square up at the end.
+			// Keep the sheet's top corners rounded throughout the grow. The final
+			// clip must match .np too, otherwise the radius only appears after the
+			// Web Animation hands control back to CSS.
 			const clip = (p: number, r: number) =>
 				`inset(${inset.map((v) => `${v * (1 - p)}px`).join(" ")} round ${r}px)`;
 			const radius = anchor.height / 2;
 			play(node, [
 				{ offset: 0, backgroundColor: pill, clipPath: clip(0, radius) },
 				{ offset: 0.8, backgroundColor: pill, clipPath: clip(0.8, radius) },
-				{ offset: 1, backgroundColor: pill, clipPath: clip(1, 0) },
+				{ offset: 1, backgroundColor: pill, clipPath: "inset(0 round 16px 16px 0 0)" },
 			]);
 
 			// Play/pause and next fly onto the mini player's buttons (scaled by icon
@@ -1389,6 +1391,9 @@
 
 	/* ---- phones --------------------------------------------------------------- */
 	@media (max-width: 899px) {
+		.np {
+			border-radius: 32px 32px 0 0;
+		}
 		.layout {
 			flex-direction: column;
 			gap: 0;
