@@ -310,7 +310,7 @@
 		main {
 			height: 100%;
 			padding-bottom: 0;
-			border-radius: 32px 32px 0 0;
+			border-radius: 28px 28px 0 0;
 		}
 		.dock {
 			/* biến dùng chung cho MiniPlayer và TabBar */

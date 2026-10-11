@@ -544,7 +544,7 @@
 			play(node, [
 				{ offset: 0, backgroundColor: pill, clipPath: clip(0, radius) },
 				{ offset: 0.8, backgroundColor: pill, clipPath: clip(0.8, radius) },
-				{ offset: 1, backgroundColor: pill, clipPath: "inset(0 round 16px 16px 0 0)" },
+				{ offset: 1, backgroundColor: pill, clipPath: "inset(0 round 28px 28px 0 0)" },
 			]);
 
 			// Play/pause and next fly onto the mini player's buttons (scaled by icon
@@ -1392,7 +1392,7 @@
 	/* ---- phones --------------------------------------------------------------- */
 	@media (max-width: 899px) {
 		.np {
-			border-radius: 32px 32px 0 0;
+			border-radius: 28px 28px 0 0;
 		}
 		.layout {
 			flex-direction: column;
