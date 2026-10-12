@@ -346,6 +346,12 @@
       case "stall-timeout":
         name = "Stream Stalled, Retrying";
         break;
+      case "stalled-on-visible":
+        name = "Stream Stalled in Background, Reloading";
+        break;
+      case "stuck-on-visible":
+        name = "Audio Stuck on Resume, Verifying Clock";
+        break;
       case "sleep-timer-stop":
         name = "Sleep Timer: Playback Stopped";
         break;

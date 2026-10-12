@@ -90,10 +90,11 @@ const STALL_CHECK_MS = 2_000;
 const STALL_LATE_MS = 5_000;
 
 /**
- * Download the whole next track into RAM this early. Resolving a cold YouTube stream
- * on the server can take a minute (an 87 s download was observed), so start early.
+ * Download the whole next track into RAM this early. Non-YouTube tracks on high-bitrate
+ * formats can be 10 MB+; in iOS background networking is throttled, so give them ample
+ * time (up to 5 min) before the current track ends.
  */
-const BLOB_LEAD_S = 150;
+const BLOB_LEAD_S = 300;
 /**
  * Same, for YouTube tracks (`yt-` ids), whose cold resolve is slow and whose first
  * attempt may fail at a proxy timeout (~80 s observed), so they need room for retries.
@@ -431,6 +432,13 @@ class Player {
 		a.addEventListener('waiting', () => {
 			if (this.audio !== a) return;
 			this.buffering = true;
+			// If the active track is streaming and starving for data, cancel the next track's
+			// background blob download so the active stream gets all available bandwidth.
+			if (!this.playingOffline && this.blobJob) {
+				logPlayback('blob-cancel', `id=${this.blobJob.id} active stream waiting`);
+				this.blobJob.abort.abort();
+				this.blobJob = null;
+			}
 			if (this.playRequested && a.readyState >= HAVE_FUTURE_DATA) this.play();
 		});
 		a.addEventListener('playing', () => {
@@ -1138,6 +1146,22 @@ class Player {
 		}
 	}
 
+	/** Seconds of audio buffered ahead of the current playback position. */
+	private forwardBuffer(): number {
+		const a = this.audio;
+		const t = a.currentTime;
+		try {
+			for (let i = 0; i < a.buffered.length; i++) {
+				if (t >= a.buffered.start(i) - 0.5 && t <= a.buffered.end(i)) {
+					return Math.max(0, a.buffered.end(i) - t);
+				}
+			}
+		} catch {
+			/* element unloaded or invalid state */
+		}
+		return 0;
+	}
+
 	/**
 	 * Download the whole next track into memory while the current one still plays,
 	 * so the `ended` handler can start it with no await and no network.
@@ -1157,6 +1181,16 @@ class Player {
 			this.primeStandby();
 		}
 		if (this.nextReady?.id === next.id || this.blobJob?.id === next.id) return;
+
+		// If the current track is streaming over HTTP (not playing from a local blob/offline copy),
+		// don't compete with it if it is currently buffering or running low on forward buffer.
+		if (!this.playingOffline && this.audio.src && !this.audio.src.startsWith('blob:')) {
+			if (this.buffering || this.audio.readyState < HAVE_FUTURE_DATA) return;
+			const dur = this.duration || this.current?.duration || 0;
+			const remaining = Math.max(0, dur - this.time);
+			const neededBuffer = Math.min(15, Math.max(0, remaining - 2));
+			if (this.forwardBuffer() < neededBuffer) return;
+		}
 
 		const failure = this.blobFailure?.id === next.id ? this.blobFailure : null;
 		if (
@@ -1266,12 +1300,21 @@ class Player {
 		// loading in the background. Either way playback is wanted (after a call iOS
 		// restarts the element itself, without our playRequested): play() below, then
 		// make sure the clock moves (`watchFrozen` reloads it if not).
+		const quiet = performance.now() - this.lastProgressAt;
 		const stuck =
 			!this.audio.paused &&
 			this.audio.readyState >= HAVE_FUTURE_DATA &&
-			performance.now() - this.lastProgressAt > FROZEN_MS;
+			quiet > FROZEN_MS;
+		const stalledInBackground =
+			(!this.audio.paused || this.playRequested || this.resumeWhenVisible) &&
+			(this.buffering || this.audio.readyState < HAVE_FUTURE_DATA) &&
+			quiet > STALL_TIMEOUT_MS;
 		if (stuck) {
 			logPlayback('stuck-on-visible', `t=${this.time.toFixed(1)}`);
+			this.resumeWhenVisible = true;
+		}
+		if (stalledInBackground) {
+			logPlayback('stalled-on-visible', `t=${this.time.toFixed(1)} quiet=${Math.round(quiet)}ms rs=${this.audio.readyState}`);
 			this.resumeWhenVisible = true;
 		}
 		// Background time is not stalled time: the 15 s window starts now. (The play()
@@ -1283,7 +1326,7 @@ class Player {
 		this.playRequested = true;
 		this.resumeWhenVisible = false;
 		// A source that failed while the network was cut can't just be played again.
-		if (this.audio.error || !this.audio.src) {
+		if (this.audio.error || !this.audio.src || stalledInBackground) {
 			this.errorRetriedFor = null;
 			this.errorSkips = 0;
 			this.load(this.index, true, this.time);
