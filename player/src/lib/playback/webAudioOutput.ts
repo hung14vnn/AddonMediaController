@@ -310,11 +310,39 @@ export class WebAudioOutput {
 		this.volume.gain.setTargetAtTime(value, this.ctx.currentTime, RAMP_S);
 	}
 
+	/** Play a 1-sample silent buffer directly to destination to force iOS CoreAudio to bind the hardware device. */
+	private kickAudioDevice() {
+		try {
+			const buffer = this.ctx.createBuffer(1, 1, 22050);
+			const source = this.ctx.createBufferSource();
+			source.buffer = buffer;
+			source.connect(this.ctx.destination);
+			source.start(0);
+		} catch {
+			/* ignore */
+		}
+	}
+
+	private armUnlock() {
+		for (const type of this.unlockEvents) {
+			document.addEventListener(type, this.unlock, { capture: true, once: true });
+		}
+	}
+
 	/** Called next to every `audio.play()`; inside a tap this is what unlocks the context. */
 	resume() {
 		clearTimeout(this.idleTimer);
+		this.kickAudioDevice();
 		if (this.ctx.state === 'running') return;
-		this.ctx.resume().catch((e: unknown) => logPlayback('webaudio-resume-failed', String(e)));
+		this.ctx
+			.resume()
+			.then(() => {
+				this.kickAudioDevice();
+			})
+			.catch((e: unknown) => {
+				logPlayback('webaudio-resume-failed', String(e));
+				this.armUnlock();
+			});
 	}
 
 	/**
@@ -350,11 +378,10 @@ export class WebAudioOutput {
 	}
 
 	private unlock = () => {
+		this.resume();
 		if (this.ctx.state === 'running') {
 			for (const type of this.unlockEvents) document.removeEventListener(type, this.unlock, true);
-			return;
 		}
-		this.resume();
 	};
 
 	// iOS suspends (or 'interrupts') the context for calls, Siri and sometimes the
@@ -367,6 +394,10 @@ export class WebAudioOutput {
 		this.idleTimer = setTimeout(() => {
 			const silent = [...this.elements].every((el) => el.paused);
 			if (!silent || this.wantsSound() || this.ctx.state !== 'running') return;
+			// Never suspend while hidden: on iOS Safari, suspending the AudioContext
+			// while hidden revokes the hardware audio session, kills the media decoder
+			// (MEDIA_ERR_DECODE code=3), and breaks subsequent audio device resumption.
+			if (document.hidden) return;
 			logPlayback('webaudio-idle', 'suspend');
 			this.detector.stop();
 			this.ctx.suspend().catch(() => {});

@@ -64,16 +64,18 @@ export class InterruptionGuard {
 	};
 
 	private readonly onStateChange = () => {
-		logPlayback('audio-session', `${this.session?.state} paused=${this.audio.paused}`);
-		if (this.session?.state === 'interrupted') {
+		const state = this.session?.state;
+		logPlayback('audio-session', `${state} paused=${this.audio.paused}`);
+		if (state === 'interrupted' || (!state && this.audio.paused && performance.now() - this.systemPausedAt < SYSTEM_PAUSE_WINDOW_MS)) {
 			// Some versions fire 'pause' themselves just before reporting the interruption.
-			if (!this.audio.paused || performance.now() - this.systemPausedAt < SYSTEM_PAUSE_WINDOW_MS) {
-				this.resumeAfter = true;
-				this.audio.pause();
+			this.resumeAfter = true;
+			if (!this.audio.paused) this.audio.pause();
+		} else if (state === 'active' || (!state && this.resumeAfter)) {
+			if (this.resumeAfter) {
+				this.resumeAfter = false;
+				logPlayback('interruption-resume', 'resuming after audio session restored');
+				this.resume();
 			}
-		} else if (this.resumeAfter) {
-			this.resumeAfter = false;
-			this.resume();
 		}
 	};
 }

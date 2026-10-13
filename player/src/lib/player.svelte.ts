@@ -687,6 +687,20 @@ class Player {
 		return el;
 	}
 
+	/** Replace the active audio element with a clean one if the current one hit a fatal decoder error. */
+	private replaceActiveElement(): HTMLAudioElement {
+		const old = this.audio;
+		old.pause();
+		old.removeAttribute('src');
+		old.load();
+		old.remove();
+		const next = this.newElement();
+		this.bindElement(next);
+		this.bindActiveAudio(next);
+		this.audio = next;
+		return next;
+	}
+
 	toggleShuffle() {
 		const cur = this.current;
 		if (!this.shuffle) {
@@ -1294,6 +1308,7 @@ class Player {
 			this.disarmStallCheck();
 			return;
 		}
+		this.output?.resume();
 		this.currentTime = this.time; // the UI copy was frozen while hidden
 		if (!this.current) return;
 		// "Playing" with no progress for a while: frozen since a call, or WebKit just held
@@ -1528,6 +1543,13 @@ class Player {
 		// A prefetched blob that fails to play is bad: forget it so the retry uses the stream.
 		if (this.playingOffline?.id === song.id && this.playingOffline.copy.url === a.src) {
 			this.releaseOffline();
+		}
+		// If WebKit destroyed the element's hardware decoder (MEDIA_ERR_DECODE),
+		// replace the element itself before retrying, as reusing a broken element
+		// often yields silence or frozen playback.
+		if (a.error?.code === 3) {
+			logPlayback('replace-audio', 'recreating element after MEDIA_ERR_DECODE');
+			this.replaceActiveElement();
 		}
 		if (this.playRequested && this.errorRetriedFor !== song.id) {
 			this.errorRetriedFor = song.id;
