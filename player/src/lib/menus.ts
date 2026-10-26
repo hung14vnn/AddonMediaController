@@ -1,4 +1,4 @@
-import { getAlbum, getPlaylist, getSimilarSongs, removeLibraryAlbum, removeLibraryTrack, requestSpotifyDownload } from './api';
+import { getAlbum, getPlaylist, getSimilarSongs, invalidateLibraryCaches, removeLibraryAlbum, removeLibraryTrack, requestSpotifyDownload } from './api';
 import { getPlayer } from './player.svelte';
 import { router } from './router.svelte';
 import type { Album, Artist, Playlist, Song } from './types';
@@ -32,6 +32,7 @@ export async function requestDownload(spotifyId: string) {
 	try {
 		const r = await requestSpotifyDownload(spotifyId);
 		ui.showToast(r.status === 'already_in_library' ? 'Already in your library' : 'Added to downloads');
+		if (r.status !== 'already_in_library') void invalidateLibraryCaches();
 	} catch (e) {
 		ui.showToast(e instanceof Error && e.message ? e.message : 'Couldn’t request download');
 	}

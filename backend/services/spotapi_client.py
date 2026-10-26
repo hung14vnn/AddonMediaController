@@ -294,14 +294,6 @@ class SpotApiClient:
 
         return await asyncio.to_thread(locked)
 
-    @staticmethod
-    def _song() -> Any:
-        return _shared("song")[0]
-
-    @staticmethod
-    def _artist() -> Any:
-        return _shared("artist")[0]
-
     async def _search_raw(self, query: str, limit: int, offset: int) -> dict[str, Any]:
         song, lock = _shared("song")
         return await self._run(
@@ -312,19 +304,37 @@ class SpotApiClient:
             lock=lock,
         )
 
-    async def search_all(
-        self, query: str, limit: int = 5
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-        """Artists, albums and tracks for one query with two upstream requests.
+    @staticmethod
+    def _artists_from_raw(raw: dict[str, Any]) -> list[dict[str, Any]]:
+        items = [_unwrap_data(item) for item in _search_items(raw, "artists")]
+        return [
+            {
+                "id": _spotify_id(item, "artist"),
+                "name": _mapping(item.get("profile")).get("name") or item.get("name", ""),
+                "images": _images(_mapping(item.get("visuals")).get("avatarImage")),
+                "genres": [
+                    str(g.get("name")) for g in _items(item.get("genres")) if g.get("name")
+                ],
+                "popularity": 0,
+                "external_urls": {
+                    "spotify": f"https://open.spotify.com/artist/{_spotify_id(item, 'artist')}"
+                },
+            }
+            for item in items
+            if _spotify_id(item, "artist")
+        ]
 
-        The artist and song searches run concurrently, and albums are derived
-        from the song response instead of repeating it. This is the hot path
-        behind Subsonic ``search3``, where clients search on every keystroke
-        and time out on slow responses.
+    async def search_all(
+        self, query: str, limit: int = 20
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+        """Artists, albums, tracks and playlists for one query in a single upstream request.
+
+        Spotify's searchDesktop GraphQL endpoint returns tracks, artists, albums,
+        and playlists in a single response, avoiding multiple concurrent upstream
+        requests and reducing rate limit pressure.
         """
-        artists_task = self.search_artists(query, limit=limit)
-        raw_task = self._search_raw(query, limit, 0)
-        (artists, _has_more), raw = await asyncio.gather(artists_task, raw_task)
+        raw = await self._search_raw(query, limit, 0)
+        artists = self._artists_from_raw(raw)[:limit]
         tracks = [_track_item(item) for item in _search_items(raw, "tracks")][:limit]
         albums = self._albums_from_raw(raw)[:limit]
         playlists_raw = _search_items(raw, "playlists")[:limit]
@@ -379,23 +389,7 @@ class SpotApiClient:
             offset=offset,
             lock=lock,
         )
-        items = [_unwrap_data(item) for item in _search_items(raw, "artists")]
-        result = [
-            {
-                "id": _spotify_id(item, "artist"),
-                "name": _mapping(item.get("profile")).get("name") or item.get("name", ""),
-                "images": _images(_mapping(item.get("visuals")).get("avatarImage")),
-                "genres": [
-                    str(g.get("name")) for g in _items(item.get("genres")) if g.get("name")
-                ],
-                "popularity": 0,
-                "external_urls": {
-                    "spotify": f"https://open.spotify.com/artist/{_spotify_id(item, 'artist')}"
-                },
-            }
-            for item in items
-            if _spotify_id(item, "artist")
-        ]
+        result = self._artists_from_raw(raw)
         search = _mapping(_mapping(raw.get("data")).get("searchV2"))
         total = int(_mapping(search.get("artists")).get("totalCount") or len(result))
         return result[:limit], offset + len(result) < total

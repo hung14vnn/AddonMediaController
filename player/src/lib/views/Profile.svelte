@@ -6,6 +6,7 @@
     getSession,
     setLastfmScrobbling,
     SubsonicError,
+    invalidateLibraryCaches,
     startScan,
     type LastfmStatus,
     type ScanStatus,
@@ -56,7 +57,10 @@
     }
     clearTimeout(pollTimer);
     if (scan.scanning) pollTimer = setTimeout(() => refreshScan(true), 2000);
-    else if (wasScanning) ui.showToast("Library scan finished");
+    else if (wasScanning) {
+      ui.showToast("Library scan finished");
+      void invalidateLibraryCaches();
+    }
   }
 
   async function rescan() {
@@ -65,6 +69,7 @@
     try {
       scan = await startScan();
       ui.showToast("Library scan started");
+      void invalidateLibraryCaches();
       refreshScan(true);
     } catch (e) {
       scanError =

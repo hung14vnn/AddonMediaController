@@ -1,6 +1,6 @@
 <script lang="ts">
-import { cachedNow, getAllSongs, getSongsByGenre, getSession } from '../api';
-	import { untrack } from 'svelte';
+import { cachedNow, getAllSongs, getSongsByGenre, getSession, invalidateCache } from '../api';
+	import { untrack, onMount, tick } from 'svelte';
 	import ErrorState from '../components/ErrorState.svelte';
 	import Icon from '../components/Icon.svelte';
 	import Sentinel from '../components/Sentinel.svelte';
@@ -22,6 +22,14 @@ import { listOfflineTrackMetadata } from '../offline';
 	let query = $state('');
 	let sort = $state<'title' | 'artist' | 'album' | 'added' | 'played'>('added');
 	let downloadedIds = $state(new Set<string>());
+	let revalidating = $state(false);
+
+	onMount(() => {
+		const timer = setTimeout(() => {
+			scrolled = true;
+		}, 350);
+		return () => clearTimeout(timer);
+	});
 
 	function fold(value: string): string {
 		return value
@@ -162,7 +170,34 @@ import { listOfflineTrackMetadata } from '../offline';
 			// Lấy trang đầu tiên từ cache nếu có và không re-check backend để tránh bị nháy/nhảy vị trí
 			const page = songs.length
 				? await fetchPage()
-				: await cachedNow(`songs:${genre ?? ''}`, fetchPage, { fresh: Infinity });
+				: await cachedNow(`songs:${genre ?? ''}`, fetchPage, {
+						fresh: 0,
+						refresh: async (fresh) => {
+							if (songs.length <= PAGE) {
+								const same = songs.length === fresh.length && songs.every((s, i) => s.id === fresh[i].id);
+								if (same) return;
+
+								scrolled = true;
+								const scroller = listEl?.closest('main') ?? document.documentElement;
+								if (scroller && scroller.scrollTop > 10) {
+									const topIdx = Math.floor(scroller.scrollTop / rowHeight);
+									const anchorId = visibleSongs[topIdx]?.id;
+									songs = [...fresh];
+									if (fresh.length < PAGE) done = true;
+									if (anchorId) {
+										await tick();
+										const newIdx = visibleSongs.findIndex((s) => s.id === anchorId);
+										if (newIdx !== -1 && newIdx !== topIdx) {
+											scroller.scrollTop += (newIdx - topIdx) * rowHeight;
+										}
+									}
+								} else {
+									songs = [...fresh];
+									if (fresh.length < PAGE) done = true;
+								}
+							}
+						}
+					});
 			songs.push(...page);
 			if (page.length < PAGE) done = true;
 		} catch (e) {
@@ -177,6 +212,20 @@ import { listOfflineTrackMetadata } from '../offline';
 		player.playList(visibleSongs, 0, { shuffle: true });
 	}
 
+	async function refreshList() {
+		if (revalidating || loading) return;
+		revalidating = true;
+		try {
+			await invalidateCache(`songs:${genre ?? ''}`);
+			songs = [];
+			done = false;
+			error = null;
+			await more();
+		} finally {
+			revalidating = false;
+		}
+	}
+
 	more();
 	const username = getSession()?.username;
 	if (username) listOfflineTrackMetadata(username).then((tracks) => (downloadedIds = new Set(tracks.map((track) => track.trackId))));
@@ -185,7 +234,11 @@ import { listOfflineTrackMetadata } from '../offline';
 <div class="page">
 	<div class="head">
 		<button class="back" onclick={() => router.go('/library')}><Icon name="chevronLeft" size={18} />Library</button>
-		<SortMenu
+		<div class="head-right">
+			<button class="refresh-btn" class:spinning={revalidating} aria-label="Refresh songs" title="Refresh songs" onclick={refreshList}>
+				<Icon name="refresh" size={14} />
+			</button>
+			<SortMenu
 			value={sort}
 			options={[
 				{ value: 'added', label: 'Recently Added' },
@@ -196,6 +249,7 @@ import { listOfflineTrackMetadata } from '../offline';
 			]}
 			onchange={(value) => (sort = value as typeof sort)}
 		/>
+	</div>
 	</div>
 	{#if !genre}<h1 class="page-title">Songs</h1>{/if}
 	<div class="tools">
@@ -235,6 +289,36 @@ import { listOfflineTrackMetadata } from '../offline';
 		animation: none;
 	}
 	.head { display: flex; align-items: center; gap: 12px; padding: 0 var(--gutter); margin-bottom: 8px; }
+	.head-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+	.head-right :global(.sort) { margin-left: 0; }
+	.refresh-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 32px;
+		padding: 0;
+		border: 0;
+		border-radius: 9px;
+		color: var(--accent);
+		background: var(--fill);
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+		transition: color 0.15s, background 0.15s, transform 0.15s;
+	}
+	.refresh-btn:hover {
+		background: var(--fill-strong);
+	}
+	.refresh-btn:active {
+		transform: scale(0.96);
+	}
+	.refresh-btn.spinning :global(svg) {
+		animation: spin 0.75s linear infinite;
+	}
+	@keyframes spin {
+		from { transform: rotate(0deg); }
+		to { transform: rotate(360deg); }
+	}
 	.back { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 14px; }
 	.tools { display: flex; gap: 10px; align-items: center; margin: 0 var(--gutter) 16px; }
 	.search { flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: var(--text-2); background: var(--fill); border-radius: 9px; }

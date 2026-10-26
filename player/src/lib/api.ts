@@ -1,4 +1,4 @@
-import { clear as idbClear, createStore, entries as idbEntries, get as idbGet, set as idbSet } from 'idb-keyval';
+import { clear as idbClear, createStore, del as idbDel, entries as idbEntries, get as idbGet, set as idbSet } from 'idb-keyval';
 import { md5 } from './md5';
 import type { Album, AlbumListType, Artist, ArtistInfo, Genre, Lyrics, Playlist, Song } from './types';
 
@@ -57,6 +57,45 @@ const memo = new Map<string, CacheEntry>();
 // blow past the ~5 MB localStorage quota. Missing in jsdom/private mode → memory only.
 const store =
 	typeof indexedDB !== 'undefined' ? createStore('music-api-cache-v1', 'entries') : null;
+
+/**
+ * Invalidates cached responses matching a predicate or key substring.
+ * Removes matching entries from memory and IndexedDB.
+ */
+export async function invalidateCache(match?: string | RegExp | ((key: string) => boolean)) {
+	const predicate = !match
+		? () => true
+		: typeof match === 'string'
+			? (k: string) => k.includes(match)
+			: match instanceof RegExp
+				? (k: string) => match.test(k)
+				: match;
+
+	for (const k of memo.keys()) {
+		if (predicate(k)) memo.delete(k);
+	}
+	if (store) {
+		try {
+			const entries = await idbEntries<string, CacheEntry>(store);
+			for (const [k] of entries) {
+				if (predicate(k)) await idbDel(k, store);
+			}
+		} catch {
+			/* storage unavailable */
+		}
+	}
+}
+
+/** Invalidate songs and library lists so freshly scanned/added songs appear. */
+export function invalidateLibraryCaches() {
+	return invalidateCache((k) =>
+		k.includes('|songs:') ||
+		k.includes('|albums:') ||
+		k.includes('|library:artists') ||
+		k.includes('|home:') ||
+		k.includes('|genres')
+	);
+}
 
 function clearCache() {
 	memo.clear();

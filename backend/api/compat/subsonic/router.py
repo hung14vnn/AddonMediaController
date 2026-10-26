@@ -1046,26 +1046,31 @@ async def _search(c: Ctx):
         # Spotify leg is bounded: on timeout the local results still go out
         # on time and the upstream call keeps running in its worker thread,
         # which leaves the shared SpotAPI session warm for the next search.
+        max_needed = max(a_count, al_count, s_count, pl_count)
         try:
             sa_res, sl_res, st_res, sp_res = await asyncio.wait_for(
-                SpotApiClient().search_all(q, limit=5),
+                SpotApiClient().search_all(q, limit=max_needed),
                 timeout=_SPOTAPI_SEARCH_TIMEOUT_S,
             )
             if a_count:
-                spot_artists = sa_res[: min(5, a_count)]
+                spot_artists = sa_res[:a_count]
             if al_count:
-                spot_albums = sl_res[: min(5, al_count)]
+                spot_albums = sl_res[:al_count]
             if s_count:
-                spot_songs = st_res[: min(5, s_count)]
+                spot_songs = st_res[:s_count]
             if pl_count:
-                spot_playlists = sp_res[: min(5, pl_count)]
+                spot_playlists = sp_res[:pl_count]
         except asyncio.TimeoutError:
             logger.warning(
                 "Spotapi search timed out after %ss; returning local results only",
                 _SPOTAPI_SEARCH_TIMEOUT_S,
             )
         except Exception as e:
-            logger.warning("Spotapi search failed: %s", e)
+            detail = getattr(e, "error", None)
+            if detail:
+                logger.warning("Spotapi search failed: %s (%s)", e, detail)
+            else:
+                logger.warning("Spotapi search failed: %s", e)
 
     return artists, albums, songs, playlists, source, spot_artists, spot_albums, spot_songs, spot_playlists
 

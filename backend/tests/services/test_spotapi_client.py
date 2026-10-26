@@ -91,3 +91,109 @@ def test_spotapi_track_accepts_duration_variants():
     assert _track_item({"duration": 274589})["duration_ms"] == 274589
     assert _track_item({"trackDuration": {"milliseconds": 225830}})["duration_ms"] == 225830
     assert _track_item({"durationMs": "123000"})["duration_ms"] == 123000
+
+
+def test_spotapi_artists_from_raw_search_desktop():
+    raw = {
+        "data": {
+            "searchV2": {
+                "artists": {
+                    "items": [
+                        {
+                            "data": {
+                                "uri": "spotify:artist:artist-1",
+                                "profile": {"name": "Artist One"},
+                                "visuals": {
+                                    "avatarImage": {
+                                        "sources": [{"url": "https://image/artist.jpg", "width": 320, "height": 320}]
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    artists = SpotApiClient._artists_from_raw(raw)
+    assert len(artists) == 1
+    assert artists[0]["id"] == "artist-1"
+    assert artists[0]["name"] == "Artist One"
+    assert artists[0]["images"][0]["url"] == "https://image/artist.jpg"
+
+
+@pytest.mark.asyncio
+async def test_spotapi_search_all_single_request(monkeypatch):
+    fake_raw = {
+        "data": {
+            "searchV2": {
+                "tracksV2": {
+                    "items": [
+                        {
+                            "item": {
+                                "data": {
+                                    "uri": "spotify:track:track-1",
+                                    "name": "Track One",
+                                    "duration": {"totalMilliseconds": 1000},
+                                    "artists": {"items": [{"uri": "spotify:artist:artist-1", "profile": {"name": "Artist One"}}]},
+                                    "albumOfTrack": {"uri": "spotify:album:album-1", "name": "Album One"}
+                                }
+                            }
+                        }
+                    ]
+                },
+                "artists": {
+                    "items": [
+                        {
+                            "data": {
+                                "uri": "spotify:artist:artist-1",
+                                "profile": {"name": "Artist One"}
+                            }
+                        }
+                    ]
+                },
+                "albumsV2": {
+                    "items": [
+                        {
+                            "data": {
+                                "uri": "spotify:album:album-1",
+                                "name": "Album One"
+                            }
+                        }
+                    ]
+                },
+                "playlists": {
+                    "items": [
+                        {
+                            "data": {
+                                "uri": "spotify:playlist:playlist-1",
+                                "name": "Playlist One"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    }
+
+    client = SpotApiClient()
+    calls = []
+
+    async def mock_search_raw(query, limit, offset):
+        calls.append((query, limit, offset))
+        return fake_raw
+
+    monkeypatch.setattr(client, "_search_raw", mock_search_raw)
+    artists, albums, tracks, playlists = await client.search_all("test", limit=10)
+
+    # Must only make 1 single upstream request!
+    assert len(calls) == 1
+    assert calls[0] == ("test", 10, 0)
+    assert len(artists) == 1
+    assert artists[0]["id"] == "artist-1"
+    assert len(albums) == 1
+    assert albums[0]["id"] == "album-1"
+    assert len(tracks) == 1
+    assert tracks[0]["id"] == "track-1"
+    assert len(playlists) == 1
+    assert playlists[0]["id"] == "playlist-1"
