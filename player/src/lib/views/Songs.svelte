@@ -1,15 +1,18 @@
 <script lang="ts">
-import { cachedNow, getAllSongs, getSongsByGenre, getSession, invalidateCache } from '../api';
+	import { cachedNow, getAllSongs, getSongsByGenre, getSession, invalidateCache } from '../api';
 	import { untrack, onMount, tick } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import ErrorState from '../components/ErrorState.svelte';
 	import Icon from '../components/Icon.svelte';
 	import Sentinel from '../components/Sentinel.svelte';
 	import SortMenu from '../components/SortMenu.svelte';
 	import TrackList from '../components/TrackList.svelte';
+	import { downloadAll } from '../menus';
 	import { getPlayer } from '../player.svelte';
-import { router } from '../router.svelte';
-import { listOfflineTrackMetadata } from '../offline';
+	import { router } from '../router.svelte';
+	import { listOfflineTrackMetadata } from '../offline';
 	import type { Song } from '../types';
+	import { ui } from '../ui.svelte';
 
 	const PAGE = 100;
 	let { genre }: { genre?: string } = $props();
@@ -23,6 +26,9 @@ import { listOfflineTrackMetadata } from '../offline';
 	let sort = $state<'title' | 'artist' | 'album' | 'added' | 'played'>('added');
 	let downloadedIds = $state(new Set<string>());
 	let revalidating = $state(false);
+	let selecting = $state(false);
+	let selected = new SvelteSet<string>();
+	let saving = $state(false);
 
 	onMount(() => {
 		const timer = setTimeout(() => {
@@ -116,6 +122,12 @@ import { listOfflineTrackMetadata } from '../offline';
 		const exact = sortedSongs.filter((song) => searchText(song).includes(term));
 		return exact.length ? exact : sortedSongs.filter((song) => fuzzyMatch(song, term));
 	});
+
+	const selectedSongs = $derived(songs.filter((song) => selected.has(song.id)));
+	const selectableSongs = $derived(visibleSongs.filter((song) => !downloadedIds.has(song.id)));
+	const allSelected = $derived(
+		selectableSongs.length > 0 && selectableSongs.every((song) => selected.has(song.id))
+	);
 
 	// ---- windowing --------------------------------------------------------------
 	// Only rows near the viewport are in the DOM; spacers stand in for the rest, so
@@ -212,6 +224,53 @@ import { listOfflineTrackMetadata } from '../offline';
 		player.playList(visibleSongs, 0, { shuffle: true });
 	}
 
+	function blockedByDownload(song: Song): boolean {
+		if (!downloadedIds.has(song.id)) return false;
+		ui.showToast('Already downloaded');
+		return true;
+	}
+
+	function startSelection(song: Song) {
+		// Holding an offline row shouldn't open a selection that can't include it.
+		if (blockedByDownload(song)) return;
+		selecting = true;
+		selected.clear();
+		selected.add(song.id);
+	}
+
+	function toggleSelect() {
+		selecting = !selecting;
+		if (!selecting) selected.clear();
+	}
+
+	function toggleSong(song: Song) {
+		if (selected.has(song.id)) selected.delete(song.id);
+		else if (!blockedByDownload(song)) selected.add(song.id);
+	}
+
+	function toggleAll() {
+		// "Deselect All" clears selections the filter is hiding too.
+		if (allSelected) selected.clear();
+		else selectableSongs.forEach((song) => selected.add(song.id));
+	}
+
+	async function downloadSelected() {
+		if (saving || !selectedSongs.length) return;
+		saving = true;
+		try {
+			await downloadAll(selectedSongs);
+			const username = getSession()?.username;
+			if (username) {
+				const offline = await listOfflineTrackMetadata(username);
+				downloadedIds = new Set(offline.map((track) => track.trackId));
+			}
+			selecting = false;
+			selected.clear();
+		} finally {
+			saving = false;
+		}
+	}
+
 	async function refreshList() {
 		if (revalidating || loading) return;
 		revalidating = true;
@@ -235,21 +294,24 @@ import { listOfflineTrackMetadata } from '../offline';
 	<div class="head">
 		<button class="back" onclick={() => router.go('/library')}><Icon name="chevronLeft" size={18} />Library</button>
 		<div class="head-right">
-			<button class="refresh-btn" class:spinning={revalidating} aria-label="Refresh songs" title="Refresh songs" onclick={refreshList}>
-				<Icon name="refresh" size={14} />
-			</button>
-			<SortMenu
-			value={sort}
-			options={[
-				{ value: 'added', label: 'Recently Added' },
-				{ value: 'title', label: 'Title' },
-				{ value: 'artist', label: 'Artist' },
-				{ value: 'album', label: 'Album' },
-				{ value: 'played', label: 'Recently Played' }
-			]}
-			onchange={(value) => (sort = value as typeof sort)}
-		/>
-	</div>
+			<div class="head-tools" class:faded={selecting} inert={selecting}>
+				<button class="refresh-btn" class:spinning={revalidating} aria-label="Refresh songs" title="Refresh songs" onclick={refreshList}>
+					<Icon name="refresh" size={14} />
+				</button>
+				<SortMenu
+					value={sort}
+					options={[
+						{ value: 'added', label: 'Recently Added' },
+						{ value: 'title', label: 'Title' },
+						{ value: 'artist', label: 'Artist' },
+						{ value: 'album', label: 'Album' },
+						{ value: 'played', label: 'Recently Played' }
+					]}
+					onchange={(value) => (sort = value as typeof sort)}
+				/>
+			</div>
+			<button class="select-btn" class:shown={selecting} inert={!selecting} onclick={toggleSelect}>Done</button>
+		</div>
 	</div>
 	{#if !genre}<h1 class="page-title">Songs</h1>{/if}
 	<div class="tools">
@@ -261,8 +323,17 @@ import { listOfflineTrackMetadata } from '../offline';
 		<div class="empty-state"><h3>No Songs</h3></div>
 	{:else}
 		<div class="pad actions bar">
-			<button class="btn" disabled={!visibleSongs.length} onclick={() => player.playList(visibleSongs)}><Icon name="play" size={16} />Play</button>
-			<button class="btn" disabled={!visibleSongs.length} onclick={shuffle}><Icon name="shuffle" size={16} />Shuffle</button>
+			{#if selecting}
+				<button class="btn" disabled={!selectedSongs.length || saving} onclick={downloadSelected}>
+					<Icon name="download" size={16} />{selectedSongs.length ? `Download ${selectedSongs.length}` : 'Download'}
+				</button>
+				<button class="btn secondary" disabled={!selectableSongs.length} onclick={toggleAll}>
+					{allSelected ? 'Deselect All' : 'Select All'}
+				</button>
+			{:else}
+				<button class="btn" disabled={!visibleSongs.length} onclick={() => player.playList(visibleSongs)}><Icon name="play" size={16} />Play</button>
+				<button class="btn" disabled={!visibleSongs.length} onclick={shuffle}><Icon name="shuffle" size={16} />Shuffle</button>
+			{/if}
 		</div>
 		<div
 			class="pad"
@@ -274,6 +345,10 @@ import { listOfflineTrackMetadata } from '../offline';
 			<TrackList
 				songs={windowSongs}
 				{downloadedIds}
+				selectionMode={selecting}
+				selectedIds={selected}
+				onselect={toggleSong}
+				onhold={startSelection}
 				onplay={(i) => player.playList(visibleSongs, windowStart + i)}
 			/>
 		</div>
@@ -289,8 +364,31 @@ import { listOfflineTrackMetadata } from '../offline';
 		animation: none;
 	}
 	.head { display: flex; align-items: center; gap: 12px; padding: 0 var(--gutter); margin-bottom: 8px; }
-	.head-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-	.head-right :global(.sort) { margin-left: 0; }
+	/* Both header controls share one grid cell, so swapping them never moves the header. */
+	.head-right { display: grid; align-items: center; justify-items: end; margin-left: auto; }
+	.head-right > * { grid-area: 1 / 1; }
+	.head-tools { display: flex; align-items: center; gap: 8px; transition: opacity 0.16s ease, transform 0.16s ease; }
+	.head-tools.faded { opacity: 0; transform: scale(0.96); pointer-events: none; }
+	.head-tools :global(.sort) { margin-left: 0; }
+	.select-btn {
+		display: inline-flex;
+		align-items: center;
+		height: 32px;
+		padding: 0 2px;
+		color: var(--accent);
+		font-size: 15px;
+		font-weight: 600;
+		white-space: nowrap;
+		opacity: 0;
+		transform: scale(0.96);
+		pointer-events: none;
+		transition: opacity 0.16s ease, transform 0.16s ease;
+	}
+	.select-btn.shown { opacity: 1; transform: none; pointer-events: auto; }
+	@media (prefers-reduced-motion: reduce) {
+		.head-tools,
+		.select-btn { transition: none; }
+	}
 	.refresh-btn {
 		display: inline-flex;
 		align-items: center;

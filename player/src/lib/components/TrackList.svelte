@@ -31,7 +31,11 @@
 		showAlbum = true,
 		onplay,
 		extraMenu,
-		downloadedIds = new Set<string>()
+		downloadedIds = new Set<string>(),
+		selectionMode = false,
+		selectedIds,
+		onselect,
+		onhold
 	}: {
 		songs: Song[];
 		/** 'album' = numbered rows without art; 'list' = artwork thumbnails. */
@@ -41,6 +45,12 @@
 		onplay?: (index: number) => void;
 		extraMenu?: (song: Song, index: number) => MenuItem[];
 		downloadedIds?: Set<string>;
+		/** Tapping a row toggles it instead of playing it. */
+		selectionMode?: boolean;
+		selectedIds?: Set<string>;
+		onselect?: (song: Song, index: number) => void;
+		/** Holding a row starts selection (iOS-style); the row is selected immediately. */
+		onhold?: (song: Song, index: number) => void;
 	} = $props();
 
 	const player = getPlayer();
@@ -69,9 +79,55 @@
 	function menu(e: MouseEvent, song: Song, i: number) {
 		ui.openMenu(e, songMenu(song, extraMenu?.(song, i) ?? []));
 	}
+
+	const HOLD_MS = 500;
+	let holdTimer: ReturnType<typeof setTimeout> | undefined;
+	let holdFrom: { x: number; y: number } | null = null;
+	// The tap that ends a hold must not toggle the row it just selected.
+	let suppressNextClick = false;
+
+	function startHold(e: PointerEvent, song: Song, i: number) {
+		suppressNextClick = false;
+		if (selectionMode || !onhold || e.button !== 0) return;
+		if ((e.target as HTMLElement).closest('a, .more')) return;
+		holdFrom = { x: e.clientX, y: e.clientY };
+		clearTimeout(holdTimer);
+		holdTimer = setTimeout(() => {
+			holdTimer = undefined;
+			suppressNextClick = true;
+			navigator.vibrate?.(8);
+			onhold(song, i);
+		}, HOLD_MS);
+	}
+
+	// Scrolling or dragging away cancels the hold.
+	function moveHold(e: PointerEvent) {
+		if (!holdFrom) return;
+		if (Math.abs(e.clientX - holdFrom.x) > 8 || Math.abs(e.clientY - holdFrom.y) > 8) endHold();
+	}
+
+	function endHold() {
+		clearTimeout(holdTimer);
+		holdTimer = undefined;
+		holdFrom = null;
+	}
+
+	function activate(i: number) {
+		if (suppressNextClick) {
+			suppressNextClick = false;
+			return;
+		}
+		if (selectionMode) onselect?.(songs[i], i);
+		else play(i);
+	}
 </script>
 
-<div class="tracks v-{variant}" class:no-album={!showAlbum} role="list">
+<div
+	class="tracks v-{variant}"
+	class:no-album={!showAlbum}
+	class:selecting={selectionMode}
+	role="list"
+>
 	{#each songs as song, i (keys[i])}
 		{#if !ui.removedSongs.has(song.id)}
 		{#if multiDisc && (i === 0 || (songs[i - 1].discNumber ?? 1) !== (song.discNumber ?? 1))}
@@ -79,14 +135,33 @@
 		{/if}
 		{@const current = player.current?.id === song.id}
 		{@const loved = ui.isLoved(song)}
+		{@const checked = selectedIds?.has(song.id) ?? false}
+		{@const locked = selectionMode && downloadedIds.has(song.id)}
 		<div
 			class="row"
 			class:current
 			role="listitem"
-			ondblclick={() => play(i)}
-			oncontextmenu={(e) => menu(e, song, i)}
+			ondblclick={selectionMode ? undefined : () => play(i)}
+			oncontextmenu={(e) => {
+				// While a hold is in progress the browser's own long-press menu must not appear.
+				if (selectionMode || holdFrom) e.preventDefault();
+				else menu(e, song, i);
+			}}
+			onpointerdown={(e) => startHold(e, song, i)}
+			onpointermove={moveHold}
+			onpointerup={endHold}
+			onpointercancel={endHold}
+			onpointerleave={endHold}
 		>
-			<button class="lead" aria-label="Play {song.title}" onclick={() => play(i)}>
+			<button
+				class="lead"
+				aria-label={locked
+					? `${song.title} is already downloaded`
+					: selectionMode
+						? `${checked ? 'Deselect' : 'Select'} ${song.title}`
+						: `Play ${song.title}`}
+				onclick={() => activate(i)}
+			>
 				{#if variant === 'list'}
 					<span class="thumb">
 						<Artwork id={song.coverArt} size={64} seed={song.album ?? song.title} />
@@ -106,7 +181,7 @@
 					</span>
 				{/if}
 			</button>
-			<button class="main" onclick={() => play(i)} tabindex="-1">
+			<button class="main" onclick={() => activate(i)} tabindex="-1">
 				<span class="title">
 					<span class="ellipsis">{song.title}</span>
 					{#if song.explicitStatus === 'explicit'}<span class="explicit" aria-label="Explicit">E</span>{/if}
@@ -123,8 +198,8 @@
 				{/if}
 			{/if}
 			<span class="love" class:on={loved}>
-				{#if downloadedIds.has(song.id)}
-					<span class="downloaded" aria-label="Downloaded"><Icon name="download" size={12} /></span>
+				{#if downloadedIds.has(song.id) && !selectionMode}
+					<span class="downloaded" aria-label="Downloaded"><Icon name="downloadFill" size={20} /></span>
 				{:else if loved}
 					<span class="icon-swap" in:pop={{ from: 0.2, duration: 300 }}>
 						<Icon name="starFill" size={14} />
@@ -132,9 +207,34 @@
 				{/if}
 			</span>
 			<span class="duration">{time(song.duration)}</span>
-			<button class="more" aria-label="More options for {song.title}" onclick={(e) => menu(e, song, i)}>
-				<Icon name="more" size={20} />
-			</button>
+			{#if selectionMode}
+				<button
+					class="check-btn"
+					class:on={checked}
+					class:locked
+					aria-pressed={checked}
+					aria-disabled={locked ? 'true' : undefined}
+					aria-label={locked
+						? `${song.title} is already downloaded`
+						: checked
+							? `Deselect ${song.title}`
+							: `Select ${song.title}`}
+					onclick={(e) => {
+						e.stopPropagation();
+						activate(i);
+					}}
+				>
+					{#if locked}
+						<Icon name="downloadFill" size={20} />
+					{:else}
+						<span class="ring">{#if checked}<Icon name="check" size={13} />{/if}</span>
+					{/if}
+				</button>
+			{:else}
+				<button class="more" aria-label="More options for {song.title}" onclick={(e) => menu(e, song, i)}>
+					<Icon name="more" size={20} />
+				</button>
+			{/if}
 		</div>
 		{/if}
 	{/each}
@@ -163,6 +263,10 @@
 		transition: background-color 0.12s ease;
 		/* Giúp GPU render danh sách cuộn cực nhẹ */
 		contain: content;
+		/* A hold must not turn into text selection or the iOS callout. */
+		-webkit-user-select: none;
+		user-select: none;
+		-webkit-touch-callout: none;
 	}
 	.v-list .row {
 		grid-template-columns: 44px minmax(0, 1.4fr) minmax(0, 1fr) 20px 52px 32px;
@@ -262,9 +366,7 @@
 		height: 20px;
 		display: grid;
 		place-items: center;
-		border-radius: 50%;
 		color: var(--text-2);
-		background: var(--fill-strong);
 		flex-shrink: 0;
 	}
 	.current .title {
@@ -300,6 +402,36 @@
 		color: var(--accent);
 		opacity: 0;
 		transition: opacity 0.12s ease;
+	}
+	.check-btn {
+		display: grid;
+		place-items: center;
+		width: 32px;
+		height: 32px;
+		border-radius: 50%;
+		-webkit-tap-highlight-color: transparent;
+	}
+	.ring {
+		display: grid;
+		place-items: center;
+		width: 22px;
+		height: 22px;
+		border-radius: 50%;
+		border: 1.5px solid var(--text-3);
+		color: #fff;
+		transition: background-color 0.12s ease, border-color 0.12s ease;
+	}
+	.check-btn.on .ring {
+		background: var(--accent);
+		border-color: var(--accent);
+	}
+	/* Offline rows can't be picked again; the badge in the check slot says why. */
+	.check-btn.locked {
+		cursor: default;
+		color: var(--text-2);
+	}
+	.selecting a.album-col {
+		pointer-events: none;
 	}
 	@media (hover: none) {
 		.more {
