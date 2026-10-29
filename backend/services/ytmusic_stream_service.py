@@ -72,6 +72,17 @@ _KARAOKE_REGEX = re.compile(r"karaoke|instrumental|off[\s-]*vocal|\bbeat\b|\bktv
 _BRACKETS_REGEX = re.compile(r"[\(\[].*?[\)\]]")
 _WHITESPACE_REGEX = re.compile(r"\s+")
 
+# A studio/art track: YouTube Music's own audio upload, never a music video.
+_STUDIO_VIDEO_TYPE = "MUSIC_VIDEO_TYPE_ATV"
+# Candidate selection tolerates remasters and radio edits; a track that differs
+# by more than this is a different recording (live, extended, a full album).
+_DURATION_TOLERANCE_S = 30.0
+_DURATION_TOLERANCE_RATIO = 0.25
+# After extraction: a result this far off the expected length is the wrong
+# video (e.g. a 92-minute M/V matched for a 3-minute song).
+_GROSS_DURATION_TOLERANCE_S = 60.0
+_GROSS_DURATION_TOLERANCE_RATIO = 0.5
+
 _YDL_BASE_OPTIONS: dict[str, object] = {
     "quiet": True,
     "no_warnings": True,
@@ -325,6 +336,87 @@ def _clean_mv_title(title: str) -> str:
     return _WHITESPACE_REGEX.sub(" ", cleaned).strip()
 
 
+def _duration_matches(value: object, expected: float | None) -> bool:
+    """True when *value* is close to *expected* seconds, or either is unknown."""
+    if not expected or not isinstance(value, (int, float)) or value <= 0:
+        return True
+    return abs(float(value) - expected) <= max(
+        _DURATION_TOLERANCE_S, expected * _DURATION_TOLERANCE_RATIO
+    )
+
+
+def _duration_grossly_wrong(value: float | None, expected: float | None) -> bool:
+    """True when *value* cannot be the same recording as *expected*."""
+    if not expected or not value or value <= 0:
+        return False
+    return abs(value - expected) > max(
+        _GROSS_DURATION_TOLERANCE_S, expected * _GROSS_DURATION_TOLERANCE_RATIO
+    )
+
+
+def _rank_track_ids(tracks: list[dict], expected_duration_s: float | None) -> list[str]:
+    """Video ids of YouTube Music search *tracks*, best match first.
+
+    Studio tracks rank above uploads and music videos, then length decides:
+    a candidate whose duration is far from *expected_duration_s* is skipped
+    when a closer one exists.
+    """
+    seen: set[str] = set()
+    ranked: list[tuple[int, dict]] = []
+    for track in tracks:
+        if not isinstance(track, dict):
+            continue
+        video_id = track.get("videoId")
+        if not isinstance(video_id, str) or len(video_id) != 11 or video_id in seen:
+            continue
+        seen.add(video_id)
+        if track.get("videoType") == _STUDIO_VIDEO_TYPE:
+            rank = 0
+        elif not _MV_REGEX.search(str(track.get("title") or "")):
+            rank = 1
+        else:
+            rank = 2
+        ranked.append((rank, track))
+
+    ranked.sort(key=lambda item: item[0])
+    ordered = [track for _, track in ranked]
+    matching = [
+        t for t in ordered if _duration_matches(t.get("duration_seconds"), expected_duration_s)
+    ]
+    return [str(t["videoId"]) for t in (matching or ordered)]
+
+
+def _bare_video_id(cache_key: str) -> str:
+    """The public id of a cache entry keyed ``<video_id>:<fmt>``."""
+    return cache_key.rsplit(":", 1)[0]
+
+
+# ---------------------------------------------------------------------------
+# Learned durations
+# ---------------------------------------------------------------------------
+
+# Listing rows (radio, playlists, Spotify imports) often carry a stale or
+# truncated length for a video; yt-dlp reports the real one on extraction.
+# Remember it so the Subsonic child for a yt- track is served (and capped by
+# clients) with the length of the bytes that will actually play.
+_DURATION_CACHE_MAX = 4096
+_known_durations: OrderedDict[str, float] = OrderedDict()
+
+
+def remember_duration(video_id: str, duration_s: float | None) -> None:
+    if not duration_s or duration_s <= 0:
+        return
+    _known_durations[video_id] = float(duration_s)
+    _known_durations.move_to_end(video_id)
+    while len(_known_durations) > _DURATION_CACHE_MAX:
+        _known_durations.popitem(last=False)
+
+
+def known_duration(video_id: str) -> float | None:
+    """Length learned at extraction time, if this process has extracted the video."""
+    return _known_durations.get(video_id)
+
+
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
@@ -345,28 +437,81 @@ class YTMusicStreamService:
     # Public API
     # ------------------------------------------------------------------
 
-    async def search(self, artist: str, track: str, fmt: str = "opus") -> StreamInfo:
+    async def search(
+        self,
+        artist: str,
+        track: str,
+        fmt: str = "opus",
+        expected_duration_s: float | None = None,
+    ) -> StreamInfo:
         """Find *track* by *artist* on YouTube Music and return stream info.
 
         The returned ``title``/``artist`` are exactly *track*/*artist* as
         passed in (YouTube's values live in ``source_title``/``source_artist``).
+
+        *expected_duration_s* (e.g. Spotify's track length) keeps a very
+        different recording — a music video, an extended mix — from being
+        chosen for the song.
+
+        The result is cached under the key ``proxy_stream`` resolves with, so
+        streaming the very next request costs no second extraction.
 
         Raises ``ValueError`` when no match is found.
         """
         key = _StreamCache.search_key(artist, track) + f":{fmt}"
         cached = self._cache.get_by_search(key)
         if cached is not None:
-            return cached
+            return replace(cached, video_id=_bare_video_id(cached.video_id))
 
         query = f"{artist} {track}".strip()
+        # ytmusicapi answers in well under a second with ids *and* durations;
+        # a yt-dlp search costs several seconds and yields no durations.
+        candidates = await self._candidate_ids(query, expected_duration_s)
+        if candidates:
+            info = await self._extract_matching(candidates, fmt, expected_duration_s)
+            if info is not None:
+                info = info.with_metadata(title=track, artist=artist)
+                self._cache.put(replace(info, video_id=f"{info.video_id}:{fmt}"), search_key=key)
+                return info
+
         result = await self._run_blocking(_YtDlp.search, query, fmt, what="search")
         if result is None:
             label = f"'{artist} - {track}'" if artist else f"'{track}'"
             raise ValueError(f"No result found for {label}")
 
         info = result.with_metadata(title=track, artist=artist)
-        self._cache.put(info, search_key=key)
+        remember_duration(info.video_id, info.duration_s)
+        self._cache.put(replace(info, video_id=f"{info.video_id}:{fmt}"), search_key=key)
         return info
+
+    async def _candidate_ids(self, query: str, expected_duration_s: float | None) -> list[str]:
+        """Video ids for *query*, best match first; empty when the fast search fails."""
+        try:
+            tracks = await self.search_tracks(query, limit=10)
+        except Exception as exc:  # noqa: BLE001 - the yt-dlp search path still runs
+            logger.warning("YouTube Music search failed for %r: %s", query, exc)
+            return []
+        return _rank_track_ids(tracks, expected_duration_s)
+
+    async def _extract_matching(
+        self, video_ids: list[str], fmt: str, expected_duration_s: float | None
+    ) -> StreamInfo | None:
+        """Extract the first candidate whose own length fits; the closest when none fits."""
+        fallback: StreamInfo | None = None
+        for video_id in video_ids[:2]:
+            try:
+                info = await self._extract_by_video_id(video_id, fmt)
+            except Exception as exc:  # noqa: BLE001 - try the next candidate
+                logger.info("Extraction failed for candidate %s: %s", video_id, exc)
+                continue
+            if not _duration_grossly_wrong(info.duration_s, expected_duration_s):
+                return info
+            logger.info(
+                "Candidate %s is %ss, not the expected %ss; trying the next one",
+                video_id, info.duration_s, expected_duration_s,
+            )
+            fallback = fallback or info
+        return fallback
 
     async def _get_radio_for_video_cached(self, video_id: str, limit: int = 25) -> list[dict]:
         """Fetch Radio (mix) tracks for a video_id, using a short-lived in-memory cache."""
@@ -757,10 +902,15 @@ class YTMusicStreamService:
 
         if _MV_REGEX.search(result.source_title) and not _KARAOKE_REGEX.search(result.source_title):
             result = await self._upgrade_mv_to_audio(result, fmt)
+        remember_duration(video_id, result.duration_s)
         return result
 
     async def _upgrade_mv_to_audio(self, mv: StreamInfo, fmt: str) -> StreamInfo:
-        """Try to swap an MV's audio URL for the matching studio track's."""
+        """Try to swap an MV's audio URL for the matching studio track's.
+
+        The studio track must be the same recording: a candidate of a very
+        different length (an extended cut, a full-album upload) is left alone.
+        """
         clean_title = _clean_mv_title(mv.source_title)
         if mv.source_artist and mv.source_artist.lower() not in clean_title.lower():
             query = f"{mv.source_artist} {clean_title}".strip()
@@ -768,24 +918,41 @@ class YTMusicStreamService:
             query = clean_title
 
         try:
-            clean = await self._run_blocking(_YtDlp.search, query, fmt, what="search")
+            candidates = await self._candidate_ids(query, mv.duration_s)
         except Exception as exc:  # noqa: BLE001
-            logger.debug("Failed to upgrade MV %s to clean audio: %s", mv.video_id, exc)
+            logger.debug("Failed to find clean audio for MV %s: %s", mv.video_id, exc)
             return mv
 
-        if clean is None or clean.video_id == mv.video_id:
-            return mv
+        for video_id in candidates[:2]:
+            if video_id == mv.video_id:
+                return mv
+            try:
+                clean = await self._run_blocking(
+                    _YtDlp.extract_video, video_id, fmt, what="extraction"
+                )
+            except Exception as exc:  # noqa: BLE001 - keep the MV
+                logger.debug("Could not extract clean audio %s: %s", video_id, exc)
+                continue
+            if clean is None:
+                continue
+            if not _duration_matches(clean.duration_s, mv.duration_s):
+                logger.info(
+                    "Kept MV %s (%ss): candidate %s is %ss",
+                    mv.video_id, mv.duration_s, video_id, clean.duration_s,
+                )
+                continue
 
-        logger.info(
-            "Upgraded MV %s (%r) to studio audio %s (%r)",
-            mv.video_id, mv.source_title, clean.video_id, clean.source_title,
-        )
-        # Keep the requested video_id so the caller's URL stays stable.
-        return replace(
-            clean,
-            video_id=mv.video_id,
-            thumbnail=clean.thumbnail or mv.thumbnail,
-        )
+            logger.info(
+                "Upgraded MV %s (%r) to studio audio %s (%r)",
+                mv.video_id, mv.source_title, clean.video_id, clean.source_title,
+            )
+            # Keep the requested video_id so the caller's URL stays stable.
+            return replace(
+                clean,
+                video_id=mv.video_id,
+                thumbnail=clean.thumbnail or mv.thumbnail,
+            )
+        return mv
 
     @staticmethod
     async def _run_blocking(fn: Callable[..., T], *args: object, what: str) -> T:

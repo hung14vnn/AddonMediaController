@@ -497,6 +497,34 @@ describe('Player platform fixes', () => {
 		}
 	});
 
+	it('still reloads a stalled source when the watchdog pause aborts its pending play()', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
+		try {
+			const { player, audio } = await freshPlayer();
+			// A cold stream: play() stays pending until the watchdog's pause aborts it,
+			// which is what WebKit does with a play() that never got data.
+			audio.play.mockImplementationOnce(() => {
+				audio.paused = false;
+				audio.fire('play');
+				audio.fire('waiting');
+				return new Promise((_, reject) => {
+					audio.addEventListener('pause', () => reject(new DOMException('aborted', 'AbortError')));
+				});
+			});
+			player.playList([song('a')]);
+			await vi.advanceTimersByTimeAsync(0);
+			audio.load.mockClear();
+			await vi.advanceTimersByTimeAsync(15_100);
+			expect(audio.pause).toHaveBeenCalled();
+			// The aborted play() must not cancel the reload queued for the 2 s error delay.
+			await vi.advanceTimersByTimeAsync(2_100);
+			expect(audio.load).toHaveBeenCalled();
+			expect(player.current?.id).toBe('a');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('does not treat a slow start as a stall the moment it starts playing', async () => {
 		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
 		try {

@@ -1283,6 +1283,10 @@ class Player {
 				this.onError();
 				return;
 			}
+			// Aborted by a pause: the stall watchdog pauses a dead stream right before
+			// queueing its reload, and clearing the request here would cancel that reload.
+			// A user pause has already cleared the request itself.
+			if (e instanceof DOMException && e.name === 'AbortError') return;
 			// Refused (e.g. autoplay blocked): show it as paused rather than playing in silence.
 			this.playRequested = false;
 			this.playing = false;

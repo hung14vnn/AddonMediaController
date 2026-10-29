@@ -413,14 +413,14 @@ def _index_letter(name: str) -> str:
     return ch if ch.isalpha() else "#"
 
 
-# Spotify track id -> (artist, title). Players stream with many Range requests
-# per track; without this each one would repeat the Spotify lookup before the
-# (already cached) YouTube Music search. Bounded; oldest entries go first.
-_SPOTIFY_TRACK_META: dict[str, tuple[str, str]] = {}
+# Spotify track id -> (artist, title, duration seconds). Players stream with many
+# Range requests per track; without this each one would repeat the Spotify lookup
+# before the (already cached) YouTube Music search. Bounded; oldest entries go first.
+_SPOTIFY_TRACK_META: dict[str, tuple[str, str, int]] = {}
 _SPOTIFY_TRACK_META_MAX = 2048
 
 
-async def _spotify_track_meta(track_id: str) -> tuple[str, str]:
+async def _spotify_track_meta(track_id: str) -> tuple[str, str, int]:
     cached = _SPOTIFY_TRACK_META.get(track_id)
     if cached is not None:
         return cached
@@ -433,10 +433,11 @@ async def _spotify_track_meta(track_id: str) -> tuple[str, str]:
     artist = ", ".join(
         str(a.get("name")) for a in (st.get("artists") or [])[:2] if a.get("name")
     )
+    duration = int((st.get("duration_ms") or 0) / 1000)
     if len(_SPOTIFY_TRACK_META) >= _SPOTIFY_TRACK_META_MAX:
         _SPOTIFY_TRACK_META.pop(next(iter(_SPOTIFY_TRACK_META)))
-    _SPOTIFY_TRACK_META[track_id] = (artist, title)
-    return artist, title
+    _SPOTIFY_TRACK_META[track_id] = (artist, title, duration)
+    return artist, title, duration
 
 
 async def _stream_spotify_track(c: Ctx, track_id: str, stream_fmt: str) -> Response:
@@ -446,8 +447,14 @@ async def _stream_spotify_track(c: Ctx, track_id: str, stream_fmt: str) -> Respo
     title and proxied through the same YouTube Music path as ``yt-`` ids.
     """
     try:
-        artist, title = await _spotify_track_meta(track_id)
-        info = await c.services.ytmusic_stream.search(artist, title, fmt=stream_fmt)
+        artist, title, duration = await _spotify_track_meta(track_id)
+        info = await c.services.ytmusic_stream.search(
+            artist,
+            title,
+            fmt=stream_fmt,
+            # Keeps a long music video from being matched for a short song.
+            expected_duration_s=duration or None,
+        )
     except SubsonicError:
         raise
     except Exception as e:
@@ -1953,6 +1960,7 @@ def _playlist_cover(record, has_tracks: bool) -> str | None:
 
 async def _build_playlist_detail(c: Ctx, pid: str):
     from services.playlist_service import PlaylistDetailView
+    from services.ytmusic_stream_service import known_duration
 
     detail = await c.services.playlists.get_playlist_with_tracks(pid, c.user)
     if not isinstance(detail, PlaylistDetailView):
@@ -2001,7 +2009,10 @@ async def _build_playlist_detail(c: Ctx, pid: str):
             )
         ):
             yt_id = encode("ytmusic", ytmusic_source_id)
-            duration_sec = int(entry.duration or 0)
+            # The stored row length comes from the listing/import and can be
+            # wrong (a 4:20 track saved as 3:00); yt-dlp's measured length wins.
+            learned = known_duration(ytmusic_source_id)
+            duration_sec = int(round(learned)) if learned else int(entry.duration or 0)
             remote = m.SChild(
                 id=yt_id,
                 isDir=False,
@@ -2124,7 +2135,11 @@ async def _get_playlist(c: Ctx) -> Response:
             songs.append(_spotapi_to_child(st))
             names = [str(a["name"]) for a in (st.get("artists") or [])[:2] if a.get("name")]
             if st.get("name") and len(_SPOTIFY_TRACK_META) < _SPOTIFY_TRACK_META_MAX:
-                _SPOTIFY_TRACK_META[st["id"]] = (", ".join(names), str(st["name"]))
+                _SPOTIFY_TRACK_META[st["id"]] = (
+                    ", ".join(names),
+                    str(st["name"]),
+                    int((st.get("duration_ms") or 0) / 1000),
+                )
         songs = await _replace_remote_playlist_songs_with_library(c, songs)
                 
         tid = encode("spotify_playlist", playlist_id)
@@ -2923,10 +2938,15 @@ def _parse_length(t: dict) -> int | None:
 
 
 def _ytmusic_to_child(t: dict) -> m.SChild | None:
+    from services.ytmusic_stream_service import known_duration
+
     vid = t.get("videoId")
     if not vid:
         return None
     tid = encode("ytmusic", vid)
+    # Prefer the length yt-dlp measured over the listing's (often stale) one.
+    learned = known_duration(vid)
+    duration = int(round(learned)) if learned else _parse_length(t)
 
     artists = [
         a.get("name") if isinstance(a, dict) else a
@@ -2942,7 +2962,7 @@ def _ytmusic_to_child(t: dict) -> m.SChild | None:
     # Last.fm wants the primary artist alone, not the joined credit line.
     _remember_remote_track(
         tid, str(t.get("title") or ""), str(artists[0]) if artists else "",
-        str(album.get("name") or ""), _parse_length(t),
+        str(album.get("name") or ""), duration,
     )
     # Radio tracks are not in any saved playlist, so getCoverArt has no stored
     # artwork for them; keep the one YouTube Music sent with the track.
@@ -2966,7 +2986,7 @@ def _ytmusic_to_child(t: dict) -> m.SChild | None:
         albumId=album_id,
         artistId=f"ytmusic-artist-{first_artist['id']}" if first_artist else None,
         coverArt=tid,
-        duration=_parse_length(t),
+        duration=duration,
         year=int(t["year"]) if str(t.get("year") or "").isdigit() else None,
         # Must match what your stream endpoint really serves:
         suffix="m4a",
@@ -3322,7 +3342,11 @@ async def _get_todays_hits(c: Ctx) -> Response:
             # Prime the stream lookup so playback skips a Spotify round trip.
             names = [str(a["name"]) for a in (st.get("artists") or [])[:2] if a.get("name")]
             if st.get("name") and len(_SPOTIFY_TRACK_META) < _SPOTIFY_TRACK_META_MAX:
-                _SPOTIFY_TRACK_META[st["id"]] = (", ".join(names), str(st["name"]))
+                _SPOTIFY_TRACK_META[st["id"]] = (
+                    ", ".join(names),
+                    str(st["name"]),
+                    int((st.get("duration_ms") or 0) / 1000),
+                )
         return songs
 
     songs = await _cached_chart("todays_hits", fetch)
