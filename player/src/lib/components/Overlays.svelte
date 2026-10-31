@@ -8,6 +8,9 @@
 	import { searchSpotifyTracks, type SpotifyMatch } from "../api";
 	import { artistName, time } from "../format";
 	import { removeFromLibrary, requestDownload } from "../menus";
+	import { getPlayer } from "../player.svelte";
+
+	const player = getPlayer();
 
 	let menuEl = $state<HTMLDivElement | null>(null);
 	let pos = $state({ x: 0, y: 0 });
@@ -131,6 +134,7 @@
 		else if (ui.spotifyPicker) ui.spotifyPicker = null;
 		else if (ui.playlistPicker) ui.playlistPicker = null;
 		else if (ui.sleepTimerPicker) ui.sleepTimerPicker = false;
+		else if (player.karaokeWaiting) player.dismissKaraokeWait();
 	}
 </script>
 
@@ -341,6 +345,58 @@
 			<button class="destructive" onclick={confirmRemoval} disabled={removing}>
 				{removing ? "Removing…" : "Remove"}
 			</button>
+		</div>
+	</div>
+{/if}
+
+{#if player.karaokeWaiting}
+	<div
+		class="sheet-scrim"
+		role="presentation"
+		transition:fadeOnly
+		onclick={() => player.dismissKaraokeWait()}
+	></div>
+	<div
+		class="sheet karaoke"
+		role="dialog"
+		in:dialog
+		out:fadeOnly={{ duration: 150 }}
+		aria-modal="true"
+		aria-labelledby="karaoke-title"
+	>
+		<header>
+			<div class="title-wrap">
+				<h3 id="karaoke-title">
+					{#if !player.karaokeError}<span class="spin" aria-hidden="true"></span>{/if}
+					Karaoke
+				</h3>
+				<p class="subtitle">
+					{#if player.karaokeError}
+						{player.karaokePreview
+							? "AI stems failed · vocal cut playing"
+							: "Couldn’t prepare karaoke"}
+					{:else if player.karaokePreview}
+						Vocal cut playing · AI stems on the way
+					{:else}
+						Cutting the vocals…
+					{/if}
+				</p>
+			</div>
+			<button class="x" aria-label="Hide" onclick={() => player.dismissKaraokeWait()}>
+				<Icon name="close" size={18} />
+			</button>
+		</header>
+		<p class="body">
+			{#if player.karaokeError}
+				{player.karaokeError}{#if player.karaokePreview} You can keep singing on the vocal cut.{/if}
+			{:else}
+				You can start singing right away. The AI version takes over from the same point as soon
+				as it’s ready.
+			{/if}
+		</p>
+		<div class="buttons">
+			<button class="secondary" onclick={() => player.dismissKaraokeWait()}>Hide</button>
+			<button class="primary" onclick={() => void player.toggleKaraoke()}>Turn Off</button>
 		</div>
 	</div>
 {/if}
@@ -668,6 +724,31 @@
 		color: var(--text);
 		font-weight: 600;
 	}
+	.karaoke .body {
+		margin: 0;
+		padding: 4px 16px 14px;
+		font-size: 14px;
+		line-height: 1.45;
+		color: var(--text-2);
+	}
+	.karaoke h3 {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.karaoke .spin {
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		border: 2px solid var(--fill);
+		border-top-color: var(--accent);
+		animation: karaoke-spin 0.8s linear infinite;
+	}
+	@keyframes karaoke-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
 	.option {
 		display: flex;
 		align-items: flex-start;
@@ -716,6 +797,10 @@
 	.secondary {
 		background: var(--fill);
 		color: var(--text);
+	}
+	.primary {
+		background: var(--accent);
+		color: #fff;
 	}
 	.destructive {
 		background: #ff3b30;

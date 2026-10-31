@@ -78,16 +78,21 @@ from tests.helpers import (
 
 
 def _iter_leaf_routes(routes: Iterable) -> Iterator:
-    """Yield endpoint-bearing routes, expanding lazily included routers.
+    """Yield leaf routes with their fully-prefixed paths.
 
-    FastAPI>=0.140 stores include_router() entries as lazy wrapper nodes
-    (exposing the sub-router as ``original_router``) instead of merged copies;
-    descend through them so allowlist assertions keep seeing every route.
+    FastAPI>=0.140 stores include_router() entries as lazy wrapper nodes; the
+    accumulated prefix lives in the wrapper's include context, so flattening
+    must go through effective_candidates() instead of reading route.path.
     """
+    from fastapi.routing import _IncludedRouter
+
     for route in routes:
-        original = getattr(route, "original_router", None)
-        if original is not None:
-            yield from _iter_leaf_routes(original.routes)
+        if isinstance(route, _IncludedRouter):
+            for candidate in route.effective_candidates():
+                if isinstance(candidate, _IncludedRouter):
+                    yield from _iter_leaf_routes([candidate])
+                else:
+                    yield candidate
         else:
             yield route
 
@@ -102,7 +107,7 @@ def test_target_scheduler_uses_configured_iana_timezone(
 
 def test_library_operation_stream_precedes_dynamic_operation_route() -> None:
     app = create_isolated_target_application()
-    paths = [route.path for route in app.routes]
+    paths = [route.path for route in _iter_leaf_routes(app.routes)]
 
     assert paths.index("/api/v1/library/operations/stream") < paths.index(
         "/api/v1/library/operations/{job_id}"
@@ -164,11 +169,11 @@ def test_isolated_target_application_mounts_target_catalog_and_compat_routes() -
     route_modules = {
         route.endpoint.__module__
         for route in _iter_leaf_routes(app.routes)
-        if hasattr(route, "endpoint")
+        if getattr(route, "endpoint", None) is not None
     }
     method_paths = {
         (method, route.path)
-        for route in app.routes
+        for route in _iter_leaf_routes(app.routes)
         for method in getattr(route, "methods", set())
     }
 
@@ -384,7 +389,7 @@ def test_offline_replacement_entrypoint_is_complete_and_single_worker() -> None:
     route_modules = {
         route.endpoint.__module__
         for route in _iter_leaf_routes(app.routes)
-        if hasattr(route, "endpoint")
+        if getattr(route, "endpoint", None) is not None
     }
     middleware = {item.cls.__name__ for item in app.user_middleware}
 
@@ -657,13 +662,6 @@ def test_production_target_lifespan_selects_validation_phase_and_runs_runtime(
         "start_target_worker_watchdog",
         lambda starters: watchdog_starters.update(starters),
     )
-    pending_migration = AsyncMock()
-    pending_migration.schedule.return_value = False
-    monkeypatch.setattr(
-        target_module,
-        "get_legacy_pending_migration_service",
-        lambda: pending_migration,
-    )
     monkeypatch.setattr(auth_providers, "get_auth_service", lambda: auth)
     monkeypatch.setattr(auth_providers, "get_auth_store", lambda: auth_store)
     registry = target_module.TaskRegistry.get_instance()
@@ -694,10 +692,7 @@ def test_production_target_lifespan_selects_validation_phase_and_runs_runtime(
         auth_store=auth_store,
         preferences=preferences,
         cache_dir=target_module.get_settings().cache_dir,
-        library_enabled=library_enabled,
     )
-    operation_supervisor.recover.assert_awaited_once()
-    recovery_service.recover_startup.assert_awaited_once()
     operational.assert_awaited_once_with(
         settings=target_module.get_settings(),
         preferences=preferences,
@@ -709,10 +704,7 @@ def test_production_target_lifespan_selects_validation_phase_and_runs_runtime(
     assert callable(operation_enabled_getter)
     assert identification_enabled_getter() is library_enabled
     assert operation_enabled_getter() is library_enabled
-    if library_enabled:
-        pending_migration.schedule.assert_awaited_once()
-    else:
-        pending_migration.schedule.assert_not_awaited()
+    assert operation_worker_arguments["recovery_getter"]() is recovery_service
     schedule_settings_getter = scan_supervisor_arguments["schedule_settings_getter"]
     assert callable(schedule_settings_getter)
     assert schedule_settings_getter()["timezone_name"] == "Europe/London"
@@ -753,8 +745,6 @@ def test_production_target_lifespan_selects_validation_phase_and_runs_runtime(
         "validate",
         "admit",
         "migrate",
-        "operation-recovery",
-        "management-recovery",
         "operational",
     ]
 
@@ -856,9 +846,6 @@ def test_production_target_lifespan_closes_scan_coordinator_on_shutdown(
     monkeypatch.setattr(target_module, "start_library_contribution_verification_worker", lambda *a, **k: None)
     monkeypatch.setattr(target_module, "start_target_wal_checkpoint_task", lambda _service: None)
     monkeypatch.setattr(target_module, "start_target_worker_watchdog", lambda starters: None)
-    pending_migration = AsyncMock()
-    pending_migration.schedule.return_value = False
-    monkeypatch.setattr(target_module, "get_legacy_pending_migration_service", lambda: pending_migration)
     monkeypatch.setattr(auth_providers, "get_auth_service", lambda: auth)
     monkeypatch.setattr(auth_providers, "get_auth_store", lambda: auth_store)
     coordinator_close = AsyncMock()

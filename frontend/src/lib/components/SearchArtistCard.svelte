@@ -16,14 +16,20 @@
 	let {
 		artist,
 		enrichmentSource = 'none',
-		onenrichmentrequest: _onenrichmentrequest = undefined
+		onenrichmentrequest = undefined
 	}: Props = $props();
+
+	const isLocalOnly = $derived(
+		Boolean(artist.local_id && artist.local_id === artist.musicbrainz_id)
+	);
 
 	let listenTitle = $derived(getListenTitle(enrichmentSource, 'artist'));
 </script>
 
 <a
 	href={providerArtistHref(artist.musicbrainz_id)}
+	onpointerenter={isLocalOnly ? undefined : onenrichmentrequest}
+	onfocus={isLocalOnly ? undefined : onenrichmentrequest}
 	class="card bg-base-100 w-full shadow-sm shrink-0 cursor-pointer transition-all hover:scale-105 hover:glow-primary group relative"
 >
 	{#if !artist.local_id || artist.local_id !== artist.musicbrainz_id}

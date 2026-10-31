@@ -93,6 +93,8 @@ from .service_providers import (  # noqa: F401
     get_library_policy_resolver,
     get_library_policy_service,
     get_legacy_pending_migration_service,
+    get_library_scan_wakeup,
+    get_library_scanner,
     get_library_filesystem_coordinator,
     get_audio_metadata_engine,
     get_audio_write_planning_service,

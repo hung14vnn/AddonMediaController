@@ -82,7 +82,7 @@ describe('Player.svelte lyrics button', () => {
 		render(Player);
 
 		await page.getByLabelText('Add current track to playlist').click();
-		expect(mockOpenPlaylistModal).toHaveBeenCalledWith([track]);
+		expect(mockOpenPlaylistModal).toHaveBeenCalledWith([{ ...track, queueOrigin: 'context' }]);
 	});
 
 	it('shows lyrics button when query succeeds with lyrics data', async () => {

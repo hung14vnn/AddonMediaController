@@ -38,7 +38,7 @@
 			if (existingScript) {
 				customElements
 					.whenDefined('am-lyrics')
-					.then(resolve)
+					.then(() => resolve())
 					.catch(reject);
 
 				return;
@@ -55,7 +55,7 @@
 			script.onload = () => {
 				customElements
 					.whenDefined('am-lyrics')
-					.then(resolve)
+					.then(() => resolve())
 					.catch(reject);
 			};
 

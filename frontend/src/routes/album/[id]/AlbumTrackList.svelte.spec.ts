@@ -6,6 +6,8 @@ import { render } from 'vitest-browser-svelte';
 const downloadMutations = vi.hoisted(() => ({ requestMutate: vi.fn() }));
 vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 	requestTrack: () => ({ mutate: downloadMutations.requestMutate, isPending: false }),
+	requestSpotifyTrack: () => ({ mutate: vi.fn(), isPending: false }),
+	requestYouTubeTrack: () => ({ mutate: vi.fn(), isPending: false }),
 	importHeldTrack: () => ({ mutate: vi.fn(), isPending: false }),
 	discardHeldTrack: () => ({ mutate: vi.fn(), isPending: false }),
 	reverifyHeldTrack: () => ({ mutate: vi.fn(), isPending: false })

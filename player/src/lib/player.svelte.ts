@@ -1,4 +1,4 @@
-import { getKaraoke, getPlayQueue, getSession, savePlayQueue, scrobble, streamUrl } from './api';
+import { getKaraoke, getPlayQueue, getSession, releaseKaraoke, savePlayQueue, scrobble, streamUrl } from './api';
 import { build, buildLabel } from './build';
 import { isPlaybackLogEnabled, logPlayback } from './playback/debugLog';
 import { audioSettings } from './playback/audioSettings.svelte';
@@ -225,9 +225,14 @@ class Player {
 	enhancerSource = $state<EnhancerSource | null>(null);
 	shuffle = $state(false);
 	repeat = $state<Repeat>('off');
-	/** Karaoke: a karaoke version is playing in place of `original` (raw: compared by id). */
+	/** Karaoke: a karaoke mix is playing in place of `original` (raw: compared by id). */
 	karaoke = $state.raw<{ original: Song; version: Song } | null>(null);
 	karaokeLoading = $state(false);
+	/** Waiting on the server's AI stems; the quick vocal cut may already be playing. */
+	karaokeWaiting = $state(false);
+	/** The karaoke stream playing now is the vocal cut, not the AI stems yet. */
+	karaokePreview = $state(false);
+	karaokeError = $state<string | null>(null);
 	error = $state<string | null>(null);
 	/** Remote Playback API (Chromecast etc. on Chrome/Android; AirPlay picker on Safari). */
 	castAvailable = $state(false);
@@ -274,6 +279,12 @@ class Player {
 	private pendingSeek = 0;
 	/** Invalidates a load still waiting on the offline lookup when another one starts. */
 	private loadToken = 0;
+	/** Invalidates a karaoke start/poll loop that was turned off or followed another track. */
+	private karaokeRun = 0;
+	/** Server session keeping this song's stems in its memory while we play them. */
+	private karaokeSession: string | null = null;
+	/** Bumped when the same `kr-` id starts serving the AI stems instead of the vocal cut. */
+	private karaokeBust = 0;
 	/** Offline/prefetched copy now playing, revoked on the next change. */
 	private playingOffline: OfflineCopy | null = null;
 	/**
@@ -724,44 +735,111 @@ class Player {
 	}
 
 	/**
-	 * Karaoke on: find the playing song's karaoke version on YouTube and play it in the
-	 * song's place, from the same moment. Off: back to the original. Returns why it
-	 * couldn't start, or null.
+	 * Karaoke on: the server cuts the vocals out of the playing local track and plays
+	 * that vocal cut straight away, then swaps in the AI stems when they finish. Off:
+	 * back to the original. Returns why it couldn't start, or null.
 	 */
 	async toggleKaraoke(): Promise<string | null> {
-		if (this.karaoke) {
-			const { original } = this.karaoke;
+		if (this.karaoke || this.karaokeWaiting || this.karaokeLoading) {
+			const original = this.karaoke?.original ?? null;
 			this.leaveKaraoke();
-			this.replaceCurrent(original);
+			if (original) this.replaceCurrent(original);
 			return null;
 		}
 		const song = this.current;
-		if (!song || this.karaokeLoading) return null;
-		this.karaokeLoading = true;
-		let found: Song | null = null;
-		try {
-			found = await getKaraoke(song);
-		} catch (e) {
-			logPlayback('karaoke-failed', String(e));
+		if (!song) return null;
+		if (song.karaokeOf || song.id.startsWith('yt-') || song.id.startsWith('st-')) {
+			return 'Karaoke works with local library tracks only.';
 		}
-		this.karaokeLoading = false;
-		if (this.current?.id !== song.id) return null; // moved on while searching
-		if (!found) return 'No karaoke version found for this song.';
-		const version: Song = { ...found, coverArt: song.coverArt ?? found.coverArt, karaokeOf: song.id };
-		logPlayback('karaoke', `id=${song.id} → ${version.id}`);
-		this.karaoke = { original: $state.snapshot(song) as Song, version };
-		this.replaceCurrent(version);
-		return null;
+		const run = ++this.karaokeRun;
+		const original = $state.snapshot(song) as Song;
+		this.karaokeLoading = true;
+		this.karaokeWaiting = true;
+		this.karaokeError = null;
+		let versionId: string | null = null;
+		try {
+			for (;;) {
+				const state = await getKaraoke(song, this.karaokeSession);
+				const currentId = this.current?.id;
+				if (run !== this.karaokeRun || (currentId !== song.id && currentId !== versionId)) {
+					// Turned off or moved on while the server was working.
+					if (state.sessionId && state.sessionId !== this.karaokeSession) {
+						void releaseKaraoke(state.sessionId);
+					}
+					return null;
+				}
+				this.karaokeLoading = false;
+				this.karaokeSession = state.sessionId ?? this.karaokeSession;
+				if (state.streamReady && state.song) {
+					if (!versionId) {
+						const version: Song = {
+							...state.song,
+							coverArt: song.coverArt ?? state.song.coverArt,
+							karaokeOf: song.id
+						};
+						versionId = version.id;
+						logPlayback('karaoke', `id=${song.id} → ${version.id} preview=${state.preview}`);
+						this.karaoke = { original, version };
+						this.karaokePreview = state.preview;
+						this.replaceCurrent(version);
+					} else if (!state.preview) {
+						// The same `kr-` id now serves the AI stems: reload in place.
+						this.karaokeBust++;
+						this.karaokePreview = false;
+						void this.load(this.index, this.playRequested || this.playing, this.time);
+					}
+				}
+				if (state.status === 'failed' || (state.status === 'not_generated' && !state.streamReady)) {
+					throw new Error(state.error ?? 'Karaoke is unavailable for this track.');
+				}
+				if (versionId && !state.preview) {
+					this.karaokeWaiting = false;
+					this.karaokeError = null;
+					return null;
+				}
+				await new Promise((resolve) => setTimeout(resolve, 1200));
+			}
+		} catch (e) {
+			if (run !== this.karaokeRun) return null;
+			const message = e instanceof Error && e.message ? e.message : 'Karaoke generation failed';
+			logPlayback('karaoke-failed', message);
+			this.karaokeLoading = false;
+			if (versionId) {
+				// The vocal cut keeps playing; the sheet explains the AI part failed.
+				this.karaokeError = message;
+				return null;
+			}
+			this.leaveKaraoke();
+			return message;
+		}
 	}
 
-	/** Ends karaoke, putting the original back wherever its karaoke version sits. */
+	/** Hides the karaoke sheet; the server keeps working and the stems swap in when ready. */
+	dismissKaraokeWait() {
+		this.karaokeWaiting = false;
+	}
+
+	/** Ends karaoke, putting the original back wherever its karaoke mix sits. */
 	private leaveKaraoke() {
+		this.cancelKaraoke();
 		const k = this.karaoke;
 		if (!k) return;
 		this.karaoke = null;
 		const swap = (list: Song[]) => list.map((s) => (s.id === k.version.id ? k.original : s));
 		this.queue = swap(this.queue);
 		if (this.unshuffled) this.unshuffled = swap(this.unshuffled);
+	}
+
+	/** Stops the karaoke loop and frees the server session; the queue is left alone. */
+	private cancelKaraoke() {
+		this.karaokeRun++;
+		this.karaokeLoading = false;
+		this.karaokeWaiting = false;
+		this.karaokePreview = false;
+		this.karaokeError = null;
+		const session = this.karaokeSession;
+		this.karaokeSession = null;
+		if (session) void releaseKaraoke(session);
 	}
 
 	/** Plays `song` in the current song's place, from the same moment. */
@@ -797,7 +875,10 @@ class Player {
 	 */
 	private async load(i: number, autoplay: boolean, startAt = 0) {
 		// Karaoke is per song: moving to another puts the original back in the queue.
-		if (this.karaoke && this.queue[i]?.id !== this.karaoke.version.id) this.leaveKaraoke();
+		const picked = this.queue[i];
+		if ((this.karaoke || this.karaokeWaiting) && picked && picked.id !== this.karaoke?.version.id) {
+			this.leaveKaraoke();
+		}
 		const song = this.queue[i];
 		if (!song) return;
 		// A preroll only carries on into the song it was started for, from its start.
@@ -858,7 +939,7 @@ class Player {
 		}
 		const outgoing = this.playingOffline;
 		this.playingOffline = offline;
-		const src = offline?.copy.url ?? streamUrl(song.id);
+		const src = offline?.copy.url ?? streamUrl(song.id, song.karaokeOf ? this.karaokeBust : 0);
 		const handoff = autoplay && startAt === 0 && this.standbyHolds(src);
 
 		logPlayback(
@@ -1711,13 +1792,15 @@ class Player {
 	private async restore() {
 		const saved = readSnapshot();
 		if (saved) {
-			this.queue = saved.queue;
-			this.index = saved.index;
+			// Karaoke mixes only live as long as the server's session: drop them on restart.
+			const queue = saved.queue.filter((s) => !s.karaokeOf);
+			this.queue = queue;
+			this.index = queue.length ? Math.min(Math.max(saved.index, 0), queue.length - 1) : -1;
 			this.setTime(saved.time);
 			this.duration = this.current?.duration ?? 0;
 			this.shuffle = saved.shuffle;
 			this.repeat = saved.repeat;
-			this.unshuffled = saved.unshuffled;
+			this.unshuffled = saved.unshuffled?.filter((s) => !s.karaokeOf) ?? null;
 			setMediaMetadata(this.current);
 			if (this.queue.length) return;
 		}
@@ -1736,6 +1819,7 @@ class Player {
 	/** Stops and releases the audio element so it can never keep playing orphaned. */
 	destroy() {
 		this.saveSnapshot();
+		this.cancelKaraoke();
 		this.destroyed = true;
 		this.unload();
 		this.singleTab.close();
@@ -1756,6 +1840,8 @@ class Player {
 	/** Called on sign-out. */
 	reset() {
 		this.unload();
+		this.cancelKaraoke();
+		this.karaoke = null;
 		this.queue = [];
 		this.index = -1;
 		this.setTime(0);

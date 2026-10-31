@@ -119,7 +119,7 @@
 	function deleteEntry(entry: KaraokeCacheEntry): void {
 		if (
 			typeof window !== 'undefined' &&
-			!window.confirm(`Remove karaoke cache for “${entryLabel(entry)}”?`)
+			!window.confirm(`Remove karaoke for “${entryLabel(entry)}” from memory?`)
 		)
 			return;
 		removeEntry.mutate(entry.id);
@@ -138,10 +138,10 @@
 					<Mic2 class="h-5 w-5" aria-hidden="true" />
 				</div>
 				<div>
-					<h2 class="text-lg font-semibold">Karaoke cache</h2>
+					<h2 class="text-lg font-semibold">Karaoke memory</h2>
 					<p class="mt-1 max-w-2xl text-sm text-base-content/60">
-						Manage generated vocal and instrumental stems. Older or unlinked karaoke folders are
-						shown too.
+						Karaoke tracks currently held in RAM. Everything is deleted as soon as the last
+						listener stops, so nothing is written to disk.
 					</p>
 				</div>
 			</div>
@@ -150,7 +150,7 @@
 				class="btn btn-ghost btn-sm gap-2"
 				disabled={entriesQuery.isFetching}
 				onclick={() => void entriesQuery.refetch()}
-				aria-label="Refresh karaoke cache"
+				aria-label="Refresh karaoke memory"
 			>
 				<RefreshCw class={`h-4 w-4 ${entriesQuery.isFetching ? 'animate-spin' : ''}`} />
 				Refresh
@@ -163,7 +163,7 @@
 				<div class="skeleton h-16 rounded-xl"></div>
 			</div>
 		{:else if entriesQuery.isError}
-			<div class="alert alert-error mt-5">Could not load the karaoke cache.</div>
+			<div class="alert alert-error mt-5">Could not load karaoke memory.</div>
 		{:else if (entriesQuery.data?.items.length ?? 0) === 0}
 			<div
 				class="mt-5 rounded-xl border border-dashed border-base-content/15 bg-base-100/30 px-5 py-8 text-center"
@@ -183,7 +183,7 @@
 						>{entriesQuery.data?.total ?? 0}
 						{entriesQuery.data?.total === 1 ? 'track' : 'tracks'}</span
 					>
-					<span>Generated cache</span>
+					<span>In memory</span>
 				</div>
 				<div class="divide-y divide-base-content/8">
 					{#each entriesQuery.data?.items ?? [] as entry (entry.id)}
@@ -199,15 +199,9 @@
 									<span
 										class="badge badge-sm {entry.status === 'ready'
 											? 'badge-success'
-											: entry.status === 'legacy'
-												? 'badge-warning'
-												: 'badge-error'}"
+											: 'badge-warning'}"
 									>
-										{entry.status === 'ready'
-											? 'Ready'
-											: entry.status === 'legacy'
-												? 'Legacy'
-												: 'Partial'}
+										{entry.status === 'ready' ? 'Ready' : 'Vocal cut'}
 									</span>
 								</div>
 								<p class="mt-0.5 truncate text-xs text-base-content/50">
@@ -220,7 +214,7 @@
 								disabled={removeEntry.isPending}
 								onclick={() => deleteEntry(entry)}
 								aria-label={`Delete ${entryLabel(entry)}`}
-								title="Delete karaoke cache"
+								title="Remove from memory"
 							>
 								<Trash2 class="h-4 w-4" aria-hidden="true" />
 							</button>

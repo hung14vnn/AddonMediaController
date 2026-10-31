@@ -1,4 +1,3 @@
-import json
 import time
 from pathlib import Path
 
@@ -6,22 +5,23 @@ import pytest
 
 from core.config import Settings
 from core.exceptions import ResourceNotFoundError
-from services.karaoke_service import KaraokeService
+from services.karaoke_service import KaraokeService, _Entry
 
 
 class _LocalFiles:
     def __init__(self, path: Path) -> None:
         self.path = path
-        self.rows: list[dict] = []
 
     async def resolve_validated_path(self, _file_id: str) -> Path:
         return self.path
 
-    async def get_karaoke_track_rows(self) -> list[dict]:
-        return self.rows
-
     async def get_karaoke_track_metadata(self, file_id: str) -> dict | None:
-        return next((row for row in self.rows if row.get("id") == file_id), None)
+        return {
+            "id": file_id,
+            "track_title": "Test song",
+            "artist_name": "Test artist",
+            "album_title": "Test album",
+        }
 
 
 def _service(tmp_path: Path) -> tuple[KaraokeService, Path]:
@@ -35,11 +35,45 @@ def _service(tmp_path: Path) -> tuple[KaraokeService, Path]:
         cache_dir=tmp_path / "cache",
         library_db_path=tmp_path / "cache" / "library.db",
         config_file_path=tmp_path / "config" / "config.json",
-        karaoke_cache_max_size_mb=128,
+        karaoke_memory_max_size_mb=128,
+        karaoke_memory_idle_minutes=5,
     )
     service = KaraokeService(settings, _LocalFiles(source))  # type: ignore[arg-type]
     service.start = lambda: None  # type: ignore[method-assign]
     return service, source
+
+
+@pytest.fixture(autouse=True)
+def _instant_preview(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        KaraokeService,
+        "_render_preview_sync",
+        lambda _self, _key, _path: b"preview-audio",
+    )
+
+
+async def _settle_previews(service: KaraokeService) -> None:
+    for task in list(service._preview_tasks.values()):
+        await task
+
+
+def _put_entry(service: KaraokeService, cache_key: str) -> None:
+    now = time.time()
+    service._entries[cache_key] = _Entry(
+        cache_key=cache_key,
+        instrumental=b"0123456789",
+        vocals=b"vocals",
+        metadata={
+            "cache_key": cache_key,
+            "track_title": "Test song",
+            "artist_name": "Test artist",
+            "album_name": "Test album",
+            "created_at": now,
+            "last_accessed_at": now,
+        },
+        created_at=now,
+        last_accessed_at=now,
+    )
 
 
 @pytest.mark.asyncio()
@@ -52,7 +86,20 @@ async def test_prepare_deduplicates_an_inflight_track(tmp_path: Path):
     assert first.status == "queued"
     assert second.job_id == first.job_id
     assert second.cache_key == first.cache_key
+    assert second.session_id != first.session_id
     assert service._queue.qsize() == 1
+    assert len(service._sessions) == 2
+
+
+@pytest.mark.asyncio()
+async def test_prepare_reuses_a_session_passed_back(tmp_path: Path):
+    service, _ = _service(tmp_path)
+
+    first = await service.prepare("track-1")
+    second = await service.prepare("track-1", session_id=first.session_id)
+
+    assert second.session_id == first.session_id
+    assert len(service._sessions) == 1
 
 
 @pytest.mark.asyncio()
@@ -63,39 +110,36 @@ async def test_status_reports_unprepared_track_without_enqueueing(tmp_path: Path
 
     assert result.status == "not_generated"
     assert service._queue.qsize() == 0
+    assert service._sessions == {}
 
 
 @pytest.mark.asyncio()
-async def test_status_reports_inflight_track(tmp_path: Path):
+async def test_prepare_builds_an_immediate_preview(tmp_path: Path):
     service, _ = _service(tmp_path)
 
     queued = await service.prepare("track-1")
-    result = await service.status("track-1")
+    assert queued.preview_status in {"pending", "generating"}
+    await _settle_previews(service)
 
-    assert result.status == "queued"
-    assert result.job_id == queued.job_id
-
-
-@pytest.mark.asyncio()
-async def test_prepare_returns_both_stems_on_cache_hit(tmp_path: Path):
-    service, _ = _service(tmp_path)
-    queued = await service.prepare("track-1")
-    entry = service._entry_dir(queued.cache_key)
-    entry.mkdir(parents=True)
-    (entry / "instrumental.m4a").write_bytes(b"instrumental")
-    (entry / "vocals.m4a").write_bytes(b"vocals")
-    (entry / "metadata.json").write_text(
-        json.dumps(
-            {
-                "created_at": time.time(),
-                "last_accessed_at": time.time(),
-                "size_bytes": 18,
-            }
-        )
+    status = await service.status("track-1")
+    assert status.preview_status == "ready"
+    assert status.preview_url is not None
+    chunks, headers, code = await service.stream_stem(
+        status.cache_key, "preview", "bytes=0-6"
     )
 
-    result = await service.prepare("track-1")
+    assert code == 206
+    assert b"".join([chunk async for chunk in chunks]) == b"preview"
+    assert headers["Cache-Control"] == "private, no-store"
 
+
+@pytest.mark.asyncio()
+async def test_prepare_returns_both_stems_from_memory_on_cache_hit(tmp_path: Path):
+    service, _ = _service(tmp_path)
+    queued = await service.prepare("track-1")
+    _put_entry(service, queued.cache_key)
+
+    result = await service.prepare("track-1")
     status = await service.status("track-1")
 
     assert result.status == "ready"
@@ -110,19 +154,7 @@ async def test_prepare_returns_both_stems_on_cache_hit(tmp_path: Path):
 async def test_stream_stem_supports_byte_ranges(tmp_path: Path):
     service, _ = _service(tmp_path)
     queued = await service.prepare("track-1")
-    entry = service._entry_dir(queued.cache_key)
-    entry.mkdir(parents=True)
-    (entry / "instrumental.m4a").write_bytes(b"0123456789")
-    (entry / "vocals.m4a").write_bytes(b"v")
-    (entry / "metadata.json").write_text(
-        json.dumps(
-            {
-                "created_at": time.time(),
-                "last_accessed_at": time.time(),
-                "size_bytes": 11,
-            }
-        )
-    )
+    _put_entry(service, queued.cache_key)
 
     chunks, headers, status = await service.stream_stem(
         queued.cache_key, "instrumental", "bytes=2-5"
@@ -135,25 +167,39 @@ async def test_stream_stem_supports_byte_ranges(tmp_path: Path):
 
 
 @pytest.mark.asyncio()
-async def test_cleanup_removes_idle_expired_package(tmp_path: Path):
+async def test_release_keeps_stems_until_the_last_session_leaves(tmp_path: Path):
     service, _ = _service(tmp_path)
-    queued = await service.prepare("track-1")
-    entry = service._entry_dir(queued.cache_key)
-    entry.mkdir(parents=True)
-    (entry / "instrumental.m4a").write_bytes(b"i")
-    (entry / "vocals.m4a").write_bytes(b"v")
-    (entry / "metadata.json").write_text(
-        json.dumps({"created_at": 1, "last_accessed_at": 1, "size_bytes": 2})
-    )
+    first = await service.prepare("track-1")
+    second = await service.prepare("track-1")
+    _put_entry(service, first.cache_key)
 
-    removed = await service.cleanup()
+    await service.release(first.session_id)
+    assert first.cache_key in service._entries
 
-    assert removed == 1
-    assert not entry.exists()
+    await service.release(second.session_id)
+    assert first.cache_key not in service._entries
+    assert first.cache_key not in service._previews
+
+    with pytest.raises(ResourceNotFoundError):
+        await service.stream_stem(first.cache_key, "instrumental", None)
 
 
 @pytest.mark.asyncio()
-async def test_local_generation_records_model_metadata(tmp_path: Path):
+async def test_cleanup_drops_idle_sessions_and_their_stems(tmp_path: Path):
+    service, _ = _service(tmp_path)
+    queued = await service.prepare("track-1")
+    _put_entry(service, queued.cache_key)
+    service._sessions[queued.session_id].last_used_at = 1
+
+    removed = await service.cleanup()
+
+    assert removed >= 1
+    assert queued.cache_key not in service._entries
+    assert service._sessions == {}
+
+
+@pytest.mark.asyncio()
+async def test_local_generation_keeps_stems_in_memory(tmp_path: Path):
     service, _ = _service(tmp_path)
     queued = await service.prepare("track-1")
     job = service._jobs[queued.job_id]
@@ -165,96 +211,93 @@ async def test_local_generation_records_model_metadata(tmp_path: Path):
     service._request_separation = separate  # type: ignore[method-assign]
     await service._generate(job)
 
-    metadata = json.loads(
-        (service._entry_dir(job.cache_key) / "metadata.json").read_text()
-    )
+    entry = service._entries[job.cache_key]
     assert job.status == "ready"
-    assert metadata["provider"] == "local"
-    assert metadata["model"] == "UVR_MDXNET_9482.onnx"
-    assert metadata["quality"] == "standard"
-    assert metadata["track_file_id"] == "track-1"
+    assert entry.instrumental == b"instrumental"
+    assert entry.vocals == b"vocals"
+    assert entry.metadata["provider"] == "local"
+    assert entry.metadata["model"] == "sherpa-onnx-spleeter-2stems-fp16"
+    assert entry.metadata["quality"] == "standard"
+    assert entry.metadata["track_file_id"] == "track-1"
+    assert not (service._tmp / job.id).exists()
 
 
 @pytest.mark.asyncio()
-async def test_list_entries_includes_current_legacy_and_partial_folders(tmp_path: Path):
+async def test_generation_without_a_session_is_discarded(tmp_path: Path):
     service, _ = _service(tmp_path)
-    current = service._entry_dir("a" * 64)
-    current.mkdir(parents=True)
-    (current / "instrumental.m4a").write_bytes(b"instrumental")
-    (current / "vocals.m4a").write_bytes(b"vocals")
-    (current / "metadata.json").write_text(
-        json.dumps(
-            {
-                "track_title": "Current song",
-                "artist_name": "Artist",
-                "size_bytes": 18,
-                "created_at": 10,
-                "last_accessed_at": 20,
-            }
-        )
-    )
+    queued = await service.prepare("track-1")
+    job = service._jobs[queued.job_id]
+    await service.release(queued.session_id)
 
-    legacy = service._root / "old-song"
-    legacy.mkdir()
-    (legacy / "instrumental.m4a").write_bytes(b"old-i")
-    (legacy / "vocals.m4a").write_bytes(b"old-v")
+    async def separate(_job, work_dir: Path) -> None:
+        (work_dir / "instrumental.m4a").write_bytes(b"instrumental")
+        (work_dir / "vocals.m4a").write_bytes(b"vocals")
 
-    partial = service._root / "broken-song"
-    partial.mkdir()
-    (partial / "vocals.m4a").write_bytes(b"broken")
+    service._request_separation = separate  # type: ignore[method-assign]
+    await service._generate(job)
 
-    response = await service.list_entries()
-
-    assert response.total == 3
-    assert {item.name for item in response.items} == {"Current song", "old-song", "broken-song"}
-    assert next(item for item in response.items if item.name == "Current song").status == "ready"
-    assert next(item for item in response.items if item.name == "old-song").status == "legacy"
-    assert next(item for item in response.items if item.name == "broken-song").status == "partial"
+    assert job.status == "failed"
+    assert job.cache_key not in service._entries
 
 
 @pytest.mark.asyncio()
-async def test_list_entries_uses_library_metadata_for_existing_cache(tmp_path: Path):
-    service, source = _service(tmp_path)
-    local_files = service._local_files
-    local_files.rows = [  # type: ignore[attr-defined]
-        {
-            "id": "track-1",
-            "file_path": str(source),
-            "track_title": "Song from the library",
-            "artist_name": "Library artist",
-            "album_title": "Library album",
-        }
-    ]
-    cache_key = service._cache_key_for_stat(
-        source, source.stat().st_size, source.stat().st_mtime_ns
+async def test_preview_is_skipped_when_ffmpeg_cannot_separate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(
+        KaraokeService, "_render_preview_sync", lambda _self, _key, _path: None
     )
-    entry = service._entry_dir(cache_key)
-    entry.mkdir(parents=True)
-    (entry / "instrumental.m4a").write_bytes(b"i")
-    (entry / "vocals.m4a").write_bytes(b"v")
-    (entry / "metadata.json").write_text(json.dumps({"cache_key": cache_key}))
+    service, _ = _service(tmp_path)
+
+    await service.prepare("track-1")
+    await _settle_previews(service)
+
+    status = await service.status("track-1")
+    assert status.preview_status == "unavailable"
+
+
+@pytest.mark.asyncio()
+async def test_list_entries_lists_ram_packages_and_deletes_them(tmp_path: Path):
+    service, _ = _service(tmp_path)
+    queued = await service.prepare("track-1")
+    _put_entry(service, queued.cache_key)
+    await _settle_previews(service)
 
     response = await service.list_entries()
 
     assert response.total == 1
     item = response.items[0]
-    assert item.name == "Song from the library"
-    assert item.artist_name == "Library artist"
-    assert item.album_name == "Library album"
-    assert item.track_file_id == "track-1"
+    assert item.id == queued.cache_key
+    assert item.name == "Test song"
+    assert item.artist_name == "Test artist"
+    assert item.album_name == "Test album"
+    assert item.size_bytes == 16
+    assert item.instrumental_size_bytes == 10
+    assert item.vocals_size_bytes == 6
+
+    await service.delete_entry(item.id)
+    assert service._entries == {}
+
+    with pytest.raises(ResourceNotFoundError):
+        await service.delete_entry("not-a-cache-key")
 
 
 @pytest.mark.asyncio()
-async def test_delete_entry_only_removes_a_listed_cache_folder(tmp_path: Path):
+async def test_legacy_disk_cache_is_purged_on_start(tmp_path: Path):
     service, _ = _service(tmp_path)
-    entry = service._root / "old-song"
-    entry.mkdir()
-    (entry / "vocals.m4a").write_bytes(b"old-v")
+    legacy = service._root / "objects" / "ab" / ("a" * 64)
+    legacy.mkdir(parents=True)
+    (legacy / "instrumental.m4a").write_bytes(b"old")
+    old = service._root / "old-song"
+    old.mkdir()
+    (old / "vocals.m4a").write_bytes(b"old")
+    service._tmp.mkdir(parents=True)
+    (service._tmp / "stale").mkdir()
 
-    listed = await service.list_entries()
-    await service.delete_entry(listed.items[0].id)
+    service._purge_legacy_disk_cache_sync()
 
-    assert not entry.exists()
+    assert not legacy.exists()
+    assert not old.exists()
+    assert service._tmp.is_dir()
+    assert list(service._tmp.iterdir()) == []
 
-    with pytest.raises(ResourceNotFoundError):
-        await service.delete_entry("Li4vLi4v")

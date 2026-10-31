@@ -1,12 +1,17 @@
-"""Single-concurrency karaoke generation and bounded two-stem disk cache."""
+"""Single-concurrency karaoke generation with in-memory stems and previews.
+
+Nothing karaoke-related survives a release: stems live in RAM only while at
+least one client session holds the track, and a quick center-cut preview is
+built while the AI separator runs so singing can start immediately.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import logging
 import shutil
+import subprocess
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -14,13 +19,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-import aiofiles
 import httpx
 
 from api.v1.schemas.karaoke import (
     KaraokeCacheEntriesResponse,
     KaraokeCacheEntry,
     KaraokeJobResponse,
+    KaraokePreviewStatus,
 )
 from core.config import Settings
 from core.exceptions import (
@@ -30,16 +35,17 @@ from core.exceptions import (
 )
 from core.task_registry import TaskRegistry
 from infrastructure.constants import STREAM_CHUNK_SIZE
-from infrastructure.file_utils import atomic_write_json, read_json
 from infrastructure.http.client import HttpClientFactory
 from services.local_files_service import LocalFilesService
 
 logger = logging.getLogger(__name__)
 
-Stem = Literal["instrumental", "vocals"]
-_ENGINE_VERSION = "uvr9482-local-aac-256k-v6"
-_MODEL = "UVR_MDXNET_9482.onnx"
-_ACCESS_WRITE_INTERVAL_SECONDS = 300
+StreamName = Literal["instrumental", "vocals", "preview"]
+_ENGINE_VERSION = "spleeter2-fp16-local-aac-256k-v7"
+_MODEL = "sherpa-onnx-spleeter-2stems-fp16"
+_PREVIEW_CONCURRENCY = 2
+_PREVIEW_TIMEOUT_SECONDS = 180
+_FINISHED_JOB_TTL_SECONDS = 3600
 
 
 @dataclass
@@ -53,6 +59,33 @@ class _Job:
     album_name: str | None = None
     status: Literal["queued", "processing", "ready", "failed"] = "queued"
     error_message: str | None = None
+    created_at: float = 0.0
+    finished_at: float = 0.0
+    cancelled: bool = False
+
+
+@dataclass
+class _Entry:
+    cache_key: str
+    instrumental: bytes
+    vocals: bytes
+    metadata: dict[str, object]
+    created_at: float
+    last_accessed_at: float
+
+
+@dataclass
+class _Preview:
+    data: bytes
+    created_at: float
+    last_accessed_at: float
+
+
+@dataclass
+class _Session:
+    id: str
+    cache_key: str
+    last_used_at: float
 
 
 class KaraokeService:
@@ -60,48 +93,102 @@ class KaraokeService:
         self._settings = settings
         self._local_files = local_files
         self._root = settings.cache_dir / "karaoke"
-        self._objects = self._root / "objects"
         self._tmp = self._root / "tmp"
-        self._objects.mkdir(parents=True, exist_ok=True)
-        self._tmp.mkdir(parents=True, exist_ok=True)
+        self._entries: dict[str, _Entry] = {}
+        self._previews: dict[str, _Preview] = {}
+        self._preview_unavailable: set[str] = set()
+        self._preview_tasks: dict[str, asyncio.Task[None]] = {}
+        self._preview_semaphore = asyncio.Semaphore(_PREVIEW_CONCURRENCY)
+        self._sessions: dict[str, _Session] = {}
+        self._sessions_by_key: dict[str, set[str]] = {}
         self._jobs: dict[str, _Job] = {}
         self._jobs_by_key: dict[str, _Job] = {}
         self._queue: asyncio.Queue[_Job] = asyncio.Queue()
         self._lock = asyncio.Lock()
-        self._last_access_write: dict[str, float] = {}
+        self._started = False
+
+    # -- lifecycle ---------------------------------------------------------
 
     def start(self) -> None:
+        if self._started:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._started = True
+        self._tmp.mkdir(parents=True, exist_ok=True)
         registry = TaskRegistry.get_instance()
+        if not registry.is_running("karaoke-legacy-purge"):
+            registry.register(
+                "karaoke-legacy-purge",
+                asyncio.create_task(self._purge_legacy_disk_cache()),
+            )
         if not registry.is_running("karaoke-job-worker"):
             registry.register(
                 "karaoke-job-worker", asyncio.create_task(self._run_jobs())
             )
-        if not registry.is_running("karaoke-cache-cleanup"):
+        if not registry.is_running("karaoke-memory-cleanup"):
             registry.register(
-                "karaoke-cache-cleanup",
+                "karaoke-memory-cleanup",
                 asyncio.create_task(self._run_cleanup_periodically()),
             )
 
-    async def prepare(self, track_file_id: str) -> KaraokeJobResponse:
+    async def _purge_legacy_disk_cache(self) -> None:
+        """One-time wipe of karaoke folders written by builds that cached to disk."""
+        await asyncio.to_thread(self._purge_legacy_disk_cache_sync)
+
+    def _purge_legacy_disk_cache_sync(self) -> None:
+        if not self._root.is_dir():
+            return
+        for child in self._root.iterdir():
+            if child.name == "tmp":
+                continue
+            try:
+                if child.is_dir() and not child.is_symlink():
+                    shutil.rmtree(child, ignore_errors=True)
+                else:
+                    child.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Could not remove legacy karaoke path %s", child)
+        if self._tmp.is_dir():
+            for child in self._tmp.iterdir():
+                try:
+                    if child.is_dir() and not child.is_symlink():
+                        shutil.rmtree(child, ignore_errors=True)
+                    else:
+                        child.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("Could not remove karaoke temp path %s", child)
+
+    # -- public API --------------------------------------------------------
+
+    async def prepare(
+        self, track_file_id: str, session_id: str | None = None
+    ) -> KaraokeJobResponse:
         if not self._settings.karaoke_enabled:
             raise ExternalServiceError("Karaoke generation is disabled")
 
         source_path, cache_key = await self._source_and_cache_key(track_file_id)
+        session_id = self._attach_session(cache_key, session_id)
+        self.start()
 
-        if self._entry_ready(cache_key):
-            await self._touch(cache_key)
-            return self._response_for_key(cache_key, cached=True)
+        entry = self._entries.get(cache_key)
+        if entry is not None:
+            self._touch_sync(cache_key)
+            return self._response_for_key(cache_key, cached=True, session_id=session_id)
 
         async with self._lock:
             existing = self._jobs_by_key.get(cache_key)
-            if existing and existing.status in {"queued", "processing"}:
-                return self._response_for_job(existing)
+            if existing is not None and existing.status in {"queued", "processing"}:
+                return self._response_for_job(existing, session_id=session_id)
 
             job = _Job(
                 id=uuid.uuid4().hex,
                 cache_key=cache_key,
                 source_path=source_path,
                 track_file_id=track_file_id,
+                created_at=time.time(),
                 **self._display_metadata(
                     await self._get_track_metadata(track_file_id)
                 ),
@@ -109,8 +196,9 @@ class KaraokeService:
             self._jobs[job.id] = job
             self._jobs_by_key[cache_key] = job
             await self._queue.put(job)
-            self.start()
-            return self._response_for_job(job)
+
+        self._start_preview(cache_key, source_path)
+        return self._response_for_job(job, session_id=session_id)
 
     async def status(self, track_file_id: str) -> KaraokeJobResponse:
         """Return a track's karaoke state without enqueueing a generation job."""
@@ -118,60 +206,131 @@ class KaraokeService:
             return KaraokeJobResponse(
                 cache_key="",
                 status="failed",
+                preview_status="unavailable",
                 error_message="Karaoke generation is disabled",
             )
 
         _source_path, cache_key = await self._source_and_cache_key(track_file_id)
-        if self._entry_ready(cache_key):
-            await self._touch(cache_key)
+        if cache_key in self._entries:
             return self._response_for_key(cache_key, cached=True)
 
-        async with self._lock:
-            job = self._jobs_by_key.get(cache_key)
-            if job is not None and job.status in {"queued", "processing", "failed"}:
-                return self._response_for_job(job)
+        job = self._jobs_by_key.get(cache_key)
+        if job is not None and job.status in {"queued", "processing", "failed"}:
+            return self._response_for_job(job)
 
-        return KaraokeJobResponse(cache_key=cache_key, status="not_generated")
+        return KaraokeJobResponse(
+            cache_key=cache_key,
+            status="not_generated",
+            preview_url=self._preview_url(cache_key),
+            preview_status=self._preview_status(cache_key),
+        )
 
     async def get_job(self, job_id: str) -> KaraokeJobResponse:
         job = self._jobs.get(job_id)
         if job is None:
             raise ResourceNotFoundError("Karaoke job not found")
-        if job.status == "ready" and not self._entry_ready(job.cache_key):
+        if job.status == "ready" and job.cache_key not in self._entries:
             job.status = "failed"
-            job.error_message = "Generated karaoke files are no longer available"
+            job.error_message = "Karaoke files are no longer available"
+            job.finished_at = time.time()
         return self._response_for_job(job)
 
+    async def release(self, session_id: str) -> None:
+        """Drop a client's claim; the last claim removes the in-memory stems."""
+        session = self._sessions.pop(session_id, None)
+        if session is None:
+            return
+        tokens = self._sessions_by_key.get(session.cache_key)
+        if tokens is None:
+            return
+        tokens.discard(session_id)
+        if not tokens:
+            self._sessions_by_key.pop(session.cache_key, None)
+            self._forget(session.cache_key)
+
     async def stream_stem(
-        self, cache_key: str, stem: Stem, range_header: str | None
+        self, cache_key: str, stem: StreamName, range_header: str | None
     ) -> tuple[AsyncGenerator[bytes, None], dict[str, str], int]:
-        if len(cache_key) != 64 or any(c not in "0123456789abcdef" for c in cache_key):
-            raise ResourceNotFoundError("Karaoke entry not found")
-        file_path = self._entry_dir(cache_key) / f"{stem}.m4a"
-        if not file_path.is_file():
-            raise ResourceNotFoundError("Karaoke stem not found")
-        await self._touch(cache_key)
-        stat = await asyncio.to_thread(file_path.stat)
-        file_size = stat.st_size
-        start, end, status = 0, max(file_size - 1, 0), 200
-        if range_header:
-            start, end = self._parse_range(range_header, file_size)
-            status = 206
-        length = max(0, end - start + 1)
-        headers = {
-            "Content-Type": "audio/mp4",
-            "Content-Length": str(length),
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "private, max-age=3600",
-        }
-        if status == 206:
-            headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
-        return self._iter_file(file_path, start, length), headers, status
+        data = self._stream_data(cache_key, stem)
+        if data is None:
+            raise ResourceNotFoundError("Karaoke stream not found")
+        self._touch_sync(cache_key)
+        return self._stream_response(data, range_header)
+
+    async def stream_karaoke(
+        self, cache_key: str, range_header: str | None
+    ) -> tuple[AsyncGenerator[bytes, None], dict[str, str], int]:
+        """Serve AI instrumental when ready, otherwise the center-cut preview."""
+        entry = self._entries.get(cache_key)
+        preview = self._previews.get(cache_key)
+        data = entry.instrumental if entry is not None else preview.data if preview else None
+        if data is None:
+            raise ResourceNotFoundError("Karaoke stream not found")
+        self._touch_sync(cache_key)
+        return self._stream_response(data, range_header)
+
+    # -- sessions ----------------------------------------------------------
+
+    def _attach_session(self, cache_key: str, session_id: str | None) -> str:
+        now = time.time()
+        if session_id:
+            session = self._sessions.get(session_id)
+            if session is not None and session.cache_key == cache_key:
+                session.last_used_at = now
+                return session_id
+        token = uuid.uuid4().hex
+        self._sessions[token] = _Session(token, cache_key, now)
+        self._sessions_by_key.setdefault(cache_key, set()).add(token)
+        return token
+
+    def _has_sessions(self, cache_key: str) -> bool:
+        return bool(self._sessions_by_key.get(cache_key))
+
+    def _touch_sync(self, cache_key: str) -> None:
+        now = time.time()
+        entry = self._entries.get(cache_key)
+        if entry is not None:
+            entry.last_accessed_at = now
+        preview = self._previews.get(cache_key)
+        if preview is not None:
+            preview.last_accessed_at = now
+        for token in self._sessions_by_key.get(cache_key, ()):
+            session = self._sessions.get(token)
+            if session is not None:
+                session.last_used_at = now
+
+    def _forget(self, cache_key: str) -> None:
+        self._entries.pop(cache_key, None)
+        self._previews.pop(cache_key, None)
+        self._preview_unavailable.discard(cache_key)
+        self._preview_tasks.pop(cache_key, None)
+        job = self._jobs_by_key.get(cache_key)
+        if job is None:
+            return
+        if job.status in {"ready", "failed"}:
+            self._jobs.pop(job.id, None)
+            self._jobs_by_key.pop(cache_key, None)
+        elif job.status == "queued":
+            job.cancelled = True
+
+    def _release_key(self, cache_key: str) -> None:
+        for token in list(self._sessions_by_key.pop(cache_key, ())):
+            self._sessions.pop(token, None)
+        self._forget(cache_key)
+
+    # -- generation --------------------------------------------------------
 
     async def _run_jobs(self) -> None:
         while True:
             job = await self._queue.get()
             try:
+                if job.cancelled or not self._has_sessions(job.cache_key):
+                    job.status = "failed"
+                    job.error_message = "Karaoke request was released"
+                    job.finished_at = time.time()
+                    if not self._has_sessions(job.cache_key):
+                        self._jobs_by_key.pop(job.cache_key, None)
+                    continue
                 await self._generate(job)
             except asyncio.CancelledError:
                 raise
@@ -179,6 +338,7 @@ class KaraokeService:
                 logger.exception("Karaoke generation failed for %s", job.cache_key[:12])
                 job.status = "failed"
                 job.error_message = self._safe_error(exc)
+                job.finished_at = time.time()
             finally:
                 self._queue.task_done()
 
@@ -193,24 +353,22 @@ class KaraokeService:
             vocals = work_dir / "vocals.m4a"
             if not instrumental.is_file() or not vocals.is_file():
                 raise ExternalServiceError("Karaoke worker returned incomplete output")
-            if instrumental.stat().st_size == 0 or vocals.stat().st_size == 0:
+            instrumental_bytes = await asyncio.to_thread(instrumental.read_bytes)
+            vocals_bytes = await asyncio.to_thread(vocals.read_bytes)
+            if not instrumental_bytes or not vocals_bytes:
                 raise ExternalServiceError("Karaoke worker returned empty output")
 
-            entry_dir = self._entry_dir(job.cache_key)
-            await asyncio.to_thread(entry_dir.mkdir, parents=True, exist_ok=True)
-            await asyncio.to_thread(
-                instrumental.replace, entry_dir / "instrumental.m4a"
-            )
-            await asyncio.to_thread(vocals.replace, entry_dir / "vocals.m4a")
+            if not self._has_sessions(job.cache_key):
+                job.status = "failed"
+                job.error_message = "Karaoke request was released"
+                return
+
             now = time.time()
-            sizes = [
-                (entry_dir / "instrumental.m4a").stat().st_size,
-                (entry_dir / "vocals.m4a").stat().st_size,
-            ]
-            await asyncio.to_thread(
-                atomic_write_json,
-                entry_dir / "metadata.json",
-                {
+            entry = _Entry(
+                cache_key=job.cache_key,
+                instrumental=instrumental_bytes,
+                vocals=vocals_bytes,
+                metadata={
                     "cache_key": job.cache_key,
                     "track_file_id": job.track_file_id,
                     "source_path": str(job.source_path),
@@ -223,12 +381,18 @@ class KaraokeService:
                     "quality": "standard",
                     "created_at": now,
                     "last_accessed_at": now,
-                    "size_bytes": sum(sizes),
+                    "size_bytes": len(instrumental_bytes) + len(vocals_bytes),
                 },
+                created_at=now,
+                last_accessed_at=now,
             )
+            self._entries[job.cache_key] = entry
+            self._previews.pop(job.cache_key, None)
+            self._preview_unavailable.discard(job.cache_key)
             job.status = "ready"
             job.error_message = None
-            await self.cleanup()
+            job.finished_at = now
+            self._cleanup_sync()
         finally:
             await asyncio.to_thread(shutil.rmtree, work_dir, True)
 
@@ -260,375 +424,345 @@ class KaraokeService:
         except httpx.HTTPError as exc:
             raise ExternalServiceError("Karaoke worker is unavailable") from exc
 
-    async def cleanup(self) -> int:
-        return await asyncio.to_thread(self._cleanup_sync)
+    # -- center-cut preview ------------------------------------------------
 
-    async def list_entries(self) -> KaraokeCacheEntriesResponse:
-        """List every durable karaoke folder, including pre-metadata folders.
+    def _start_preview(self, cache_key: str, source_path: Path) -> None:
+        if not self._has_sessions(cache_key):
+            return
+        if cache_key in self._entries or cache_key in self._previews:
+            return
+        if cache_key in self._preview_unavailable:
+            return
+        task = self._preview_tasks.get(cache_key)
+        if task is not None and not task.done():
+            return
+        task = asyncio.create_task(self._build_preview(cache_key, source_path))
+        self._preview_tasks[cache_key] = task
 
-        The current cache has two levels under ``objects`` while older builds
-        may have placed entries directly below ``karaoke``. Discovery is based
-        on artifact/leaf folders instead of metadata alone so old entries stay
-        manageable.
-        """
-        track_rows = await self._get_track_rows()
-        items = await asyncio.to_thread(self._list_entries_sync, track_rows)
-        return KaraokeCacheEntriesResponse(items=items, total=len(items))
+        def _drop(done: asyncio.Task[None], key: str = cache_key) -> None:
+            if self._preview_tasks.get(key) is done:
+                self._preview_tasks.pop(key, None)
 
-    async def delete_entry(self, entry_id: str) -> None:
-        """Remove one entry previously returned by :meth:`list_entries`."""
-        await asyncio.to_thread(self._delete_entry_sync, entry_id)
+        task.add_done_callback(_drop)
 
-    def _list_entries_sync(
-        self, track_rows: list[dict] | None = None
-    ) -> list[KaraokeCacheEntry]:
-        root = self._root.resolve()
-        if not root.is_dir():
-            return []
-
-        track_map = self._track_metadata_by_cache_key(track_rows or [])
-        entries: list[KaraokeCacheEntry] = []
-        for directory in self._entry_directories_sync(root):
-            try:
-                relative = directory.relative_to(root).as_posix()
-                files = {
-                    child.name: child
-                    for child in directory.iterdir()
-                    if child.is_file()
-                }
-                metadata_path = files.get("metadata.json")
-                try:
-                    metadata = (
-                        read_json(metadata_path, default={}) if metadata_path else {}
-                    )
-                except Exception:  # noqa: BLE001 - malformed legacy metadata is manageable
-                    metadata = {}
-                if not isinstance(metadata, dict):
-                    metadata = {}
-
-                instrumental = files.get("instrumental.m4a")
-                vocals = files.get("vocals.m4a")
-                has_instrumental = instrumental is not None
-                has_vocals = vocals is not None
-                has_metadata = metadata_path is not None
-                if has_instrumental and has_vocals and has_metadata:
-                    status = "ready"
-                elif has_instrumental and has_vocals:
-                    status = "legacy"
-                elif has_instrumental or has_vocals or has_metadata:
-                    status = "partial"
-                else:
-                    status = "legacy"
-
-                cache_key = (
-                    self._metadata_string(metadata, "cache_key") or directory.name
-                )
-                matched_track = track_map.get(cache_key, {})
-                source_path = self._metadata_string(
-                    metadata, "source_path"
-                ) or self._metadata_string(matched_track, "file_path")
-                track_title = self._metadata_string(
-                    metadata, "track_title"
-                ) or self._metadata_string(matched_track, "track_title")
-                artist_name = self._metadata_string(
-                    metadata, "artist_name"
-                ) or self._metadata_string(
-                    matched_track, "artist_name"
-                ) or self._metadata_string(matched_track, "album_artist_name")
-                album_name = self._metadata_string(
-                    metadata, "album_name"
-                ) or self._metadata_string(matched_track, "album_title")
-                source_name = Path(source_path).stem if source_path else None
-                display_name = track_title or source_name or directory.name
-
-                sizes = [
-                    child.stat().st_size
-                    for child in files.values()
-                    if child.name != "metadata.json"
-                ]
-                metadata_size = self._metadata_int(metadata, "size_bytes")
-                entries.append(
-                    KaraokeCacheEntry(
-                        id=self._entry_id(relative),
-                        name=display_name,
-                        relative_path=relative,
-                        status=status,
-                        size_bytes=metadata_size if metadata_size is not None else sum(sizes),
-                        instrumental_size_bytes=(
-                            instrumental.stat().st_size if instrumental else 0
-                        ),
-                        vocals_size_bytes=vocals.stat().st_size if vocals else 0,
-                        created_at=self._metadata_float(metadata, "created_at"),
-                        last_accessed_at=self._metadata_float(
-                            metadata, "last_accessed_at"
-                        ),
-                        track_file_id=(
-                            self._metadata_string(metadata, "track_file_id")
-                            or self._metadata_string(matched_track, "id")
-                        ),
-                        track_title=track_title,
-                        artist_name=artist_name,
-                        album_name=album_name,
-                    )
-                )
-            except (OSError, ValueError, TypeError):
-                # A cache entry can disappear during cleanup. It should not
-                # make the whole administrator view fail.
-                continue
-
-        entries.sort(key=lambda item: item.relative_path.casefold())
-        return entries
-
-    def _delete_entry_sync(self, entry_id: str) -> None:
-        root = self._root.resolve()
-        candidates = {
-            entry.id: entry.relative_path for entry in self._list_entries_sync()
-        }
-        relative = candidates.get(entry_id)
-        if relative is None:
-            raise ResourceNotFoundError("Karaoke cache entry not found")
-
-        candidate = (root / Path(relative)).resolve()
-        if (
-            candidate == root
-            or candidate == self._tmp.resolve()
-            or candidate == self._objects.resolve()
-            or not candidate.is_dir()
-            or not candidate.is_relative_to(root)
-        ):
-            raise ResourceNotFoundError("Karaoke cache entry not found")
-        shutil.rmtree(candidate)
-
-    def _entry_directories_sync(self, root: Path) -> list[Path]:
-        directories: list[Path] = []
-        for directory in root.rglob("*"):
-            if not directory.is_dir() or directory.is_symlink():
-                continue
-            try:
-                relative = directory.relative_to(root)
-                resolved = directory.resolve()
-            except ValueError:
-                continue
-            if not relative.parts or relative.parts[0] == "tmp":
-                continue
-            if not resolved.is_relative_to(root):
-                continue
-            if resolved == self._objects.resolve():
-                continue
-            try:
-                children = list(directory.iterdir())
-            except OSError:
-                continue
-            has_karaoke_artifact = any(
-                child.is_file()
-                and child.name in {"instrumental.m4a", "vocals.m4a", "metadata.json"}
-                for child in children
-            )
-            has_child_directory = any(child.is_dir() for child in children)
-            # ``objects/<prefix>`` is only a sharding container in the current
-            # layout. Once its last entry is deleted it must not appear as a
-            # phantom legacy track.
-            if (
-                relative.parts[0] == "objects"
-                and len(relative.parts) == 2
-                and not has_karaoke_artifact
-            ):
-                continue
-            # Current prefix folders have children but no artifacts. Leaf
-            # folders are included even when malformed/empty so they can be
-            # cleaned up from the same screen.
-            if has_karaoke_artifact or not has_child_directory:
-                directories.append(directory)
-        return directories
-
-    @staticmethod
-    def _metadata_string(metadata: dict, key: str) -> str | None:
-        value = metadata.get(key)
-        return value.strip() if isinstance(value, str) and value.strip() else None
-
-    def _track_metadata_by_cache_key(self, rows: list[dict]) -> dict[str, dict]:
-        matched: dict[str, dict] = {}
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            source = self._metadata_string(row, "file_path")
-            if not source:
-                continue
-            try:
-                source_path = Path(source).resolve()
-                stat = source_path.stat()
-                cache_key = self._cache_key_for_stat(
-                    source_path, stat.st_size, stat.st_mtime_ns
-                )
-            except (OSError, ValueError):
-                continue
-            matched[cache_key] = row
-        return matched
-
-    async def _get_track_rows(self) -> list[dict]:
-        getter = getattr(self._local_files, "get_karaoke_track_rows", None)
-        if not callable(getter):
-            return []
+    async def _build_preview(self, cache_key: str, source_path: Path) -> None:
         try:
-            rows = await getter()
-        except Exception:  # noqa: BLE001 - cache listing should remain available
+            async with self._preview_semaphore:
+                if not self._has_sessions(cache_key):
+                    return
+                data = await asyncio.to_thread(
+                    self._render_preview_sync, cache_key, source_path
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - the AI path still works without a preview
+            logger.exception("Karaoke preview failed for %s", cache_key[:12])
+            data = None
+
+        if data is None:
+            if self._has_sessions(cache_key) and cache_key not in self._entries:
+                self._preview_unavailable.add(cache_key)
+            return
+        if not self._has_sessions(cache_key) or cache_key in self._entries:
+            return
+        now = time.time()
+        self._previews[cache_key] = _Preview(data, now, now)
+
+    def _render_preview_sync(self, cache_key: str, source_path: Path) -> bytes | None:
+        output = self._tmp / f"preview-{uuid.uuid4().hex}.m4a"
+        try:
+            result = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-i",
+                    str(source_path),
+                    "-map",
+                    "0:a:0",
+                    "-vn",
+                    "-map_metadata",
+                    "-1",
+                    "-af",
+                    "pan=stereo|c0=0.5*c0-0.5*c1|c1=0.5*c0-0.5*c1",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    "-movflags",
+                    "+faststart",
+                    str(output),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=_PREVIEW_TIMEOUT_SECONDS,
+                check=False,
+            )
+            if result.returncode != 0:
+                logger.info(
+                    "Karaoke preview unavailable for %s: %.300s",
+                    cache_key[:12],
+                    result.stderr.decode("utf-8", "replace"),
+                )
+                return None
+            if not output.is_file():
+                return None
+            data = output.read_bytes()
+            return data or None
+        except (OSError, subprocess.SubprocessError):
             logger.warning(
-                "Could not load library tracks for karaoke cache labels",
+                "Karaoke preview could not be rendered for %s",
+                cache_key[:12],
                 exc_info=True,
             )
-            return []
-        return rows if isinstance(rows, list) else []
-
-    async def _get_track_metadata(self, track_file_id: str) -> dict | None:
-        getter = getattr(self._local_files, "get_karaoke_track_metadata", None)
-        if not callable(getter):
             return None
-        try:
-            result = await getter(track_file_id)
-        except Exception:  # noqa: BLE001 - labels are best-effort metadata
-            return None
-        return result if isinstance(result, dict) else None
+        finally:
+            output.unlink(missing_ok=True)
 
-    @staticmethod
-    def _display_metadata(row: dict | None) -> dict[str, str | None]:
-        if not row:
-            return {}
-        return {
-            "track_title": KaraokeService._metadata_string(row, "track_title"),
-            "artist_name": KaraokeService._metadata_string(row, "artist_name")
-            or KaraokeService._metadata_string(row, "album_artist_name"),
-            "album_name": KaraokeService._metadata_string(row, "album_title"),
-        }
+    def _preview_status(self, cache_key: str) -> KaraokePreviewStatus:
+        if cache_key in self._previews:
+            return "ready"
+        task = self._preview_tasks.get(cache_key)
+        if task is not None and not task.done():
+            return "generating"
+        if cache_key in self._preview_unavailable:
+            return "unavailable"
+        return "pending"
 
-    @staticmethod
-    def _metadata_float(metadata: dict, key: str) -> float | None:
-        value = metadata.get(key)
-        try:
-            return float(value) if value is not None else None
-        except (TypeError, ValueError):
-            return None
+    # -- memory cleanup ----------------------------------------------------
 
-    @staticmethod
-    def _metadata_int(metadata: dict, key: str) -> int | None:
-        value = metadata.get(key)
-        try:
-            return int(value) if value is not None else None
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _entry_id(relative_path: str) -> str:
-        return (
-            base64.urlsafe_b64encode(relative_path.encode("utf-8"))
-            .decode("ascii")
-            .rstrip("=")
-        )
+    async def cleanup(self) -> int:
+        return self._cleanup_sync()
 
     def _cleanup_sync(self) -> int:
         now = time.time()
-        ttl = max(1, self._settings.karaoke_cache_ttl_days) * 86400
-        entries: list[tuple[float, int, Path]] = []
-        total = 0
         removed = 0
-        for meta_path in self._objects.glob("*/*/metadata.json"):
-            entry_dir = meta_path.parent
-            try:
-                meta = read_json(meta_path, default={})
-                last_access = float(
-                    meta.get("last_accessed_at", meta.get("created_at", 0))
-                )
-                size = int(meta.get("size_bytes", 0))
-            except Exception:  # noqa: BLE001
-                continue
-            if last_access + ttl < now:
-                shutil.rmtree(entry_dir, ignore_errors=True)
-                removed += 1
-                continue
-            total += size
-            entries.append((last_access, size, entry_dir))
+        idle = max(5, self._settings.karaoke_memory_idle_minutes) * 60
 
-        limit = max(1, self._settings.karaoke_cache_max_size_mb) * 1024 * 1024
-        target = int(limit * 0.9)
+        for token, session in list(self._sessions.items()):
+            if now - session.last_used_at <= idle:
+                continue
+            self._sessions.pop(token, None)
+            tokens = self._sessions_by_key.get(session.cache_key)
+            if tokens is not None:
+                tokens.discard(token)
+                if not tokens:
+                    self._sessions_by_key.pop(session.cache_key, None)
+
+        for cache_key in [*self._entries, *self._previews]:
+            if self._has_sessions(cache_key):
+                continue
+            self._forget(cache_key)
+            removed += 1
+
+        for job in list(self._jobs.values()):
+            if job.status not in {"ready", "failed"}:
+                continue
+            finished = job.finished_at or job.created_at
+            if now - finished <= _FINISHED_JOB_TTL_SECONDS:
+                continue
+            self._jobs.pop(job.id, None)
+            if self._jobs_by_key.get(job.cache_key) is job:
+                self._jobs_by_key.pop(job.cache_key, None)
+
+        limit = max(64, self._settings.karaoke_memory_max_size_mb) * 1024 * 1024
+        sizes: dict[str, int] = {}
+        access: dict[str, float] = {}
+        for cache_key, entry in self._entries.items():
+            sizes[cache_key] = len(entry.instrumental) + len(entry.vocals)
+            access[cache_key] = entry.last_accessed_at
+        for cache_key, preview in self._previews.items():
+            if cache_key in sizes:
+                continue
+            sizes[cache_key] = len(preview.data)
+            access[cache_key] = preview.last_accessed_at
+        total = sum(sizes.values())
         if total > limit:
-            for _, size, entry_dir in sorted(entries, key=lambda item: item[0]):
-                shutil.rmtree(entry_dir, ignore_errors=True)
-                total -= size
-                removed += 1
+            target = int(limit * 0.9)
+            # No-session packages go first, then the least recently used ones.
+            order = sorted(
+                sizes,
+                key=lambda key: (
+                    key in self._sessions_by_key,
+                    access.get(key, 0.0),
+                ),
+            )
+            for cache_key in order:
                 if total <= target:
                     break
+                total -= sizes.get(cache_key, 0)
+                self._forget(cache_key)
+                removed += 1
         return removed
 
     async def _run_cleanup_periodically(self) -> None:
         while True:
             try:
-                await self.cleanup()
+                self._cleanup_sync()
             except Exception:  # noqa: BLE001
-                logger.exception("Karaoke cache cleanup failed")
+                logger.exception("Karaoke memory cleanup failed")
             await asyncio.sleep(
-                max(60, self._settings.karaoke_cache_cleanup_interval_seconds)
+                max(60, self._settings.karaoke_cleanup_interval_seconds)
             )
 
-    async def _source_and_cache_key(self, track_file_id: str) -> tuple[Path, str]:
-        source_path = await self._local_files.resolve_validated_path(track_file_id)
-        stat = await asyncio.to_thread(source_path.stat)
-        cache_key = self._cache_key_for_stat(
-            source_path, stat.st_size, stat.st_mtime_ns
+    # -- administrator listing --------------------------------------------
+
+    async def list_entries(self) -> KaraokeCacheEntriesResponse:
+        items: list[KaraokeCacheEntry] = []
+        for cache_key, entry in self._entries.items():
+            items.append(
+                self._entry_item(cache_key, entry.metadata, entry.last_accessed_at, "ready", len(entry.instrumental) + len(entry.vocals), len(entry.instrumental), len(entry.vocals), 0)
+            )
+        for cache_key, preview in self._previews.items():
+            if cache_key in self._entries:
+                continue
+            job = self._jobs_by_key.get(cache_key)
+            metadata = (
+                {
+                    "track_file_id": job.track_file_id,
+                    "track_title": job.track_title,
+                    "artist_name": job.artist_name,
+                    "album_name": job.album_name,
+                }
+                if job is not None
+                else {}
+            )
+            items.append(
+                self._entry_item(cache_key, metadata, preview.last_accessed_at, "preview", len(preview.data), 0, 0, len(preview.data))
+            )
+        items.sort(key=lambda item: item.name.casefold())
+        return KaraokeCacheEntriesResponse(items=items, total=len(items))
+
+    def _entry_item(
+        self,
+        cache_key: str,
+        metadata: dict[str, object],
+        last_accessed_at: float,
+        status: Literal["ready", "preview"],
+        size_bytes: int,
+        instrumental_size: int,
+        vocals_size: int,
+        preview_size: int,
+    ) -> KaraokeCacheEntry:
+        track_title = self._metadata_string(metadata, "track_title")
+        source_path = self._metadata_string(metadata, "source_path")
+        source_name = Path(source_path).stem if source_path else None
+        return KaraokeCacheEntry(
+            id=cache_key,
+            name=track_title or source_name or cache_key[:12],
+            relative_path=cache_key,
+            status=status,
+            size_bytes=size_bytes,
+            instrumental_size_bytes=instrumental_size,
+            vocals_size_bytes=vocals_size,
+            preview_size_bytes=preview_size,
+            created_at=self._metadata_float(metadata, "created_at"),
+            last_accessed_at=last_accessed_at,
+            track_file_id=self._metadata_string(metadata, "track_file_id"),
+            track_title=track_title,
+            artist_name=self._metadata_string(metadata, "artist_name"),
+            album_name=self._metadata_string(metadata, "album_name"),
         )
-        return source_path, cache_key
+
+    async def delete_entry(self, entry_id: str) -> None:
+        cache_key = entry_id.strip()
+        if (
+            not self._valid_cache_key(cache_key)
+            or cache_key not in self._entries
+            and cache_key not in self._previews
+        ):
+            raise ResourceNotFoundError("Karaoke entry not found")
+        self._release_key(cache_key)
+
+    # -- responses and streaming ------------------------------------------
 
     @staticmethod
-    def _cache_key_for_stat(source_path: Path, size: int, mtime_ns: int) -> str:
-        return hashlib.sha256(
-            f"{source_path}\0{size}\0{mtime_ns}\0{_ENGINE_VERSION}".encode()
-        ).hexdigest()
+    def _valid_cache_key(cache_key: str) -> bool:
+        return len(cache_key) == 64 and all(c in "0123456789abcdef" for c in cache_key)
 
-    async def _touch(self, cache_key: str) -> None:
-        now = time.time()
-        if (
-            now - self._last_access_write.get(cache_key, 0)
-            < _ACCESS_WRITE_INTERVAL_SECONDS
-        ):
-            return
-        self._last_access_write[cache_key] = now
-        meta_path = self._entry_dir(cache_key) / "metadata.json"
-        try:
-            meta = await asyncio.to_thread(read_json, meta_path, {})
-            meta["last_accessed_at"] = now
-            await asyncio.to_thread(atomic_write_json, meta_path, meta)
-        except Exception:  # noqa: BLE001 - playback must not fail for an access timestamp
-            logger.debug("Could not update karaoke access time", exc_info=True)
+    def _preview_url(self, cache_key: str) -> str:
+        return f"/api/v1/karaoke/{cache_key}/preview"
 
-    def _entry_dir(self, cache_key: str) -> Path:
-        return self._objects / cache_key[:2] / cache_key
-
-    def _entry_ready(self, cache_key: str) -> bool:
-        entry = self._entry_dir(cache_key)
-        return all(
-            (entry / filename).is_file()
-            for filename in ("instrumental.m4a", "vocals.m4a", "metadata.json")
-        )
-
-    def _response_for_key(self, cache_key: str, *, cached: bool) -> KaraokeJobResponse:
+    def _response_for_key(
+        self, cache_key: str, *, cached: bool, session_id: str | None = None
+    ) -> KaraokeJobResponse:
         base = f"/api/v1/karaoke/{cache_key}"
         return KaraokeJobResponse(
             cache_key=cache_key,
             status="ready",
             cached=cached,
+            session_id=session_id,
             instrumental_url=f"{base}/instrumental",
             vocals_url=f"{base}/vocals",
+            preview_url=self._preview_url(cache_key),
+            preview_status=self._preview_status(cache_key),
         )
 
-    def _response_for_job(self, job: _Job) -> KaraokeJobResponse:
+    def _response_for_job(
+        self, job: _Job, *, session_id: str | None = None
+    ) -> KaraokeJobResponse:
         if job.status == "ready":
-            response = self._response_for_key(job.cache_key, cached=False)
-            response.job_id = job.id
-            return response
+            if job.cache_key in self._entries:
+                response = self._response_for_key(
+                    job.cache_key, cached=False, session_id=session_id
+                )
+                response.job_id = job.id
+                return response
+            job.status = "failed"
+            job.error_message = "Karaoke files are no longer available"
         return KaraokeJobResponse(
             job_id=job.id,
             cache_key=job.cache_key,
             status=job.status,
+            session_id=session_id,
+            preview_url=self._preview_url(job.cache_key),
+            preview_status=self._preview_status(job.cache_key),
             error_message=job.error_message,
         )
+
+    def _stream_data(self, cache_key: str, stem: StreamName) -> bytes | None:
+        if not self._valid_cache_key(cache_key):
+            return None
+        if stem == "preview":
+            preview = self._previews.get(cache_key)
+            return preview.data if preview is not None else None
+        entry = self._entries.get(cache_key)
+        if entry is None:
+            return None
+        return entry.instrumental if stem == "instrumental" else entry.vocals
+
+    def _stream_response(
+        self, data: bytes, range_header: str | None
+    ) -> tuple[AsyncGenerator[bytes, None], dict[str, str], int]:
+        size = len(data)
+        start, end, status = 0, max(size - 1, 0), 200
+        if range_header:
+            start, end = self._parse_range(range_header, size)
+            status = 206
+        length = max(0, end - start + 1)
+        headers = {
+            "Content-Type": "audio/mp4",
+            "Content-Length": str(length),
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "private, no-store",
+        }
+        if status == 206:
+            headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+        return self._iter_bytes(data, start, length), headers, status
+
+    @staticmethod
+    async def _iter_bytes(
+        data: bytes, offset: int, length: int
+    ) -> AsyncGenerator[bytes, None]:
+        end = min(offset + length, len(data))
+        position = offset
+        while position < end:
+            chunk_end = min(position + STREAM_CHUNK_SIZE, end)
+            yield data[position:chunk_end]
+            position = chunk_end
 
     @staticmethod
     def _safe_error(exc: Exception) -> str:
@@ -656,16 +790,52 @@ class KaraokeService:
             raise RangeNotSatisfiableError(file_size)
         return start, end
 
+    # -- track metadata ----------------------------------------------------
+
+    async def _source_and_cache_key(self, track_file_id: str) -> tuple[Path, str]:
+        source_path = await self._local_files.resolve_validated_path(track_file_id)
+        stat = await asyncio.to_thread(source_path.stat)
+        cache_key = self._cache_key_for_stat(
+            source_path, stat.st_size, stat.st_mtime_ns
+        )
+        return source_path, cache_key
+
     @staticmethod
-    async def _iter_file(
-        path: Path, offset: int, length: int
-    ) -> AsyncGenerator[bytes, None]:
-        remaining = length
-        async with aiofiles.open(path, "rb") as handle:
-            await handle.seek(offset)
-            while remaining > 0:
-                chunk = await handle.read(min(STREAM_CHUNK_SIZE, remaining))
-                if not chunk:
-                    break
-                remaining -= len(chunk)
-                yield chunk
+    def _cache_key_for_stat(source_path: Path, size: int, mtime_ns: int) -> str:
+        return hashlib.sha256(
+            f"{source_path}\0{size}\0{mtime_ns}\0{_ENGINE_VERSION}".encode()
+        ).hexdigest()
+
+    async def _get_track_metadata(self, track_file_id: str) -> dict | None:
+        getter = getattr(self._local_files, "get_karaoke_track_metadata", None)
+        if not callable(getter):
+            return None
+        try:
+            result = await getter(track_file_id)
+        except Exception:  # noqa: BLE001 - labels are best-effort metadata
+            return None
+        return result if isinstance(result, dict) else None
+
+    @staticmethod
+    def _display_metadata(row: dict | None) -> dict[str, str | None]:
+        if not row:
+            return {}
+        return {
+            "track_title": KaraokeService._metadata_string(row, "track_title"),
+            "artist_name": KaraokeService._metadata_string(row, "artist_name")
+            or KaraokeService._metadata_string(row, "album_artist_name"),
+            "album_name": KaraokeService._metadata_string(row, "album_title"),
+        }
+
+    @staticmethod
+    def _metadata_string(metadata: dict, key: str) -> str | None:
+        value = metadata.get(key)
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    @staticmethod
+    def _metadata_float(metadata: dict, key: str) -> float | None:
+        value = metadata.get(key)
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None

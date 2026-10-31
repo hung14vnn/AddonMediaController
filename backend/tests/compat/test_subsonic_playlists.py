@@ -287,6 +287,7 @@ async def test_spotify_imported_cover_advertised_and_served(
     spotify_client.get_playlist_tracks.return_value = []
     factory = AsyncMock()
     factory.resolve_spotify.return_value = spotify_client
+    factory.resolve_spotify_catalog.return_value = spotify_client
     importer = SpotifyImportService(
         client_factory=factory,
         playlist_repo=None,

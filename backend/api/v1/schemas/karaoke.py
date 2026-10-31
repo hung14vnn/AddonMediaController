@@ -4,10 +4,15 @@ from api.v1.schemas.common import AppStruct
 
 
 KaraokeStatus = Literal["not_generated", "queued", "processing", "ready", "failed"]
+KaraokePreviewStatus = Literal["pending", "generating", "ready", "unavailable"]
 
 
 class KaraokePrepareRequest(AppStruct):
     track_file_id: str
+
+
+class KaraokeReleaseRequest(AppStruct):
+    session_id: str
 
 
 class KaraokeJobResponse(AppStruct):
@@ -15,19 +20,22 @@ class KaraokeJobResponse(AppStruct):
     status: KaraokeStatus
     job_id: str | None = None
     cached: bool = False
+    session_id: str | None = None
     instrumental_url: str | None = None
     vocals_url: str | None = None
+    preview_url: str | None = None
+    preview_status: KaraokePreviewStatus = "pending"
     error_message: str | None = None
 
 
-KaraokeCacheEntryStatus = Literal["ready", "partial", "legacy"]
+KaraokeCacheEntryStatus = Literal["ready", "preview"]
 
 
 class KaraokeCacheEntry(AppStruct):
-    """One administrator-visible folder in the karaoke cache.
+    """One karaoke package currently held in memory.
 
-    ``legacy`` deliberately includes complete cache folders without the current
-    metadata file. They are still safe to remove from the management screen.
+    ``preview`` entries only have the quick vocal-cut mix while the AI stems are
+    still being generated.
     """
 
     id: str
@@ -37,6 +45,7 @@ class KaraokeCacheEntry(AppStruct):
     size_bytes: int = 0
     instrumental_size_bytes: int = 0
     vocals_size_bytes: int = 0
+    preview_size_bytes: int = 0
     created_at: float | None = None
     last_accessed_at: float | None = None
     track_file_id: str | None = None

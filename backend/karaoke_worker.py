@@ -1,11 +1,11 @@
-"""Tiny internal HTTP sidecar for CPU-friendly MDX vocal separation."""
+"""Tiny internal HTTP sidecar for CPU-friendly Spleeter vocal separation."""
 
 from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -19,13 +19,11 @@ MUSIC_ROOTS = [
 CACHE_TMP_ROOT = Path(
     os.getenv("KARAOKE_CACHE_TMP_ROOT", "/app/cache/karaoke/tmp")
 ).resolve()
-MODEL_NAME = os.getenv("KARAOKE_MODEL_NAME", "UVR_MDXNET_9482.onnx")
-MODEL_DIR = Path(
-    os.getenv(
-        "AUDIO_SEPARATOR_MODEL_DIR", "/app/.cache/audio-separator/models"
-    )
-).resolve()
+MODEL_DIR = Path(os.getenv("KARAOKE_MODEL_DIR", "/app/models")).resolve()
+MODEL_FILES = ("vocals.fp16.onnx", "accompaniment.fp16.onnx")
+WORKER_THREADS = int(os.getenv("KARAOKE_WORKER_THREADS", "2"))
 JOB_TIMEOUT = int(os.getenv("KARAOKE_WORKER_JOB_TIMEOUT", "840"))
+SAMPLE_RATE = 44_100
 
 
 def _inside(path: Path, roots: list[Path]) -> bool:
@@ -43,6 +41,109 @@ def _run(argv: list[str], timeout: int = JOB_TIMEOUT) -> None:
     )
 
 
+def _ensure_models() -> None:
+    missing = [name for name in MODEL_FILES if not (MODEL_DIR / name).is_file()]
+    if missing:
+        raise RuntimeError(f"Missing karaoke model files: {', '.join(missing)}")
+
+
+def _decode(source: Path, target: Path) -> None:
+    _run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-vn",
+            "-ac",
+            "2",
+            "-ar",
+            str(SAMPLE_RATE),
+            "-c:a",
+            "pcm_f32le",
+            str(target),
+        ]
+    )
+
+
+def _encode(source: Path, target: Path, *, vocal_gain: bool = False) -> None:
+    argv = [
+        "ffmpeg",
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(source),
+        "-map_metadata",
+        "-1",
+    ]
+    if vocal_gain:
+        argv.extend(["-af", "volume=1.12"])
+    argv.extend(
+        ["-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", str(target)]
+    )
+    _run(argv)
+
+
+def _separate_worker(source: Path, destination: Path) -> None:
+    import numpy as np
+    import sherpa_onnx
+    import soundfile as sf
+
+    _ensure_models()
+    source_wav = destination / "source.wav"
+    vocals_wav = destination / "vocals.wav"
+    instrumental_wav = destination / "instrumental.wav"
+    try:
+        _decode(source, source_wav)
+        samples, sample_rate = sf.read(
+            str(source_wav), dtype="float32", always_2d=True
+        )
+        if sample_rate != SAMPLE_RATE or samples.shape[1] != 2:
+            raise RuntimeError("Decoded audio is not 44.1 kHz stereo")
+        config = sherpa_onnx.OfflineSourceSeparationConfig(
+            model=sherpa_onnx.OfflineSourceSeparationModelConfig(
+                spleeter=sherpa_onnx.OfflineSourceSeparationSpleeterModelConfig(
+                    vocals=str(MODEL_DIR / MODEL_FILES[0]),
+                    accompaniment=str(MODEL_DIR / MODEL_FILES[1]),
+                ),
+                num_threads=WORKER_THREADS,
+                debug=False,
+                provider="cpu",
+            )
+        )
+        if not config.validate():
+            raise RuntimeError("Invalid karaoke model configuration")
+        separator = sherpa_onnx.OfflineSourceSeparation(config)
+        output = separator.process(
+            sample_rate=sample_rate, samples=np.ascontiguousarray(samples.T)
+        )
+        if len(output.stems) != 2:
+            raise RuntimeError("Karaoke model did not return two stems")
+        # Spleeter returns vocals first, then accompaniment.
+        for stem, path in (
+            (output.stems[0], vocals_wav),
+            (output.stems[1], instrumental_wav),
+        ):
+            sf.write(
+                str(path),
+                np.ascontiguousarray(stem.data.T),
+                output.sample_rate,
+                subtype="FLOAT",
+            )
+        _encode(instrumental_wav, destination / "instrumental.m4a")
+        _encode(vocals_wav, destination / "vocals.m4a", vocal_gain=True)
+    finally:
+        for path in (source_wav, vocals_wav, instrumental_wav):
+            path.unlink(missing_ok=True)
+
+
 def separate(input_path: str, output_dir: str) -> None:
     source = Path(input_path).resolve(strict=True)
     destination = Path(output_dir).resolve()
@@ -52,80 +153,19 @@ def separate(input_path: str, output_dir: str) -> None:
         raise ValueError("Output is outside karaoke temporary cache")
 
     destination.mkdir(parents=True, exist_ok=True)
-    separated = destination / "separated"
-    shutil.rmtree(separated, ignore_errors=True)
     _run(
         [
-            "audio-separator",
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--separate-worker",
             str(source),
-            "--model_filename",
-            MODEL_NAME,
-            "--model_file_dir",
-            str(MODEL_DIR),
-            "--output_dir",
-            str(separated),
-            "--output_format",
-            "WAV",
-            "--mdx_batch_size",
-            "1",
-            "--mdx_segment_size",
-            "256",
-            "--mdx_overlap",
-            "0.25",
-            "--custom_output_names",
-            '{"Vocals":"vocals","Instrumental":"instrumental"}',
-            "--log_level",
-            "WARNING",
+            str(destination),
         ]
     )
-    accompaniment = separated / "instrumental.wav"
-    vocals = separated / "vocals.wav"
-    if not accompaniment.is_file() or not vocals.is_file():
-        raise RuntimeError("Audio separator did not create both stems")
-
-    _run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(accompaniment),
-            "-map_metadata",
-            "-1",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "256k",
-            "-movflags",
-            "+faststart",
-            str(destination / "instrumental.m4a"),
-        ]
-    )
-    _run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(vocals),
-            "-map_metadata",
-            "-1",
-            "-af",
-            "volume=1.12",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "256k",
-            "-movflags",
-            "+faststart",
-            str(destination / "vocals.m4a"),
-        ]
-    )
-    shutil.rmtree(separated, ignore_errors=True)
+    for filename in ("instrumental.m4a", "vocals.m4a"):
+        path = destination / filename
+        if not path.is_file() or path.stat().st_size == 0:
+            raise RuntimeError("Audio separator did not create both stems")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -169,5 +209,12 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    CACHE_TMP_ROOT.mkdir(parents=True, exist_ok=True)
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    if len(sys.argv) == 4 and sys.argv[1] == "--separate-worker":
+        _separate_worker(
+            Path(sys.argv[2]).resolve(strict=True),
+            Path(sys.argv[3]).resolve(),
+        )
+    else:
+        _ensure_models()
+        CACHE_TMP_ROOT.mkdir(parents=True, exist_ok=True)
+        ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

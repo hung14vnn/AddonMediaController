@@ -30,6 +30,7 @@ from core.dependencies import (
     get_now_playing_service,
     get_playlist_service,
     get_preferences_service,
+    get_karaoke_service,
     get_stream_concurrency_service,
     get_transcode_service,
     get_version_service,
@@ -54,6 +55,7 @@ if TYPE_CHECKING:
     from services.compat.stream_concurrency import StreamConcurrencyService
     from services.compat.transcode_service import TranscodeService
     from services.local_files_service import LocalFilesService
+    from services.karaoke_service import KaraokeService
     from services.now_playing_service import NowPlayingService
     from services.playlist_service import PlaylistService
     from services.preferences_service import PreferencesService
@@ -85,6 +87,7 @@ class CompatServices:
     scan: "TargetCompatScanService"
     advanced_transcode: "AdvancedTranscodeService"
     ytmusic_stream: "YTMusicStreamService"
+    karaoke: "KaraokeService | None" = None
 
 
 def get_compat_services(
@@ -110,6 +113,7 @@ def get_compat_services(
     scan=Depends(get_target_compat_scan_service),
     advanced_transcode=Depends(get_advanced_transcode_service),
     ytmusic_stream=Depends(get_ytmusic_stream_service),
+    karaoke=Depends(get_karaoke_service),
 ) -> CompatServices:
     return CompatServices(
         app_passwords=app_passwords,
@@ -134,4 +138,5 @@ def get_compat_services(
         scan=scan,
         advanced_transcode=advanced_transcode,
         ytmusic_stream=ytmusic_stream,
+        karaoke=karaoke,
     )

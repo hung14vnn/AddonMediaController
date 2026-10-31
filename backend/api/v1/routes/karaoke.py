@@ -9,6 +9,7 @@ from api.v1.schemas.karaoke import (
     KaraokeCacheEntryDeleteRequest,
     KaraokeJobResponse,
     KaraokePrepareRequest,
+    KaraokeReleaseRequest,
 )
 from core.dependencies import get_karaoke_service
 from core.exceptions import RangeNotSatisfiableError
@@ -34,7 +35,18 @@ async def delete_karaoke_entry(
     service: KaraokeService = Depends(get_karaoke_service),
 ) -> StatusMessageResponse:
     await service.delete_entry(body.id)
-    return StatusMessageResponse(status="ok", message="Karaoke cache entry removed")
+    return StatusMessageResponse(status="ok", message="Karaoke entry removed")
+
+
+@router.post("/release", response_model=StatusMessageResponse)
+async def release_karaoke(
+    _current_user: CurrentUserDep,
+    body: KaraokeReleaseRequest = MsgSpecBody(KaraokeReleaseRequest),
+    service: KaraokeService = Depends(get_karaoke_service),
+) -> StatusMessageResponse:
+    """Drop this client's claim on the in-memory stems."""
+    await service.release(body.session_id)
+    return StatusMessageResponse(status="ok", message="Karaoke session released")
 
 
 @router.post("", response_model=KaraokeJobResponse)
@@ -68,7 +80,7 @@ async def get_karaoke_status(
 @router.get("/{cache_key}/{stem}")
 async def stream_karaoke_stem(
     cache_key: str,
-    stem: Literal["instrumental", "vocals"],
+    stem: Literal["instrumental", "vocals", "preview"],
     request: Request,
     _current_user: CurrentUserDep,
     service: KaraokeService = Depends(get_karaoke_service),

@@ -263,6 +263,7 @@ async def test_subsonic_endpoints_isolate_user_tracks(tmp_path: Path):
         playback_report=target.playback_report,
         scan=scan,
         advanced_transcode=AdvancedTranscodeService(),
+        ytmusic_stream=None,
     )
 
     app = FastAPI()

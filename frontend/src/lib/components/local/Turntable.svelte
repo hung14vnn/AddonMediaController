@@ -55,9 +55,11 @@
 		Boolean(np?.trackName?.trim() && formatArtistCredit(np?.artistName).trim())
 	);
 	const karaokeBusy = $derived(
-		karaokeController.status === 'preparing' ||
+		(karaokeController.status === 'preparing' ||
 			karaokeController.status === 'queued' ||
-			karaokeController.status === 'processing'
+			karaokeController.status === 'processing') &&
+			!playerStore.karaokeActive &&
+			!karaokeController.previewPlaying
 	);
 
 	function karaokeTip(): string {
@@ -403,7 +405,7 @@
 								? 'Karaoke ready'
 								: 'Karaoke'}
 				</button>
-				{#if playerStore.karaokeActive}
+				{#if playerStore.karaokeActive && !karaokeController.previewPlaying}
 					<div class="flex min-w-40 flex-1 items-center gap-2">
 						<Mic class="h-4 w-4 shrink-0 text-accent" />
 						<input
@@ -422,6 +424,8 @@
 							>{Math.round(playerStore.karaokeVocalLevel)}%</span
 						>
 					</div>
+				{:else if playerStore.karaokeActive}
+					<span class="text-xs text-base-content/60">Vocal cut · AI stems on the way</span>
 				{:else if karaokeController.status === 'failed'}
 					<span class="text-xs text-error">{karaokeController.error}</span>
 				{/if}

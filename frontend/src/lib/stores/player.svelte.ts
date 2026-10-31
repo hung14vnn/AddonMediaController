@@ -53,6 +53,7 @@ import { resumeAudioEngine } from '$lib/player/audioElement';
 import { createOfflineTrackUrl } from '$lib/offline/offlineAudio';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { KaraokePlaybackSource } from '$lib/player/KaraokePlaybackSource';
+import { NativeAudioSource } from '$lib/player/NativeAudioSource';
 import { usesMobileLowPowerVisuals } from '$lib/utils/mobilePerformance';
 import {
 	setMediaSessionActionHandler,
@@ -105,6 +106,7 @@ function createPlayerStore() {
 	let playbackOrigin = $state<PlaybackOrigin>('https');
 	let isPlayerVisible = $state(false);
 	let karaokeActive = $state(false);
+	let karaokePreviewActive = $state(false);
 	let karaokeVocalLevel = $state(100);
 	let loadGeneration = 0;
 	let queue = $state<QueueItem[]>([]);
@@ -265,6 +267,7 @@ function createPlayerStore() {
 		isSeekable = true;
 		isPlayerVisible = false;
 		karaokeActive = false;
+		karaokePreviewActive = false;
 		setProgress(0);
 		duration = 0;
 		queue = [];
@@ -421,6 +424,7 @@ function createPlayerStore() {
 		}
 		currentSource?.destroy();
 		karaokeActive = false;
+		karaokePreviewActive = false;
 		const gen = ++loadGeneration;
 		let source: PlaybackSource,
 			resolvedUrl: string | undefined = item.streamUrl;
@@ -710,8 +714,7 @@ function createPlayerStore() {
 		});
 		source.onProgress((currentTime, dur) => {
 			if (gen !== loadGeneration) return;
-			progress = currentTime;
-			visibleProgress = currentTime;
+			setProgress(currentTime);
 			duration = dur;
 			// Do not publish MediaSession position on every native `timeupdate`.
 			// iOS fires this event several times per second, and each
@@ -813,6 +816,9 @@ function createPlayerStore() {
 		get karaokeActive() {
 			return karaokeActive;
 		},
+		get karaokePreviewActive() {
+			return karaokePreviewActive;
+		},
 		get karaokeVocalLevel() {
 			return karaokeVocalLevel;
 		},
@@ -870,6 +876,7 @@ function createPlayerStore() {
 			isSeekable = true;
 			isPlayerVisible = true;
 			karaokeActive = false;
+			karaokePreviewActive = false;
 			queue = [];
 			currentIndex = 0;
 			shuffleOrder = [];
@@ -1228,13 +1235,51 @@ function createPlayerStore() {
 			try {
 				await replaceCurrentSource(source, startAt, resume);
 				karaokeActive = true;
+				karaokePreviewActive = false;
 			} catch (error) {
 				karaokeActive = false;
+				karaokePreviewActive = false;
 				if (queue[currentIndex]?.trackSourceId === item.trackSourceId) {
 					await restoreOriginalSource(startAt, resume);
 				}
 				throw error;
 			}
+		},
+
+		async activateKaraokePreview(previewUrl: string): Promise<void> {
+			const item = queue[currentIndex];
+			if (!item || item.sourceType !== 'local') {
+				throw new Error('Karaoke is currently available for local tracks only');
+			}
+			if (karaokeActive) return;
+			const startAt = progress;
+			const resume = isPlaying;
+			const source = new NativeAudioSource('local', { url: previewUrl, seekable: true });
+			try {
+				await replaceCurrentSource(source, startAt, resume);
+				karaokeActive = true;
+				karaokePreviewActive = true;
+			} catch (error) {
+				karaokeActive = false;
+				karaokePreviewActive = false;
+				if (queue[currentIndex]?.trackSourceId === item.trackSourceId) {
+					await restoreOriginalSource(startAt, resume);
+				}
+				throw error;
+			}
+		},
+
+		async upgradeKaraoke(instrumentalUrl: string, vocalsUrl: string): Promise<void> {
+			if (!karaokeActive) {
+				await this.activateKaraoke(instrumentalUrl, vocalsUrl);
+				return;
+			}
+			const startAt = progress;
+			const resume = isPlaying;
+			const source = new KaraokePlaybackSource(instrumentalUrl, vocalsUrl);
+			source.setVocalLevel(karaokeVocalLevel);
+			await replaceCurrentSource(source, startAt, resume);
+			karaokePreviewActive = false;
 		},
 
 		async deactivateKaraoke(): Promise<void> {
@@ -1243,6 +1288,7 @@ function createPlayerStore() {
 			const resume = isPlaying;
 			await restoreOriginalSource(startAt, resume);
 			karaokeActive = false;
+			karaokePreviewActive = false;
 		},
 
 		setKaraokeVocalLevel(level: number): void {

@@ -20,7 +20,14 @@ vi.mock('$lib/queries/HomeIntegrationStatusQuery.svelte', () => ({
 	})
 }));
 
+// The queue components own their queries; this page spec only checks which
+// branch of the page renders, so keep them out of the browser QueryClient path.
+vi.mock('$lib/components/downloads/FreeMusicQueue.svelte', () => ({ default: () => null }));
+vi.mock('$lib/components/downloads/DownloadQueue.svelte', () => ({ default: () => null }));
+vi.mock('$lib/components/discover/DiscoveryBatchList.svelte', () => ({ default: () => null }));
+
 vi.mock('$lib/stores/authStore.svelte', () => ({
+	LAST_USER_ID_KEY: 'test:last-user',
 	authStore: {
 		get isAdmin() {
 			return h.isAdmin;
@@ -41,7 +48,9 @@ vi.mock('$lib/queries/import/DropImportQueries.svelte', () => ({
 vi.mock('$lib/queries/import/DropImportMutations.svelte', () => ({
 	uploadDropMutation: () => ({ mutate: vi.fn(), isPending: false }),
 	matchDropItemMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	discardDropItemMutation: () => ({ mutate: vi.fn(), isPending: false })
+	discardDropItemMutation: () => ({ mutate: vi.fn(), isPending: false }),
+	clearDiscardedDropItemsMutation: () => ({ mutate: vi.fn(), isPending: false }),
+	clearFinishedDropJobsMutation: () => ({ mutate: vi.fn(), isPending: false })
 }));
 
 import DownloadsPage from './+page.svelte';
@@ -75,10 +84,11 @@ describe('/downloads page', () => {
 			.not.toBeInTheDocument();
 	});
 
-	it('shows a loading skeleton before integration status loads', async () => {
+	it('shows the queue instead of skeletons while integration status loads', async () => {
 		h.loaded = false;
 		const { container } = await render(DownloadsPage);
-		expect(container.querySelector('.skeleton')).not.toBeNull();
+		expect(container.querySelector('.skeleton')).toBeNull();
+		expect(container.textContent).toContain('Downloads');
 	});
 
 	it('hides the Import tab from plain users', async () => {

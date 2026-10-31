@@ -38,8 +38,28 @@ vi.mock('$lib/queries/import/DropImportQueries.svelte', () => ({
 
 vi.mock('$lib/queries/import/DropImportMutations.svelte', () => ({
 	matchDropItemMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	discardDropItemMutation: () => ({ mutate: h.discard, isPending: false })
+	discardDropItemMutation: () => ({ mutate: h.discard, isPending: false }),
+	clearDiscardedDropItemsMutation: () => ({ mutate: vi.fn(), isPending: false }),
+	clearFinishedDropJobsMutation: () => ({ mutate: vi.fn(), isPending: false })
 }));
+
+// The match modal opens its own TanStack queries; this spec only checks that
+// the Match button surfaces the modal, so keep those queries inert instead of
+// mounting a QueryClientProvider around the list.
+vi.mock('@tanstack/svelte-query', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@tanstack/svelte-query')>();
+	return {
+		...actual,
+		createQuery: () => ({
+			data: undefined,
+			isLoading: false,
+			isFetching: false,
+			isError: false,
+			error: null,
+			refetch: vi.fn()
+		})
+	};
+});
 
 vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	getAlbumSearchQuery: () => ({ data: [], isFetching: false })
@@ -169,6 +189,6 @@ describe('DropImportJobList', () => {
 		];
 		await render(DropImportJobList);
 		await page.getByRole('button', { name: 'Match…' }).click();
-		await expect.element(page.getByText('Match to an album')).toBeVisible();
+		await expect.element(page.getByText('Review import')).toBeVisible();
 	});
 });

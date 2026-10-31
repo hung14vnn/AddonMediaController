@@ -210,7 +210,7 @@ describe('low power playback', () => {
 		await start();
 		expect(createOfflineTrackUrl).toHaveBeenCalled();
 		expect(createPlaybackSource).toHaveBeenLastCalledWith('local', {
-			url: '/stream/test',
+			url: 'http://localhost/test.mp3',
 			seekable: true,
 			cleanup: undefined
 		});
@@ -260,8 +260,9 @@ describe('playerStore queue methods', () => {
 	});
 
 	describe('previousTrack', () => {
-		it('keeps Previous enabled and restarts the first queued track', () => {
+		it('keeps Previous enabled and restarts the first queued track', async () => {
 			playerStore.playQueue(makeItems(2));
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
 			expect(playerStore.hasPrevious).toBe(true);
 			playerStore.previousTrack();

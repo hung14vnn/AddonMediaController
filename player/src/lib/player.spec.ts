@@ -48,6 +48,12 @@ class FakeAudio extends EventTarget {
 	ended = false;
 	style: Record<string, string> = {};
 	remove = vi.fn();
+	/** Healthy forward buffer: the prefetch guard skips only a stream that is starving. */
+	buffered = {
+		length: 1,
+		start: () => 0,
+		end: () => this.currentTime + 120
+	};
 	static all: FakeAudio[] = [];
 	constructor() {
 		super();
@@ -169,20 +175,24 @@ describe('Player track changes', () => {
 			document.dispatchEvent(new Event('visibilitychange'));
 			expect(audio.play).toHaveBeenCalledTimes(1);
 		} finally {
-			vi.restoreAllMocks();
+			hidden.mockRestore();
 		}
 	});
 
-	it('downloads the next track in the last 150 seconds and plays it from memory', async () => {
-		const fetchMock = vi.fn(async () => audioResponse());
+	it('downloads the next track in the last five minutes and plays it from memory', async () => {
+		const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => audioResponse());
 		vi.stubGlobal('fetch', fetchMock);
 		const { player, audio } = await freshPlayer();
-		player.playList([song('a', 200), song('b')]);
+		player.playList([song('a', 400), song('b')]);
 		await flush();
 		audio.ready();
 		playTo(audio, 40);
-		expect(fetchMock).not.toHaveBeenCalled();
-		for (const t of [60, 61, 62]) playTo(audio, t);
+		// The load already probed the next stream (Range warm-start); the whole-track
+		// download must still wait for the lead window.
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(fetchMock.mock.calls[0][1]).toMatchObject({ headers: { Range: 'bytes=0-1' } });
+		fetchMock.mockClear();
+		for (const t of [100, 101, 102]) playTo(audio, t);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('id=b'), expect.anything());
 		await flush();
@@ -611,13 +621,16 @@ describe('Player platform fixes', () => {
 		const { player, audio } = await freshPlayer();
 		player.playList([song('a'), song('b')]);
 		await flush();
-		vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+		const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
 		try {
 			audio.fire('ended');
 			// No await: the src must already be set.
 			expect(audio.src).toContain('id=b');
 		} finally {
-			vi.restoreAllMocks();
+			// Restore only this spy: vi.restoreAllMocks() also rewinds the timer
+			// globals that earlier fake-timer tests installed, leaving setTimeout
+			// frozen for every later test.
+			hidden.mockRestore();
 		}
 	});
 });
@@ -665,7 +678,9 @@ describe('Player background track changes', () => {
 	});
 
 	it('iOS: keeps a single element and swaps its source', async () => {
-		vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)');
+		const userAgent = vi
+			.spyOn(navigator, 'userAgent', 'get')
+			.mockReturnValue('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)');
 		try {
 			const { player, audio } = await withStandby();
 			expect(FakeAudio.all).toHaveLength(1);
@@ -673,7 +688,7 @@ describe('Player background track changes', () => {
 			expect(player.current?.id).toBe('b');
 			expect(audio.src).toMatch(/^blob:test\//);
 		} finally {
-			vi.restoreAllMocks();
+			userAgent.mockRestore();
 		}
 	});
 
@@ -708,7 +723,9 @@ describe('Player background track changes', () => {
 	});
 
 	it('iOS: never streams on standby', async () => {
-		vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)');
+		const userAgent = vi
+			.spyOn(navigator, 'userAgent', 'get')
+			.mockReturnValue('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)');
 		vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
 		try {
 			const { player, audio } = await freshPlayer();
@@ -718,7 +735,7 @@ describe('Player background track changes', () => {
 			playTo(audio, 199.5);
 			expect(FakeAudio.all).toHaveLength(1);
 		} finally {
-			vi.restoreAllMocks();
+			userAgent.mockRestore();
 		}
 	});
 

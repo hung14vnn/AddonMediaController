@@ -16,6 +16,7 @@ _PREFIX = {
     "playlist": "pl-",
     "genre": "ge-",
     "ytmusic": "yt-",
+    "karaoke": "kr-",
     "spotify_artist": "sa-",
     "spotify_album": "sl-",
     "spotify_track": "st-",

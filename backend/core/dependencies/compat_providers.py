@@ -255,7 +255,12 @@ def get_target_compat_services() -> "CompatServices":
     from services.compat.native_lyrics_service import NativeLyricsService
 
     from .cache_providers import get_preferences_service
-    from .service_providers import get_now_playing_service, get_version_service, get_ytmusic_stream_service
+    from .service_providers import (
+        get_now_playing_service,
+        get_target_karaoke_service,
+        get_version_service,
+        get_ytmusic_stream_service,
+    )
 
     target = get_target_consumer_composition()
     return CompatServices(
@@ -281,4 +286,5 @@ def get_target_compat_services() -> "CompatServices":
         scan=get_target_compat_scan_service(),
         advanced_transcode=get_advanced_transcode_service(),
         ytmusic_stream=get_ytmusic_stream_service(),
+        karaoke=get_target_karaoke_service(),
     )

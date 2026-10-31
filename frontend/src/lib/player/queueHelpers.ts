@@ -312,7 +312,7 @@ export function playlistTrackToQueueItem(track: PlaylistTrack): QueueItem | null
 		(track.album_id?.startsWith('ytmusic-') ?? false);
 
 	const availableSources: SourceType[] = track.available_sources
-		? (track.available_sources as SourceType[])
+		? [...(track.available_sources as SourceType[])]
 		: [isYtMusic ? 'ytmusic' : (track.source_type as SourceType)];
 
 	if (isYtMusic && !availableSources.includes('ytmusic')) {
