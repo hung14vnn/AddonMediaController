@@ -399,6 +399,32 @@ async def test_get_recently_played_songs(compat_env):
     songs = body["recentlyPlayedSongs"]["song"]
     assert any(s["id"] == "st-spotify123" and s["title"] == "Midnight City" and s["artist"] == "M83" for s in songs)
 
+
+async def test_get_recently_played_songs_deduplicates(compat_env):
+    # Insert the same song played twice at different times
+    await compat_env.phs.insert(
+        "user-alice",
+        track_name="Midnight City",
+        artist_name="M83",
+        played_at="2026-11-06T10:00:00Z",
+        album_name="Hurry Up, We're Dreaming",
+        track_id="st-spotify123",
+        cover_art="https://i.scdn.co/image/ab67616d0000b273test",
+    )
+    await compat_env.phs.insert(
+        "user-alice",
+        track_name="Midnight City",
+        artist_name="M83",
+        played_at="2026-11-06T10:30:00Z",
+        album_name="Hurry Up, We're Dreaming",
+        track_id="st-spotify123",
+        cover_art="https://i.scdn.co/image/ab67616d0000b273test",
+    )
+    body = _get(compat_env, "getRecentlyPlayedSongs", count=10)
+    songs = body["recentlyPlayedSongs"]["song"]
+    m83_songs = [s for s in songs if s["title"] == "Midnight City" and s["artist"] == "M83"]
+    assert len(m83_songs) == 1
+
 async def test_get_album_list2_recent_includes_external_tracks(compat_env):
     await compat_env.phs.insert(
         "user-alice",

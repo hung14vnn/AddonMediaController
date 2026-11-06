@@ -1110,20 +1110,30 @@ async def _get_album_list(c: Ctx) -> Response:
     )
 
 
-async def _resolve_recent_child(c: Ctx, r, play_store=None) -> m.SChild:
+async def _resolve_recent_child(c: Ctx, r, play_store=None) -> m.SChild | None:
     sid = r.track_id
     cover = r.cover_art
 
-    if not sid:
-        for remote_sid, meta in _REMOTE_TRACK_META.items():
-            if (
-                meta[0].lower() == (r.track_name or "").lower()
-                and meta[1].lower() == (r.artist_name or "").lower()
-            ):
-                sid = remote_sid
-                break
+    # 1. If sid is a local library track ('tr-...' or decoded as 'track')
+    if sid:
+        try:
+            kind, internal = decode(sid)
+            if kind == "track":
+                local = await c.services.view.get_track(internal, user=c.user)
+                if local:
+                    return c.child(local)
+                # It was not found in the local library!
+                # Do NOT keep a dead 'tr-...' ID that will 404 on stream.
+                sid = None
+            elif kind in ("spotify_track", "ytmusic"):
+                pass  # valid provider track prefix
+            else:
+                sid = None
+        except Exception:  # noqa: BLE001
+            sid = None
 
-    if r.recording_mbid and hasattr(c.services.discover, "_db"):
+    # 2. Check if recording_mbid links to a local file
+    if not sid and r.recording_mbid and hasattr(c.services.discover, "_db"):
         try:
             files = await c.services.discover._db.get_library_files_for_recording(r.recording_mbid)
             if files and (fid := files[0].get("file_id")):
@@ -1133,27 +1143,40 @@ async def _resolve_recent_child(c: Ctx, r, play_store=None) -> m.SChild:
         except Exception:  # noqa: BLE001
             pass
 
-    if sid and _kind_of(sid) == "track":
-        local = await c.services.view.get_track(decode(sid)[1], user=c.user)
-        if local:
-            return c.child(local)
-
-    if hasattr(c.services.view, "_db"):
+    # 3. Search local library by name and artist
+    if not sid and hasattr(c.services.view, "_db"):
         try:
             found = await c.services.view._db.search_tracks(f"{r.track_name} {r.artist_name}", limit=1)
             if found and (fid := found[0].get("file_id")):
                 local = await c.services.view.get_track(fid, user=c.user)
                 if local:
-                    sid = encode("track", local.file_id)
-                    cover = local.cover_url or None
+                    new_sid = encode("track", local.file_id)
+                    new_cover = local.cover_url or None
                     if play_store and hasattr(play_store, "update_metadata"):
-                        asyncio.create_task(play_store.update_metadata(r.id, track_id=sid, cover_art=cover))
+                        asyncio.create_task(play_store.update_metadata(r.id, track_id=new_sid, cover_art=new_cover))
                     return c.child(local)
         except Exception:  # noqa: BLE001
             pass
 
+    # 4. Check in-memory remote track meta
+    if not sid:
+        for remote_sid, meta in _REMOTE_TRACK_META.items():
+            if (
+                meta[0].lower() == (r.track_name or "").lower()
+                and meta[1].lower() == (r.artist_name or "").lower()
+            ):
+                sid = remote_sid
+                break
+
+    # 5. Search YouTube Music or Spotify to resolve real streamable ID and artwork
     if not sid or not cover:
-        query = f"{r.artist_name} {r.track_name}".strip()
+        track_name = (r.track_name or "").strip()
+        artist_name = (r.artist_name or "").strip()
+        if artist_name.lower() in track_name.lower():
+            query = track_name
+        else:
+            query = f"{artist_name} {track_name}".strip()
+
         if c.services.ytmusic_stream:
             try:
                 results = await c.services.ytmusic_stream.search_tracks(query, limit=1)
@@ -1161,7 +1184,8 @@ async def _resolve_recent_child(c: Ctx, r, play_store=None) -> m.SChild:
                     results = await c.services.ytmusic_stream.search_videos(query, limit=1)
                 if results and (vid := results[0].get("videoId")):
                     sid = encode("ytmusic", vid)
-                    cover = _ytmusic_thumbnail_url(results[0].get("thumbnails") or results[0].get("thumbnail")) or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+                    thumb = _ytmusic_thumbnail_url(results[0].get("thumbnails") or results[0].get("thumbnail"))
+                    cover = thumb or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
                     if play_store and hasattr(play_store, "update_metadata"):
                         asyncio.create_task(play_store.update_metadata(r.id, track_id=sid, cover_art=cover))
             except Exception as exc:  # noqa: BLE001
@@ -1181,6 +1205,7 @@ async def _resolve_recent_child(c: Ctx, r, play_store=None) -> m.SChild:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Spotify fallback failed for %s: %s", query, exc)
 
+    # 6. Build the final SChild
     if sid and _kind_of(sid) == "spotify_track":
         internal = decode(sid)[1]
         meta = _REMOTE_TRACK_META.get(sid)
@@ -1232,17 +1257,7 @@ async def _resolve_recent_child(c: Ctx, r, play_store=None) -> m.SChild:
             path=sid + ".m4a",
         )
 
-    return m.SChild(
-        id=sid or r.track_id or r.id,
-        isDir=False,
-        title=r.track_name,
-        album=r.album_name or "",
-        artist=r.artist_name,
-        duration=(r.duration_ms or 0) // 1000,
-        coverArt=cover or None,
-        type="music",
-        mediaType="song",
-    )
+    return None
 
 
 @endpoint("getRecentlyPlayedSongs")
@@ -1252,11 +1267,29 @@ async def _get_recently_played_songs(c: Ctx) -> Response:
     if not play_store:
         return c.render("recentlyPlayedSongs", {"song": []})
 
-    records = await play_store.recent(c.user.id, limit=count)
+    records = await play_store.recent(c.user.id, limit=max(count * 4, 100))
+    seen_keys: set[str] = set()
+    seen_ids: set[str] = set()
     songs: list[m.SChild] = []
+
     for r in records:
+        norm_artist = (r.artist_name or "").strip().lower()
+        norm_track = (r.track_name or "").strip().lower()
+        clean_track = re.sub(r"\s*[\(\[].*?[\)\]]", "", norm_track).strip() or norm_track
+        key = f"{norm_artist}::{clean_track}"
+        if key in seen_keys:
+            continue
+
         child = await _resolve_recent_child(c, r, play_store=play_store)
+        if child is None or child.id in seen_ids:
+            continue
+
+        seen_keys.add(key)
+        seen_ids.add(child.id)
         songs.append(child)
+        if len(songs) >= count:
+            break
+
     return c.render("recentlyPlayedSongs", {"song": songs})
 
 
@@ -2047,6 +2080,25 @@ async def _stream(c: Ctx) -> Response:
         plugin_resp = await _plugin_stream_fallback(c, fid, requested_format=fmt if fmt != "raw" else None, max_bitrate=max_bitrate, start_seconds=time_offset if fmt != "raw" else 0.0, force_original=fmt == "raw", estimate=estimate)
         if plugin_resp is not None:
             return plugin_resp
+        play_store = getattr(c.services.discover, "_play_history", None)
+        if play_store:
+            try:
+                recent = await play_store.recent(c.user.id, limit=50)
+                for r in recent:
+                    if r.id == fid or r.track_id == sid:
+                        child = await _resolve_recent_child(c, r, play_store=play_store)
+                        if child and child.id.startswith("yt-"):
+                            stream_fmt = _ytmusic_format(c.request, fmt)
+                            chunks, headers, status = await c.services.ytmusic_stream.proxy_stream(
+                                child.id.removeprefix("yt-"), range_header=c.request.headers.get("Range"), fmt=stream_fmt
+                            )
+                            return StreamingResponse(
+                                chunks, status_code=status, headers=headers, media_type=headers.get("Content-Type", "application/octet-stream")
+                            )
+                        elif child and _kind_of(child.id) == "spotify_track":
+                            return await _stream_spotify_track(c, decode(child.id)[1], _ytmusic_format(c.request, fmt))
+            except Exception:  # noqa: BLE001
+                pass
         raise SubsonicError(70, "Song not found")
     if fmt == "raw":
         try:

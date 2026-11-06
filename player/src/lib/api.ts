@@ -321,7 +321,9 @@ export async function login(opts: { server: string; username?: string; password?
 // ---- URLs -------------------------------------------------------------------
 
 export function coverUrl(id: string | undefined, size = 300) {
-	if (!id || !session) return undefined;
+	if (!id) return undefined;
+	if (id.startsWith('http://') || id.startsWith('https://')) return id;
+	if (!session) return undefined;
 	// Snap to a few sizes so the browser/SW cache is shared across views.
 	const snapped = [64, 150, 300, 600, 1200].find((n) => n >= size) ?? 1200;
 	return buildUrl(session, 'getCoverArt', { id, size: snapped });

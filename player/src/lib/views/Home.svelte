@@ -54,7 +54,7 @@
 	// these hold back the shelves above.
 	let recent = $state(
 		optional(
-			cachedNow("home:recent:songs", () => getRecentlyPlayedSongs(20), {
+			cachedNow("home:recent:songs:v2", () => getRecentlyPlayedSongs(20), {
 				fresh: 0,
 				refresh: (list) => (recent = list),
 			}),
