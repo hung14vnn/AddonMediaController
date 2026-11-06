@@ -325,8 +325,8 @@ export function coverUrl(id: string | undefined, size = 300) {
 	return buildUrl(session, 'getCoverArt', { id, size: snapped });
 }
 
-export function streamUrl(id: string) {
-	return session ? buildUrl(session, 'stream', { id }) : '';
+export function streamUrl(id: string, bust?: number) {
+	return session ? buildUrl(session, 'stream', bust ? { id, _: bust } : { id }) : '';
 }
 
 /**
@@ -740,11 +740,12 @@ export async function getLastfmRecommendations(refresh = false): Promise<LastfmS
 
 /**
  * Streamed YouTube (`yt-`) and Spotify (`st-`) tracks — see the backend's
- * subsonic `ids.py`. They aren't library files, so they aren't saved as the
- * server play queue. They are scrobbled: the server names them from the provider.
+ * subsonic `ids.py` — plus generated karaoke mixes (`kr-`). They aren't library
+ * files, so they aren't saved as the server play queue. The streamed ones are
+ * scrobbled: the server names them from the provider.
  */
 function isRemoteTrack(id: string | undefined): boolean {
-	return !!id && (id.startsWith('yt-') || id.startsWith('st-'));
+	return !!id && (id.startsWith('yt-') || id.startsWith('st-') || id.startsWith('kr-'));
 }
 
 export async function scrobble(id: string, submission: boolean) {
@@ -767,14 +768,37 @@ export async function getLyrics(song: Song): Promise<Lyrics | null> {
 	return null;
 }
 
-/** A karaoke (instrumental) version of `song` found on YouTube, or null when there is none. */
-export async function getKaraoke(song: Song): Promise<Song | null> {
-	const r = await call('getKaraoke', {
+/** A local track's karaoke mix, generated on the server from the library file. */
+export interface KaraokeState {
+	/** Present once something is playable: the quick vocal cut, then the AI stems. */
+	song?: Song;
+	sessionId?: string;
+	status: 'not_generated' | 'queued' | 'processing' | 'ready' | 'failed';
+	/** A playable stream exists (`song` is set). */
+	streamReady: boolean;
+	/** The stream is the fast vocal-cut preview rather than the AI stems. */
+	preview: boolean;
+	error?: string;
+}
+
+export function getKaraoke(song: Song, sessionId?: string | null): Promise<KaraokeState> {
+	return call('getKaraoke', {
+		id: song.id,
+		session: sessionId ?? undefined,
 		title: song.title,
 		artist: song.artist,
-		duration: song.duration
-	});
-	return (r.karaoke?.song as Song | undefined) ?? null;
+		duration: song.duration,
+		coverArt: song.coverArt
+	}).then((r) => (r.karaoke ?? { status: 'not_generated', streamReady: false, preview: false }) as KaraokeState);
+}
+
+/** Ends the session; the last one for a song frees its in-memory stems. */
+export async function releaseKaraoke(sessionId: string): Promise<void> {
+	try {
+		await call('releaseKaraoke', { sessionId });
+	} catch {
+		/* the server also drops idle sessions */
+	}
 }
 
 export async function savePlayQueue(ids: string[], current?: string, position?: number) {

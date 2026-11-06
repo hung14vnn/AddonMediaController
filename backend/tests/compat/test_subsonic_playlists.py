@@ -90,6 +90,31 @@ async def test_update_adds_ytmusic_track(compat_env):
     assert playlist["entry"][0]["album"] == "Test Album"
 
 
+async def test_ytmusic_entry_duration_follows_the_measured_stream(compat_env):
+    from services.ytmusic_stream_service import _known_durations, remember_duration
+
+    pid = _sub(_get(compat_env, "createPlaylist", name="YouTube Mix"))["playlist"]["id"]
+    _sub(_get(
+        compat_env,
+        "updatePlaylist",
+        playlistId=pid,
+        songIdToAdd="yt-R-hYM3BqTbA",
+        songTitle="Test YouTube Song",
+        songArtist="Test Artist",
+        songDuration="123",
+    ))
+
+    remember_duration("R-hYM3BqTbA", 260.0)
+    try:
+        playlist = _sub(_get(compat_env, "getPlaylist", id=pid))["playlist"]
+    finally:
+        _known_durations.pop("R-hYM3BqTbA", None)
+
+    # Saved as 2:03 from the listing; the streamed audio is 4:20, and clients
+    # stop playback at the reported duration.
+    assert playlist["entry"][0]["duration"] == 260
+
+
 async def test_get_unknown_playlist_is_70(compat_env):
     body = json.loads(_get(compat_env, "getPlaylist", id="pl-nope").content)["subsonic-response"]
     assert body["error"]["code"] == 70
@@ -262,6 +287,7 @@ async def test_spotify_imported_cover_advertised_and_served(
     spotify_client.get_playlist_tracks.return_value = []
     factory = AsyncMock()
     factory.resolve_spotify.return_value = spotify_client
+    factory.resolve_spotify_catalog.return_value = spotify_client
     importer = SpotifyImportService(
         client_factory=factory,
         playlist_repo=None,

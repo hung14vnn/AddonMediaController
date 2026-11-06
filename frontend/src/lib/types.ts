@@ -1694,7 +1694,7 @@ export type NativeTrackPage = {
 	limit: number;
 };
 
-export type KaraokeCacheEntryStatus = 'ready' | 'partial' | 'legacy';
+export type KaraokeCacheEntryStatus = 'ready' | 'preview';
 
 export type KaraokeCacheEntry = {
 	id: string;
@@ -1704,6 +1704,7 @@ export type KaraokeCacheEntry = {
 	size_bytes: number;
 	instrumental_size_bytes: number;
 	vocals_size_bytes: number;
+	preview_size_bytes: number;
 	created_at: number | null;
 	last_accessed_at: number | null;
 	track_file_id: string | null;
@@ -1717,13 +1718,18 @@ export type KaraokeCacheEntriesResponse = {
 	total: number;
 };
 
+export type KaraokePreviewStatus = 'pending' | 'generating' | 'ready' | 'unavailable';
+
 export type KaraokeJobResponse = {
 	cache_key: string;
 	status: 'not_generated' | 'queued' | 'processing' | 'ready' | 'failed';
 	job_id: string | null;
 	cached: boolean;
+	session_id: string | null;
 	instrumental_url: string | null;
 	vocals_url: string | null;
+	preview_url: string | null;
+	preview_status: KaraokePreviewStatus;
 	error_message: string | null;
 };
 

@@ -771,7 +771,9 @@ def _load_upgrade_backup(settings: Settings, directory_value: object) -> Upgrade
 
 def _fsync_directory(directory: Path) -> None:
     try:
-        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        descriptor = os.open(
+            directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        )
     except OSError:
         return
     try:

@@ -75,7 +75,7 @@ describe('LyricsPanel', () => {
 			preferWordSynced: false,
 			onclose: vi.fn()
 		};
-		const view = render(LyricsPanel, props);
+		const view = await render(LyricsPanel, props);
 
 		await expect
 			.poll(() => document.documentElement.classList.contains('lyrics-page-scroll-lock'))

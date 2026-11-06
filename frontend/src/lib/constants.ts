@@ -138,6 +138,7 @@ export const API = {
 		prepare: () => '/api/v1/karaoke',
 		job: (jobId: string) => `/api/v1/karaoke/jobs/${encodeURIComponent(jobId)}`,
 		status: (trackFileId: string) => `/api/v1/karaoke/${encodeURIComponent(trackFileId)}/status`,
+		release: () => '/api/v1/karaoke/release',
 		entries: () => '/api/v1/karaoke/entries',
 		deleteEntry: () => '/api/v1/karaoke/entries'
 	},

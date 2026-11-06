@@ -99,9 +99,17 @@ class Settings(BaseSettings):
     karaoke_enabled: bool = Field(default=True, description="Enable on-demand local-track karaoke")
     karaoke_worker_url: str = Field(default="http://karaoke-worker:8091")
     karaoke_job_timeout_seconds: int = Field(default=900, ge=30, le=3600)
-    karaoke_cache_max_size_mb: int = Field(default=10240, ge=128)
-    karaoke_cache_ttl_days: int = Field(default=45, ge=1)
-    karaoke_cache_cleanup_interval_seconds: int = Field(default=3600, ge=60)
+    karaoke_memory_max_size_mb: int = Field(
+        default=512,
+        ge=64,
+        description="Upper bound for karaoke stems held in RAM; least-recently-used entries are evicted first.",
+    )
+    karaoke_memory_idle_minutes: int = Field(
+        default=60,
+        ge=5,
+        description="Drop an in-memory karaoke entry after this long without a session or stream access.",
+    )
+    karaoke_cleanup_interval_seconds: int = Field(default=300, ge=60)
     trusted_proxy_ips: str = Field(
         default="127.0.0.1,::1",
         description="Comma-separated IPs/CIDRs trusted as reverse proxies for X-Forwarded-* headers. Configure the private proxy network in a reverse-proxy deployment; never use '*' on a directly reachable service.",

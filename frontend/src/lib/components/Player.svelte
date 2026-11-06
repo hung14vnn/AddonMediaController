@@ -14,6 +14,7 @@
 	import ContextMenu, { type MenuItem } from '$lib/components/ContextMenu.svelte';
 	import EqPanel from '$lib/components/EqPanel.svelte';
 	import SleepTimerPanel from '$lib/components/SleepTimerPanel.svelte';
+	import KaraokeWaitModal from '$lib/components/KaraokeWaitModal.svelte';
 	import { sleepTimerStore } from '$lib/stores/sleepTimer.svelte';
 	import LyricsPanel from '$lib/components/LyricsPanel.svelte';
 	import { openGlobalPlaylistModal } from '$lib/components/AddToPlaylistModal.svelte';
@@ -125,6 +126,10 @@
 
 	const isKaraokeBusy = $derived(
 		karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'
+	);
+	/** Separation still running with nothing to hear yet; once a preview plays the button turns it off. */
+	const karaokePending = $derived(
+		isKaraokeBusy && !playerStore.karaokeActive && !karaokeController.previewPlaying
 	);
 
 	// The compact mobile player consolidates the desktop-only controls (lyrics,
@@ -668,14 +673,12 @@
 								karaokeStatus === 'processing' ||
 								karaokeStatus === 'queued'}
 							class:text-error={karaokeStatus === 'failed'}
-							disabled={karaokeStatus === 'preparing' ||
-								karaokeStatus === 'queued' ||
-								karaokeStatus === 'processing'}
+							disabled={karaokePending}
 							onclick={toggleKaraoke}
 							aria-label={playerStore.karaokeActive ? 'Turn off karaoke' : 'Start karaoke'}
 							title={karaokeTip()}
 						>
-							{#if karaokeStatus === 'preparing' || karaokeStatus === 'queued' || karaokeStatus === 'processing'}
+							{#if karaokePending}
 								<span class="loading loading-spinner loading-xs"></span>
 							{:else}
 								<Mic class="h-4 w-4" />
@@ -793,6 +796,7 @@
 	</div>
 
 	<EqPanel bind:open={eqPanelOpen} onclose={() => (eqPanelOpen = false)} />
+	<KaraokeWaitModal />
 {/if}
 
 <!-- Keep the word-synced lyrics web component out of the DOM until lyrics are

@@ -363,9 +363,6 @@
 						{isPlaying}
 						{isrc}
 						onseek={seekFromLyrics}
-						onavailability={(available) => {
-							wordSyncedAvailable = available;
-						}}
 					/>
 				{/key}
 			{:else}

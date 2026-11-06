@@ -410,6 +410,9 @@ async def compat_env(
         deps.get_target_compat_scan_service: lambda: scan,
         deps.get_advanced_transcode_service: lambda: advanced_transcode,
         deps.get_transcode_service: lambda: transcode,
+        # Keep compat flows offline: tests must never reach YouTube/Spotify.
+        deps.get_ytmusic_stream_service: lambda: None,
+        deps.get_karaoke_service: lambda: None,
     }
     app.dependency_overrides.update(overrides)
     client = build_test_client(app)

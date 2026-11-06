@@ -107,6 +107,7 @@ describe('audioElement registry', () => {
 		expect.assertions(1);
 		const audio = { src: '' } as HTMLAudioElement;
 		setAudioElement(audio);
+		getAudioEngine();
 
 		await resumeAudioEngine();
 
@@ -125,6 +126,7 @@ describe('audioElement registry', () => {
 		expect.assertions(2);
 		const audio = { src: '' } as HTMLAudioElement;
 		setAudioElement(audio);
+		getAudioEngine();
 		mockEngine.resume.mockRejectedValueOnce(new Error('not allowed'));
 
 		await expect(resumeAudioEngine()).resolves.toBeUndefined();
@@ -184,7 +186,8 @@ describe('audioElement registry', () => {
 		expect(mockEngine.resume).toHaveBeenCalledTimes(1);
 	});
 
-	it('creates the engine from the playback path off iOS', async () => {
+	it('leaves the engine uncreated from the playback path off iOS', async () => {
+		expect.assertions(3);
 		vi.stubGlobal('navigator', {
 			userAgent: 'Mozilla/5.0 (Linux; Android 15)',
 			platform: 'Linux armv8l',
@@ -195,8 +198,9 @@ describe('audioElement registry', () => {
 
 		await resumeAudioEngine();
 
-		expect(mockEngine.connect).toHaveBeenCalledWith(audio);
-		expect(mockEngine.resume).toHaveBeenCalledTimes(1);
+		expect(tryGetAudioEngine()).toBeNull();
+		expect(mockEngine.connect).not.toHaveBeenCalled();
+		expect(mockEngine.resume).not.toHaveBeenCalled();
 	});
 
 	it('keeps iPhone playback native even when standalone detection is unavailable', () => {

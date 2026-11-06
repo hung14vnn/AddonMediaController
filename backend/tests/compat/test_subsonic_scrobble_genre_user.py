@@ -135,6 +135,26 @@ async def test_scrobble_ytmusic_track_sends_primary_artist_and_no_radio_album(co
     assert rows[0]["album_name"] in ("", None)
 
 
+async def test_ytmusic_child_reports_the_duration_measured_at_extraction():
+    from api.compat.subsonic import router as subsonic_router
+    from services.ytmusic_stream_service import _known_durations, remember_duration
+
+    remember_duration("vid260", 260.0)
+    try:
+        learned = subsonic_router._ytmusic_to_child(
+            {"videoId": "vid260", "title": "Song", "artists": [{"name": "A"}], "length": "3:00"}
+        )
+        listed = subsonic_router._ytmusic_to_child(
+            {"videoId": "vid180", "title": "Song", "artists": [{"name": "A"}], "length": "3:00"}
+        )
+    finally:
+        _known_durations.pop("vid260", None)
+
+    # The listing said 3:00; the streamed file is 4:20 (the 180s-cap bug).
+    assert learned.duration == 260
+    assert listed.duration == 180
+
+
 async def test_scrobble_unresolvable_remote_track_is_skipped(compat_env, monkeypatch):
     from api.compat.subsonic import router as subsonic_router
 

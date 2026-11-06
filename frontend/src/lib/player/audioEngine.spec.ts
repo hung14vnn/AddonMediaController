@@ -29,6 +29,17 @@ function createMockAnalyser() {
 	};
 }
 
+function createMockGain() {
+	return {
+		gain: {
+			cancelScheduledValues: vi.fn(),
+			setTargetAtTime: vi.fn()
+		},
+		connect: vi.fn(),
+		disconnect: vi.fn()
+	};
+}
+
 function createMockContext(
 	mockSource: ReturnType<typeof createMockSource>,
 	mockFilterFactory: () => ReturnType<typeof createMockFilter>,
@@ -40,6 +51,7 @@ function createMockContext(
 		createMediaElementSource: vi.fn(() => mockSource),
 		createBiquadFilter: vi.fn(mockFilterFactory),
 		createAnalyser: vi.fn(() => mockAnalyser),
+		createGain: vi.fn(() => createMockGain()),
 		resume: vi.fn(() => Promise.resolve()),
 		suspend: vi.fn(() => Promise.resolve()),
 		close: vi.fn(() => Promise.resolve()),
@@ -335,17 +347,6 @@ describe('AudioEngine', () => {
 	});
 
 	describe('connectAuxiliary', () => {
-		function createMockGain() {
-			return {
-				gain: {
-					cancelScheduledValues: vi.fn(),
-					setTargetAtTime: vi.fn()
-				},
-				connect: vi.fn(),
-				disconnect: vi.fn()
-			};
-		}
-
 		it('routes auxiliary to destination when EQ is disabled', () => {
 			const mockGain = createMockGain();
 			(mockCtx as any).createGain = vi.fn(() => mockGain);

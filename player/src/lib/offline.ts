@@ -89,6 +89,18 @@ export async function deleteOfflineTrack(userId: string, trackId: string): Promi
 	await Promise.all([del(key, AUDIO_DB), del(key, METADATA_DB)]);
 }
 
+/** Removes several offline copies; one failure doesn't stop the rest. */
+export async function deleteOfflineTracks(userId: string, trackIds: string[]): Promise<string[]> {
+	if (!isOfflineAudioSupported()) return [];
+	const results = await Promise.allSettled(
+		trackIds.map(async (id) => {
+			await deleteOfflineTrack(userId, id);
+			return id;
+		})
+	);
+	return results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
+}
+
 export async function deleteAllOfflineTracks(userId: string): Promise<number> {
 	if (!isOfflineAudioSupported()) return 0;
 	const prefix = userKeyPrefix(userId);

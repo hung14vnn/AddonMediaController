@@ -47,6 +47,24 @@ vi.mock('$lib/queries/connections/ConnectionsQuery.svelte', () => ({
 }));
 
 vi.mock('$lib/queries/discover/DiscoverDemand.svelte', () => ({ useDiscoverActivity: vi.fn() }));
+
+// Home entry cards open their own TanStack query; keep it inert so the shell
+// renders without a QueryClientProvider.
+vi.mock('@tanstack/svelte-query', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@tanstack/svelte-query')>();
+	return {
+		...actual,
+		createQuery: () => ({
+			data: undefined,
+			isLoading: false,
+			isFetching: false,
+			isPending: false,
+			isError: false,
+			error: null,
+			refetch: vi.fn()
+		})
+	};
+});
 import Page from './+page.svelte';
 
 function contentResponse(): Partial<HomeResponse> {

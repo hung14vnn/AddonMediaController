@@ -1,94 +1,161 @@
-"""getKaraoke: a karaoke version of a song, picked from a YouTube search (faked here)."""
+"""getKaraoke: local karaoke sessions served from RAM (worker faked here)."""
 
 import json
 
 import pytest
 
-from api.compat.subsonic import router
+from api.v1.schemas.karaoke import KaraokeJobResponse
 from core import dependencies as deps
-from services.compat.karaoke import pick_karaoke, search_query
+
+CACHE_KEY = "a" * 64
 
 
-def _v(vid, title, duration=240, channel="Sing King"):
-    return {"id": vid, "title": title, "duration": duration, "channel": channel}
+class FakeKaraoke:
+    def __init__(self) -> None:
+        self.response = KaraokeJobResponse(
+            cache_key=CACHE_KEY,
+            status="queued",
+            preview_url=f"/api/v1/karaoke/{CACHE_KEY}/preview",
+            preview_status="generating",
+            session_id="session-1",
+        )
+        self.prepare_calls: list[tuple[str, str | None]] = []
+        self.released: list[str] = []
+        self.range_header: str | None = None
 
+    async def prepare(self, file_id: str, session_id: str | None = None):
+        self.prepare_calls.append((file_id, session_id))
+        return self.response
 
-def test_picks_a_karaoke_upload_of_the_same_song():
-    candidates = [
-        _v("orig0000001", "Ed Sheeran - Shape of You (Official Music Video)"),
-        _v("other000001", "Perfect - Ed Sheeran (Karaoke Version)"),
-        _v("kara0000001", "Ed Sheeran - Shape Of You (Karaoke Version)", 236),
-    ]
-    assert pick_karaoke("Shape of You", "Ed Sheeran", 233, candidates)["id"] == "kara0000001"
+    async def release(self, session_id: str) -> None:
+        self.released.append(session_id)
 
+    async def stream_karaoke(self, cache_key: str, range_header: str | None):
+        assert cache_key == CACHE_KEY
+        self.range_header = range_header
+        data = b"ai-instrumental"
+        start, end, status = 0, len(data) - 1, 200
+        if range_header:
+            first, last = range_header.rsplit("=", 1)[-1].split("-")
+            start, end, status = int(first), int(last), 206
+        headers = {
+            "Content-Type": "audio/mp4",
+            "Content-Length": str(end - start + 1),
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "private, no-store",
+        }
+        if status == 206:
+            headers["Content-Range"] = f"bytes {start}-{end}/{len(data)}"
 
-def test_rejects_other_versions_and_wrong_lengths():
-    candidates = [
-        _v("remix000001", "Shape of You (Remix) Karaoke"),
-        _v("short000001", "Shape of You Karaoke (Short)", 90),
-    ]
-    assert pick_karaoke("Shape of You", "Ed Sheeran", 233, candidates) is None
+        async def chunks():
+            yield data[start : end + 1]
 
-
-def test_a_keyword_in_the_song_name_is_not_a_karaoke_marker():
-    # "Beat It" contains "beat", which alone would read as an instrumental.
-    assert pick_karaoke("Beat It", "Michael Jackson", 258, [_v("mv000000001", "Michael Jackson - Beat It", 258)]) is None
-    hit = pick_karaoke("Beat It", "Michael Jackson", 258, [_v("kara0000002", "Beat It - Michael Jackson | Karaoke", 260)])
-    assert hit["id"] == "kara0000002"
-
-
-def test_vietnamese_beat_upload_matches_without_accents_mattering():
-    candidates = [_v("vnbeat00001", "Em Của Ngày Hôm Qua - Sơn Tùng M-TP | Beat Chuẩn Tone Nam", 230, "Beat Việt")]
-    assert pick_karaoke("Em Của Ngày Hôm Qua", "Sơn Tùng M-TP", 226, candidates)["id"] == "vnbeat00001"
-
-
-def test_query_drops_features_and_extra_artists():
-    assert search_query("Señorita (feat. X)", "Shawn Mendes, Camila Cabello") == "Señorita Shawn Mendes karaoke"
-
-
-class FakeYT:
-    def __init__(self, results):
-        self.results = results
-        self.queries: list[str] = []
-
-    async def search_videos(self, query, limit=10):
-        self.queries.append(query)
-        return self.results
+        return chunks(), headers, status
 
 
 @pytest.fixture
-def yt(compat_env):
-    fake = FakeYT([_v("kara0000001", "Ed Sheeran - Shape Of You (Karaoke Version)", 236)])
-    compat_env.app.dependency_overrides[deps.get_ytmusic_stream_service] = lambda: fake
-    router._KARAOKE.clear()
+def karaoke(compat_env):
+    fake = FakeKaraoke()
+    compat_env.app.dependency_overrides[deps.get_karaoke_service] = lambda: fake
     yield fake
-    compat_env.app.dependency_overrides.pop(deps.get_ytmusic_stream_service, None)
-    router._KARAOKE.clear()
+    compat_env.app.dependency_overrides.pop(deps.get_karaoke_service, None)
+
+
+def _query(env, params):
+    return [("v", "1.16.1"), ("c", "pytest"), ("f", "json"), ("apiKey", env.secret), *params]
 
 
 def _get(env, params):
-    q = [("v", "1.16.1"), ("c", "pytest"), ("f", "json"), ("apiKey", env.secret), *params]
-    resp = env.client.get("/subsonic/rest/getKaraoke", params=q)
+    resp = env.client.get("/subsonic/rest/getKaraoke", params=_query(env, params))
     assert resp.status_code == 200
     return json.loads(resp.content)["subsonic-response"]
 
 
-@pytest.mark.asyncio
-async def test_endpoint_returns_a_playable_track_and_caches_it(compat_env, yt):
-    params = [("title", "Shape of You"), ("artist", "Ed Sheeran"), ("duration", "233")]
-    song = _get(compat_env, params)["karaoke"]["song"]
-    assert song["id"] == "yt-kara0000001"
-    assert song["title"] == "Shape of You"
-    assert song["album"] == "Karaoke"
-    assert song["duration"] == 236
-
-    _get(compat_env, params)
-    assert len(yt.queries) == 1  # second call served from the cache
+def _track_id(env) -> str:
+    return "tr-" + env.ids["tracks"][0]
 
 
-@pytest.mark.asyncio
-async def test_endpoint_reports_none_found(compat_env, yt):
-    yt.results = [_v("orig0000001", "Ed Sheeran - Shape of You (Official Music Video)")]
-    body = _get(compat_env, [("title", "Shape of You"), ("artist", "Ed Sheeran")])
-    assert body["status"] == "ok"
-    assert "song" not in body.get("karaoke", {})
+def test_reports_a_generating_session_without_a_song(compat_env, karaoke):
+    body = _get(compat_env, [("id", _track_id(compat_env)), ("title", "Airbag")])
+
+    payload = body["karaoke"]
+    assert payload["status"] == "queued"
+    assert payload["streamReady"] is False
+    assert payload["sessionId"] == "session-1"
+    assert "song" not in payload
+
+
+def test_preview_ready_returns_a_playable_karaoke_track(compat_env, karaoke):
+    karaoke.response.preview_status = "ready"
+
+    payload = _get(
+        compat_env,
+        [
+            ("id", _track_id(compat_env)),
+            ("title", "Airbag"),
+            ("artist", "Radiohead"),
+            ("duration", "283"),
+        ],
+    )["karaoke"]
+
+    assert payload["streamReady"] is True
+    assert payload["preview"] is True
+    assert payload["song"]["id"] == "kr-" + CACHE_KEY
+    assert payload["song"]["album"] == "Karaoke"
+    assert payload["song"]["duration"] == 283
+    assert karaoke.prepare_calls[-1][0] == compat_env.ids["tracks"][0]
+
+
+def test_poll_reuses_the_session_and_stems_replace_the_preview(compat_env, karaoke):
+    karaoke.response.preview_status = "ready"
+    _get(compat_env, [("id", _track_id(compat_env)), ("session", "session-1")])
+
+    karaoke.response.status = "ready"
+    karaoke.response.preview_status = "pending"
+    karaoke.response.instrumental_url = f"/api/v1/karaoke/{CACHE_KEY}/instrumental"
+    karaoke.response.vocals_url = f"/api/v1/karaoke/{CACHE_KEY}/vocals"
+    payload = _get(
+        compat_env, [("id", _track_id(compat_env)), ("session", "session-1")]
+    )["karaoke"]
+
+    assert karaoke.prepare_calls[-1] == (compat_env.ids["tracks"][0], "session-1")
+    assert payload["preview"] is False
+    assert payload["status"] == "ready"
+    assert payload["song"]["id"] == "kr-" + CACHE_KEY
+
+
+def test_failed_ai_still_returns_the_preview(compat_env, karaoke):
+    karaoke.response.status = "failed"
+    karaoke.response.preview_status = "ready"
+    karaoke.response.error_message = "Karaoke worker is unavailable"
+
+    payload = _get(compat_env, [("id", _track_id(compat_env))])["karaoke"]
+
+    assert payload["streamReady"] is True
+    assert payload["preview"] is True
+    assert payload["error"] == "Karaoke worker is unavailable"
+    assert payload["song"]["id"] == "kr-" + CACHE_KEY
+
+
+def test_release_ends_the_session(compat_env, karaoke):
+    resp = compat_env.client.get(
+        "/subsonic/rest/releaseKaraoke",
+        params=_query(compat_env, [("sessionId", "session-1")]),
+    )
+
+    assert resp.status_code == 200
+    assert json.loads(resp.content)["subsonic-response"]["karaokeRelease"]["released"] is True
+    assert karaoke.released == ["session-1"]
+
+
+def test_karaoke_ids_stream_through_the_normal_stream_endpoint(compat_env, karaoke):
+    resp = compat_env.client.get(
+        "/subsonic/rest/stream",
+        params=_query(compat_env, [("id", "kr-" + CACHE_KEY)]),
+        headers={"Range": "bytes=3-6"},
+    )
+
+    assert resp.status_code == 206
+    assert resp.content == b"inst"
+    assert resp.headers["content-range"] == "bytes 3-6/15"
+    assert karaoke.range_header == "bytes=3-6"

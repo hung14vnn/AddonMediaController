@@ -5,6 +5,7 @@ import { HomeQueryKeyFactory } from './HomeQueryKeyFactory';
 import { setQueueCachedData } from '$lib/utils/discoverQueueCache';
 import { overviewCacheSuffix } from '$lib/utils/timeRangeCache';
 import { clearUserScopedLocalCaches } from '$lib/utils/userScopedCaches';
+import { setMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScope.svelte';
 
 // A switch must drop both the user-keyed TanStack home cache and the localStorage caches the
 // query-cache reset misses; asserts the two mechanisms in isolation, not the logout() orchestration.
@@ -24,6 +25,11 @@ describe('clear-on-user-switch (AMU-5)', () => {
 	});
 
 	it('clearUserScopedLocalCaches() removes the prior user discover-queue + time-range entries', () => {
+		// The queue cache only writes once the user has a resolved MusicBrainz source.
+		setMusicBrainzSourceScope(
+			{ source_mode: 'brainzmash', source_id: 'brainzmash', generation: 1 },
+			'user-a'
+		);
 		setQueueCachedData({ items: [], currentIndex: 0, queueId: 'q-a' }, 'user-a');
 		const queueKey = `${CACHE_KEYS.DISCOVER_QUEUE}_user-a`;
 		const trKey = `${CACHE_KEYS.TIME_RANGE_OVERVIEW_CACHE}_${overviewCacheSuffix(

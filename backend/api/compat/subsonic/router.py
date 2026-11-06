@@ -413,14 +413,14 @@ def _index_letter(name: str) -> str:
     return ch if ch.isalpha() else "#"
 
 
-# Spotify track id -> (artist, title). Players stream with many Range requests
-# per track; without this each one would repeat the Spotify lookup before the
-# (already cached) YouTube Music search. Bounded; oldest entries go first.
-_SPOTIFY_TRACK_META: dict[str, tuple[str, str]] = {}
+# Spotify track id -> (artist, title, duration seconds). Players stream with many
+# Range requests per track; without this each one would repeat the Spotify lookup
+# before the (already cached) YouTube Music search. Bounded; oldest entries go first.
+_SPOTIFY_TRACK_META: dict[str, tuple[str, str, int]] = {}
 _SPOTIFY_TRACK_META_MAX = 2048
 
 
-async def _spotify_track_meta(track_id: str) -> tuple[str, str]:
+async def _spotify_track_meta(track_id: str) -> tuple[str, str, int]:
     cached = _SPOTIFY_TRACK_META.get(track_id)
     if cached is not None:
         return cached
@@ -433,10 +433,11 @@ async def _spotify_track_meta(track_id: str) -> tuple[str, str]:
     artist = ", ".join(
         str(a.get("name")) for a in (st.get("artists") or [])[:2] if a.get("name")
     )
+    duration = int((st.get("duration_ms") or 0) / 1000)
     if len(_SPOTIFY_TRACK_META) >= _SPOTIFY_TRACK_META_MAX:
         _SPOTIFY_TRACK_META.pop(next(iter(_SPOTIFY_TRACK_META)))
-    _SPOTIFY_TRACK_META[track_id] = (artist, title)
-    return artist, title
+    _SPOTIFY_TRACK_META[track_id] = (artist, title, duration)
+    return artist, title, duration
 
 
 async def _stream_spotify_track(c: Ctx, track_id: str, stream_fmt: str) -> Response:
@@ -446,8 +447,14 @@ async def _stream_spotify_track(c: Ctx, track_id: str, stream_fmt: str) -> Respo
     title and proxied through the same YouTube Music path as ``yt-`` ids.
     """
     try:
-        artist, title = await _spotify_track_meta(track_id)
-        info = await c.services.ytmusic_stream.search(artist, title, fmt=stream_fmt)
+        artist, title, duration = await _spotify_track_meta(track_id)
+        info = await c.services.ytmusic_stream.search(
+            artist,
+            title,
+            fmt=stream_fmt,
+            # Keeps a long music video from being matched for a short song.
+            expected_duration_s=duration or None,
+        )
     except SubsonicError:
         raise
     except Exception as e:
@@ -1025,11 +1032,19 @@ async def _search(c: Ctx):
     albums = []
     songs = []
     playlists = []
+    if a_count:
+        artists, _ = await c.services.view.get_artists(
+            limit=a_count, offset=a_offset, q=q, user=c.user
+        )
+    if al_count:
+        albums, _ = await c.services.view.get_albums_offset(
+            limit=al_count, offset=al_offset, q=q, user=c.user
+        )
     if s_count:
         songs, _ = await c.services.view.get_tracks_page(
             limit=s_count, offset=s_offset, q=q, user=c.user
         )
-        
+
     spot_artists: list = []
     spot_albums: list = []
     spot_songs: list = []
@@ -1684,6 +1699,22 @@ async def _stream(c: Ctx) -> Response:
             headers=headers,
             media_type=headers.get("Content-Type", "application/octet-stream"),
         )
+    if kind == "karaoke":
+        karaoke = c.services.karaoke
+        if karaoke is None:
+            raise SubsonicError(70, "Song not found")
+        try:
+            chunks, headers, status = await karaoke.stream_karaoke(
+                fid, c.request.headers.get("Range")
+            )
+        except ResourceNotFoundError:
+            raise SubsonicError(70, "Song not found")
+        return StreamingResponse(
+            chunks,
+            status_code=status,
+            headers=headers,
+            media_type=headers.get("Content-Type", "audio/mp4"),
+        )
     if kind != "track":
         raise SubsonicError(70, "Invalid id type")
     max_bitrate = c.pint("maxBitRate", minimum=0, maximum=1_000_000)
@@ -1953,6 +1984,7 @@ def _playlist_cover(record, has_tracks: bool) -> str | None:
 
 async def _build_playlist_detail(c: Ctx, pid: str):
     from services.playlist_service import PlaylistDetailView
+    from services.ytmusic_stream_service import known_duration
 
     detail = await c.services.playlists.get_playlist_with_tracks(pid, c.user)
     if not isinstance(detail, PlaylistDetailView):
@@ -2001,7 +2033,10 @@ async def _build_playlist_detail(c: Ctx, pid: str):
             )
         ):
             yt_id = encode("ytmusic", ytmusic_source_id)
-            duration_sec = int(entry.duration or 0)
+            # The stored row length comes from the listing/import and can be
+            # wrong (a 4:20 track saved as 3:00); yt-dlp's measured length wins.
+            learned = known_duration(ytmusic_source_id)
+            duration_sec = int(round(learned)) if learned else int(entry.duration or 0)
             remote = m.SChild(
                 id=yt_id,
                 isDir=False,
@@ -2124,7 +2159,11 @@ async def _get_playlist(c: Ctx) -> Response:
             songs.append(_spotapi_to_child(st))
             names = [str(a["name"]) for a in (st.get("artists") or [])[:2] if a.get("name")]
             if st.get("name") and len(_SPOTIFY_TRACK_META) < _SPOTIFY_TRACK_META_MAX:
-                _SPOTIFY_TRACK_META[st["id"]] = (", ".join(names), str(st["name"]))
+                _SPOTIFY_TRACK_META[st["id"]] = (
+                    ", ".join(names),
+                    str(st["name"]),
+                    int((st.get("duration_ms") or 0) / 1000),
+                )
         songs = await _replace_remote_playlist_songs_with_library(c, songs)
                 
         tid = encode("spotify_playlist", playlist_id)
@@ -2876,35 +2915,14 @@ async def _get_top_songs(c: Ctx) -> Response:
     if not artist:
         raise SubsonicError(10, "Required parameter 'artist' is missing")
     count = c.pint("count", 50, minimum=1, maximum=500) or 50
-    
-    spot_songs = []
-    try:
-        from services.spotapi_client import SpotApiClient
-        spotapi = SpotApiClient()
-        st, _ = await spotapi.search_tracks(f"artist:{artist}", limit=count)
-        spot_songs = [_spotapi_to_child(t) for t in st]
-    except Exception as e:
-        logger.warning("Spotapi getTopSongs search failed: %s", e)
-        
-    if c.services.ytmusic_stream:
-        yt_tracks = await c.services.ytmusic_stream.get_artist_top_songs(artist, limit=count)
-        if yt_tracks:
-            remote = [
-                child for track in yt_tracks if (child := _ytmusic_to_child(track))
-            ] + spot_songs
-            songs = await _replace_remote_songs_with_library(
-                c, remote, query=artist
-            )
-            return c.render("topSongs", {"song": songs})
-            
+    # Owned-local only: a shared server must never surface another user's
+    # catalogue through an external search.
     tracks = await c.services.discover.get_top_songs(
         artist, user_id=c.user.id, count=count, user=c.user
     )
-    local_songs = [c.child(track) for track in tracks]
-    return c.render(
-        "topSongs",
-        {"song": local_songs + _prefer_library_songs(local_songs, spot_songs)},
-    )
+    if not tracks:
+        raise SubsonicError(70, "Artist not found")
+    return c.render("topSongs", {"song": [c.child(track) for track in tracks]})
 
 
 def _parse_length(t: dict) -> int | None:
@@ -2923,10 +2941,15 @@ def _parse_length(t: dict) -> int | None:
 
 
 def _ytmusic_to_child(t: dict) -> m.SChild | None:
+    from services.ytmusic_stream_service import known_duration
+
     vid = t.get("videoId")
     if not vid:
         return None
     tid = encode("ytmusic", vid)
+    # Prefer the length yt-dlp measured over the listing's (often stale) one.
+    learned = known_duration(vid)
+    duration = int(round(learned)) if learned else _parse_length(t)
 
     artists = [
         a.get("name") if isinstance(a, dict) else a
@@ -2942,7 +2965,7 @@ def _ytmusic_to_child(t: dict) -> m.SChild | None:
     # Last.fm wants the primary artist alone, not the joined credit line.
     _remember_remote_track(
         tid, str(t.get("title") or ""), str(artists[0]) if artists else "",
-        str(album.get("name") or ""), _parse_length(t),
+        str(album.get("name") or ""), duration,
     )
     # Radio tracks are not in any saved playlist, so getCoverArt has no stored
     # artwork for them; keep the one YouTube Music sent with the track.
@@ -2966,7 +2989,7 @@ def _ytmusic_to_child(t: dict) -> m.SChild | None:
         albumId=album_id,
         artistId=f"ytmusic-artist-{first_artist['id']}" if first_artist else None,
         coverArt=tid,
-        duration=_parse_length(t),
+        duration=duration,
         year=int(t["year"]) if str(t.get("year") or "").isdigit() else None,
         # Must match what your stream endpoint really serves:
         suffix="m4a",
@@ -2984,6 +3007,7 @@ async def _similar_songs(c: Ctx) -> list[m.SChild]:
 
     video_seeds: list[str] = []
     seeds: list[tuple[str, str]] = []
+    artist_ids: list[str] = []
 
     # Smart Discover (Hify client): repeated artist/title pairs, like the native
     # POST /api/v1/discover/queue/smart-discover seeds. Each pair is resolved on
@@ -3020,16 +3044,48 @@ async def _similar_songs(c: Ctx) -> list[m.SChild]:
                 for t in random.sample(tracks, min(3, len(tracks))):
                     seeds.append((t.artist_name, t.title))
             elif kind == "artist":
-                artist_tuple = await c.services.view.get_artist_with_albums(internal, user=c.user)
-                if artist_tuple:
-                    artist_view, _ = artist_tuple
-                    tracks = await c.services.discover.get_top_songs(
-                        artist_view.name, user_id=c.user.id, count=3, user=c.user
-                    ) or []
-                    for t in tracks:
-                        seeds.append((t.artist_name, t.title))
+                artist_ids.append(internal)
         except Exception as e:
             logger.warning("Seed lookup failed for %s: %s", raw_id, e)
+
+    if artist_ids and not seeds and not video_seeds:
+        # Artist ids are an owned-local request: stay in the library so every
+        # user sees only their own catalogue (no external lookups).
+        songs: list[m.SChild] = []
+        seen: set[str] = set()
+        for artist_mbid in artist_ids:
+            try:
+                tracks = await c.services.discover.get_similar_songs(
+                    artist_mbid, user_id=c.user.id, count=count, user=c.user
+                )
+            except Exception as e:
+                logger.warning("Similar lookup failed for %s: %s", artist_mbid, e)
+                continue
+            for track in tracks:
+                if track.file_id in seen:
+                    continue
+                seen.add(track.file_id)
+                songs.append(c.child(track))
+                if len(songs) >= count:
+                    break
+            if len(songs) >= count:
+                break
+        if not songs:
+            raise SubsonicError(70, "Media not found")
+        return songs
+
+    for artist_mbid in artist_ids:
+        artist_tuple = await c.services.view.get_artist_with_albums(
+            artist_mbid, user=c.user
+        )
+        if not artist_tuple:
+            continue
+        artist_view, _ = artist_tuple
+        tracks = await c.services.discover.get_top_songs(
+            artist_view.name, user_id=c.user.id, count=3, user=c.user
+        ) or []
+        for t in tracks:
+            seeds.append((t.artist_name, t.title))
 
     if not seeds and not video_seeds:
         raise SubsonicError(70, "Media not found")
@@ -3322,7 +3378,11 @@ async def _get_todays_hits(c: Ctx) -> Response:
             # Prime the stream lookup so playback skips a Spotify round trip.
             names = [str(a["name"]) for a in (st.get("artists") or [])[:2] if a.get("name")]
             if st.get("name") and len(_SPOTIFY_TRACK_META) < _SPOTIFY_TRACK_META_MAX:
-                _SPOTIFY_TRACK_META[st["id"]] = (", ".join(names), str(st["name"]))
+                _SPOTIFY_TRACK_META[st["id"]] = (
+                    ", ".join(names),
+                    str(st["name"]),
+                    int((st.get("duration_ms") or 0) / 1000),
+                )
         return songs
 
     songs = await _cached_chart("todays_hits", fetch)
@@ -3644,65 +3704,74 @@ async def _build_lastfm_recommendations(c: Ctx) -> dict:
     return {"linked": True, "username": username, "shelf": out}
 
 
-# (artist, title) -> (looked_up_at, karaoke child as builtins, or None for none found)
-_KARAOKE: dict[tuple[str, str], tuple[float, dict | None]] = {}
-_KARAOKE_MAX = 1024
-_KARAOKE_TTL = 7 * 24 * 60 * 60
-_KARAOKE_MISS_TTL = 6 * 60 * 60
-
-
 @endpoint("getKaraoke")
 async def _get_karaoke(c: Ctx) -> Response:
-    """A karaoke (instrumental) version of a song, found on YouTube: played in
-    place of the song by the player's karaoke mode. ``song`` is absent when
-    there's none worth playing."""
-    from services.compat.karaoke import loose, pick_karaoke, search_query
+    """A karaoke mix for a local library track, generated by the karaoke worker.
 
-    title = (c.p("title") or "").strip()
-    artist = (c.p("artist") or "").strip()
-    if not title:
-        raise SubsonicError(10, "Required parameter is missing: title")
-    duration = c.pfloat("duration", None, minimum=0)
-    key = (loose(artist), loose(title))
-    hit = _KARAOKE.get(key)
-    if hit and time.monotonic() - hit[0] < (_KARAOKE_TTL if hit[1] else _KARAOKE_MISS_TTL):
-        return c.render("karaoke", {"song": hit[1]} if hit[1] else {})
+    The quick vocal-cut preview and the AI stems both stream through ``kr-`` ids.
+    ``song`` appears only once a stream is playable; until then the player polls
+    with its ``session`` so the generated stems stay in memory while it waits.
+    """
+    from core.exceptions import ExternalServiceError, ResourceNotFoundError
 
-    ytmusic = c.services.ytmusic_stream
-    if not ytmusic:
-        return c.render("karaoke", {})
+    raw_id = (c.p("id") or "").strip()
+    if not raw_id:
+        raise SubsonicError(10, "Required parameter is missing: id")
     try:
-        candidates = await ytmusic.search_videos(search_query(title, artist))
-    except Exception as e:  # noqa: BLE001 - a failed search isn't "none exists": don't cache
-        logger.warning("Karaoke search failed for %r - %r: %s", artist, title, e)
-        return c.render("karaoke", {})
-    pick = pick_karaoke(title, artist, duration, candidates)
-    song = None
-    if pick:
-        vid = pick["id"]
-        tid = encode("ytmusic", vid)
-        _remember_cover("ytmusic", vid, f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg")
-        length = pick.get("duration")
-        song = msgspec.to_builtins(
-            m.SChild(
-                id=tid,
-                isDir=False,
-                title=title,
-                album="Karaoke",
-                artist=artist or None,
-                coverArt=tid,
-                duration=int(length) if isinstance(length, (int, float)) else None,
-                suffix="m4a",
-                contentType="audio/mp4",
-                type="music",
-                mediaType="song",
-            )
+        kind, fid = decode(raw_id)
+    except SubsonicError:
+        kind, fid = "track", raw_id
+    if kind != "track":
+        raise SubsonicError(10, "Karaoke needs a local track id")
+    karaoke = c.services.karaoke
+    if karaoke is None:
+        return c.render("karaoke", {"status": "failed", "error": "Karaoke is disabled"})
+    try:
+        state = await karaoke.prepare(fid, session_id=(c.p("session") or None))
+    except ResourceNotFoundError:
+        return c.render("karaoke", {"status": "not_generated"})
+    except ExternalServiceError as exc:
+        return c.render("karaoke", {"status": "failed", "error": str(exc)[:300]})
+
+    preview_ready = state.preview_status == "ready"
+    stems_ready = bool(state.instrumental_url)
+    stream_ready = stems_ready or preview_ready
+    payload: dict = {
+        "status": state.status,
+        "sessionId": state.session_id,
+        "streamReady": stream_ready,
+        "preview": preview_ready and not stems_ready,
+    }
+    if state.error_message:
+        payload["error"] = state.error_message
+    if stream_ready:
+        duration = c.pfloat("duration", None, minimum=0)
+        song = m.SChild(
+            id=encode("karaoke", state.cache_key),
+            isDir=False,
+            title=((c.p("title") or "").strip() or "Karaoke"),
+            album="Karaoke",
+            artist=(c.p("artist") or "").strip() or None,
+            coverArt=(c.p("coverArt") or "").strip() or None,
+            duration=int(duration) if duration is not None else None,
+            suffix="m4a",
+            contentType="audio/mp4",
+            type="music",
+            mediaType="song",
         )
-        logger.info("Karaoke for %r - %r: %s %r", artist, title, vid, pick.get("title"))
-    if key not in _KARAOKE and len(_KARAOKE) >= _KARAOKE_MAX:
-        _KARAOKE.pop(next(iter(_KARAOKE)))
-    _KARAOKE[key] = (time.monotonic(), song)
-    return c.render("karaoke", {"song": song} if song else {})
+        payload["song"] = msgspec.to_builtins(song)
+    return c.render("karaoke", payload)
+
+
+@endpoint("releaseKaraoke")
+async def _release_karaoke(c: Ctx) -> Response:
+    """End a karaoke session; the last session deletes the in-memory stems."""
+    session_id = (c.p("sessionId") or "").strip()
+    if not session_id:
+        raise SubsonicError(10, "Required parameter is missing: sessionId")
+    if c.services.karaoke is not None:
+        await c.services.karaoke.release(session_id)
+    return c.render("karaokeRelease", {"released": True})
 
 
 @endpoint("getLastfmRecommendations")

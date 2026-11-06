@@ -83,7 +83,11 @@ vi.mock('$lib/stores/discographyDownload.svelte', () => ({
 }));
 
 vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
-	requestAlbum: () => ({ isPending: false, mutate: vi.fn() })
+	requestAlbum: () => ({ isPending: false, mutate: vi.fn() }),
+	requestTrack: () => ({ mutate: vi.fn(), isPending: false }),
+	requestSpotifyTrack: () => ({ mutate: vi.fn(), isPending: false }),
+	requestSpotifyTracks: () => ({ mutate: vi.fn(), isPending: false }),
+	requestYouTubeTrack: () => ({ mutate: vi.fn(), isPending: false })
 }));
 
 vi.mock('runed', () => ({
