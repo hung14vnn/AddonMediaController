@@ -177,12 +177,20 @@
 		<section class="now-playing-section" aria-label="Currently playing track">
 			<h3>Now Playing</h3>
 			<div class="now-playing-card">
-				<span class="art">
-					<Artwork id={player.current.coverArt} size={64} seed={player.current.album ?? player.current.title} />
-				</span>
-				<div class="text">
-					<span class="title ellipsis">{player.current.title}</span>
-					<span class="artist ellipsis">{artistName(player.current)}</span>
+				<div class="art-stage">
+					{#key player.current.id}
+						<span class="art" in:fadeOnly={{ duration: 250 }} out:fadeOnly={{ duration: 200 }}>
+							<Artwork id={player.current.coverArt} size={64} seed={player.current.album ?? player.current.title} />
+						</span>
+					{/key}
+				</div>
+				<div class="text-stage">
+					{#key player.current.id}
+						<div class="text" in:fadeOnly={{ duration: 250 }} out:fadeOnly={{ duration: 200 }}>
+							<span class="title ellipsis">{player.current.title}</span>
+							<span class="artist ellipsis">{artistName(player.current)}</span>
+						</div>
+					{/key}
 				</div>
 				<div class="now-playing-bars" class:paused={!player.playing} aria-label="Playing">
 					<span class="bar bar-1"></span>
@@ -197,16 +205,23 @@
 		<div class="header-left">
 			<h3>Playing Next</h3>
 			{#if player.upNext.length}
-				<span class="queue-count">{player.upNext.length} {player.upNext.length === 1 ? 'song' : 'songs'}</span>
+				<span class="queue-count" transition:fadeOnly={{ duration: 180 }}>
+					{player.upNext.length} {player.upNext.length === 1 ? 'song' : 'songs'}
+				</span>
 			{/if}
 		</div>
-		{#if player.upNext.length}<button class="clear" onclick={clearQueue}>Clear</button>{/if}
+		{#if player.upNext.length}
+			<button class="clear" onclick={clearQueue} transition:fadeOnly={{ duration: 180 }}>
+				Clear
+			</button>
+		{/if}
 	</header>
 
+	<div class="playing-next-body">
 		{#if !player.upNext.length}
 			<p
 				class="empty"
-				in:fadeOnly={{ duration: 220 }}
+				in:fadeOnly={{ duration: 220, delay: 100 }}
 				out:fadeOnly={{ duration: 160 }}
 			>
 				Nothing up next. Use “Play Next” on any song to add it here.
@@ -288,6 +303,7 @@
 			{/each}
 		</ol>
 	</div>
+	</div>
 </div>
 
 <style>
@@ -338,6 +354,28 @@
 		border-radius: 12px;
 		box-shadow: 0 4px 16px rgb(0 0 0 / 0.2);
 	}
+	.art-stage {
+		width: 42px;
+		height: 42px;
+		flex-shrink: 0;
+		display: grid;
+		grid-template-columns: 1fr;
+		grid-template-rows: 1fr;
+	}
+	.art-stage > :global(*) {
+		grid-area: 1 / 1;
+	}
+	.text-stage {
+		flex: 1;
+		min-width: 0;
+		display: grid;
+		grid-template-columns: 1fr;
+		grid-template-rows: 1fr;
+	}
+	.text-stage > :global(*) {
+		grid-area: 1 / 1;
+		min-width: 0;
+	}
 	.now-playing-bars {
 		display: flex;
 		align-items: flex-end;
@@ -378,6 +416,8 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 0 8px 8px;
+		min-height: 38px;
+		box-sizing: border-box;
 		flex-shrink: 0;
 	}
 	h3 {
@@ -430,10 +470,21 @@
 	.smart-discover.discovering {
 		cursor: wait;
 	}
+	.playing-next-body {
+		display: grid;
+		grid-template-columns: 1fr;
+		grid-template-rows: auto;
+		position: relative;
+	}
+	.playing-next-body > :global(*) {
+		grid-area: 1 / 1;
+		width: 100%;
+	}
 	.empty {
 		padding: 16px 8px;
 		color: rgb(255 255 255 / 0.6);
 		font-size: 14px;
+		margin: 0;
 	}
 	ol {
 		list-style: none;

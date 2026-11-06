@@ -384,3 +384,53 @@ async def test_unknown_album_info_id_error_unchanged_under_base(compat_env):
          "id": "al-does-not-exist"}
     body = _sub(client.get("/subsonic/rest/getAlbumInfo2", params=q))
     assert body["error"]["code"] == 70
+
+async def test_get_album_list2_recent_includes_external_tracks(compat_env):
+    await compat_env.phs.insert(
+        "user-alice",
+        track_name="Midnight City",
+        artist_name="M83",
+        played_at="2026-11-06T10:00:00Z",
+        album_name="Hurry Up, We're Dreaming",
+        track_id="st-spotify123",
+        cover_art="https://i.scdn.co/image/ab67616d0000b273test",
+    )
+    body = _get(compat_env, "getAlbumList2", type="recent")
+    albums = body["albumList2"]["album"]
+    assert any(a["id"] == "st-spotify123" and a["name"] == "Hurry Up, We're Dreaming" and a["artist"] == "M83" for a in albums)
+
+
+async def test_get_recently_played_songs(compat_env):
+    await compat_env.phs.insert(
+        "user-alice",
+        track_name="Midnight City",
+        artist_name="M83",
+        played_at="2026-11-06T10:00:00Z",
+        album_name="Hurry Up, We're Dreaming",
+        track_id="st-spotify123",
+        cover_art="https://i.scdn.co/image/ab67616d0000b273test",
+    )
+    body = _get(compat_env, "getRecentlyPlayedSongs", count=10)
+    songs = body["recentlyPlayedSongs"]["song"]
+    assert any(s["id"] == "st-spotify123" and s["title"] == "Midnight City" and s["artist"] == "M83" for s in songs)
+
+
+async def test_get_album_external_spotify_track(compat_env):
+    await compat_env.phs.insert(
+        "user-alice",
+        track_name="Midnight City",
+        artist_name="M83",
+        played_at="2026-11-06T10:00:00Z",
+        album_name="Hurry Up, We're Dreaming",
+        track_id="st-spotify123",
+        cover_art="https://i.scdn.co/image/ab67616d0000b273test",
+    )
+    # Priming recent albums caches metadata into _REMOTE_TRACK_META
+    _get(compat_env, "getAlbumList2", type="recent")
+    body = _get(compat_env, "getAlbum", id="st-spotify123")
+    album = body["album"]
+    assert album["id"] == "st-spotify123"
+    assert len(album["song"]) == 1
+    assert album["song"][0]["id"] == "st-spotify123"
+    assert album["song"][0]["title"] == "Midnight City"
+

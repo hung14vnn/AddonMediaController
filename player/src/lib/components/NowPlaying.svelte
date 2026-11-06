@@ -30,10 +30,11 @@
 	// Whole seconds: the bar moves ~1px/s, so repainting on every timeupdate (~4/s) is wasted.
 	const progressTime = $derived(Math.floor(player.currentTime));
 
+	const trackDuration = $derived(player.duration || song?.duration || 0);
 	// Round to whole seconds so the time strings are not re-formatted every millisecond.
 	const formattedCurrentTime = $derived(time(Math.floor(shownTime)));
 	const formattedRemainingTime = $derived(
-		time(Math.max(0, Math.floor((player.duration || 0) - shownTime))),
+		time(Math.max(0, Math.floor(trackDuration - shownTime))),
 	);
 
 	interface DisplayTrack {
@@ -48,9 +49,6 @@
 	let currentDisplay = $state<DisplayTrack | null>(null);
 	let incomingDisplay = $state<DisplayTrack | null>(null);
 	let incomingActive = $state(false);
-	let outgoingDisplay = $state<DisplayTrack | null>(null);
-	let outgoingActive = $state(false);
-	let outgoingTimer: ReturnType<typeof setTimeout> | undefined;
 
 	let tint: Tint | null = $state(null);
 	let nextTint: Tint | null = $state(null);
@@ -97,33 +95,17 @@
 		if (!cur) {
 			currentDisplay = null;
 			incomingDisplay = null;
-			outgoingDisplay = null;
 			return;
 		}
 
-		if (!currentDisplay) {
-			currentDisplay = {
-				id: cur.id,
-				coverArt: cur.coverArt,
-				title: cur.title,
-				artist: cur.artist,
-				album: cur.album,
-				tint
-			};
-			return;
-		}
-
-		if (cur.id !== currentDisplay.id) {
-			clearTimeout(outgoingTimer);
+		if (!currentDisplay || cur.id !== currentDisplay.id) {
 			if (incomingDisplay && incomingDisplay.id === cur.id) {
 				// Seamless handoff from audio crossfade
 				currentDisplay = incomingDisplay;
 				incomingDisplay = null;
 				incomingActive = false;
 			} else {
-				// Smooth cross-dissolve on manual track change
-				outgoingDisplay = currentDisplay;
-				outgoingActive = true;
+				// Smooth cross-dissolve & artSwap transition triggered via key
 				currentDisplay = {
 					id: cur.id,
 					coverArt: cur.coverArt,
@@ -132,10 +114,6 @@
 					album: cur.album,
 					tint
 				};
-				outgoingTimer = setTimeout(() => {
-					outgoingDisplay = null;
-					outgoingActive = false;
-				}, 480);
 			}
 		}
 	});
@@ -800,20 +778,26 @@
 >
 	<div class="backdrop" aria-hidden="true">
 		{#if currentDisplay}
-			<div class="backdrop-layer active">
-				<canvas class="backdrop-canvas" use:softArt={currentDisplay.coverArt}></canvas>
-				{#if currentDisplay.tint}
-					<div
-						class="tint"
-						style:--top={currentDisplay.tint.top}
-						style:--bottom={currentDisplay.tint.bottom}
-						style:--accent={currentDisplay.tint.accent ?? currentDisplay.tint.top}
-						style:--glow={currentDisplay.tint.glow ?? 'transparent'}
-					>
-						<div class="mesh-aura" class:paused={!player.playing} aria-hidden="true"></div>
-					</div>
-				{/if}
-			</div>
+			{#key currentDisplay.id}
+				<div
+					class="backdrop-layer active"
+					in:fadeOnly={{ duration: 520 }}
+					out:fadeOnly={{ duration: 380 }}
+				>
+					<canvas class="backdrop-canvas" use:softArt={currentDisplay.coverArt}></canvas>
+					{#if currentDisplay.tint}
+						<div
+							class="tint"
+							style:--top={currentDisplay.tint.top}
+							style:--bottom={currentDisplay.tint.bottom}
+							style:--accent={currentDisplay.tint.accent ?? currentDisplay.tint.top}
+							style:--glow={currentDisplay.tint.glow ?? 'transparent'}
+						>
+							<div class="mesh-aura" class:paused={!player.playing} aria-hidden="true"></div>
+						</div>
+					{/if}
+				</div>
+			{/key}
 		{/if}
 
 		{#if incomingDisplay}
@@ -826,21 +810,6 @@
 						style:--bottom={incomingDisplay.tint.bottom}
 						style:--accent={incomingDisplay.tint.accent ?? incomingDisplay.tint.top}
 						style:--glow={incomingDisplay.tint.glow ?? 'transparent'}
-					>
-						<div class="mesh-aura" class:paused={!player.playing} aria-hidden="true"></div>
-					</div>
-				{/if}
-			</div>
-		{:else if outgoingDisplay}
-			<div class="backdrop-layer outgoing" class:fading-out={outgoingActive}>
-				<canvas class="backdrop-canvas" use:softArt={outgoingDisplay.coverArt}></canvas>
-				{#if outgoingDisplay.tint}
-					<div
-						class="tint"
-						style:--top={outgoingDisplay.tint.top}
-						style:--bottom={outgoingDisplay.tint.bottom}
-						style:--accent={outgoingDisplay.tint.accent ?? outgoingDisplay.tint.top}
-						style:--glow={outgoingDisplay.tint.glow ?? 'transparent'}
 					>
 						<div class="mesh-aura" class:paused={!player.playing} aria-hidden="true"></div>
 					</div>
@@ -978,14 +947,20 @@
 						<div class="art" class:paused={!player.playing}>
 							<div class="art-layers">
 								{#if currentDisplay}
-									<div class="art-layer active">
-										<Artwork
-											id={currentDisplay.coverArt}
-											size={600}
-											seed={currentDisplay.album ?? currentDisplay.title}
-											priority
-										/>
-									</div>
+									{#key currentDisplay.id}
+										<div
+											class="art-layer active"
+											in:artSwap={{ duration: 420 }}
+											out:fadeOnly={{ duration: 320 }}
+										>
+											<Artwork
+												id={currentDisplay.coverArt}
+												size={600}
+												seed={currentDisplay.album ?? currentDisplay.title}
+												priority
+											/>
+										</div>
+									{/key}
 								{/if}
 
 								{#if incomingDisplay}
@@ -994,15 +969,6 @@
 											id={incomingDisplay.coverArt}
 											size={600}
 											seed={incomingDisplay.album ?? incomingDisplay.title}
-											priority
-										/>
-									</div>
-								{:else if outgoingDisplay}
-									<div class="art-layer outgoing" class:fading-out={outgoingActive}>
-										<Artwork
-											id={outgoingDisplay.coverArt}
-											size={600}
-											seed={outgoingDisplay.album ?? outgoingDisplay.title}
 											priority
 										/>
 									</div>
@@ -1056,31 +1022,30 @@
 					class:overlay={mobileOpen && ui.panel === "lyrics"}
 					class:controls-hidden={isMobile && ui.panel === "lyrics" && player.playing && !controlsVisible}
 				>
-					{#if mobileOpen && ui.panel === "lyrics"}
-						<!-- A copy of the screen backdrop, lined up with it, so lyrics passing
-						     under the floating controls fade out into the real background. -->
-						<div class="overlay-bg" aria-hidden="true">
-							<div class="overlay-tint" class:tinted={!!tint}></div>
-						</div>
-					{/if}
 					{#if !mobileOpen}
 						<div
 							class="info"
 							data-flip="info"
 							in:fadeOnly={{ duration: 260 }}
 						>
-							{#key song.id}
-								<div class="text" in:textSwap>
-									<span class="title ellipsis"
-										>{song.title}</span
+							<div class="text-stage">
+								{#key song.id}
+									<div
+										class="text"
+										in:fadeOnly={{ duration: 240 }}
+										out:fadeOnly={{ duration: 180 }}
 									>
-									<ArtistLinks
-										class="artist ellipsis"
-										item={song}
-										onclick={close}
-									/>
-								</div>
-							{/key}
+										<span class="title ellipsis"
+											>{song.title}</span
+										>
+										<ArtistLinks
+											class="artist ellipsis"
+											item={song}
+											onclick={close}
+										/>
+									</div>
+								{/key}
+							</div>
 							<button
 								class="round"
 								class:on={ui.isLoved(song)}
@@ -1132,58 +1097,60 @@
 						{/if}
 						<Slider
 							value={progressTime}
-							max={player.duration}
+							max={trackDuration}
 							label="Seek"
 							onchange={(v) => player.seek(v)}
 							oninput={(v) => (scrub = v)}
 						/>
 						<div class="times">
 							<span>{formattedCurrentTime}</span>
-							{#if player.muted}
-								<!-- iOS ignores volume but honours mute, and the volume row is hidden while a panel is open. -->
-								<button
-									class="quality muted"
-									onclick={() => player.toggleMute()}
-									>Muted · Tap to unmute</button
-								>
-							{:else if player.karaoke}
-								<span class="quality sing-label">Sing</span>
-							{:else if sleepTimer.isActive}
-								<button
-									class="quality active-timer-text"
-									onclick={() => (ui.sleepTimerPicker = true)}
-								>
-									<Icon name="clock" size={11} />
-									{sleepTimer.isCountdown
-										? sleepTimer.remainingLabel
-										: "End of Track"}
-								</button>
-							{:else if player.crossfading}
-								<span
-									class="fade-notice"
-									in:fadeOnly={{ duration: 200 }}
-									out:fadeOnly={{ duration: 180 }}
-								>
-									<Icon name="crossfade" size={11} />
-									<span class="fade-notice-text">
-										Fading into {player.nextSong?.title ? `“${player.nextSong.title}”` : "next track"}
+							<div class="times-center">
+								{#if player.muted}
+									<!-- iOS ignores volume but honours mute, and the volume row is hidden while a panel is open. -->
+									<button
+										class="quality muted"
+										onclick={() => player.toggleMute()}
+										>Muted · Tap to unmute</button
+									>
+								{:else if player.karaoke}
+									<span class="quality sing-label">Sing</span>
+								{:else if sleepTimer.isActive}
+									<button
+										class="quality active-timer-text"
+										onclick={() => (ui.sleepTimerPicker = true)}
+									>
+										<Icon name="clock" size={11} />
+										{sleepTimer.isCountdown
+											? sleepTimer.remainingLabel
+											: "End of Track"}
+									</button>
+								{:else if player.crossfading}
+									<span
+										class="fade-notice"
+										in:fadeOnly={{ duration: 200 }}
+										out:fadeOnly={{ duration: 180 }}
+									>
+										<Icon name="crossfade" size={11} />
+										<span class="fade-notice-text">
+											Fading into {player.nextSong?.title ? `“${player.nextSong.title}”` : "next track"}
+										</span>
 									</span>
-								</span>
-							{:else if qualityBadgeLabel}
-								<button
-									class="quality-badge"
-									class:is-lossless={LOSSLESS.has(song?.suffix?.toLowerCase() ?? "")}
-									onclick={() => (showAudioSpecs = true)}
-									aria-label="Audio Quality: {qualityBadgeLabel} — click for technical details"
-									title="Audio Quality & Technical Details"
-									in:fadeOnly={{ duration: 200 }}
-								>
-									{#if LOSSLESS.has(song?.suffix?.toLowerCase() ?? "")}
-										<span class="quality-dot"></span>
-									{/if}
-									<span class="badge-text">{qualityBadgeLabel}</span>
-								</button>
-							{/if}
+								{:else if qualityBadgeLabel}
+									<button
+										class="quality-badge"
+										class:is-lossless={LOSSLESS.has(song?.suffix?.toLowerCase() ?? "")}
+										onclick={() => (showAudioSpecs = true)}
+										aria-label="Audio Quality: {qualityBadgeLabel} — click for technical details"
+										title="Audio Quality & Technical Details"
+										in:fadeOnly={{ duration: 200 }}
+									>
+										{#if LOSSLESS.has(song?.suffix?.toLowerCase() ?? "")}
+											<span class="quality-dot"></span>
+										{/if}
+										<span class="badge-text">{qualityBadgeLabel}</span>
+									</button>
+								{/if}
+							</div>
 							<span class="right">-{formattedRemainingTime}</span>
 						</div>
 					</div>
@@ -1342,15 +1309,6 @@
 	}
 	.backdrop-layer.incoming.fading-in {
 		opacity: 1;
-	}
-	.backdrop-layer.outgoing {
-		z-index: 2;
-		opacity: 1;
-		transition: opacity 0.45s ease-out;
-		will-change: opacity;
-	}
-	.backdrop-layer.outgoing.fading-out {
-		opacity: 0;
 	}
 	.backdrop-canvas {
 		position: absolute;
@@ -1576,15 +1534,6 @@
 	.art-layer.incoming.fading-in {
 		opacity: 1;
 	}
-	.art-layer.outgoing {
-		z-index: 2;
-		opacity: 1;
-		transition: opacity 0.45s ease-out;
-		will-change: opacity;
-	}
-	.art-layer.outgoing.fading-out {
-		opacity: 0;
-	}
 	/* On mobile, the row also carries the compact title/buttons — collapsed to
 	   zero width (and hidden) whenever the art is at full size, since the art
 	   itself already claims all the row's width at that point. */
@@ -1638,6 +1587,18 @@
 		display: flex;
 		align-items: center;
 		gap: 12px;
+	}
+	.text-stage {
+		flex: 1;
+		min-width: 0;
+		display: grid;
+		grid-template-columns: 1fr;
+		grid-template-rows: 1fr;
+		align-items: center;
+	}
+	.text-stage > .text {
+		grid-area: 1 / 1;
+		width: 100%;
 	}
 	.text {
 		flex: 1;
@@ -1707,6 +1668,16 @@
 		font-weight: 600;
 		color: rgb(255 255 255 / 0.42);
 		font-variant-numeric: tabular-nums;
+	}
+	.times-center {
+		display: grid;
+		grid-template-columns: 1fr;
+		grid-template-rows: 1fr;
+		place-items: center;
+		justify-self: center;
+	}
+	.times-center > * {
+		grid-area: 1 / 1;
 	}
 	.sing-label {
 		color: rgb(255 255 255 / 0.75);
@@ -2095,49 +2066,37 @@
 			margin: 0 -12px;
 			padding: 28px 12px 0;
 		}
-		/* The controls' box down to the bottom of the screen (through the layout's
-		   bottom padding, where overflowing lyrics would otherwise show), with a
-		   static top fade (painted once). */
-		.overlay-bg {
-			position: absolute;
-			inset: 0 0 calc(-1 * max(12px, env(safe-area-inset-bottom))) 0;
-			z-index: -1;
-			overflow: hidden;
-			pointer-events: none;
-			-webkit-mask-image: linear-gradient(to bottom, transparent, #000 28px);
-			mask-image: linear-gradient(to bottom, transparent, #000 28px);
-		}
-		/* Full-screen sized and placed where the real backdrop is: the controls
-		   sit 16px from the screen edges (28px layout padding − 12px margin), and
-		   .overlay-bg ends at the bottom of the screen. */
-		.overlay-tint {
-			position: absolute;
-			left: -16px;
-			right: -16px;
-			bottom: 0;
-			height: var(--np-h, 100vh);
-			background: #3a3a3c;
-		}
-		.overlay-tint.tinted {
-			background: radial-gradient(
-					120% 60% at 50% 0%,
-					color-mix(in srgb, var(--np-top) 85%, #fff 15%),
-					transparent 70%
-				),
-				linear-gradient(180deg, var(--np-top) 0%, var(--np-bottom) 100%);
-		}
-		.overlay-tint::after {
-			content: "";
-			position: absolute;
-			inset: 0;
-			background: linear-gradient(
-				to bottom,
-				transparent 55%,
-				rgb(0 0 0 / 0.18)
-			);
-		}
 		.mobile-panel:has(.controls.overlay) .panel-mobile {
 			margin-bottom: 0;
+			mask-image: linear-gradient(
+				to bottom,
+				#000 0%,
+				#000 calc(100% - 240px),
+				transparent calc(100% - 60px),
+				transparent 100%
+			);
+			-webkit-mask-image: linear-gradient(
+				to bottom,
+				#000 0%,
+				#000 calc(100% - 240px),
+				transparent calc(100% - 60px),
+				transparent 100%
+			);
+			transition: mask-image 0.45s ease, -webkit-mask-image 0.45s ease;
+		}
+		.mobile-panel:has(.controls.overlay.controls-hidden) .panel-mobile {
+			mask-image: linear-gradient(
+				to bottom,
+				#000 0%,
+				#000 calc(100% - 80px),
+				transparent 100%
+			);
+			-webkit-mask-image: linear-gradient(
+				to bottom,
+				#000 0%,
+				#000 calc(100% - 80px),
+				transparent 100%
+			);
 		}
 	}
 

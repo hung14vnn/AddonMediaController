@@ -130,6 +130,7 @@ class CompatScrobbleAdapter:
             return ScrobbleResponse(accepted=True, services={})
         track = track or await self._resolve(file_id)
         ts = int(played_at if played_at is not None else time.time())
+        cover = track.cover_url or getattr(track, "album_mbid", None) or None
         req = ScrobbleRequest(
             track_name=track.title,
             artist_name=track.artist_name,
@@ -139,6 +140,8 @@ class CompatScrobbleAdapter:
             mbid=track.recording_mbid,
             source=source,
             release_group_mbid=track.rg_mbid,
+            track_id=file_id or track.file_id,
+            cover_art=cover,
         )
         result = await self._scrobble.submit_scrobble(req, user_id=user_id)
         if played_at is None:

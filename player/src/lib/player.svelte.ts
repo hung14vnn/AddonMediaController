@@ -963,7 +963,7 @@ class Player {
 			// Not taking over the prerolled element after all: stop it, or both would play.
 			this.cancelPreroll();
 			outgoing?.copy.revoke();
-			this.output?.resetFade(this.audio);
+			this.output?.quickFadeIn(this.audio, 0.22);
 			this.audio.autoplay = autoplay;
 			this.applyVolume(this.audio);
 			this.audio.src = src;

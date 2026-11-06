@@ -1,6 +1,8 @@
 import { clear as idbClear, createStore, del as idbDel, entries as idbEntries, get as idbGet, set as idbSet } from 'idb-keyval';
 import { md5 } from './md5';
 import type { Album, AlbumListType, Artist, ArtistInfo, Genre, Lyrics, Playlist, Song } from './types';
+import { APPLE_MUSIC_GENRES } from './genres';
+export { APPLE_MUSIC_GENRES };
 
 const API_VERSION = '1.16.1';
 const CLIENT = 'hify';
@@ -436,6 +438,11 @@ export async function getRandomSongs(size = 50, extra: Params = {}) {
 	return (r.randomSongs?.song ?? []) as Song[];
 }
 
+export async function getRecentlyPlayedSongs(count = 30, offset = 0) {
+	const r = await call('getRecentlyPlayedSongs', { count, offset });
+	return (r.recentlyPlayedSongs?.song ?? []) as Song[];
+}
+
 export async function getRandomRadioMix(count = 20, force = false) {
 	const key = 'cachedRadioMix';
 	if (!force) {
@@ -464,7 +471,11 @@ export async function getSongsByGenre(genre: string, count = 100, offset = 0) {
 	return (r.songsByGenre?.song ?? []) as Song[];
 }
 
-export async function getGenres() {
+export async function getGenres(): Promise<Genre[]> {
+	return APPLE_MUSIC_GENRES;
+}
+
+export async function getSubsonicGenres() {
 	const r = await call('getGenres');
 	return ((r.genres?.genre ?? []) as Genre[]).sort((a, b) => (b.songCount ?? 0) - (a.songCount ?? 0));
 }

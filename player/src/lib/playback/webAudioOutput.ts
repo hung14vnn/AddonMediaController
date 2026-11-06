@@ -310,6 +310,27 @@ export class WebAudioOutput {
 		param.setValueAtTime(1, now);
 	}
 
+	/** Smooth fade-in when a track starts (manual change or without crossfade) to prevent harsh pops. */
+	quickFadeIn(el: HTMLMediaElement, duration = 0.22) {
+		const param = this.channels.get(el)?.fade.gain;
+		if (!param) return;
+		const now = this.ctx.currentTime;
+		hold(param, now);
+		param.setValueAtTime(0, now);
+
+		const ramp = () => {
+			const t = this.ctx.currentTime;
+			hold(param, t);
+			param.setValueAtTime(0, t);
+			try {
+				param.linearRampToValueAtTime(1, t + duration);
+			} catch {
+				param.setValueAtTime(1, t);
+			}
+		};
+		el.addEventListener('playing', ramp, { once: true });
+	}
+
 	setVolume(level: number, muted: boolean) {
 		const value = muted ? 0 : Math.max(0, Math.min(1, level));
 		this.volume.gain.setTargetAtTime(value, this.ctx.currentTime, RAMP_S);

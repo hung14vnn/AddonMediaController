@@ -22,6 +22,8 @@ class PlayHistoryRecord(msgspec.Struct, frozen=True):
     release_group_mbid: str | None = None
     duration_ms: int | None = None
     source: str | None = None
+    track_id: str | None = None
+    cover_art: str | None = None
 
 
 class PlayHistoryStore(PersistenceBase):
@@ -44,10 +46,18 @@ class PlayHistoryStore(PersistenceBase):
                   track_name TEXT NOT NULL, artist_name TEXT NOT NULL, album_name TEXT,
                   recording_mbid TEXT, release_group_mbid TEXT, duration_ms INTEGER,
                   source TEXT,
-                  played_at TEXT NOT NULL
+                  played_at TEXT NOT NULL,
+                  track_id TEXT,
+                  cover_art TEXT
                 )
                 """
             )
+            cursor = conn.execute("PRAGMA table_info(play_history)")
+            cols = {row[1] for row in cursor.fetchall()}
+            if "track_id" not in cols:
+                conn.execute("ALTER TABLE play_history ADD COLUMN track_id TEXT")
+            if "cover_art" not in cols:
+                conn.execute("ALTER TABLE play_history ADD COLUMN cover_art TEXT")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_play_history_user_played "
                 "ON play_history(user_id, played_at DESC)"
@@ -58,6 +68,7 @@ class PlayHistoryStore(PersistenceBase):
 
     @staticmethod
     def _row_to_record(row: sqlite3.Row) -> PlayHistoryRecord:
+        cols = row.keys()
         return PlayHistoryRecord(
             id=row["id"],
             user_id=row["user_id"],
@@ -69,6 +80,8 @@ class PlayHistoryStore(PersistenceBase):
             release_group_mbid=row["release_group_mbid"],
             duration_ms=row["duration_ms"],
             source=row["source"],
+            track_id=row["track_id"] if "track_id" in cols else None,
+            cover_art=row["cover_art"] if "cover_art" in cols else None,
         )
 
     async def insert(
@@ -83,6 +96,8 @@ class PlayHistoryStore(PersistenceBase):
         release_group_mbid: str | None = None,
         duration_ms: int | None = None,
         source: str | None = None,
+        track_id: str | None = None,
+        cover_art: str | None = None,
     ) -> str:
         row_id = uuid4().hex
 
@@ -91,8 +106,9 @@ class PlayHistoryStore(PersistenceBase):
                 """
                 INSERT INTO play_history (
                     id, user_id, track_name, artist_name, album_name,
-                    recording_mbid, release_group_mbid, duration_ms, source, played_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    recording_mbid, release_group_mbid, duration_ms, source, played_at,
+                    track_id, cover_art
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row_id,
@@ -105,6 +121,8 @@ class PlayHistoryStore(PersistenceBase):
                     duration_ms,
                     source,
                     played_at,
+                    track_id,
+                    cover_art,
                 ),
             )
 

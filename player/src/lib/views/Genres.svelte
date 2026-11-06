@@ -10,7 +10,14 @@ import { router } from '../router.svelte';
 </script>
 
 <div class="page">
-	<div class="head"><button class="back" onclick={() => router.go('/library')}><Icon name="chevronLeft" size={18} />Library</button></div>
+	<div class="head">
+		<button
+			class="back"
+			onclick={() => (history.length > 1 ? history.back() : router.go('/browse'))}
+		>
+			<Icon name="chevronLeft" size={18} />Back
+		</button>
+	</div>
 	<h1 class="page-title">Genres</h1>
 	{#await data}
 		<div class="spinner"></div>

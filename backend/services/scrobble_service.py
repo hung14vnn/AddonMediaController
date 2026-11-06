@@ -240,6 +240,8 @@ class ScrobbleService:
             duration_ms=request.duration_ms or None,
             source=request.source,
             played_at=played_at,
+            track_id=getattr(request, "track_id", None),
+            cover_art=getattr(request, "cover_art", None),
         )
 
     @staticmethod

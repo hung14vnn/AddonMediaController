@@ -146,6 +146,7 @@ class HomeSectionBuilders:
                 artist_name=r.artist_name,
                 album_name=r.album_name,
                 listened_at=r.played_at,
+                image_url=getattr(r, "cover_art", None),
             )
             for r in records[:15]
         ]

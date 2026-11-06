@@ -778,6 +778,54 @@ async def _get_album(c: Ctx) -> Response:
     sid = c.p("id") or ""
     if _kind_of(sid) == "spotify_album":
         return await _get_spotify_album(c, decode(sid)[1])
+    if _kind_of(sid) == "spotify_track":
+        from services.spotapi_client import SpotApiClient
+        track_id = decode(sid)[1]
+        try:
+            st = await SpotApiClient().get_track(track_id)
+            if st and (al := st.get("album")) and al.get("id"):
+                return await _get_spotify_album(c, al["id"])
+            if st and st.get("id"):
+                child = _spotapi_to_child(st)
+                detail = m.SAlbumID3(
+                    id=sid,
+                    name=child.album or child.title,
+                    artist=child.artist,
+                    coverArt=child.coverArt,
+                    songCount=1,
+                    song=[child],
+                )
+                return c.render("album", detail)
+        except Exception as e:
+            logger.warning("Spotapi track to album lookup failed for %s: %s", sid, e)
+        meta = _REMOTE_TRACK_META.get(sid)
+        if meta:
+            title, artist, album_name, duration = meta
+            child = m.SChild(
+                id=sid, isDir=False, title=title,
+                album=album_name or title, artist=artist,
+                duration=duration, coverArt=sid, type="music", mediaType="song",
+                suffix="m4a", contentType="audio/mp4", size=10_000_000,
+                path=sid + ".m4a", track=1, discNumber=1,
+            )
+            return c.render("album", m.SAlbumID3(
+                id=sid, name=album_name or title, artist=artist,
+                coverArt=sid, songCount=1, song=[child]
+            ))
+        raise SubsonicError(70, "Album not found")
+    if sid.startswith("yt-"):
+        meta = _REMOTE_TRACK_META.get(sid)
+        title, artist, album, duration = meta if meta else ("YouTube Track", "YouTube Music", "YouTube Music", 0)
+        child = m.SChild(
+            id=sid, isDir=False, title=title, album=album, artist=artist,
+            duration=duration, coverArt=sid, type="music", mediaType="song",
+            suffix="m4a", contentType="audio/mp4", size=10_000_000, path=sid + ".m4a",
+        )
+        detail = m.SAlbumID3(
+            id=sid, name=album or title, artist=artist, coverArt=sid,
+            songCount=1, song=[child],
+        )
+        return c.render("album", detail)
     # Legacy id from getYtMusicNewReleases (clients may still have it cached).
     # Without this it fell through to a Spotify *search* for the raw id string,
     # which returned the same unrelated album for every release.
@@ -879,10 +927,12 @@ async def _album_list(c: Ctx):
         raise SubsonicError(0, "Album list type 'highest' is not supported")
     size = c.pint("size", 10, minimum=1, maximum=500) or 10
     offset = c.pint("offset", 0, minimum=0, maximum=2_147_483_647) or 0
-    if typ in {"recent", "frequent"}:
+    if typ == "recent":
+        return await _get_recent_albums(c, limit=size, offset=offset)
+    if typ == "frequent":
         return await c.services.discover.get_history_albums(
             user_id=c.user.id,
-            frequent=typ == "frequent",
+            frequent=True,
             limit=size,
             offset=offset,
             user=c.user,
@@ -926,16 +976,184 @@ async def _album_list(c: Ctx):
     return albums
 
 
+async def _get_recent_albums(c: Ctx, limit: int, offset: int) -> list:
+    play_store = getattr(c.services.discover, "_play_history", None)
+    if not play_store:
+        return await c.services.discover.get_history_albums(
+            user_id=c.user.id, frequent=False, limit=limit, offset=offset, user=c.user
+        )
+    records = await play_store.recent(c.user.id, limit=max(limit * 3 + offset, 60))
+    if not records:
+        return []
+
+    seen = set()
+    deduped = []
+    for r in records:
+        key = r.release_group_mbid or f"name:{(r.artist_name or '').lower()}:{(r.album_name or r.track_name or '').lower()}"
+        if key not in seen:
+            seen.add(key)
+            deduped.append(r)
+
+    page = deduped[offset : offset + limit]
+    if not page:
+        return []
+
+    local_mbids = [r.release_group_mbid for r in page if r.release_group_mbid]
+    local_map = {}
+    if local_mbids:
+        for la in await c.services.view.get_albums_by_ids(local_mbids, user=c.user):
+            local_map[la.rg_mbid] = la
+
+    result = []
+    for r in page:
+        if r.release_group_mbid and r.release_group_mbid in local_map:
+            result.append(local_map[r.release_group_mbid])
+        else:
+            album_id = r.track_id or encode("track", r.id)
+            cover = r.cover_art or r.track_id or encode("track", r.id)
+            if r.track_id:
+                _remember_remote_track(
+                    r.track_id,
+                    r.track_name,
+                    r.artist_name,
+                    r.album_name or "",
+                    round(r.duration_ms / 1000) if r.duration_ms else 0,
+                )
+                if _kind_of(r.track_id) == "spotify_track":
+                    _remember_cover("spotify_track", decode(r.track_id)[1], cover)
+            result.append(
+                m.SAlbumID3(
+                    id=album_id,
+                    name=r.album_name or r.track_name,
+                    artist=r.artist_name or "Unknown Artist",
+                    coverArt=cover,
+                    songCount=1,
+                    duration=round(r.duration_ms / 1000) if r.duration_ms else None,
+                    played=m.played_iso(r.played_at),
+                )
+            )
+    return result
+
+
 @endpoint("getAlbumList2")
 async def _get_album_list2(c: Ctx) -> Response:
     albums = await _album_list(c)
-    return c.render("albumList2", {"album": [m.to_album_id3(a) for a in albums]})
+    from services.compat.view_models import ViewAlbum
+    return c.render(
+        "albumList2",
+        {"album": [m.to_album_id3(a) if isinstance(a, ViewAlbum) else a for a in albums]},
+    )
 
 
 @endpoint("getAlbumList")
 async def _get_album_list(c: Ctx) -> Response:
     albums = await _album_list(c)
-    return c.render("albumList", {"album": [m.to_album_child(a) for a in albums]})
+    from services.compat.view_models import ViewAlbum
+    return c.render(
+        "albumList",
+        {
+            "album": [
+                m.to_album_child(a)
+                if isinstance(a, ViewAlbum)
+                else (
+                    m.SChild(
+                        id=a.id,
+                        isDir=True,
+                        title=a.name,
+                        album=a.name,
+                        artist=a.artist,
+                        coverArt=a.coverArt,
+                        duration=a.duration,
+                    )
+                    if isinstance(a, m.SAlbumID3)
+                    else a
+                )
+                for a in albums
+            ]
+        },
+    )
+
+
+@endpoint("getRecentlyPlayedSongs")
+async def _get_recently_played_songs(c: Ctx) -> Response:
+    count = c.pint("count", 30, minimum=1, maximum=100) or 30
+    play_store = getattr(c.services.discover, "_play_history", None)
+    if not play_store:
+        return c.render("recentlyPlayedSongs", {"song": []})
+
+    records = await play_store.recent(c.user.id, limit=count)
+    songs: list[m.SChild] = []
+    for r in records:
+        sid = r.track_id or (encode("track", r.recording_mbid) if r.recording_mbid else None)
+        if sid and _kind_of(sid) == "track":
+            local = await c.services.view.get_track(decode(sid)[1], user=c.user)
+            if local:
+                songs.append(c.child(local))
+                continue
+        elif sid and _kind_of(sid) == "spotify_track":
+            internal = decode(sid)[1]
+            meta = _REMOTE_TRACK_META.get(sid)
+            duration = meta[3] if meta else ((r.duration_ms or 0) // 1000)
+            cover = r.cover_art or sid
+            _remember_cover("spotify_track", internal, cover)
+            _remember_remote_track(sid, r.track_name, r.artist_name, r.album_name or "", duration)
+            songs.append(
+                m.SChild(
+                    id=sid,
+                    isDir=False,
+                    title=r.track_name,
+                    album=r.album_name or "Unknown",
+                    artist=r.artist_name,
+                    duration=duration,
+                    coverArt=cover,
+                    type="music",
+                    mediaType="song",
+                    suffix="m4a",
+                    contentType="audio/mp4",
+                    size=10_000_000,
+                    path=sid + ".m4a",
+                )
+            )
+            continue
+        elif sid and sid.startswith("yt-"):
+            internal = sid.removeprefix("yt-")
+            meta = _REMOTE_TRACK_META.get(sid)
+            duration = meta[3] if meta else ((r.duration_ms or 0) // 1000)
+            cover = r.cover_art or sid
+            _remember_cover("ytmusic", internal, cover)
+            _remember_remote_track(sid, r.track_name, r.artist_name, r.album_name or "", duration)
+            songs.append(
+                m.SChild(
+                    id=sid,
+                    isDir=False,
+                    title=r.track_name,
+                    album=r.album_name or "YouTube Music",
+                    artist=r.artist_name,
+                    duration=duration,
+                    coverArt=cover,
+                    type="music",
+                    mediaType="song",
+                    suffix="m4a",
+                    contentType="audio/mp4",
+                    size=10_000_000,
+                    path=sid + ".m4a",
+                )
+            )
+            continue
+        songs.append(
+            m.SChild(
+                id=sid or encode("track", r.id),
+                isDir=False,
+                title=r.track_name,
+                album=r.album_name or "",
+                artist=r.artist_name,
+                duration=(r.duration_ms or 0) // 1000,
+                coverArt=r.cover_art or (sid or encode("track", r.id)),
+                type="music",
+                mediaType="song",
+            )
+        )
+    return c.render("recentlyPlayedSongs", {"song": songs})
 
 
 @endpoint("getRandomSongs")

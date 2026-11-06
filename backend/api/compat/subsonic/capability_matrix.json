@@ -85,6 +85,7 @@
     "getYtMusicNewReleases": {"state": "full", "response_key": "albumList2", "service": "spotify catalog (player extension)", "parameters": ["count?"]},
     "getTodaysHits": {"state": "full", "response_key": "todaysHits", "service": "spotify catalog (player extension)", "parameters": ["count?"]},
     "getRandomRadioMix": {"state": "full", "response_key": "randomRadioMix", "service": "ytmusic radio (player extension)", "parameters": ["count?"]},
+    "getRecentlyPlayedSongs": {"state": "full", "response_key": "recentlyPlayedSongs", "service": "play history (player extension)", "parameters": ["count?", "offset?"]},
 
     "getAlbumInfo": {"state": "full", "response_key": "albumInfo", "service": "library metadata", "parameters": ["id"]},
     "getAlbumInfo2": {"state": "full", "response_key": "albumInfo2", "service": "library metadata", "parameters": ["id"]},
