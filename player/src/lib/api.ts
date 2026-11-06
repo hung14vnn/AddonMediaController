@@ -759,9 +759,9 @@ function isRemoteTrack(id: string | undefined): boolean {
 	return !!id && (id.startsWith('yt-') || id.startsWith('st-') || id.startsWith('kr-'));
 }
 
-export async function scrobble(id: string, submission: boolean) {
+export async function scrobble(id: string, submission: boolean, coverArt?: string) {
 	try {
-		await call('scrobble', { id, submission, time: Date.now() });
+		await call('scrobble', { id, submission, time: Date.now(), ...(coverArt ? { coverArt } : {}) });
 	} catch {
 		/* scrobbling is best-effort */
 	}

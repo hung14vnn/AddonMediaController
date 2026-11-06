@@ -5,6 +5,7 @@
 		getAlbumList,
 		getLastfmRecommendations,
 		getRandomSongs,
+		getRecentlyPlayedSongs,
 		getTodaysHits,
 		getTrendingSongs,
 		optional,
@@ -52,7 +53,7 @@
 	// these hold back the shelves above.
 	let recent = $state(
 		optional(
-			cachedNow("home:recent", () => getAlbumList("recent", 20), {
+			cachedNow("home:recent:songs", () => getRecentlyPlayedSongs(12), {
 				fresh: 0,
 				refresh: (list) => (recent = list),
 			}),
@@ -180,6 +181,7 @@
 				<h3>Your library is empty</h3>
 				<p>Add music on the server and it will show up here.</p>
 			</div>
+			{#await recent then list}{@render songs("Recently Played", list)}{/await}
 			{@render lastfm()}
 			{#await hits then list}{@render songs("Today's Hits", list)}{/await}
 			{#await trending then list}{@render songs(
@@ -187,13 +189,7 @@
 					list,
 				)}{/await}
 		{:else}
-			{#await recent then list}
-				{#if list.length}
-					<Shelf title="Recently Played" size="lg">
-						{#each list as album (album.id)}<AlbumCard {album} />{/each}
-					</Shelf>
-				{/if}
-			{/await}
+			{#await recent then list}{@render songs("Recently Played", list)}{/await}
 			{#await trending then list}{@render songs(
 					"Trending Songs",
 					list,

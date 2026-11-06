@@ -979,7 +979,7 @@ class Player {
 			// YouTube track takes seconds to arrive, and Android/iOS refuse to start audio
 			// from a background page that has been silent that long. `canplay` still retries.
 			this.play();
-			if (!song.karaokeOf) scrobble(song.id, false);
+			if (!song.karaokeOf) scrobble(song.id, false, song.coverArt);
 		}
 		this.persist();
 		this.prepareNextOffline();
@@ -1495,7 +1495,7 @@ class Player {
 		if (song && !this.scrobbled && dur > 30 && (a.currentTime >= dur / 2 || a.currentTime >= 240)) {
 			this.scrobbled = true;
 			// Singing along isn't listening to the song: karaoke versions aren't scrobbled.
-			if (!song.karaokeOf) scrobble(song.id, true);
+			if (!song.karaokeOf) scrobble(song.id, true, song.coverArt);
 		}
 		if (a.currentTime !== this.lastProgressTime) {
 			this.lastProgressTime = a.currentTime;
