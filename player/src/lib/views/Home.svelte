@@ -16,6 +16,7 @@
 	import Icon from "../components/Icon.svelte";
 	import ProfileButton from "../components/ProfileButton.svelte";
 	import Shelf from "../components/Shelf.svelte";
+	import SongCard from "../components/SongCard.svelte";
 	import TrackList from "../components/TrackList.svelte";
 	import { getPlayer } from "../player.svelte";
 	import type { Album, Song } from "../types";
@@ -53,7 +54,7 @@
 	// these hold back the shelves above.
 	let recent = $state(
 		optional(
-			cachedNow("home:recent:songs", () => getRecentlyPlayedSongs(12), {
+			cachedNow("home:recent:songs", () => getRecentlyPlayedSongs(20), {
 				fresh: 0,
 				refresh: (list) => (recent = list),
 			}),
@@ -181,7 +182,15 @@
 				<h3>Your library is empty</h3>
 				<p>Add music on the server and it will show up here.</p>
 			</div>
-			{#await recent then list}{@render songs("Recently Played", list)}{/await}
+			{#await recent then list}
+				{#if list.length}
+					<Shelf title="Recently Played" size="lg">
+						{#each list as song, i (song.id)}
+							<SongCard {song} queue={list} index={i} />
+						{/each}
+					</Shelf>
+				{/if}
+			{/await}
 			{@render lastfm()}
 			{#await hits then list}{@render songs("Today's Hits", list)}{/await}
 			{#await trending then list}{@render songs(
@@ -189,7 +198,15 @@
 					list,
 				)}{/await}
 		{:else}
-			{#await recent then list}{@render songs("Recently Played", list)}{/await}
+			{#await recent then list}
+				{#if list.length}
+					<Shelf title="Recently Played" size="lg">
+						{#each list as song, i (song.id)}
+							<SongCard {song} queue={list} index={i} />
+						{/each}
+					</Shelf>
+				{/if}
+			{/await}
 			{#await trending then list}{@render songs(
 					"Trending Songs",
 					list,

@@ -67,6 +67,7 @@ class CompatScrobbleAdapter:
             (user_id, _norm_client(client) or "", file_id), None
         )
         track = track or await self._resolve(file_id)
+        cover = track.cover_url or getattr(track, "album_mbid", None) or None
         req = NowPlayingRequest(
             track_name=track.title,
             artist_name=track.artist_name,
@@ -75,6 +76,8 @@ class CompatScrobbleAdapter:
             mbid=track.recording_mbid,
             source=_norm_client(client),
             release_group_mbid=track.rg_mbid,
+            track_id=file_id or track.file_id,
+            cover_art=cover,
         )
         result = await self._scrobble.report_now_playing(req, user_id=user_id)
         await self._write_presence(

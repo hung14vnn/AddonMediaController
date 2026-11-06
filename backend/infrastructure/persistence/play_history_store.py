@@ -129,6 +129,31 @@ class PlayHistoryStore(PersistenceBase):
         await self._write(operation)
         return row_id
 
+    async def update_metadata(
+        self,
+        record_id: str,
+        *,
+        track_id: str | None = None,
+        cover_art: str | None = None,
+    ) -> None:
+        def operation(conn: sqlite3.Connection) -> None:
+            updates = []
+            params = []
+            if track_id is not None:
+                updates.append("track_id = ?")
+                params.append(track_id)
+            if cover_art is not None:
+                updates.append("cover_art = ?")
+                params.append(cover_art)
+            if updates:
+                params.append(record_id)
+                conn.execute(
+                    f"UPDATE play_history SET {', '.join(updates)} WHERE id = ?",
+                    params,
+                )
+
+        await self._write(operation)
+
     async def recent(self, user_id: str, limit: int = 50) -> list[PlayHistoryRecord]:
         safe_limit = max(1, limit)
 

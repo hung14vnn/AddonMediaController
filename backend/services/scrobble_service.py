@@ -230,6 +230,21 @@ class ScrobbleService:
 
     async def _record_play_history(self, request: ScrobbleRequest, user_id: str) -> None:
         played_at = datetime.fromtimestamp(request.timestamp, tz=timezone.utc).isoformat()
+        try:
+            recent = await self._play_history_store.recent(user_id, limit=1)
+            if (
+                recent
+                and recent[0].track_name.lower() == request.track_name.lower()
+                and recent[0].artist_name.lower() == request.artist_name.lower()
+            ):
+                track_id = getattr(request, "track_id", None) or recent[0].track_id
+                cover_art = getattr(request, "cover_art", None) or recent[0].cover_art
+                await self._play_history_store.update_metadata(
+                    recent[0].id, track_id=track_id, cover_art=cover_art
+                )
+                return
+        except Exception:  # noqa: BLE001
+            pass
         await self._play_history_store.insert(
             user_id,
             track_name=request.track_name,

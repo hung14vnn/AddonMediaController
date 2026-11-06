@@ -13,6 +13,8 @@ class NowPlayingRequest(AppStruct):
     # native playback source, or normalized client name from the compat adapter
     source: str | None = None
     release_group_mbid: str | None = None
+    track_id: str | None = None
+    cover_art: str | None = None
 
     def __post_init__(self) -> None:
         if self.duration_ms < 0:
@@ -29,6 +31,8 @@ class ScrobbleRequest(AppStruct):
     # native playback source, or normalized client name from the compat adapter
     source: str | None = None
     release_group_mbid: str | None = None
+    track_id: str | None = None
+    cover_art: str | None = None
     track_id: str | None = None
     cover_art: str | None = None
 

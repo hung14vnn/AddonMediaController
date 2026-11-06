@@ -1,16 +1,28 @@
 <script lang="ts">
 	import { songMenu } from '../menus';
 	import { getPlayer } from '../player.svelte';
-	import { href } from '../router.svelte';
 	import type { Song } from '../types';
 	import { ui } from '../ui.svelte';
 	import ArtistLinks from './ArtistLinks.svelte';
 	import Card from './Card.svelte';
 
-	let { song }: { song: Song } = $props();
+	let {
+		song,
+		queue,
+		index = 0
+	}: {
+		song: Song;
+		queue?: Song[];
+		index?: number;
+	} = $props();
 
 	function play() {
-		getPlayer().playList([song]);
+		const p = getPlayer();
+		if (queue && queue.length > 0) {
+			p.playList(queue, index);
+		} else {
+			p.playList([song]);
+		}
 	}
 
 	let menuItems = $state<any[]>([]);
@@ -24,11 +36,11 @@
 {/snippet}
 
 <Card
-	href={song.albumId ? href.album(song.albumId) : '#'}
 	coverArt={song.coverArt}
 	title={song.title}
 	subtitleSlot={artists}
 	icon="note"
+	onclick={play}
 	onplay={play}
 	onmenu={(e) => ui.openMenu(e, menuItems)}
 />

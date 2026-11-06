@@ -6,7 +6,8 @@
 
 	import type { Snippet } from 'svelte';
 	let {
-		href,
+		href = '#',
+		onclick,
 		coverArt,
 		title,
 		subtitle,
@@ -18,7 +19,8 @@
 		onmenu,
 		onprefetch
 	}: {
-		href: string;
+		href?: string;
+		onclick?: () => void;
 		coverArt?: string;
 		title: string;
 		subtitle?: string;
@@ -71,7 +73,17 @@
 	onpointercancel={cancel}
 	role="group"
 >
-	<a class="cover" {href} aria-label={title}>
+	<a
+		class="cover"
+		{href}
+		aria-label={title}
+		onclick={(e) => {
+			if (onclick) {
+				e.preventDefault();
+				onclick();
+			}
+		}}
+	>
 		<Artwork id={coverArt} seed={title} alt="" {icon} />
 		<div class="overlay">
 			{#if onplay}
@@ -98,7 +110,16 @@
 		</div>
 	</a>
 	<div class="meta">
-		<a class="title" {href}>
+		<a
+			class="title"
+			{href}
+			onclick={(e) => {
+				if (onclick) {
+					e.preventDefault();
+					onclick();
+				}
+			}}
+		>
 			<span class="clamp">{title}</span>
 			{#if explicit}<span class="explicit" aria-label="Explicit">E</span>{/if}
 		</a>
