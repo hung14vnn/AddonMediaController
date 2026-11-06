@@ -10,9 +10,10 @@
 	import { songMenu } from "../menus";
 	import type { TransitionConfig } from "svelte/transition";
 	import { artSwap, fadeOnly, pop, sheet, textSwap } from "../motion";
-	import { artworkTint, type Tint } from "../palette";
+	import { artworkTint, softArt, type Tint } from "../palette";
 	import { getPlayer } from "../player.svelte";
 	import { sleepTimer } from "../sleepTimer.svelte";
+	import { audioSettings } from "../playback/audioSettings.svelte";
 	import { ui } from "../ui.svelte";
 	import Artwork from "./Artwork.svelte";
 	import ArtistLinks from "./ArtistLinks.svelte";
@@ -23,6 +24,7 @@
 
 	const player = getPlayer();
 	const song = $derived(player.current);
+	const nextSong = $derived(player.nextSong);
 	let scrub = $state<number | null>(null);
 	const shownTime = $derived(scrub ?? player.currentTime);
 	// Whole seconds: the bar moves ~1px/s, so repainting on every timeupdate (~4/s) is wasted.
@@ -34,7 +36,24 @@
 		time(Math.max(0, Math.floor((player.duration || 0) - shownTime))),
 	);
 
+	interface DisplayTrack {
+		id: string;
+		coverArt?: string;
+		title?: string;
+		artist?: string;
+		album?: string;
+		tint: Tint | null;
+	}
+
+	let currentDisplay = $state<DisplayTrack | null>(null);
+	let incomingDisplay = $state<DisplayTrack | null>(null);
+	let incomingActive = $state(false);
+	let outgoingDisplay = $state<DisplayTrack | null>(null);
+	let outgoingActive = $state(false);
+	let outgoingTimer: ReturnType<typeof setTimeout> | undefined;
+
 	let tint: Tint | null = $state(null);
+	let nextTint: Tint | null = $state(null);
 	let npHeight = $state(0);
 	let controlsVisible = $state(true);
 	let controlsTimer: ReturnType<typeof setTimeout> | undefined;
@@ -44,10 +63,120 @@
 		const art = song?.coverArt;
 		let cancelled = false;
 		Promise.resolve(artworkTint(art)).then((t) => {
-			if (!cancelled) tint = t;
+			if (!cancelled) {
+				tint = t;
+				if (currentDisplay && currentDisplay.id === song?.id) {
+					currentDisplay.tint = t;
+				}
+			}
 		});
 		return () => (cancelled = true);
 	});
+
+	$effect(() => {
+		const art = nextSong?.coverArt;
+		let cancelled = false;
+		if (art) {
+			Promise.resolve(artworkTint(art)).then((t) => {
+				if (!cancelled) {
+					nextTint = t;
+					if (incomingDisplay && incomingDisplay.id === nextSong?.id) {
+						incomingDisplay.tint = t;
+					}
+				}
+			});
+		} else {
+			nextTint = null;
+		}
+		return () => (cancelled = true);
+	});
+
+	// Smooth track transition management
+	$effect(() => {
+		const cur = song;
+		if (!cur) {
+			currentDisplay = null;
+			incomingDisplay = null;
+			outgoingDisplay = null;
+			return;
+		}
+
+		if (!currentDisplay) {
+			currentDisplay = {
+				id: cur.id,
+				coverArt: cur.coverArt,
+				title: cur.title,
+				artist: cur.artist,
+				album: cur.album,
+				tint
+			};
+			return;
+		}
+
+		if (cur.id !== currentDisplay.id) {
+			clearTimeout(outgoingTimer);
+			if (incomingDisplay && incomingDisplay.id === cur.id) {
+				// Seamless handoff from audio crossfade
+				currentDisplay = incomingDisplay;
+				incomingDisplay = null;
+				incomingActive = false;
+			} else {
+				// Smooth cross-dissolve on manual track change
+				outgoingDisplay = currentDisplay;
+				outgoingActive = true;
+				currentDisplay = {
+					id: cur.id,
+					coverArt: cur.coverArt,
+					title: cur.title,
+					artist: cur.artist,
+					album: cur.album,
+					tint
+				};
+				outgoingTimer = setTimeout(() => {
+					outgoingDisplay = null;
+					outgoingActive = false;
+				}, 480);
+			}
+		}
+	});
+
+	// Audio crossfade reactive controller
+	$effect(() => {
+		const isCf = player.crossfading;
+		const nxt = player.nextSong;
+
+		if (isCf && nxt) {
+			incomingDisplay = {
+				id: nxt.id,
+				coverArt: nxt.coverArt,
+				title: nxt.title,
+				artist: nxt.artist,
+				album: nxt.album,
+				tint: nextTint
+			};
+			requestAnimationFrame(() => {
+				requestAnimationFrame(() => {
+					incomingActive = true;
+				});
+			});
+		} else if (!isCf && incomingDisplay) {
+			if (incomingDisplay.id !== song?.id) {
+				incomingActive = false;
+				const timer = setTimeout(() => {
+					if (!player.crossfading) {
+						incomingDisplay = null;
+					}
+				}, 500);
+				return () => clearTimeout(timer);
+			}
+		}
+	});
+
+	const displayTint = $derived(
+		incomingActive && incomingDisplay?.tint
+			? incomingDisplay.tint
+			: currentDisplay?.tint ?? tint
+	);
 
 	const LOSSLESS = new Set([
 		"flac",
@@ -65,6 +194,39 @@
 		return song?.bitRate
 			? `${s.toUpperCase()} · ${song.bitRate} kbps`
 			: s.toUpperCase();
+	});
+
+	const qualityBadgeLabel = $derived.by(() => {
+		const s = song?.suffix?.toLowerCase();
+		if (!s) return "";
+		if (LOSSLESS.has(s)) {
+			return song?.bitRate && song.bitRate > 1500
+				? "Hi-Res Lossless"
+				: "Lossless";
+		}
+		const codec = s === "m4a" ? "AAC" : s.toUpperCase();
+		return song?.bitRate ? `${codec} · ${song.bitRate}k` : codec;
+	});
+
+	let showAudioSpecs = $state(false);
+
+	const sampleRateLabel = $derived.by(() => {
+		const sr = player.sampleRate ?? 44100;
+		return `${(sr / 1000).toFixed(1)} kHz`;
+	});
+
+	const bitDepthLabel = $derived.by(() => {
+		const s = song?.suffix?.toLowerCase() ?? "";
+		if (LOSSLESS.has(s)) {
+			return song?.bitRate && song.bitRate > 1500 ? "24-bit" : "16-bit";
+		}
+		return "16-bit";
+	});
+
+	const replayGainLabel = $derived.by(() => {
+		const g = song?.replayGain?.trackGain;
+		if (typeof g === "number") return `${g > 0 ? "+" : ""}${g.toFixed(1)} dB`;
+		return audioSettings.soundCheck ? "0.0 dB (Check on)" : "Off";
 	});
 
 	const outputLabel = $derived(
@@ -619,9 +781,9 @@
 <div
 	transition:morph
 	class="np"
-	class:tinted={!!tint}
-	style:--np-top={tint?.top}
-	style:--np-bottom={tint?.bottom}
+	class:tinted={!!displayTint}
+	style:--np-top={displayTint?.top}
+	style:--np-bottom={displayTint?.bottom}
 	style:--np-h="{npHeight}px"
 	bind:clientHeight={npHeight}
 	style:transform={dragY ? `translateY(${dragY}px)` : undefined}
@@ -637,16 +799,53 @@
 	aria-label="Now Playing"
 >
 	<div class="backdrop" aria-hidden="true">
-		{#if tint}
-			{#key tint}
-				<div
-					class="tint"
-					style:--top={tint.top}
-					style:--bottom={tint.bottom}
-					in:fadeOnly={{ duration: 900 }}
-					out:fadeOnly={{ duration: 900 }}
-				></div>
-			{/key}
+		{#if currentDisplay}
+			<div class="backdrop-layer active">
+				<canvas class="backdrop-canvas" use:softArt={currentDisplay.coverArt}></canvas>
+				{#if currentDisplay.tint}
+					<div
+						class="tint"
+						style:--top={currentDisplay.tint.top}
+						style:--bottom={currentDisplay.tint.bottom}
+						style:--accent={currentDisplay.tint.accent ?? currentDisplay.tint.top}
+						style:--glow={currentDisplay.tint.glow ?? 'transparent'}
+					>
+						<div class="mesh-aura" class:paused={!player.playing} aria-hidden="true"></div>
+					</div>
+				{/if}
+			</div>
+		{/if}
+
+		{#if incomingDisplay}
+			<div class="backdrop-layer incoming" class:fading-in={incomingActive}>
+				<canvas class="backdrop-canvas" use:softArt={incomingDisplay.coverArt}></canvas>
+				{#if incomingDisplay.tint}
+					<div
+						class="tint"
+						style:--top={incomingDisplay.tint.top}
+						style:--bottom={incomingDisplay.tint.bottom}
+						style:--accent={incomingDisplay.tint.accent ?? incomingDisplay.tint.top}
+						style:--glow={incomingDisplay.tint.glow ?? 'transparent'}
+					>
+						<div class="mesh-aura" class:paused={!player.playing} aria-hidden="true"></div>
+					</div>
+				{/if}
+			</div>
+		{:else if outgoingDisplay}
+			<div class="backdrop-layer outgoing" class:fading-out={outgoingActive}>
+				<canvas class="backdrop-canvas" use:softArt={outgoingDisplay.coverArt}></canvas>
+				{#if outgoingDisplay.tint}
+					<div
+						class="tint"
+						style:--top={outgoingDisplay.tint.top}
+						style:--bottom={outgoingDisplay.tint.bottom}
+						style:--accent={outgoingDisplay.tint.accent ?? outgoingDisplay.tint.top}
+						style:--glow={outgoingDisplay.tint.glow ?? 'transparent'}
+					>
+						<div class="mesh-aura" class:paused={!player.playing} aria-hidden="true"></div>
+					</div>
+				{/if}
+			</div>
 		{/if}
 	</div>
 
@@ -656,6 +855,90 @@
 			<Icon name="chevronDown" size={26} />
 		</button>
 	</div>
+
+	{#if showAudioSpecs && song}
+		<div
+			class="specs-overlay"
+			onclick={() => (showAudioSpecs = false)}
+			in:fadeOnly={{ duration: 180 }}
+			out:fadeOnly={{ duration: 150 }}
+			role="presentation"
+		>
+			<div
+				class="specs-sheet"
+				tabindex="-1"
+				role="dialog"
+				aria-modal="true"
+				aria-label="Audio Technical Specs"
+				onclick={(e) => e.stopPropagation()}
+				onkeydown={(e) => {
+					if (e.key === "Escape") showAudioSpecs = false;
+				}}
+				in:pop={{ from: 0.92, duration: 220 }}
+				out:pop={{ from: 0.92, duration: 160 }}
+			>
+				<header class="specs-header">
+					<div class="specs-title-row">
+						<span class="specs-badge">{quality || "Audio"}</span>
+						<h3>Audio Technical Specs</h3>
+					</div>
+					<button
+						class="specs-close"
+						onclick={() => (showAudioSpecs = false)}
+						aria-label="Close audio details"
+					>
+						<Icon name="close" size={16} />
+					</button>
+				</header>
+
+				<div class="specs-grid">
+					<div class="spec-card">
+						<span class="spec-label">Format / Codec</span>
+						<span class="spec-val highlight">{(song.suffix ?? "N/A").toUpperCase()}</span>
+					</div>
+					<div class="spec-card">
+						<span class="spec-label">Bitrate</span>
+						<span class="spec-val">
+							{song.bitRate
+								? `${song.bitRate} kbps`
+								: (LOSSLESS.has(song.suffix?.toLowerCase() ?? '') ? 'Lossless VBR' : 'Standard')}
+						</span>
+					</div>
+					<div class="spec-card">
+						<span class="spec-label">Sample Rate</span>
+						<span class="spec-val">{sampleRateLabel}</span>
+					</div>
+					<div class="spec-card">
+						<span class="spec-label">Bit Depth</span>
+						<span class="spec-val">{bitDepthLabel}</span>
+					</div>
+					<div class="spec-card">
+						<span class="spec-label">Audio Engine</span>
+						<span class="spec-val">{player.webAudio ? "Web Audio DSP" : "Native Audio"}</span>
+					</div>
+					<div class="spec-card">
+						<span class="spec-label">Sound Check</span>
+						<span class="spec-val">{replayGainLabel}</span>
+					</div>
+					<div class="spec-card">
+						<span class="spec-label">Equalizer</span>
+						<span class="spec-val">
+							{audioSettings.eqEnabled ? audioSettings.preset : (audioSettings.enhancer ? 'Sound Enhancer' : 'Flat')}
+						</span>
+					</div>
+					<div class="spec-card">
+						<span class="spec-label">Crossfade</span>
+						<span class="spec-val">{audioSettings.crossfade ? '8s Blend' : 'Disabled'}</span>
+					</div>
+				</div>
+
+				<div class="specs-footer">
+					<Icon name="waveform" size={15} />
+					<span>Destination: {outputLabel}</span>
+				</div>
+			</div>
+		</div>
+	{/if}
 
 	{#if song}
 		{#if isMobile && ui.panel === "lyrics" && player.playing && !controlsVisible}
@@ -693,16 +976,38 @@
 				<div class="art-row" class:mini={mobileOpen}>
 					<div class="art-wrap" data-flip="art">
 						<div class="art" class:paused={!player.playing}>
-							{#key song.id}
-								<div in:artSwap>
-									<Artwork
-										id={song.coverArt}
-										size={600}
-										seed={song.album ?? song.title}
-										priority
-									/>
-								</div>
-							{/key}
+							<div class="art-layers">
+								{#if currentDisplay}
+									<div class="art-layer active">
+										<Artwork
+											id={currentDisplay.coverArt}
+											size={600}
+											seed={currentDisplay.album ?? currentDisplay.title}
+											priority
+										/>
+									</div>
+								{/if}
+
+								{#if incomingDisplay}
+									<div class="art-layer incoming" class:fading-in={incomingActive}>
+										<Artwork
+											id={incomingDisplay.coverArt}
+											size={600}
+											seed={incomingDisplay.album ?? incomingDisplay.title}
+											priority
+										/>
+									</div>
+								{:else if outgoingDisplay}
+									<div class="art-layer outgoing" class:fading-out={outgoingActive}>
+										<Artwork
+											id={outgoingDisplay.coverArt}
+											size={600}
+											seed={outgoingDisplay.album ?? outgoingDisplay.title}
+											priority
+										/>
+									</div>
+								{/if}
+							</div>
 						</div>
 					</div>
 					<div class="meta" inert={!mobileOpen ? true : undefined}>
@@ -853,8 +1158,31 @@
 										? sleepTimer.remainingLabel
 										: "End of Track"}
 								</button>
-							{:else}
-								<span class="quality">{quality}</span>
+							{:else if player.crossfading}
+								<span
+									class="fade-notice"
+									in:fadeOnly={{ duration: 200 }}
+									out:fadeOnly={{ duration: 180 }}
+								>
+									<Icon name="crossfade" size={11} />
+									<span class="fade-notice-text">
+										Fading into {player.nextSong?.title ? `“${player.nextSong.title}”` : "next track"}
+									</span>
+								</span>
+							{:else if qualityBadgeLabel}
+								<button
+									class="quality-badge"
+									class:is-lossless={LOSSLESS.has(song?.suffix?.toLowerCase() ?? "")}
+									onclick={() => (showAudioSpecs = true)}
+									aria-label="Audio Quality: {qualityBadgeLabel} — click for technical details"
+									title="Audio Quality & Technical Details"
+									in:fadeOnly={{ duration: 200 }}
+								>
+									{#if LOSSLESS.has(song?.suffix?.toLowerCase() ?? "")}
+										<span class="quality-dot"></span>
+									{/if}
+									<span class="badge-text">{qualityBadgeLabel}</span>
+								</button>
 							{/if}
 							<span class="right">-{formattedRemainingTime}</span>
 						</div>
@@ -992,19 +1320,99 @@
 		position: absolute;
 		inset: 0;
 		z-index: -1;
-		background: #3a3a3c;
+		background: #1c1c1e;
 		contain: strict;
+		overflow: hidden;
+	}
+	.backdrop-layer {
+		position: absolute;
+		inset: 0;
+		overflow: hidden;
+		pointer-events: none;
+	}
+	.backdrop-layer.active {
+		z-index: 1;
+		opacity: 1;
+	}
+	.backdrop-layer.incoming {
+		z-index: 2;
+		opacity: 0;
+		transition: opacity 6.5s cubic-bezier(0.4, 0, 0.2, 1);
+		will-change: opacity;
+	}
+	.backdrop-layer.incoming.fading-in {
+		opacity: 1;
+	}
+	.backdrop-layer.outgoing {
+		z-index: 2;
+		opacity: 1;
+		transition: opacity 0.45s ease-out;
+		will-change: opacity;
+	}
+	.backdrop-layer.outgoing.fading-out {
+		opacity: 0;
+	}
+	.backdrop-canvas {
+		position: absolute;
+		inset: -15%;
+		width: 130%;
+		height: 130%;
+		z-index: 0;
+		opacity: 0.85;
+		pointer-events: none;
+		transform: scale(1.05);
 	}
 	.tint {
 		position: absolute;
 		inset: 0;
 		z-index: 1;
 		background: radial-gradient(
-				120% 60% at 50% 0%,
-				color-mix(in srgb, var(--top) 85%, #fff 15%),
+				110% 70% at 20% 0%,
+				color-mix(in srgb, var(--accent, var(--top)) 70%, transparent),
 				transparent 70%
 			),
-			linear-gradient(180deg, var(--top) 0%, var(--bottom) 100%);
+			radial-gradient(
+				100% 60% at 85% 25%,
+				color-mix(in srgb, var(--top) 70%, transparent),
+				transparent 75%
+			),
+			linear-gradient(
+				180deg,
+				color-mix(in srgb, var(--top) 40%, transparent) 0%,
+				color-mix(in srgb, var(--bottom) 85%, #000 15%) 100%
+			);
+		overflow: hidden;
+	}
+	.mesh-aura {
+		position: absolute;
+		inset: -15%;
+		background: radial-gradient(circle at 50% 30%, var(--glow, transparent) 0%, transparent 60%);
+		opacity: 0.65;
+		animation: auraPulse 16s ease-in-out infinite alternate;
+		will-change: transform, opacity;
+		pointer-events: none;
+	}
+	.mesh-aura.paused {
+		animation-play-state: paused;
+	}
+	@keyframes auraPulse {
+		0% {
+			transform: scale(0.96) translate3d(0, 0, 0);
+			opacity: 0.45;
+		}
+		50% {
+			transform: scale(1.06) translate3d(2%, -1%, 0);
+			opacity: 0.8;
+		}
+		100% {
+			transform: scale(1) translate3d(-1%, 2%, 0);
+			opacity: 0.55;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.mesh-aura {
+			animation: none;
+		}
 	}
 	.backdrop::after {
 		content: "";
@@ -1047,7 +1455,7 @@
 		animation: show-controls-in 0.35s ease both;
 	}
 	.show-controls:active {
-		transform: scale(0.88);
+		opacity: 0.7;
 	}
 	.show-controls :global(svg) {
 		transform: rotate(180deg);
@@ -1101,25 +1509,81 @@
 		align-items: center;
 		justify-content: center;
 		gap: 12px;
-		padding-top: 18px;
+		padding-top: 14px;
 	}
 	.art-row:not(.mini) {
 		gap: 0;
 	}
 	.art-wrap {
+		position: relative;
 		flex-shrink: 0;
 		width: min(100%, 50vh);
 	}
+	/* Diffused ambient glow halo directly behind the artwork (Apple Music / BitChord) */
+	.art-row:not(.mini) .art-wrap::before {
+		content: "";
+		position: absolute;
+		inset: -8%;
+		border-radius: 28px;
+		background: radial-gradient(
+			circle at 50% 50%,
+			color-mix(in srgb, var(--accent, var(--glow, transparent)) 50%, transparent) 0%,
+			transparent 75%
+		);
+		opacity: 0.9;
+		pointer-events: none;
+		z-index: 0;
+		transform: scale(1.08);
+		filter: blur(28px);
+	}
 	.art {
+		position: relative;
+		z-index: 1;
 		width: 100%;
-		--art-radius: 10px;
-		--art-shadow: 0 18px 44px rgb(0 0 0 / 0.35);
+		--art-radius: 14px;
+		--art-shadow: 0 16px 48px var(--glow, rgb(0 0 0 / 0.35));
 		transition: transform 0.55s cubic-bezier(0.3, 1.35, 0.5, 1);
 		transform-origin: center 40%;
 	}
 	.art.paused {
-		transform: scale(0.84);
+		transform: scale(0.85);
 		--art-shadow: 0 8px 22px rgb(0 0 0 / 0.25);
+	}
+	.art-layers {
+		position: relative;
+		width: 100%;
+		aspect-ratio: 1;
+		border-radius: var(--art-radius, 14px);
+	}
+	.art-layer {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		border-radius: var(--art-radius, 14px);
+		overflow: hidden;
+	}
+	.art-layer.active {
+		z-index: 1;
+		opacity: 1;
+	}
+	.art-layer.incoming {
+		z-index: 2;
+		opacity: 0;
+		transition: opacity 6.5s cubic-bezier(0.4, 0, 0.2, 1);
+		will-change: opacity;
+	}
+	.art-layer.incoming.fading-in {
+		opacity: 1;
+	}
+	.art-layer.outgoing {
+		z-index: 2;
+		opacity: 1;
+		transition: opacity 0.45s ease-out;
+		will-change: opacity;
+	}
+	.art-layer.outgoing.fading-out {
+		opacity: 0;
 	}
 	/* On mobile, the row also carries the compact title/buttons — collapsed to
 	   zero width (and hidden) whenever the art is at full size, since the art
@@ -1272,6 +1736,82 @@
 	.times .right {
 		text-align: right;
 	}
+	.quality-badge {
+		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		height: 22px;
+		padding: 0 10px;
+		border-radius: 11px;
+		background: rgb(255 255 255 / 0.1);
+		border: 0.5px solid rgb(255 255 255 / 0.16);
+		color: rgb(255 255 255 / 0.88);
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
+		box-shadow: 0 2px 8px rgb(0 0 0 / 0.16);
+		transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1),
+					background-color 0.18s ease,
+					color 0.18s ease,
+					border-color 0.18s ease,
+					box-shadow 0.18s ease;
+		max-width: 170px;
+		user-select: none;
+	}
+	.quality-badge:hover {
+		background: rgb(255 255 255 / 0.2);
+		border-color: rgb(255 255 255 / 0.28);
+		color: #fff;
+	}
+	.quality-badge:active {
+		opacity: 0.75;
+	}
+	.quality-badge.is-lossless {
+		background: color-mix(in srgb, var(--accent, #fff) 20%, rgb(255 255 255 / 0.08));
+		border-color: color-mix(in srgb, var(--accent, #fff) 40%, transparent);
+		color: #fff;
+	}
+	.quality-dot {
+		width: 4px;
+		height: 4px;
+		border-radius: 50%;
+		background: color-mix(in srgb, var(--accent, #30d158) 85%, #fff 15%);
+		box-shadow: 0 0 6px color-mix(in srgb, var(--accent, #30d158) 70%, transparent);
+		flex-shrink: 0;
+	}
+	.badge-text {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	/* Subtle crossfade notice: clean inline status text between timestamps (non-badge, non-clickable) */
+	.fade-notice {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 5px;
+		color: rgb(255 255 255 / 0.52);
+		font-size: 10.5px;
+		font-weight: 500;
+		letter-spacing: 0.01em;
+		text-transform: none;
+		max-width: 200px;
+		user-select: none;
+	}
+	.fade-notice :global(svg) {
+		opacity: 0.75;
+		flex-shrink: 0;
+	}
+	.fade-notice-text {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
 	.quality {
 		font-size: 11px;
 		font-weight: 600;
@@ -1289,6 +1829,110 @@
 		color: #ffd60a;
 	}
 
+	/* ---- audio specs modal ---------------------------------------------------- */
+	.specs-overlay {
+		position: absolute;
+		inset: 0;
+		z-index: 60;
+		background: rgb(0 0 0 / 0.45);
+		backdrop-filter: blur(8px);
+		-webkit-backdrop-filter: blur(8px);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 20px;
+	}
+	.specs-sheet {
+		width: 100%;
+		max-width: 360px;
+		background: rgba(30, 30, 34, 0.9);
+		backdrop-filter: blur(28px);
+		-webkit-backdrop-filter: blur(28px);
+		border: 0.5px solid rgb(255 255 255 / 0.2);
+		border-radius: 20px;
+		padding: 20px;
+		box-shadow: 0 16px 40px rgb(0 0 0 / 0.5);
+		color: #fff;
+	}
+	.specs-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 16px;
+	}
+	.specs-title-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.specs-title-row h3 {
+		margin: 0;
+		font-size: 15px;
+		font-weight: 700;
+	}
+	.specs-badge {
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		padding: 2px 6px;
+		border-radius: 4px;
+		background: #fff;
+		color: #000;
+	}
+	.specs-close {
+		width: 28px;
+		height: 28px;
+		border-radius: 50%;
+		background: rgb(255 255 255 / 0.12);
+		color: rgb(255 255 255 / 0.8);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+	}
+	.specs-close:hover {
+		background: rgb(255 255 255 / 0.22);
+		color: #fff;
+	}
+	.specs-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 8px;
+		margin-bottom: 14px;
+	}
+	.spec-card {
+		background: rgb(255 255 255 / 0.06);
+		border: 0.5px solid rgb(255 255 255 / 0.08);
+		border-radius: 12px;
+		padding: 8px 10px;
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+	}
+	.spec-label {
+		font-size: 10.5px;
+		color: rgb(255 255 255 / 0.5);
+		font-weight: 500;
+	}
+	.spec-val {
+		font-size: 12.5px;
+		color: #fff;
+		font-weight: 600;
+	}
+	.spec-val.highlight {
+		color: color-mix(in srgb, var(--accent, #30d158) 75%, #fff 25%);
+	}
+	.specs-footer {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 11.5px;
+		color: rgb(255 255 255 / 0.65);
+		padding-top: 10px;
+		border-top: 0.5px solid rgb(255 255 255 / 0.1);
+	}
+
 	/* ---- transport ------------------------------------------------------------ */
 	.transport {
 		display: flex;
@@ -1304,11 +1948,11 @@
 		border-radius: 50%;
 		color: #fff;
 		transition:
-			transform 0.14s ease,
+			opacity 0.14s ease,
 			background 0.14s ease;
 	}
 	.transport button:active {
-		transform: scale(0.86);
+		opacity: 0.7;
 		background: rgb(255 255 255 / 0.12);
 	}
 

@@ -241,10 +241,18 @@ class Player {
 	/** Tracks already passed in this play session, for the queue's History section. */
 	history = $derived(this.index > 0 ? this.queue.slice(0, this.index) : []);
 	upNext = $derived(this.queue.slice(this.index + 1));
+	/** Next track in queue that will play when the current track ends. */
+	nextSong = $derived(
+		this.queue[this.index + 1] ?? (this.repeat === 'all' ? this.queue[0] : undefined)
+	);
 	/** The song lyrics are for: the original while its karaoke version plays. */
 	lyricsSong = $derived(
 		this.karaoke && this.current?.id === this.karaoke.version.id ? this.karaoke.original : this.current
 	);
+	/** Hardware sample rate of the Web Audio output graph, if active. */
+	get sampleRate(): number | undefined {
+		return this.output?.sampleRate;
+	}
 
 	private audio: HTMLAudioElement;
 	private readonly ios = isIOSDevice();
@@ -331,6 +339,8 @@ class Player {
 	 * this one (`fading` once its fade-in has begun).
 	 */
 	private preroll: { el: HTMLAudioElement; listeners: AbortController; fading: boolean } | null = null;
+	/** Whether the player is currently crossfading between tracks. */
+	crossfading = $state(false);
 
 	constructor() {
 		// Marks where each page load starts in the log, and which build it ran.
@@ -954,6 +964,7 @@ class Player {
 			() => {
 				const seconds = Math.max(0.5, (endsAt - performance.now()) / 1000);
 				preroll.fading = true;
+				this.crossfading = true;
 				logPlayback('crossfade', `${seconds.toFixed(1)}s`);
 				output.crossfade(this.audio, el, seconds);
 			},
@@ -971,6 +982,7 @@ class Player {
 		const preroll = this.preroll;
 		if (!preroll) return;
 		this.preroll = null;
+		this.crossfading = false;
 		preroll.listeners.abort();
 		preroll.el.pause();
 		try {
@@ -1073,6 +1085,7 @@ class Player {
 		const preroll = this.preroll;
 		if (preroll) {
 			this.preroll = null;
+			this.crossfading = false;
 			preroll.listeners.abort();
 			// It never got to play under the old song, or a skip cut the fade short:
 			// full level now.

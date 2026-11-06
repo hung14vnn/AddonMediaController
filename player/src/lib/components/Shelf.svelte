@@ -88,12 +88,21 @@
 </section>
 
 <style>
+	.shelf {
+		margin-bottom: 34px;
+	}
+	@media (max-width: 699px) {
+		.shelf {
+			margin-bottom: 26px;
+		}
+	}
+
 	header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		padding: 0 var(--gutter);
-		margin-bottom: 10px;
+		margin-bottom: 12px;
 	}
 
 	/* one line: a long title ("Because You Listened to …") ends in an ellipsis */
@@ -192,7 +201,7 @@
 		overscroll-behavior-x: contain;
 		scroll-snap-type: x mandatory;
 		scroll-padding-inline: var(--gutter);
-		padding: 0 var(--gutter) 6px;
+		padding: 4px var(--gutter) 10px;
 		scrollbar-width: none;
 
 		/* TỐI ƯU 2: Cô lập khung cuộn để tránh repaint các phần tử xung quanh */

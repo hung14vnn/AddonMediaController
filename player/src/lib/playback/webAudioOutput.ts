@@ -232,6 +232,11 @@ export class WebAudioOutput {
 		for (const type of this.unlockEvents) document.addEventListener(type, this.unlock, true);
 	}
 
+	/** Hardware sample rate of the underlying AudioContext. */
+	get sampleRate(): number {
+		return this.ctx.sampleRate;
+	}
+
 	/** Route an element's sound through the graph. An element can only ever join one. */
 	attach(el: HTMLMediaElement) {
 		if (this.channels.has(el)) return;

@@ -253,7 +253,8 @@
 	}
 	.synced.active {
 		color: #fff;
-		transform: scale(1.02);
+		transform: scale(1.025);
+		text-shadow: 0 0 22px rgb(255 255 255 / 0.5);
 	}
 	.synced:hover {
 		background: rgb(255 255 255 / 0.08);

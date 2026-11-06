@@ -304,7 +304,7 @@
 		}
 		.glass:active,
 		.play:active {
-			transform: scale(0.94);
+			opacity: 0.75;
 		}
 		.glass.busy {
 			animation: pulse 1.1s ease-in-out infinite;

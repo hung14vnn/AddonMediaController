@@ -194,12 +194,12 @@
 		margin-left: 2px;
 	}
 	.meta {
-		padding-top: 7px;
+		padding-top: 8px;
 		display: flex;
 		flex-direction: column;
-		gap: 1px;
+		gap: 2px;
 		font-size: 13px;
-		line-height: 1.3;
+		line-height: 1.35;
 	}
 	.title {
 		display: flex;
@@ -223,6 +223,7 @@
 		text-overflow: ellipsis;
 		-webkit-box-orient: vertical;
 		-webkit-line-clamp: 2;
+		line-clamp: 2;
 	}
 	/* ArtistLinks renders the subtitle from a child component, so its class is
 	   not covered by Card's scoped selector without an explicit global part. */
@@ -233,6 +234,7 @@
 		text-overflow: ellipsis;
 		-webkit-box-orient: vertical;
 		-webkit-line-clamp: 2;
+		line-clamp: 2;
 	}
 	a.subtitle:hover,
 	a.title:hover {

@@ -1,7 +1,6 @@
 <script lang="ts">
-	// Round user avatar: the server's getAvatar image, else initials on a tinted disc.
+	// Round user avatar: the server's getAvatar image, else initials on a solid Google button blue disc.
 	import { avatarUrl } from '../api';
-	import { hue } from '../format';
 
 	let { username, size = 32 }: { username?: string; size?: number } = $props();
 
@@ -22,7 +21,7 @@
 	});
 </script>
 
-<span class="avatar" style:--size="{size}px" style:--h={hue(username ?? '')}>
+<span class="avatar" style:--size="{size}px">
 	{#if src && !failed}
 		<img {src} alt="" onerror={() => (failed = true)} oncontextmenu={(e) => e.preventDefault()} />
 	{:else}
@@ -39,8 +38,8 @@
 		overflow: hidden;
 		display: grid;
 		place-items: center;
-		background: linear-gradient(145deg, hsl(var(--h) 45% 62%), hsl(calc(var(--h) + 30) 45% 45%));
-		box-shadow: inset 0 0 0 0.5px var(--hairline);
+		background: #165548;
+		box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
 	}
 	img {
 		width: 100%;
@@ -49,8 +48,9 @@
 	}
 	.initials {
 		color: #fff;
-		font-weight: 600;
-		font-size: calc(var(--size) * 0.4);
-		letter-spacing: 0.02em;
+		font-weight: 500;
+		font-size: calc(var(--size) * 0.44);
+		letter-spacing: 0.01em;
+		user-select: none;
 	}
 </style>

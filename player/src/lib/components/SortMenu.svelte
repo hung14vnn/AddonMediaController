@@ -82,7 +82,7 @@
 		cursor: pointer;
 		-webkit-tap-highlight-color: transparent;
 	}
-	.sort-button:active { transform: scale(0.98); }
+	.sort-button:active { opacity: 0.75; }
 	.sort-caption { color: var(--text-2); }
 	.sort-value { font-weight: 600; }
 	.sort-button :global(svg) { transition: transform 160ms ease; }

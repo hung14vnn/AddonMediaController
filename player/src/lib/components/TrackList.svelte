@@ -155,9 +155,9 @@
 		display: grid;
 		grid-template-columns: 36px minmax(0, 1.4fr) 20px 52px 32px;
 		align-items: center;
-		gap: 8px;
-		min-height: 48px;
-		padding: 0 6px 0 4px;
+		gap: 10px;
+		min-height: 52px;
+		padding: 6px 8px 6px 6px;
 		border-radius: 8px;
 		position: relative;
 		transition: background-color 0.12s ease;
@@ -165,11 +165,12 @@
 		contain: content;
 	}
 	.v-list .row {
-		grid-template-columns: 44px minmax(0, 1.4fr) minmax(0, 1fr) 20px 52px 32px;
-		min-height: 56px;
+		grid-template-columns: 48px minmax(0, 1.4fr) minmax(0, 1fr) 20px 52px 32px;
+		min-height: 58px;
+		padding: 7px 10px 7px 6px;
 	}
 	.v-list.no-album .row {
-		grid-template-columns: 44px minmax(0, 1fr) 20px 52px 32px;
+		grid-template-columns: 48px minmax(0, 1fr) 20px 52px 32px;
 	}
 	.v-album .row:nth-child(even of .row) {
 		background: var(--stripe);
@@ -177,7 +178,7 @@
 	.v-list .row::after {
 		content: '';
 		position: absolute;
-		left: 56px;
+		left: 64px;
 		right: 0;
 		bottom: 0;
 		border-bottom: 0.5px solid var(--hairline);
@@ -246,7 +247,7 @@
 		min-width: 0;
 		height: 100%;
 		text-align: left;
-		gap: 1px;
+		gap: 3px;
 	}
 	.title {
 		display: flex;
@@ -309,17 +310,24 @@
 	}
 	@media (max-width: 699px) {
 		.v-list .row {
-			grid-template-columns: 44px minmax(0, 1fr) 20px 32px;
+			grid-template-columns: 46px minmax(0, 1fr) 20px 32px;
+			min-height: 54px;
+			padding: 5px 6px 5px 2px;
 		}
 		.row {
-			grid-template-columns: 30px minmax(0, 1fr) 20px 32px;
+			grid-template-columns: 32px minmax(0, 1fr) 20px 32px;
+			min-height: 50px;
+			padding: 5px 6px 5px 2px;
 		}
 		.album-col,
 		.duration {
 			display: none;
 		}
 		.v-list.no-album .row {
-			grid-template-columns: 44px minmax(0, 1fr) 20px 32px;
+			grid-template-columns: 46px minmax(0, 1fr) 20px 32px;
+		}
+		.v-list .row::after {
+			left: 56px;
 		}
 	}
 

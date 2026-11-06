@@ -256,21 +256,34 @@
 		font-size: 15px;
 	}
 	.picks {
-		margin-bottom: 30px;
+		margin-bottom: 34px;
+	}
+	@media (max-width: 699px) {
+		.picks {
+			margin-bottom: 26px;
+		}
 	}
 	.picks-head {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		padding-right: var(--gutter);
+		margin-bottom: 12px;
+	}
+	.picks-head :global(.section-title) {
+		margin-bottom: 0;
 	}
 	.picks-heading {
 		min-width: 0;
 	}
 	.picks-subtitle {
-		margin: -6px var(--gutter) 10px;
+		margin: 3px var(--gutter) 0;
 		font-size: 13px;
+		line-height: 1.35;
 		color: var(--text-2);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	/* Apple Music-style caption under a recommended artist: why it's there. */
 	/* stretch, not center: the card must fill the column or its artwork shrinks

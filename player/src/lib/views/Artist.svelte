@@ -531,7 +531,7 @@
 		}
 		.glass:active,
 		.play:active {
-			transform: scale(0.94);
+			opacity: 0.75;
 		}
 		.hero-body {
 			position: relative;

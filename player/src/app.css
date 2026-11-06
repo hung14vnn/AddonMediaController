@@ -417,12 +417,11 @@ img {
   place-items: center;
 }
 
-/* Press feedback on every tappable control, like UIKit's highlight shrink. */
+/* Press feedback on tappable controls. */
 button:not(:disabled),
 a.tile,
 .card .cover {
   transition:
-    transform 0.18s cubic-bezier(0.3, 1.3, 0.5, 1),
     background-color 0.18s ease,
     color 0.18s ease,
     opacity 0.18s ease,
@@ -432,15 +431,7 @@ a.tile,
 button:not(:disabled):active,
 .card .cover:active,
 a.tile:active {
-  transform: scale(0.95);
-}
-
-/* Track rows should not shrink when tapped; keep the press feedback for
-   ordinary controls and cards. */
-.tracks .lead:active,
-.tracks .main:active,
-.queue .item:active {
-  transform: none;
+  opacity: 0.75;
 }
 
 /* Staggered reveal for grids, shelves and track lists on first paint. */

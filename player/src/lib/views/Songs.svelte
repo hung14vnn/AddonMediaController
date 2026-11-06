@@ -310,7 +310,7 @@ import { listOfflineTrackMetadata } from '../offline';
 		background: var(--fill-strong);
 	}
 	.refresh-btn:active {
-		transform: scale(0.96);
+		opacity: 0.75;
 	}
 	.refresh-btn.spinning :global(svg) {
 		animation: spin 0.75s linear infinite;

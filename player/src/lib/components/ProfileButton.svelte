@@ -16,10 +16,10 @@
 	.profile-btn {
 		display: none;
 		border-radius: 50%;
-		transition: transform 0.18s cubic-bezier(0.3, 1.3, 0.5, 1);
+		transition: opacity 0.15s ease;
 	}
 	.profile-btn:active {
-		transform: scale(0.9);
+		opacity: 0.75;
 	}
 	@media (max-width: 899px) {
 		.profile-btn {

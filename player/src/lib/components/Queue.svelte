@@ -172,8 +172,34 @@
 			</ol>
 		</section>
 	{/if}
+
+	{#if player.current}
+		<section class="now-playing-section" aria-label="Currently playing track">
+			<h3>Now Playing</h3>
+			<div class="now-playing-card">
+				<span class="art">
+					<Artwork id={player.current.coverArt} size={64} seed={player.current.album ?? player.current.title} />
+				</span>
+				<div class="text">
+					<span class="title ellipsis">{player.current.title}</span>
+					<span class="artist ellipsis">{artistName(player.current)}</span>
+				</div>
+				<div class="now-playing-bars" class:paused={!player.playing} aria-label="Playing">
+					<span class="bar bar-1"></span>
+					<span class="bar bar-2"></span>
+					<span class="bar bar-3"></span>
+				</div>
+			</div>
+		</section>
+	{/if}
+
 	<header bind:this={playingNextHeader}>
-		<h3>Playing Next</h3>
+		<div class="header-left">
+			<h3>Playing Next</h3>
+			{#if player.upNext.length}
+				<span class="queue-count">{player.upNext.length} {player.upNext.length === 1 ? 'song' : 'songs'}</span>
+			{/if}
+		</div>
 		{#if player.upNext.length}<button class="clear" onclick={clearQueue}>Clear</button>{/if}
 	</header>
 
@@ -293,6 +319,59 @@
 	}
 	.history h3 {
 		padding: 0 8px 6px;
+	}
+	.now-playing-section {
+		flex-shrink: 0;
+		padding: 0 0 14px;
+	}
+	.now-playing-section h3 {
+		padding: 0 8px 8px;
+	}
+	.now-playing-card {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 8px 10px;
+		margin: 0 4px;
+		background: rgb(255 255 255 / 0.12);
+		border: 0.5px solid rgb(255 255 255 / 0.18);
+		border-radius: 12px;
+		box-shadow: 0 4px 16px rgb(0 0 0 / 0.2);
+	}
+	.now-playing-bars {
+		display: flex;
+		align-items: flex-end;
+		gap: 2.5px;
+		height: 16px;
+		margin-left: auto;
+		padding-right: 4px;
+		flex-shrink: 0;
+	}
+	.now-playing-bars .bar {
+		width: 3px;
+		border-radius: 2px;
+		background: #fff;
+		animation: barBounce 1s ease-in-out infinite alternate;
+	}
+	.now-playing-bars .bar-1 { height: 14px; animation-delay: 0s; }
+	.now-playing-bars .bar-2 { height: 8px; animation-delay: 0.2s; }
+	.now-playing-bars .bar-3 { height: 12px; animation-delay: 0.4s; }
+	@keyframes barBounce {
+		0% { height: 4px; }
+		100% { height: 16px; }
+	}
+	.now-playing-bars.paused .bar {
+		animation-play-state: paused;
+	}
+	.header-left {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+	}
+	.queue-count {
+		font-size: 12px;
+		color: rgb(255 255 255 / 0.55);
+		font-weight: 500;
 	}
 	header {
 		display: flex;
