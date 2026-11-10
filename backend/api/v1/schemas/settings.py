@@ -528,21 +528,21 @@ class SabnzbdConnectionSettings(AppStruct):
         self.url = self.url.rstrip("/")
 
 
-class SpotiflacConnectionSettings(AppStruct):
-    """Local SpotiFLAC configuration.
+class MornyeConnectionSettings(AppStruct):
+    """Local Mornye configuration.
 
-    SpotiFLAC is launched inside the DroppedNeedle container rather than contacted
+    Mornye runs inside the DroppedNeedle container rather than being contacted
     over HTTP. ``downloads_mount`` must therefore be a writable path visible to
     this container and to the library importer.
     """
 
     enabled: bool = False
-    client_type: str = "spotiflac"
-    downloads_mount: str = "/spotiflac-downloads"
+    client_type: str = "mornye"
+    downloads_mount: str = "/mornye-downloads"
     quality: str = "LOSSLESS"
 
     def __post_init__(self) -> None:
-        self.downloads_mount = self.downloads_mount.strip() or "/spotiflac-downloads"
+        self.downloads_mount = self.downloads_mount.strip() or "/mornye-downloads"
         if self.quality not in {"LOW", "HIGH", "LOSSLESS", "HI_RES_LOSSLESS"}:
             self.quality = "LOSSLESS"
 

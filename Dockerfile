@@ -46,6 +46,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MALLOC_ARENA_MAX=2 \
     HOME=/app \
     CHROME_PATH=/usr/bin/chromium \
+    MORNYE_DATA_DIR=/app/cache/mornye \
     PORT=8688 \
     DROPPEDNEEDLE_STATIC_DIR=/app/cache/frontend-static \
     COMMIT_TAG=${COMMIT_TAG} \
@@ -65,21 +66,12 @@ RUN apt-get update \
 
 COPY --from=python-deps /install /usr/local
 
-# nodriver 0.50.3 generates this module in Latin-1 without declaring its
-# encoding. Patch it while dependencies are still root-owned; the app itself
-# deliberately runs as the unprivileged droppedneedle user.
-RUN sed -i '1i# -*- coding: latin-1 -*-' /usr/local/lib/python3.13/site-packages/nodriver/cdp/network.py
-
 # Bake the user at the entrypoint's default PUID/PGID (1000) so the common
 # deployment needs no runtime usermod/groupmod remap (which can stall startup).
 RUN groupadd -r -g 1000 droppedneedle \
     && useradd -r -u 1000 -g droppedneedle -d /app -s /sbin/nologin droppedneedle
 
 COPY backend/ .
-# Recent download extensions use file.downloadSegments and
-# file.transformPatternedBlocks. Patch the bridge while site-packages is still
-# root-owned; the application runs as an unprivileged user.
-RUN python maintenance/patch_spotiflac_bridge.py
 # Pristine, never-served input for entrypoint.sh, which writes the resolved
 # frontend to DROPPEDNEEDLE_STATIC_DIR before uvicorn starts.
 COPY --from=frontend-build /app/frontend/build ./static-template
@@ -94,8 +86,7 @@ RUN find /app -type f -print0 \
       | cut -d' ' -f1 > /app/.droppedneedle-source-revision \
     && test -s /app/.droppedneedle-source-revision
 
-RUN mkdir -p /app/cache/spotiflac /app/config /app/imports \
-    && ln -s /app/cache/spotiflac /app/.spotiflac \
+RUN mkdir -p /app/cache/mornye /app/config /app/imports \
     && chown -R droppedneedle:droppedneedle /app \
     && chmod +x /entrypoint.sh
 

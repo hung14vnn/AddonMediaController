@@ -25,7 +25,7 @@
 	const META: Record<string, { label: string; sub: string; icon: ComponentType | Component<any> | typeof Rss }> = {
 		soulseek: { label: 'Soulseek', sub: 'slskd', icon: HardDriveDownload },
 		usenet: { label: 'Usenet', sub: 'SABnzbd', icon: Rss },
-		spotiflac: { label: 'Spotify', sub: 'SpotiFLAC', icon: YouTubeIcon }
+		mornye: { label: 'Spotify', sub: 'Mornye', icon: YouTubeIcon }
 	};
 
 	const pluginLabels = $derived(

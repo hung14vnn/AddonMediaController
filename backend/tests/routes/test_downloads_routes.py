@@ -10,7 +10,7 @@ from api.v1.routes import downloads
 from core.dependencies import (
     get_acquisition_dispatcher,
     get_download_service,
-    get_spotiflac_service,
+    get_mornye_service,
 )
 from core.exceptions import (
     ConflictError,
@@ -296,34 +296,34 @@ def test_retry_success_returns_new_task_id():
     assert body["task_id"] == "t2"
 
 
-def test_retry_spotiflac_task_uses_spotiflac_service():
+def test_retry_mornye_task_uses_mornye_service():
     service = AsyncMock()
-    service.get_task.return_value = _task("t1", source="spotiflac")
-    spotiflac = AsyncMock()
-    spotiflac.retry_task.return_value = "spotiflac-t2"
+    service.get_task.return_value = _task("t1", source="mornye")
+    mornye = AsyncMock()
+    mornye.retry_task.return_value = "mornye-t2"
     app = _app(service)
-    app.dependency_overrides[get_spotiflac_service] = lambda: spotiflac
+    app.dependency_overrides[get_mornye_service] = lambda: mornye
 
     response = build_test_client(app).post("/downloads/t1/retry")
 
     assert response.status_code == 200
-    assert response.json()["task_id"] == "spotiflac-t2"
-    spotiflac.retry_task.assert_awaited_once_with("t1", "u1", "user")
+    assert response.json()["task_id"] == "mornye-t2"
+    mornye.retry_task.assert_awaited_once_with("t1", "u1", "user")
     service.retry_task.assert_not_awaited()
 
 
-def test_retry_spotiflac_download_client_uses_spotiflac_service():
+def test_retry_mornye_download_client_uses_mornye_service():
     service = AsyncMock()
-    service.get_task.return_value = _task("t1", download_client="spotiflac")
-    spotiflac = AsyncMock()
-    spotiflac.retry_task.return_value = "spotiflac-t2"
+    service.get_task.return_value = _task("t1", download_client="mornye")
+    mornye = AsyncMock()
+    mornye.retry_task.return_value = "mornye-t2"
     app = _app(service)
-    app.dependency_overrides[get_spotiflac_service] = lambda: spotiflac
+    app.dependency_overrides[get_mornye_service] = lambda: mornye
 
     response = build_test_client(app).post("/downloads/t1/retry")
 
     assert response.status_code == 200
-    spotiflac.retry_task.assert_awaited_once_with("t1", "u1", "user")
+    mornye.retry_task.assert_awaited_once_with("t1", "u1", "user")
 
 
 def test_retry_legacy_task_uses_current_acquisition_when_native_is_disabled():
@@ -340,14 +340,14 @@ def test_retry_legacy_task_uses_current_acquisition_when_native_is_disabled():
     )
     service.retry_task.side_effect = ConfigurationError("client disabled")
     acquisition = AsyncMock()
-    acquisition.request_track.return_value = "spotiflac-t2"
+    acquisition.request_track.return_value = "mornye-t2"
     app = _app(service)
     app.dependency_overrides[get_acquisition_dispatcher] = lambda: acquisition
 
     response = build_test_client(app).post("/downloads/t1/retry")
 
     assert response.status_code == 200
-    assert response.json()["task_id"] == "spotiflac-t2"
+    assert response.json()["task_id"] == "mornye-t2"
     acquisition.request_track.assert_awaited_once()
 
 
@@ -514,7 +514,7 @@ def test_retry_all_failed_returns_count():
     assert response.status_code == 200
     assert response.json() == {"retried": 4}
     service.retry_all_failed.assert_awaited_once_with(
-        "u1", "user", exclude_sources={"spotiflac", "youtube"}
+        "u1", "user", exclude_sources={"mornye", "youtube"}
     )
 
 

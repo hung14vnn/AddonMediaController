@@ -69,7 +69,7 @@
 	const progress = $derived(stream.state.progress);
 	const livePct = $derived(progress?.progress_percent ?? task.progress_percent);
 	const isIndeterminate = $derived(
-		task.source === 'spotiflac' && (progress?.bytes_total ?? task.total_size_bytes ?? 0) <= 0
+		task.source === 'mornye' && (progress?.bytes_total ?? task.total_size_bytes ?? 0) <= 0
 	);
 	// the orchestrator emits a 'retrying' status while it fails over to another peer
 	const isRetrying = $derived(stream.state.status === 'retrying');

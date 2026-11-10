@@ -10,7 +10,7 @@ from api.v1.schemas.settings import (
     SABNZBD_API_KEY_MASK,
     DownloadPolicySettings,
     SabnzbdConnectionSettings,
-    SpotiflacConnectionSettings,
+    MornyeConnectionSettings,
     WantedWatcherSettings,
 )
 from core.dependencies import get_preferences_service
@@ -30,10 +30,10 @@ def _prefs():
     )
     prefs.get_download_policy.return_value = DownloadPolicySettings()
     prefs.save_sabnzbd_connection.return_value = None
-    prefs.get_spotiflac_connection.return_value = SpotiflacConnectionSettings(
-        enabled=True, downloads_mount="/spotiflac-downloads", quality="LOSSLESS"
+    prefs.get_mornye_connection.return_value = MornyeConnectionSettings(
+        enabled=True, downloads_mount="/mornye-downloads", quality="LOSSLESS"
     )
-    prefs.save_spotiflac_connection.return_value = None
+    prefs.save_mornye_connection.return_value = None
     prefs.save_download_policy.return_value = None
     prefs.get_wanted_settings.return_value = WantedWatcherSettings()
     prefs.save_wanted_settings.return_value = None
@@ -65,34 +65,34 @@ def test_get_sabnzbd_non_admin_forbidden():
     assert build_test_client(app).get("/download-clients/sabnzbd").status_code == 403
 
 
-def test_get_spotiflac_admin():
+def test_get_mornye_admin():
     app = _app()
     app.dependency_overrides[_get_current_admin] = mock_admin_user
-    response = build_test_client(app).get("/download-clients/spotiflac")
+    response = build_test_client(app).get("/download-clients/mornye")
     assert response.status_code == 200
-    assert response.json()["downloads_mount"] == "/spotiflac-downloads"
+    assert response.json()["downloads_mount"] == "/mornye-downloads"
 
 
-def test_put_spotiflac_saves_settings():
+def test_put_mornye_saves_settings():
     prefs = _prefs()
     app = _app(prefs)
     app.dependency_overrides[_get_current_admin] = mock_admin_user
     response = build_test_client(app).put(
-        "/download-clients/spotiflac",
-        json={"enabled": True, "downloads_mount": "/downloads/spotiflac", "quality": "LOSSLESS"},
+        "/download-clients/mornye",
+        json={"enabled": True, "downloads_mount": "/downloads/mornye", "quality": "LOSSLESS"},
     )
     assert response.status_code == 200
-    saved = prefs.save_spotiflac_connection.call_args.args[0]
+    saved = prefs.save_mornye_connection.call_args.args[0]
     assert saved.enabled is True
-    assert saved.downloads_mount == "/downloads/spotiflac"
+    assert saved.downloads_mount == "/downloads/mornye"
     assert saved.quality == "LOSSLESS"
 
 
-def test_test_spotiflac_reports_installed_version(monkeypatch):
-    process = MagicMock(returncode=0, stdout=b"usage: spotiflac ...\n", stderr=b"")
+def test_test_mornye_reports_installed_version(monkeypatch):
+    process = MagicMock(returncode=0, stdout=b"usage: mornye ...\n", stderr=b"")
 
     def fake_run(args, **kwargs):  # noqa: ANN001, ANN003
-        assert args == ["spotiflac", "--help"]
+        assert args == ["mornye", "--help"]
         assert kwargs["timeout"] == 10
         return process
 
@@ -100,9 +100,9 @@ def test_test_spotiflac_reports_installed_version(monkeypatch):
     monkeypatch.setattr(download_clients.importlib.metadata, "version", lambda _: "1.4.9")
     app = _app()
     app.dependency_overrides[_get_current_admin] = mock_admin_user
-    response = build_test_client(app).post("/download-clients/spotiflac/test")
+    response = build_test_client(app).post("/download-clients/mornye/test")
     assert response.status_code == 200
-    assert response.json() == {"valid": True, "version": "1.4.9", "message": "SpotiFLAC is installed"}
+    assert response.json() == {"valid": True, "version": "1.4.9", "message": "Mornye is installed"}
 
 
 def test_get_policy_admin():

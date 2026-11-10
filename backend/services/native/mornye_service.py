@@ -2,7 +2,6 @@ import asyncio
 import contextlib
 import logging
 import shutil
-import threading
 from pathlib import Path
 
 from core.exceptions import PermissionDeniedError, ResourceNotFoundError, ValidationError
@@ -10,8 +9,9 @@ from core.exceptions import PermissionDeniedError, ResourceNotFoundError, Valida
 logger = logging.getLogger(__name__)
 
 _PROVIDER_FALLBACKS = ["ext:tidal-web", "ext:qobuz-web", "ext:deezer", "ext:amazon"]
-_SPOTIFLAC_PROVIDER_TIMEOUT_SECONDS = 150
-_SPOTIFLAC_PROGRESS_INTERVAL_SECONDS = 1.0
+_LOSSY_PROVIDERS = ["ext:ytmusic-spotiflac"]
+_MORNYE_PROVIDER_TIMEOUT_SECONDS = 150
+_MORNYE_PROGRESS_INTERVAL_SECONDS = 1.0
 
 _AUDIO_EXTENSIONS = {
     ".flac",
@@ -24,85 +24,63 @@ _AUDIO_EXTENSIONS = {
 }
 
 
-class _CrossLoopAsyncLock:
-    """Serialize SpotiFLAC auth callbacks that run on independent event loops."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-
-    async def __aenter__(self):  # noqa: ANN001 - context manager protocol
-        # Do not use ``to_thread(self._lock.acquire)`` here.  Cancelling that
-        # await abandons a worker which may later acquire the lock forever.
-        while not self._lock.acquire(blocking=False):
-            await asyncio.sleep(0.01)
-        return self
-
-    async def __aexit__(self, *_exc):  # noqa: ANN001 - context manager protocol
-        self._lock.release()
-
-
-_SPOTIFLAC_AUTH_LOCKS: dict[str, _CrossLoopAsyncLock] = {}
-_SPOTIFLAC_AUTH_LOCKS_GUARD = threading.Lock()
-_SPOTIFLAC_LOCK_PATCHED = False
-
-
-def _patch_spotiflac_cross_loop_lock() -> None:
-    global _SPOTIFLAC_LOCK_PATCHED
-
-    with _SPOTIFLAC_AUTH_LOCKS_GUARD:
-        if _SPOTIFLAC_LOCK_PATCHED:
-            return
-
-        from SpotiFLAC.core import signed_session_mobile
-
-        def get_auth_lock(namespace: str) -> _CrossLoopAsyncLock:
-            with _SPOTIFLAC_AUTH_LOCKS_GUARD:
-                lock = _SPOTIFLAC_AUTH_LOCKS.get(namespace)
-                if lock is None:
-                    lock = _CrossLoopAsyncLock()
-                    _SPOTIFLAC_AUTH_LOCKS[namespace] = lock
-                return lock
-
-        signed_session_mobile._get_auth_lock = get_auth_lock
-        _SPOTIFLAC_LOCK_PATCHED = True
-
-
-def spotiflac_client_options(output_dir: str, quality: str) -> dict[str, object]:
-    """Build options supported by the pinned SpotiFLAC client."""
+def mornye_client_options(output_dir: str, quality: str) -> dict[str, object]:
+    """Build options supported by the pinned Mornye client."""
     options: dict[str, object] = {
         "output_dir": output_dir,
         "quality": quality,
         "services": _PROVIDER_FALLBACKS,
-        "sync_extensions": False,
+        "sync_extensions": True,
+        "timeout_s": _MORNYE_PROVIDER_TIMEOUT_SECONDS,
     }
 
     if quality == "LOW":
         options.update(
-            services=["ext:ytmusic-spotiflac"],
+            services=_LOSSY_PROVIDERS,
             allow_fallback=False,
-            use_extensions_fallback=True,
         )
 
     return options
 
 
-async def _download_track_with_timeout(  # noqa: ANN001
-    client,
-    url: str,
-    provider: str,
-) -> None:
-    """Bound one provider so a wedged callback cannot block the fallback chain."""
-    try:
-        async with asyncio.timeout(_SPOTIFLAC_PROVIDER_TIMEOUT_SECONDS):
-            await client.download_track(url)
-    except TimeoutError as exc:
-        raise RuntimeError(
-            f"SpotiFLAC provider {provider} timed out after "
-            f"{_SPOTIFLAC_PROVIDER_TIMEOUT_SECONDS} seconds"
-        ) from exc
+def _spotify_url_from_id(value: str | None) -> str | None:
+    """Return a Spotify URL for ``spotify:track:…``/``spotify:album:…`` IDs."""
+    if not value or not value.startswith("spotify:"):
+        return None
+    _, kind, item_id = value.split(":", 2)
+    if kind not in {"track", "album"} or not item_id:
+        return None
+    return f"https://open.spotify.com/{kind}/{item_id}"
 
 
-class SpotiflacService:
+def _result_external_url(match) -> str | None:  # noqa: ANN001 - search result dict
+    if isinstance(match, dict):
+        external = match.get("external_urls") or {}
+        return external.get("spotify") if isinstance(external, dict) else None
+    return None
+
+
+async def _search_spotify_url(query: str, result_kind: str) -> str | None:
+    """Resolve a free-text query to a Spotify album or track URL.
+
+    Uses the application's own public Spotify catalog client: Mornye's
+    built-in Spotify metadata client is supplied by an optional utilities
+    extension, while its ``spotify-web`` extension already handles the
+    actual link resolution during the download.
+    """
+    from services.spotapi_client import SpotApiClient
+
+    client = SpotApiClient()
+    if result_kind == "albums":
+        results, _ = await client.search_albums(query, limit=5)
+    else:
+        results, _ = await client.search_tracks(query, limit=5)
+
+    match = next(iter(results or []), None)
+    return _result_external_url(match)
+
+
+class MornyeService:
     def __init__(
         self,
         *,
@@ -117,7 +95,7 @@ class SpotiflacService:
         self._bus = event_bus
 
     def is_ready(self) -> bool:
-        settings = self._prefs.get_spotiflac_connection()
+        settings = self._prefs.get_mornye_connection()
         path = Path(settings.downloads_mount)
 
         return settings.enabled and path.is_dir() and path.exists()
@@ -133,7 +111,8 @@ class SpotiflacService:
     ) -> str:  # noqa: ANN003
         return await self._start(
             user_id,
-            f"{artist_name} {album_title}",
+            _spotify_url_from_id(release_group_mbid)
+            or f"{artist_name} {album_title}",
             "albums",
             download_type="album",
             release_group_mbid=release_group_mbid,
@@ -157,13 +136,14 @@ class SpotiflacService:
         **kwargs,
     ) -> str:  # noqa: ANN003
         spotify_track_id = kwargs.get("spotify_track_id")
+        spotify_url = (
+            f"https://open.spotify.com/track/{spotify_track_id}"
+            if spotify_track_id
+            else _spotify_url_from_id(recording_mbid)
+        )
         return await self._start(
             user_id,
-            (
-                f"https://open.spotify.com/track/{spotify_track_id}"
-                if spotify_track_id
-                else f"{artist_name} {track_title}"
-            ),
+            spotify_url or f"{artist_name} {track_title}",
             "tracks",
             download_type="track",
             recording_mbid=recording_mbid,
@@ -183,7 +163,7 @@ class SpotiflacService:
         user_id: str,
         user_role: str,
     ) -> str:
-        """Create a new SpotiFLAC task for an eligible failed task."""
+        """Create a new Mornye task for an eligible failed task."""
         task = await self._store.get_task(task_id)
 
         if task is None:
@@ -192,8 +172,8 @@ class SpotiflacService:
         if user_role != "admin" and task.user_id != user_id:
             raise PermissionDeniedError("Cannot retry another user's download")
 
-        if task.source != "spotiflac":
-            raise ValidationError("This is not a SpotiFLAC download")
+        if task.source != "mornye":
+            raise ValidationError("This is not a Mornye download")
 
         if task.status not in ("failed", "cancelled", "partial"):
             raise ValidationError(
@@ -229,7 +209,7 @@ class SpotiflacService:
         )
 
     async def retry_from_task(self, task) -> str:  # noqa: ANN001 - DownloadTask
-        """Continue a failed non-SpotiFLAC task through SpotiFLAC."""
+        """Continue a failed non-Mornye task through Mornye."""
         if task.download_type == "track":
             return await self.request_track(
                 user_id=task.user_id,
@@ -259,7 +239,7 @@ class SpotiflacService:
         user_id: str,
         user_role: str,
     ) -> int:
-        """Retry this user's failed SpotiFLAC tasks through SpotiFLAC itself."""
+        """Retry this user's failed Mornye tasks through Mornye itself."""
         tasks = await self._store.list_tasks_by_status(
             user_id,
             user_role,
@@ -269,7 +249,7 @@ class SpotiflacService:
         retried = 0
 
         for task in tasks:
-            if task.source != "spotiflac":
+            if task.source != "mornye":
                 continue
 
             await self.retry_task(task.id, user_id, user_role)
@@ -286,14 +266,14 @@ class SpotiflacService:
     ) -> str:  # noqa: ANN003
         if not self.is_ready():
             raise ValidationError(
-                "SpotiFLAC is not enabled or its downloads mount is unavailable"
+                "Mornye is not enabled or its downloads mount is unavailable"
             )
 
-        settings = self._prefs.get_spotiflac_connection()
+        settings = self._prefs.get_mornye_connection()
         task = await self._store.create_task(
             user_id=user_id,
-            source="spotiflac",
-            download_client="spotiflac",
+            source="mornye",
+            download_client="mornye",
             status="queued",
             **task_fields,
         )
@@ -301,7 +281,7 @@ class SpotiflacService:
         await self._bus.publish(
             f"download:{task.id}",
             "status",
-            {"status": "queued", "source": "spotiflac"},
+            {"status": "queued", "source": "mornye"},
         )
 
         asyncio.create_task(
@@ -328,31 +308,13 @@ class SpotiflacService:
     ) -> None:
         """Resolve the Spotify URL after the task is visible in the queue."""
         try:
-            if query.startswith("https://open.spotify.com/track/"):
+            if query.startswith("https://open.spotify.com/"):
                 url = query
             else:
-                from SpotiFLAC.client import AsyncSpotiFLAC
-
-                _patch_spotiflac_cross_loop_lock()
-                async with AsyncSpotiFLAC(
-                    **spotiflac_client_options(str(output), quality)
-                ) as client:
-                    results = await client.search(query, limit=5)
-
-                match = next(iter(results.get(result_kind) or []), None)
-                if match is None:
-                    raise ValidationError(
-                        "SpotiFLAC could not find a Spotify match for this request"
-                    )
-
-                url = (
-                    match.external_url
-                    if result_kind == "tracks"
-                    else match.get("external_url")
-                )
+                url = await _search_spotify_url(query, result_kind)
             if not url:
                 raise ValidationError(
-                    "SpotiFLAC returned a result without a Spotify URL"
+                    "Mornye could not find a Spotify match for this request"
                 )
 
             task = await self._store.get_task(task_id)
@@ -363,14 +325,14 @@ class SpotiflacService:
             await self._bus.publish(
                 f"download:{task_id}",
                 "status",
-                {"status": "downloading", "source": "spotiflac"},
+                {"status": "downloading", "source": "mornye"},
             )
             await self._download(task_id, user_id, url, quality, output)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - surface background lookup failures
-            logger.exception("SpotiFLAC task %s lookup failed", task_id)
-            err_msg = str(exc) or "SpotiFLAC task failed"
+            logger.exception("Mornye task %s lookup failed", task_id)
+            err_msg = str(exc) or "Mornye task failed"
             await self._store.update_status(
                 task_id,
                 "failed",
@@ -465,9 +427,7 @@ class SpotiflacService:
         quality: str,
         output: Path,
     ) -> None:
-        from SpotiFLAC.client import AsyncSpotiFLAC
-
-        _patch_spotiflac_cross_loop_lock()
+        from mornye import AsyncMornye
 
         staging = output / f".droppedneedle-{task_id}"
         progress_task: asyncio.Task | None = None
@@ -481,35 +441,39 @@ class SpotiflacService:
                 self._watch_progress(task_id, staging)
             )
 
-            downloaded_files: list[Path] = []
             provider_errors: list[str] = []
-            files: list[Path] = []
             conversion_errors: list[str] = []
+            files: list[Path] = []
+            providers = _LOSSY_PROVIDERS if quality == "LOW" else _PROVIDER_FALLBACKS
 
-            for provider in _PROVIDER_FALLBACKS:
+            for provider in providers:
                 await self._bus.publish(
                     f"download:{task_id}",
                     "status",
                     {
                         "status": "downloading",
-                        "source": "spotiflac",
+                        "source": "mornye",
                         "provider": provider,
                     },
                 )
-                options = spotiflac_client_options(str(staging), quality)
+                options = mornye_client_options(str(staging), quality)
                 options.update(
                     services=[provider],
                     allow_fallback=False,
                 )
 
                 try:
-                    async with AsyncSpotiFLAC(**options) as client:
-                        await _download_track_with_timeout(client, url, provider)
+                    async with AsyncMornye(**options) as client:
+                        failed_tracks = await client.download_track(url)
+                    if failed_tracks:
+                        provider_errors.append(
+                            f"{provider}: {len(failed_tracks)} track(s) failed"
+                        )
                 except Exception as exc:  # noqa: BLE001 - isolate third-party provider
                     error = str(exc) or type(exc).__name__
                     provider_errors.append(f"{provider}: {error}")
                     logger.warning(
-                        "SpotiFLAC provider %s failed for task %s: %s",
+                        "Mornye provider %s failed for task %s: %s",
                         provider,
                         task_id,
                         error,
@@ -532,7 +496,7 @@ class SpotiflacService:
                         error = "encrypted provider artifact"
                         conversion_errors.append(f"{path.name}: {error}")
                         logger.warning(
-                            "Skipping unusable SpotiFLAC audio artifact %s for task %s: %s",
+                            "Skipping unusable Mornye audio artifact %s for task %s: %s",
                             path.name,
                             task_id,
                             error,
@@ -546,7 +510,7 @@ class SpotiflacService:
                         error = str(exc) or type(exc).__name__
                         conversion_errors.append(f"{path.name}: {error}")
                         logger.warning(
-                            "Skipping unusable SpotiFLAC audio artifact %s for task %s: %s",
+                            "Skipping unusable Mornye audio artifact %s for task %s: %s",
                             path.name,
                             task_id,
                             error,
@@ -564,7 +528,7 @@ class SpotiflacService:
 
             if not files:
                 raise RuntimeError(
-                    "SpotiFLAC did not produce a usable audio file"
+                    "Mornye did not produce a usable audio file"
                     + (
                         f" ({'; '.join(provider_errors + conversion_errors)})"
                         if provider_errors or conversion_errors
@@ -576,7 +540,7 @@ class SpotiflacService:
 
             await self._drop_import.create_job(
                 user_id=user_id,
-                user_name="SpotiFLAC",
+                user_name="Mornye",
                 uploads=[
                     (path.name, path)
                     for path in files
@@ -634,11 +598,11 @@ class SpotiflacService:
 
         except Exception as e:
             logger.exception(
-                "SpotiFLAC task %s failed",
+                "Mornye task %s failed",
                 task_id,
             )
 
-            err_msg = str(e) or "SpotiFLAC task failed"
+            err_msg = str(e) or "Mornye task failed"
 
             await self._store.update_status(
                 task_id,
@@ -669,7 +633,7 @@ class SpotiflacService:
     async def _watch_progress(self, task_id: str, staging: Path) -> None:
         previous: tuple[int, int] | None = None
         while True:
-            await asyncio.sleep(_SPOTIFLAC_PROGRESS_INTERVAL_SECONDS)
+            await asyncio.sleep(_MORNYE_PROGRESS_INTERVAL_SECONDS)
             try:
                 files = [path for path in staging.rglob("*") if path.is_file()]
                 bytes_downloaded = sum(path.stat().st_size for path in files)
@@ -707,7 +671,7 @@ class SpotiflacService:
                     f"download:{task_id}",
                     "progress",
                     {
-                        "source": "spotiflac",
+                        "source": "mornye",
                         "bytes_downloaded": bytes_downloaded,
                         "bytes_total": 0,
                         "files_completed": len(audio_files),
@@ -723,7 +687,7 @@ class SpotiflacService:
                 raise
             except Exception:  # noqa: BLE001 - progress must never stop the download
                 logger.debug(
-                    "SpotiFLAC progress probe failed for task %s",
+                    "Mornye progress probe failed for task %s",
                     task_id,
                     exc_info=True,
                 )

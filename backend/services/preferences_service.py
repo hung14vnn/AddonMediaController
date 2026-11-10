@@ -16,7 +16,7 @@ from api.v1.schemas.settings import (
     LibraryScanFilesystemWatcherSettings,
     LibraryScanScheduleSettings,
     DownloadClientConnectionSettings,
-    SpotiflacConnectionSettings,
+    MornyeConnectionSettings,
     JellyfinConnectionSettings,
     ListenBrainzConnectionSettings,
     OIDCConnectionSettings,
@@ -625,14 +625,14 @@ class PreferencesService:
         order: list[str] = []
         if isinstance(raw, list):
             for s in raw:
-                if s == "spotdl":
-                    s = "spotiflac"
-                if s in ("soulseek", "usenet", "spotiflac") or (
+                if s in ("spotdl", "spotiflac"):
+                    s = "mornye"
+                if s in ("soulseek", "usenet", "mornye") or (
                     isinstance(s, str) and _PLUGIN_KEY_RE.match(s)
                 ):
                     if s not in order:
                         order.append(s)
-        for source in ("soulseek", "usenet", "spotiflac"):
+        for source in ("soulseek", "usenet", "mornye"):
             if source not in order:
                 order.append(source)
         return order
@@ -640,14 +640,14 @@ class PreferencesService:
     def save_source_priority(self, order: list[str]) -> None:
         clean: list[str] = []
         for s in order:
-            if s == "spotdl":
-                s = "spotiflac"
-            if s in ("soulseek", "usenet", "spotiflac") or (
+            if s in ("spotdl", "spotiflac"):
+                s = "mornye"
+            if s in ("soulseek", "usenet", "mornye") or (
                 isinstance(s, str) and _PLUGIN_KEY_RE.match(s)
             ):
                 if s not in clean:
                     clean.append(s)
-        for source in ("soulseek", "usenet", "spotiflac"):
+        for source in ("soulseek", "usenet", "mornye"):
             if source not in clean:
                 clean.append(source)
         config = self._load_config().copy()
@@ -707,37 +707,41 @@ class PreferencesService:
             logger.error("Failed to save SABnzbd settings: %s", e)
             raise ConfigurationError(f"Failed to save SABnzbd settings: {e}")
 
-    # --- SpotiFLAC local download client ---------------------------------------------
+    # --- Mornye local download client ------------------------------------------------
 
-    def get_spotiflac_connection(self) -> SpotiflacConnectionSettings:
+    def get_mornye_connection(self) -> MornyeConnectionSettings:
         clients = self._load_config().get("download_clients", {})
-        data = clients.get("spotiflac") or clients.get("spotdl", {})
+        data = clients.get("mornye") or clients.get("spotiflac") or clients.get("spotdl")
         if not data:
-            return SpotiflacConnectionSettings()
+            return MornyeConnectionSettings()
         migrated = dict(data)
-        migrated["client_type"] = "spotiflac"
-        migrated["downloads_mount"] = migrated.get("downloads_mount") or "/spotiflac-downloads"
+        migrated["client_type"] = "mornye"
+        mount = str(migrated.get("downloads_mount") or "").strip()
+        if mount in ("", "/spotiflac-downloads"):
+            mount = "/mornye-downloads"
+        migrated["downloads_mount"] = mount
         migrated["quality"] = "LOSSLESS" if migrated.get("format") == "flac" else migrated.get("quality", "LOSSLESS")
         migrated.pop("format", None)
-        return msgspec.convert(migrated, type=SpotiflacConnectionSettings)
+        return msgspec.convert(migrated, type=MornyeConnectionSettings)
 
-    def save_spotiflac_connection(self, settings: SpotiflacConnectionSettings) -> None:
+    def save_mornye_connection(self, settings: MornyeConnectionSettings) -> None:
         try:
             config = self._load_config().copy()
             clients = dict(config.get("download_clients", {}))
-            clients["spotiflac"] = {
+            clients["mornye"] = {
                 "enabled": settings.enabled,
-                "client_type": "spotiflac",
+                "client_type": "mornye",
                 "downloads_mount": settings.downloads_mount,
                 "quality": settings.quality,
             }
+            clients.pop("spotiflac", None)
             clients.pop("spotdl", None)
             config["download_clients"] = clients
             self._save_config(config)
-            logger.info("Saved SpotiFLAC connection settings")
+            logger.info("Saved Mornye connection settings")
         except Exception as e:  # noqa: BLE001
-            logger.error("Failed to save SpotiFLAC settings: %s", e)
-            raise ConfigurationError(f"Failed to save SpotiFLAC settings: {e}")
+            logger.error("Failed to save Mornye settings: %s", e)
+            raise ConfigurationError(f"Failed to save Mornye settings: {e}")
 
     # --- Lidarr import connection (LidarrImport D5) - read-only migration aid ------
 
@@ -988,18 +992,18 @@ class PreferencesService:
     def is_builtin_download_ready(self) -> bool:
         """A user-configured download client is ready.
 
-        SpotiFLAC is an in-process client, so its readiness is based on the
+        Mornye is an in-process client, so its readiness is based on the
         enabled flag and the configured output directory being mounted. Keep it
         in this shared predicate so UI integration gates and acquisition fallback
         selection agree about whether a download client exists.
         """
-        spotiflac = self.get_spotiflac_connection()
-        spotiflac_ready = spotiflac.enabled and Path(spotiflac.downloads_mount).is_dir()
-        return self.is_soulseek_ready() or self.is_usenet_ready() or spotiflac_ready
+        mornye = self.get_mornye_connection()
+        mornye_ready = mornye.enabled and Path(mornye.downloads_mount).is_dir()
+        return self.is_soulseek_ready() or self.is_usenet_ready() or mornye_ready
 
     def is_download_source_ready(self) -> bool:
         """At least one acquisition source is set up: Soulseek, Usenet,
-        SpotiFLAC, or Free Music (D24)."""
+        Mornye, or Free Music (D24)."""
         return (
             self.is_builtin_download_ready() or self.get_free_music_settings().enabled
         )

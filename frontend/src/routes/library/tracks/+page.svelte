@@ -90,6 +90,7 @@
 	let existingTargetTrackIds = new SvelteSet<string>();
 	let offlineAvailableIds = new SvelteSet<string>();
 	let offlineDownloadingIds = new SvelteSet<string>();
+	let compressingIds = new SvelteSet<string>();
 	let bulkOfflineDownloading = $state(false);
 	let clearingAllOffline = $state(false);
 	let deletingInvalidOffline = $state(false);
@@ -760,8 +761,9 @@
 		return [
 			...(authStore.isAdmin
 				? [{
-						label: 'Compress music',
-						icon: Archive,
+						label: compressingIds.has(localTrackId(track)) ? 'Compressing...' : 'Compress music',
+						icon: compressingIds.has(localTrackId(track)) ? LoaderCircle : Archive,
+						disabled: offlineOnly || compressingIds.has(localTrackId(track)),
 						onclick: () => undefined,
 						submenuLabel: `${(track.format || 'unknown').toUpperCase()} · ${formatFileSize(track.file_size_bytes)}`,
 						submenu: [
@@ -815,10 +817,13 @@
 	}
 
 	async function compressTrack(track: NativeTrackListItem, outputFormat: 'aac' | 'opus', bitrateKbps: number) {
-		if (!authStore.isAdmin) return;
+		const trackId = localTrackId(track);
+		if (!authStore.isAdmin || offlineOnly || compressingIds.has(trackId)) return;
 		if (!confirm(`Compress "${track.title}" to ${outputFormat.toUpperCase()} ${bitrateKbps} kbps?`)) return;
+		compressingIds.add(trackId);
+		toastStore.show({ message: `Compressing "${track.title}"...`, type: 'info' });
 		try {
-			await api.global.post(API.library.compressTrack(localTrackId(track)), {
+			await api.global.post(API.library.compressTrack(trackId), {
 				output_format: outputFormat,
 				bitrate_kbps: bitrateKbps
 			});
@@ -826,6 +831,8 @@
 			await fetchTracks();
 		} catch (error) {
 			toastStore.show({ message: error instanceof Error ? error.message : "Couldn't compress this track", type: 'error' });
+		} finally {
+			compressingIds.delete(trackId);
 		}
 	}
 

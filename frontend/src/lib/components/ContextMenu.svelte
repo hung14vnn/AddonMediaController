@@ -10,8 +10,8 @@
 </script>
 
 <script lang="ts">
-	import { EllipsisVertical } from 'lucide-svelte';
-	import type { Component, SvelteComponent } from 'svelte';
+	import { ChevronDown, EllipsisVertical } from 'lucide-svelte';
+	import { tick, type Component, type SvelteComponent } from 'svelte';
 
 	const MENU_WIDTH = 208;
 	const ITEM_HEIGHT_EST = 40;
@@ -42,6 +42,7 @@
 	let isOpen = $state(false);
 	let menuTop = $state(0);
 	let menuLeft = $state(0);
+	let expandedSubmenu = $state<number | null>(null);
 
 	function portal(node: HTMLElement) {
 		document.body.appendChild(node);
@@ -64,16 +65,22 @@
 			menuLeft = window.innerWidth - MENU_WIDTH - VIEWPORT_MARGIN;
 		}
 
-		const estimatedHeight = items.length * ITEM_HEIGHT_EST + MENU_PADDING;
-		if (menuTop + estimatedHeight > window.innerHeight - VIEWPORT_MARGIN) {
-			menuTop = rect.top - estimatedHeight - 4;
+		const menuHeight =
+			menuEl?.getBoundingClientRect().height ?? items.length * ITEM_HEIGHT_EST + MENU_PADDING;
+		if (menuTop + menuHeight > window.innerHeight - VIEWPORT_MARGIN) {
+			menuTop = rect.top - menuHeight - 4;
 			if (menuTop < VIEWPORT_MARGIN) menuTop = VIEWPORT_MARGIN;
 		}
 	}
 
-	function handleItemClick(item: MenuItem) {
+	async function handleItemClick(item: MenuItem, index: number) {
 		if (item.disabled) return;
-		if (item.submenu?.length) return;
+		if (item.submenu?.length) {
+			expandedSubmenu = expandedSubmenu === index ? null : index;
+			await tick();
+			computeMenuPosition();
+			return;
+		}
 		if (detailsEl) detailsEl.open = false;
 		item.onclick();
 	}
@@ -85,13 +92,14 @@
 		}
 	}
 
-	function handleScroll() {
+	function handleScroll(event: Event) {
+		if (event.target instanceof Node && menuEl?.contains(event.target)) return;
 		if (detailsEl?.open) {
 			detailsEl.open = false;
 		}
 	}
 
-	function handleToggle() {
+	async function handleToggle() {
 		const nowOpen = detailsEl?.open ?? false;
 		if (nowOpen) {
 			if (activeMenu && activeMenu !== detailsEl) {
@@ -102,7 +110,12 @@
 		} else if (activeMenu === detailsEl) {
 			activeMenu = null;
 		}
+		expandedSubmenu = null;
 		isOpen = nowOpen;
+		if (nowOpen) {
+			await tick();
+			computeMenuPosition();
+		}
 	}
 
 	$effect(() => {
@@ -137,7 +150,7 @@
 	<ul
 		bind:this={menuEl}
 		use:portal
-		class="menu bg-base-200/95 backdrop-blur-md rounded-box shadow-lg w-52 p-2"
+		class="menu bg-base-200/95 backdrop-blur-md rounded-box shadow-lg w-52 p-2 flex-nowrap overflow-y-auto max-h-[calc(100dvh-16px)]"
 		style="position: fixed; top: {menuTop}px; left: {menuLeft}px; z-index: 9999;"
 		role="menu"
 		onclick={(e: MouseEvent) => e.stopPropagation()}
@@ -146,25 +159,30 @@
 		}}
 	>
 		{#each items as item, i (`item-${i}`)}
-			<li class:relative={!!item.submenu?.length} class:group={!!item.submenu?.length}>
+			<li>
 				<button
 					role="menuitem"
 					class="{item.disabled ? 'opacity-50 cursor-not-allowed' : ''} {item.className ?? ''}"
 					disabled={item.disabled}
 					aria-disabled={item.disabled ? 'true' : undefined}
+					aria-expanded={item.submenu?.length ? expandedSubmenu === i : undefined}
 					onclick={(e: MouseEvent) => {
 						e.stopPropagation();
-						handleItemClick(item);
+						void handleItemClick(item, i);
 					}}
 				>
 					<item.icon class="h-4 w-4" />
 					{item.label}
-					{#if item.submenu?.length}<span class="ml-auto text-xs">›</span>{/if}
+					{#if item.submenu?.length}
+						<ChevronDown class="ml-auto h-3 w-3 {expandedSubmenu === i ? 'rotate-180' : ''}" />
+					{/if}
 				</button>
-				{#if item.submenu?.length}
-					<ul class="menu absolute left-full top-0 z-10 ml-1 hidden w-52 rounded-box bg-base-200/95 p-2 shadow-lg backdrop-blur-md group-hover:block group-focus-within:block">
+				{#if item.submenu?.length && expandedSubmenu === i}
+					<ul>
 						{#if item.submenuLabel}
-							<li class="menu-title px-3 py-1 text-[11px] uppercase tracking-wide text-base-content/50">
+							<li
+								class="menu-title px-3 py-1 text-[11px] uppercase tracking-wide text-base-content/50"
+							>
 								{item.submenuLabel}
 							</li>
 						{/if}
@@ -172,7 +190,8 @@
 							<li>
 								<button
 									role="menuitem"
-									class="{child.disabled ? 'opacity-50 cursor-not-allowed' : ''} {child.className ?? ''}"
+									class="{child.disabled ? 'opacity-50 cursor-not-allowed' : ''} {child.className ??
+										''}"
 									disabled={child.disabled}
 									onclick={(e: MouseEvent) => {
 										e.stopPropagation();

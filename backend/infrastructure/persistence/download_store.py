@@ -731,6 +731,12 @@ class DownloadStore(PersistenceBase):
                     conn.execute(statement)
                 except sqlite3.OperationalError:
                     pass  # duplicate column - already present
+            # SpotiFLAC was renamed to Mornye; keep existing task history and
+            # retry routing consistent with the new source key.
+            conn.execute(
+                "UPDATE download_tasks SET source = 'mornye', download_client = 'mornye' "
+                "WHERE source = 'spotiflac' OR download_client = 'spotiflac'"
+            )
             self._migrate_quarantine(conn)
             conn.executescript(_HELD_IMPORTS_DDL)
             conn.executescript(_DOWNLOAD_ACTIVITY_DDL)

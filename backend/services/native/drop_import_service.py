@@ -1225,7 +1225,7 @@ class DropImportService:
                     album_title=requested_album_title,
                     track_title=requested_track_title,
                 )
-            # A SpotiFLAC track task represents exactly one requested recording.
+            # A Mornye track task represents exactly one requested recording.
             if len(entries) == 1:
                 assignments[str(entries[0].path)] = recording_mbid
         else:

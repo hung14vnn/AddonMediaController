@@ -2644,18 +2644,18 @@ async def test_retry_failed_tasks_respects_backoff(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_retry_failed_tasks_uses_spotiflac_after_blank_source_retry(
+async def test_retry_failed_tasks_uses_mornye_after_blank_source_retry(
     tmp_path: Path,
 ):
-    """A no-match task with no linked source must skip the first native source and try Spotiflac next."""
+    """A no-match task with no linked source must skip the first native source and try Mornye next."""
     store, orch, *_ = _build(tmp_path, auto_retry_base_interval_minutes=0.01)
-    orch._source_priority = ["soulseek", "spotiflac", "usenet"]
+    orch._source_priority = ["soulseek", "mornye", "usenet"]
     failover = AsyncMock(return_value=True)
     orch._create_retry_task = AsyncMock()
     task = await _new_task(store, status="failed", retry_count=0, source="")
     await store.update_status(task.id, "failed", completed_at=_t.time() - 10)
 
-    await orch.retry_failed_tasks(failover_to_spotiflac=failover)
+    await orch.retry_failed_tasks(failover_to_mornye=failover)
 
     failover.assert_awaited_once()
     assert failover.await_args.args[0].id == task.id
@@ -2663,18 +2663,18 @@ async def test_retry_failed_tasks_uses_spotiflac_after_blank_source_retry(
 
 
 @pytest.mark.asyncio
-async def test_retry_failed_tasks_uses_spotiflac_after_soulseek_no_match(
+async def test_retry_failed_tasks_uses_mornye_after_soulseek_no_match(
     tmp_path: Path,
 ):
-    """A Soulseek miss must advance to SpotiFLAC before any later native source."""
+    """A Soulseek miss must advance to Mornye before any later native source."""
     store, orch, *_ = _build(tmp_path, auto_retry_base_interval_minutes=0.01)
-    orch._source_priority = ["soulseek", "spotiflac", "usenet"]
+    orch._source_priority = ["soulseek", "mornye", "usenet"]
     failover = AsyncMock(return_value=True)
     orch._create_retry_task = AsyncMock()
     task = await _new_task(store, status="failed", retry_count=0, source="soulseek")
     await store.update_status(task.id, "failed", completed_at=_t.time() - 10)
 
-    await orch.retry_failed_tasks(failover_to_spotiflac=failover)
+    await orch.retry_failed_tasks(failover_to_mornye=failover)
 
     failover.assert_awaited_once()
     assert failover.await_args.args[0].id == task.id

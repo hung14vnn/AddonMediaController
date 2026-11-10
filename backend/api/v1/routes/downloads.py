@@ -60,10 +60,10 @@ from core.dependencies import (
     get_download_orchestrator,
     get_download_service,
     get_download_store,
+    get_mornye_service,
     get_preferences_service,
     get_quota_service,
     get_sse_publisher,
-    get_spotiflac_service,
     get_youtube_download_service,
 )
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
@@ -382,19 +382,19 @@ async def retry_download(
     task_id: str,
     current_user: CurrentUserDep,
     service=Depends(get_download_service),
-    spotiflac_service=Depends(get_spotiflac_service),
+    mornye_service=Depends(get_mornye_service),
     youtube_service=Depends(get_youtube_download_service),
     acquisition=Depends(get_acquisition_dispatcher),
 ):
     task = await service.get_task(task_id, current_user.id, current_user.role)
-    is_spotiflac_task = any(
-        isinstance(value, str) and value.casefold() == "spotiflac"
+    is_mornye_task = any(
+        isinstance(value, str) and value.casefold() == "mornye"
         for value in (task.source, task.download_client)
     )
     if task.source == "youtube":
         new_task_id = await youtube_service.retry_task(task)
-    elif is_spotiflac_task:
-        new_task_id = await spotiflac_service.retry_task(
+    elif is_mornye_task:
+        new_task_id = await mornye_service.retry_task(
             task_id, current_user.id, current_user.role
         )
     else:
@@ -456,13 +456,13 @@ async def stop_all_retries(
 async def retry_all_failed(
     current_user: CurrentUserDep,
     service=Depends(get_download_service),
-    spotiflac_service=Depends(get_spotiflac_service),
+    mornye_service=Depends(get_mornye_service),
 ):
     """Re-dispatch failures through the service that created each task."""
     retried = await service.retry_all_failed(
-        current_user.id, current_user.role, exclude_sources={"spotiflac", "youtube"}
+        current_user.id, current_user.role, exclude_sources={"mornye", "youtube"}
     )
-    retried += await spotiflac_service.retry_all_failed(
+    retried += await mornye_service.retry_all_failed(
         current_user.id, current_user.role
     )
     return RetryAllResponse(retried=retried)

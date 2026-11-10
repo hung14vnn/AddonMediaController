@@ -8,8 +8,8 @@ import type {
 	DownloadPolicySettings,
 	SabnzbdConnectionSettings,
 	SabnzbdTestResult,
-	SpotiflacConnectionSettings,
-	SpotiflacTestResult,
+	MornyeConnectionSettings,
+	MornyeTestResult,
 	SourcePriority,
 	WantedWatcherSettings
 } from '$lib/types';
@@ -47,15 +47,15 @@ const sabnzbdOptions = () =>
 
 export const getSabnzbdConfigQuery = () => createQuery(() => sabnzbdOptions());
 
-const spotiflacOptions = () =>
+const mornyeOptions = () =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
-		queryKey: DownloadQueryKeyFactory.spotiflac(),
+		queryKey: DownloadQueryKeyFactory.mornye(),
 		queryFn: ({ signal }) =>
-			api.global.get<SpotiflacConnectionSettings>(API.downloadClients.spotiflac(), { signal })
+			api.global.get<MornyeConnectionSettings>(API.downloadClients.mornye(), { signal })
 	});
 
-export const getSpotiflacConfigQuery = () => createQuery(() => spotiflacOptions());
+export const getMornyeConfigQuery = () => createQuery(() => mornyeOptions());
 
 
 const sabnzbdStatusOptions = () =>
@@ -83,7 +83,7 @@ export const getDownloadPolicyQuery = (getEnabled: () => boolean = () => true) =
 
 async function invalidateClients() {
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sabnzbd() });
-	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.spotiflac() });
+	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.mornye() });
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sabnzbdStatus() });
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.clientStatus() });
 	await invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix });
@@ -104,17 +104,17 @@ export function testSabnzbd() {
 	}));
 }
 
-export function saveSpotiflacConfig() {
+export function saveMornyeConfig() {
 	return createMutation(() => ({
-		mutationFn: (config: SpotiflacConnectionSettings) =>
-			api.global.put<SpotiflacConnectionSettings>(API.downloadClients.spotiflac(), config),
+		mutationFn: (config: MornyeConnectionSettings) =>
+			api.global.put<MornyeConnectionSettings>(API.downloadClients.mornye(), config),
 		onSuccess: invalidateClients
 	}));
 }
 
-export function testSpotiflac() {
+export function testMornye() {
 	return createMutation(() => ({
-		mutationFn: () => api.global.post<SpotiflacTestResult>(API.downloadClients.spotiflacTest(), {})
+		mutationFn: () => api.global.post<MornyeTestResult>(API.downloadClients.mornyeTest(), {})
 	}));
 }
 

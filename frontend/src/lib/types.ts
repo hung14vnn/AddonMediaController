@@ -2367,14 +2367,14 @@ export interface SabnzbdTestResult {
 	mount_message?: string | null;
 }
 
-export interface SpotiflacConnectionSettings {
+export interface MornyeConnectionSettings {
 	enabled: boolean;
 	client_type: string;
 	downloads_mount: string;
 	quality: 'LOW' | 'HIGH' | 'LOSSLESS' | 'HI_RES_LOSSLESS';
 }
 
-export interface SpotiflacTestResult {
+export interface MornyeTestResult {
 	valid: boolean;
 	version?: string | null;
 	message: string;

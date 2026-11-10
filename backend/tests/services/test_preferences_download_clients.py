@@ -12,7 +12,7 @@ from api.v1.schemas.settings import (
     DownloadPolicySettings,
     NewznabIndexerSettings,
     SabnzbdConnectionSettings,
-    SpotiflacConnectionSettings,
+    MornyeConnectionSettings,
 )
 from core.config import Settings
 from services.preferences_service import PreferencesService
@@ -52,18 +52,18 @@ def test_soulseek_ready_makes_source_ready(prefs):
     assert prefs.is_download_source_ready() is True
 
 
-def test_spotiflac_ready_makes_source_ready(prefs, tmp_path):
-    prefs.save_spotiflac_connection(
-        SpotiflacConnectionSettings(enabled=True, downloads_mount=str(tmp_path))
+def test_mornye_ready_makes_source_ready(prefs, tmp_path):
+    prefs.save_mornye_connection(
+        MornyeConnectionSettings(enabled=True, downloads_mount=str(tmp_path))
     )
 
     assert prefs.is_builtin_download_ready() is True
     assert prefs.is_download_source_ready() is True
 
 
-def test_spotiflac_without_a_mounted_output_directory_is_not_ready(prefs, tmp_path):
-    prefs.save_spotiflac_connection(
-        SpotiflacConnectionSettings(
+def test_mornye_without_a_mounted_output_directory_is_not_ready(prefs, tmp_path):
+    prefs.save_mornye_connection(
+        MornyeConnectionSettings(
             enabled=True, downloads_mount=str(tmp_path / "missing")
         )
     )
@@ -193,14 +193,14 @@ def test_policy_preferred_quality_must_be_within_accepted_range():
 
 
 def test_source_priority_defaults_soulseek_first(prefs):
-    assert prefs.get_source_priority() == ["soulseek", "usenet", "spotiflac"]
+    assert prefs.get_source_priority() == ["soulseek", "usenet", "mornye"]
 
 
 def test_source_priority_save_and_normalise(prefs):
     prefs.save_source_priority(["usenet"])  # omitted sources are appended
-    assert prefs.get_source_priority() == ["usenet", "soulseek", "spotiflac"]
+    assert prefs.get_source_priority() == ["usenet", "soulseek", "mornye"]
     prefs.save_source_priority(["usenet", "bogus", "soulseek"])  # unknowns dropped
-    assert prefs.get_source_priority() == ["usenet", "soulseek", "spotiflac"]
+    assert prefs.get_source_priority() == ["usenet", "soulseek", "mornye"]
 
 
 
@@ -212,14 +212,34 @@ def test_sabnzbd_defaults_disabled(prefs):
     assert sab.downloads_mount == "/sabnzbd-downloads"
 
 
-def test_spotiflac_settings_round_trip_and_normalise_quality(prefs):
-    prefs.save_spotiflac_connection(
-        SpotiflacConnectionSettings(enabled=True, downloads_mount=" /downloads/spotiflac ", quality="nope")
+def test_mornye_settings_round_trip_and_normalise_quality(prefs):
+    prefs.save_mornye_connection(
+        MornyeConnectionSettings(enabled=True, downloads_mount=" /downloads/mornye ", quality="nope")
     )
-    spotiflac = prefs.get_spotiflac_connection()
-    assert spotiflac.enabled is True
-    assert spotiflac.downloads_mount == "/downloads/spotiflac"
-    assert spotiflac.quality == "LOSSLESS"
+    mornye = prefs.get_mornye_connection()
+    assert mornye.enabled is True
+    assert mornye.downloads_mount == "/downloads/mornye"
+    assert mornye.quality == "LOSSLESS"
+
+
+def test_legacy_spotiflac_settings_are_migrated(prefs):
+    config = prefs._load_config().copy()
+    config["download_clients"] = {
+        "spotiflac": {
+            "enabled": True,
+            "client_type": "spotiflac",
+            "downloads_mount": "/spotiflac-downloads",
+            "quality": "HI_RES_LOSSLESS",
+        }
+    }
+    prefs._save_config(config)
+
+    mornye = prefs.get_mornye_connection()
+
+    assert mornye.enabled is True
+    assert mornye.client_type == "mornye"
+    assert mornye.downloads_mount == "/mornye-downloads"
+    assert mornye.quality == "HI_RES_LOSSLESS"
 
 
 def test_sabnzbd_key_masked_on_read_decrypted_raw(prefs):

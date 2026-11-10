@@ -3,30 +3,30 @@
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 
 	import {
-		getSpotiflacConfigQuery,
-		saveSpotiflacConfig,
-		testSpotiflac
+		getMornyeConfigQuery,
+		saveMornyeConfig,
+		testMornye
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import type { SpotiflacConnectionSettings, SpotiflacTestResult } from '$lib/types';
+	import type { MornyeConnectionSettings, MornyeTestResult } from '$lib/types';
 
 	import DownloadClientCard from './DownloadClientCard.svelte';
 
-	const configQuery = getSpotiflacConfigQuery();
-	const save = saveSpotiflacConfig();
-	const test = testSpotiflac();
+	const configQuery = getMornyeConfigQuery();
+	const save = saveMornyeConfig();
+	const test = testMornye();
 
 	let enabled = $state(false);
-	let downloadsMount = $state('/spotiflac-downloads');
-	let quality = $state<SpotiflacConnectionSettings['quality']>('LOSSLESS');
+	let downloadsMount = $state('/mornye-downloads');
+	let quality = $state<MornyeConnectionSettings['quality']>('LOSSLESS');
 	let seeded = $state(false);
-	let testResult = $state<SpotiflacTestResult | null>(null);
+	let testResult = $state<MornyeTestResult | null>(null);
 
 	async function checkInstallation() {
 		try {
 			testResult = await test.mutateAsync();
 		} catch {
-			testResult = { valid: false, message: "Couldn't run SpotiFLAC" };
+			testResult = { valid: false, message: "Couldn't run Mornye" };
 		}
 	}
 
@@ -34,7 +34,7 @@
 		const settings = configQuery.data;
 		if (settings && !seeded) {
 			enabled = settings.enabled;
-			downloadsMount = settings.downloads_mount || '/spotiflac-downloads';
+			downloadsMount = settings.downloads_mount || '/mornye-downloads';
 			quality = settings.quality || 'LOSSLESS';
 			seeded = true;
 			if (settings.enabled) void checkInstallation();
@@ -52,16 +52,16 @@
 				: 'Disabled'
 	);
 
-	function current(): SpotiflacConnectionSettings {
-		return { enabled, client_type: 'spotiflac', downloads_mount: downloadsMount, quality };
+	function current(): MornyeConnectionSettings {
+		return { enabled, client_type: 'mornye', downloads_mount: downloadsMount, quality };
 	}
 
 	async function onSave() {
 		try {
 			await save.mutateAsync(current());
-			toastStore.show({ message: 'SpotiFLAC settings saved', type: 'success' });
+			toastStore.show({ message: 'Mornye settings saved', type: 'success' });
 		} catch {
-			toastStore.show({ message: 'Could not save SpotiFLAC settings', type: 'error' });
+			toastStore.show({ message: 'Could not save Mornye settings', type: 'error' });
 		}
 	}
 
@@ -74,12 +74,12 @@
 				testResult = null;
 			}
 			toastStore.show({
-				message: `SpotiFLAC ${enabled ? 'enabled' : 'disabled'}`,
+				message: `Mornye ${enabled ? 'enabled' : 'disabled'}`,
 				type: 'success'
 			});
 		} catch {
 			enabled = !enabled;
-			toastStore.show({ message: 'Could not update SpotiFLAC', type: 'error' });
+			toastStore.show({ message: 'Could not update Mornye', type: 'error' });
 		}
 	}
 
@@ -92,23 +92,23 @@
 	<div class="skeleton h-28 w-full rounded-box"></div>
 {:else if configQuery.isError}
 	<div class="alert alert-error">
-		Failed to load SpotiFLAC settings: {configQuery.error.message}
+		Failed to load Mornye settings: {configQuery.error.message}
 	</div>
 {:else}
 	<DownloadClientCard
-		title="spotbye"
-		sourceLabel="SpotiFLAC"
+		title="Mornye"
+		sourceLabel="Mornye"
 		icon={YouTubeIcon}
 		{connected}
 		{statusText}
 		bind:enabled
 		{onToggle}
-		enableAriaLabel="Enable SpotiFLAC download client"
+		enableAriaLabel="Enable Mornye download client"
 	>
 		<div class="alert alert-warning items-start text-sm">
-		<YouTubeIcon class="size-5 shrink-0" aria-hidden="true" />
+			<YouTubeIcon class="size-5 shrink-0" aria-hidden="true" />
 			<p>
-				SpotiFLAC matches Spotify metadata against external audio providers. Only download material
+				Mornye matches Spotify metadata against external audio providers. Only download material
 				you are authorised to obtain, and expect provider availability to vary.
 			</p>
 		</div>
@@ -140,10 +140,10 @@
 			</div>
 
 			<div class="form-control">
-				<label class="label" for="spotiflac-quality"
+				<label class="label" for="mornye-quality"
 					><span class="label-text">Maximum downloaded quality</span></label
 				>
-				<select id="spotiflac-quality" class="select select-bordered" bind:value={quality}>
+				<select id="mornye-quality" class="select select-bordered" bind:value={quality}>
 					{#each ['LOW', 'HIGH', 'LOSSLESS', 'HI_RES_LOSSLESS'] as option (option)}
 						<option value={option}>{option.replaceAll('_', ' ')}</option>
 					{/each}
@@ -159,20 +159,20 @@
 					<FolderDown class="size-4 text-base-content/70" aria-hidden="true" /> Downloads mount
 				</div>
 				<p class="text-xs text-base-content/60">
-					A writable directory mounted into hify. SpotiFLAC output will be imported from here.
+					A writable directory mounted into hify. Mornye output will be imported from here.
 				</p>
 				<input
-					id="spotiflac-mount"
+					id="mornye-mount"
 					type="text"
 					class="input input-sm input-bordered w-full font-mono"
 					bind:value={downloadsMount}
-					placeholder="/spotiflac-downloads"
+					placeholder="/mornye-downloads"
 				/>
 			</div>
 		</section>
 
 		<p class="text-xs leading-relaxed text-base-content/60">
-			SpotiFLAC is bundled with the hify image. This client configuration prepares its local
+			Mornye is bundled with the hify image. This client configuration prepares its local
 			output location and requested quality; direct request routing will be enabled with the next
 			acquisition-source update.
 		</p>

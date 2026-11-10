@@ -198,11 +198,11 @@ describe('DownloadSourceStatus.svelte', () => {
 			.not.toBeInTheDocument();
 	});
 
-	it('shows the SpotiFLAC download status and active provider', async () => {
-		renderStatus(task({ source: 'spotiflac', source_username: null, remote_queued: false }), 128, {
+	it('shows the Mornye download status and active provider', async () => {
+		renderStatus(task({ source: 'mornye', source_username: null, remote_queued: false }), 128, {
 			provider: 'ext:tidal-web',
 			candidate_index: null,
-			source: 'spotiflac',
+			source: 'mornye',
 			quality_format: null,
 			quality_bit_depth: null,
 			quality_sample_rate: null,
@@ -216,7 +216,7 @@ describe('DownloadSourceStatus.svelte', () => {
 			has_next_source: false
 		});
 
-		await expect.element(page.getByText('Downloading with SpotiFLAC')).toBeVisible();
+		await expect.element(page.getByText('Downloading with Mornye')).toBeVisible();
 		await expect.element(page.getByText('Provider: tidal-web')).toBeVisible();
 	});
 

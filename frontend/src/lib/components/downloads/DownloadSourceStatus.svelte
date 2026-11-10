@@ -180,7 +180,7 @@
 {/if}
 <!-- Plugin sources (source "plugin:<name>") intentionally take the generic path:
 	no remote-queue hints below - only Soulseek peers report queue telemetry. -->
-{#if source === 'spotiflac' && task.status === 'downloading' && !task.held_for_review}
+{#if source === 'mornye' && task.status === 'downloading' && !task.held_for_review}
 	<div
 		class:source-telemetry-compact={compact}
 		class="source-telemetry mt-2"
@@ -189,8 +189,8 @@
 		aria-atomic="true"
 	>
 		<div class="min-w-0">
-			<p class="text-xs font-bold tracking-wide text-base-content/85">SpotiFLAC</p>
-			<p class="mt-0.5 text-xs text-base-content/65">Downloading with SpotiFLAC</p>
+			<p class="text-xs font-bold tracking-wide text-base-content/85">Mornye</p>
+			<p class="mt-0.5 text-xs text-base-content/65">Downloading with Mornye</p>
 		</div>
 		{#if provider}
 			<div class="source-facts">

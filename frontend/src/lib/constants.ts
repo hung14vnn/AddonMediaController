@@ -857,8 +857,8 @@ export const API = {
 		discard: (itemId: number) => `/api/v1/import/items/${itemId}/discard`
 	},
 	downloadClients: {
-		spotiflac: () => '/api/v1/download-clients/spotiflac',
-		spotiflacTest: () => '/api/v1/download-clients/spotiflac/test',
+		mornye: () => '/api/v1/download-clients/mornye',
+		mornyeTest: () => '/api/v1/download-clients/mornye/test',
 		sabnzbd: () => '/api/v1/download-clients/sabnzbd',
 		sabnzbdTest: () => '/api/v1/download-clients/sabnzbd/test',
 		sabnzbdStatus: () => '/api/v1/download-clients/sabnzbd/status',

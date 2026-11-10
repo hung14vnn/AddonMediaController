@@ -3866,7 +3866,7 @@ class DownloadOrchestrator:
             return None
         return anchor + self._retry_backoff_seconds(task.retry_count)
 
-    async def retry_failed_tasks(self, failover_to_spotiflac=None) -> None:  # noqa: ANN001
+    async def retry_failed_tasks(self, failover_to_mornye=None) -> None:  # noqa: ANN001
         """Periodic safety net: re-dispatch ``failed``/``partial`` downloads whose
         per-task exponential backoff has elapsed, up to ``auto_retry_max_attempts``.
         Mirrors the lidarr QueueCleaner pattern - a failed download sits until the
@@ -3918,7 +3918,7 @@ class DownloadOrchestrator:
             # the search job never linked a candidate. A Soulseek miss can also leave the
             # task pinned to the stale source even though the next configured downloader is
             # higher in ``source_priority``. In both cases the retry ladder must skip the
-            # current/first native source once so it can advance to SpotiFLAC instead of
+            # current/first native source once so it can advance to Mornye instead of
             # re-arming Soulseek forever.
             handed_off = False
             retry_sources = self._sources_after(task.source)
@@ -3927,10 +3927,10 @@ class DownloadOrchestrator:
                 if first_source in {"soulseek", "usenet"}:
                     retry_sources = list(self._source_priority[1:]) or list(self._source_priority)
             for source in retry_sources:
-                if source == "spotiflac":
+                if source == "mornye":
                     if (
-                        failover_to_spotiflac is not None
-                        and await failover_to_spotiflac(task)
+                        failover_to_mornye is not None
+                        and await failover_to_mornye(task)
                     ):
                         handed_off = True
                         break

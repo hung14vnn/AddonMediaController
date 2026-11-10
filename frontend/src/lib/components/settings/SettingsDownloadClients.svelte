@@ -8,7 +8,7 @@
 	import SettingsDownloadPolicy from './SettingsDownloadPolicy.svelte';
 	import SettingsOnboardingChecklist from './SettingsOnboardingChecklist.svelte';
 	import SettingsSabnzbd from './SettingsSabnzbd.svelte';
-	import SettingsSpotiflac from './SettingsSpotiflac.svelte';
+	import SettingsMornye from './SettingsMornye.svelte';
 	import SettingsWanted from './SettingsWanted.svelte';
 
 	const sourcesQuery = getPluginSourcesQuery();
@@ -19,7 +19,7 @@
 	<div>
 		<h2 class="text-xl font-bold">Download clients</h2>
 		<p class="text-sm text-base-content/60">
-			Soulseek, Usenet, and SpotiFLAC are available download clients. Configure any of them,
+			Soulseek, Usenet, and Mornye are available download clients. Configure any of them,
 			set which is tried first, and tune the shared policy.
 		</p>
 	</div>
@@ -85,6 +85,6 @@
 	</div>
 	<SettingsDownloadPolicy />
 	<SettingsWanted />
-	<SettingsSpotiflac />
+	<SettingsMornye />
 	<SettingsOnboardingChecklist />
 </div>

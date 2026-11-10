@@ -141,8 +141,8 @@
 						{filesCompleted}/{filesTotal} {filesTotal === 1 ? 'file' : 'files'}
 					</span>
 				{/if}
-				{#if task.source === 'spotiflac'}
-					<span class="badge badge-ghost badge-sm">SpotiFLAC</span>
+				{#if task.source === 'mornye'}
+					<span class="badge badge-ghost badge-sm">Mornye</span>
 				{/if}
 				{#if task.source === 'usenet'}
 					<span class="badge badge-ghost badge-sm">Usenet</span>
@@ -155,7 +155,7 @@
 				{/if}
 				<!-- Plugin sources take the generic path: no client-specific badges or
 					remote-queue hints, just the source key. -->
-				{#if task.source && task.source !== 'soulseek' && task.source !== 'usenet' && task.source !== 'spotiflac'}
+				{#if task.source && task.source !== 'soulseek' && task.source !== 'usenet' && task.source !== 'mornye'}
 					<span class="badge badge-ghost badge-sm">{task.source}</span>
 				{/if}
 				{#if isOwnedByOther}

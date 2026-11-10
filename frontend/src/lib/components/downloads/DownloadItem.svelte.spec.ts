@@ -116,9 +116,9 @@ describe('DownloadItem.svelte', () => {
 		expect(h.cancelMutate).toHaveBeenCalled();
 	});
 
-	it('shows the SpotiFLAC source badge only once', async () => {
-		await renderItem(task({ source: 'spotiflac', status: 'completed' }));
-		expect((await page.getByText('SpotiFLAC', { exact: true }).all()).length).toBe(1);
+	it('shows the Mornye source badge only once', async () => {
+		await renderItem(task({ source: 'mornye', status: 'completed' }));
+		expect((await page.getByText('Mornye', { exact: true }).all()).length).toBe(1);
 	});
 
 	it('shows the track title first for a track download', async () => {

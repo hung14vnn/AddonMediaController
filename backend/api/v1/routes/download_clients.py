@@ -8,27 +8,24 @@ reports SABnzbd's version + category list + completed dir (the mount hint).
 
 import asyncio
 import importlib.metadata
-import importlib.util
-import logging
 import subprocess
-from pathlib import Path
 
 
 import msgspec
 from fastapi import APIRouter, Depends
 
 from api.v1.schemas.download import (
+    MornyeTestResponse,
     PolicyImpactResponse,
     PolicySummaryResponse,
     SabnzbdTestResponse,
     SourcePriority,
-    SpotiflacTestResponse,
 )
 from api.v1.schemas.settings import (
     SABNZBD_API_KEY_MASK,
     DownloadPolicySettings,
+    MornyeConnectionSettings,
     SabnzbdConnectionSettings,
-    SpotiflacConnectionSettings,
     WantedWatcherSettings,
     validate_new_quality_fields,
 )
@@ -36,8 +33,6 @@ from core.dependencies import build_sabnzbd_download_client, get_preferences_ser
 from core.exceptions import ExternalServiceError
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from middleware import CurrentAdminDep, CurrentUserDep
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(
     route_class=MsgSpecRoute, prefix="/download-clients", tags=["download-clients"]
@@ -86,31 +81,6 @@ def _clear_download_client_cache() -> None:
         get_target_download_service,
     ):
         provider.cache_clear()
-
-
-def _prepare_nodriver_for_spotiflac() -> None:
-    """Repair the malformed nodriver 0.50.3 generated CDP module before importing it.
-
-    That release declares no source encoding even though its generated ``network.py``
-    includes a Latin-1 plus/minus symbol. SpotiFLAC requires its newer event API, so
-    the older importable nodriver release is not an option. The patch is idempotent
-    and only touches the known invalid package file.
-    """
-    spec = importlib.util.find_spec("nodriver")
-    if spec is None or spec.origin is None:
-        return
-    network_module = Path(spec.origin).parent / "cdp" / "network.py"
-    try:
-        source = network_module.read_bytes()
-    except OSError as exc:
-        logger.warning("Could not inspect nodriver encoding for SpotiFLAC: %s", exc)
-        return
-    first_two_lines = source.splitlines()[:2]
-    if b"\xb1" in source and not any(b"coding" in line for line in first_two_lines):
-        try:
-            network_module.write_bytes(b"# -*- coding: latin-1 -*-\n" + source)
-        except OSError as exc:
-            logger.warning("Could not repair nodriver encoding for SpotiFLAC: %s", exc)
 
 
 @router.get("/sabnzbd", response_model=SabnzbdConnectionSettings)
@@ -180,54 +150,48 @@ async def test_sabnzbd(
     )
 
 
-@router.get("/spotiflac", response_model=SpotiflacConnectionSettings)
-async def get_spotiflac(_: CurrentAdminDep, preferences=Depends(get_preferences_service)):
-    return preferences.get_spotiflac_connection()
+@router.get("/mornye", response_model=MornyeConnectionSettings)
+async def get_mornye(_: CurrentAdminDep, preferences=Depends(get_preferences_service)):
+    return preferences.get_mornye_connection()
 
 
-@router.put("/spotiflac", response_model=SpotiflacConnectionSettings)
-async def update_spotiflac(
+@router.put("/mornye", response_model=MornyeConnectionSettings)
+async def update_mornye(
     _: CurrentAdminDep,
-    settings: SpotiflacConnectionSettings = MsgSpecBody(SpotiflacConnectionSettings),
+    settings: MornyeConnectionSettings = MsgSpecBody(MornyeConnectionSettings),
     preferences=Depends(get_preferences_service),
 ):
-    preferences.save_spotiflac_connection(settings)
+    preferences.save_mornye_connection(settings)
     _clear_download_client_cache()
-    return preferences.get_spotiflac_connection()
+    return preferences.get_mornye_connection()
 
 
-@router.post("/spotiflac/test", response_model=SpotiflacTestResponse)
-async def test_spotiflac(_: CurrentAdminDep):
+@router.post("/mornye/test", response_model=MornyeTestResponse)
+async def test_mornye(_: CurrentAdminDep):
     """Confirm the bundled local CLI is runnable without attempting a download."""
     try:
-        _prepare_nodriver_for_spotiflac()
         # Uvicorn's Windows reload loop can be a SelectorEventLoop, which deliberately
         # does not implement asyncio subprocess transports. Run this short health check
         # in a worker thread so local development behaves like production too.
         process = await asyncio.to_thread(
             subprocess.run,
-            ["spotiflac", "--help"],
+            ["mornye", "--help"],
             capture_output=True,
             timeout=10,
             check=False,
         )
     except FileNotFoundError:
-        return SpotiflacTestResponse(valid=False, message="SpotiFLAC is not installed in this container")
+        return MornyeTestResponse(valid=False, message="Mornye is not installed in this container")
     except subprocess.TimeoutExpired:
-        return SpotiflacTestResponse(valid=False, message="SpotiFLAC did not respond within 10 seconds")
+        return MornyeTestResponse(valid=False, message="Mornye did not respond within 10 seconds")
     if process.returncode != 0:
         message = (process.stderr or process.stdout).decode(errors="replace").strip()
-        if "Connection.process_event" in message or "Non-UTF-8 code" in message:
-            message = (
-                "SpotiFLAC cannot start because its current nodriver dependency is "
-                "incompatible on this Python installation."
-            )
-        return SpotiflacTestResponse(valid=False, message=message or "SpotiFLAC could not start")
+        return MornyeTestResponse(valid=False, message=message or "Mornye could not start")
     try:
-        version = importlib.metadata.version("SpotiFLAC")
+        version = importlib.metadata.version("mornye")
     except importlib.metadata.PackageNotFoundError:
         version = None
-    return SpotiflacTestResponse(valid=True, version=version or None, message="SpotiFLAC is installed")
+    return MornyeTestResponse(valid=True, version=version or None, message="Mornye is installed")
 
 
 @router.get("/sabnzbd/status", response_model=SabnzbdTestResponse)

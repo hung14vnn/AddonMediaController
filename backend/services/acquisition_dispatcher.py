@@ -39,7 +39,7 @@ class AcquisitionDispatcher:
         *,
         get_download_service: "Callable[[], DownloadService]",
         get_free_music_service: "Callable[[], FreeMusicService]",
-        get_spotiflac_service=None,  # Callable[[], SpotiflacService] | None
+        get_mornye_service=None,  # Callable[[], MornyeService] | None
         preferences_service: "PreferencesService",
         ownership_service: "LibraryOwnershipService | None" = None,
         get_album_service: "Callable[[], AlbumService] | None" = None,
@@ -47,7 +47,7 @@ class AcquisitionDispatcher:
     ) -> None:
         self._get_download_service = get_download_service
         self._get_free_music_service = get_free_music_service
-        self._get_spotiflac_service = get_spotiflac_service
+        self._get_mornye_service = get_mornye_service
         self._prefs = preferences_service
         self._ownership = ownership_service
         self._get_album_service = get_album_service
@@ -65,11 +65,11 @@ class AcquisitionDispatcher:
             return False
         return self._get_free_music_service().is_ready()
 
-    def _use_spotiflac(self) -> bool:
-        if self._get_spotiflac_service is None:
+    def _use_mornye(self) -> bool:
+        if self._get_mornye_service is None:
             return False
-        service = self._get_spotiflac_service()
-        settings = self._prefs.get_spotiflac_connection()
+        service = self._get_mornye_service()
+        settings = self._prefs.get_mornye_connection()
         return bool(settings.enabled and service.is_ready())
 
     def _source_priority(self) -> list[str]:
@@ -79,8 +79,8 @@ class AcquisitionDispatcher:
         return getter()
 
     def _source_ready(self, source: str) -> bool:
-        if source == "spotiflac":
-            return self._use_spotiflac()
+        if source == "mornye":
+            return self._use_mornye()
         if source == "soulseek":
             getter = getattr(self._prefs, "is_soulseek_ready", None)
             return bool(getter() if getter is not None else self._prefs.is_builtin_download_ready())
@@ -100,7 +100,7 @@ class AcquisitionDispatcher:
         self,
         method: str,
         *,
-        spotiflac_kwargs: dict,
+        mornye_kwargs: dict,
         native_kwargs: dict,
         free_request: Callable[[], Awaitable[str]] | None = None,
     ) -> str:
@@ -117,11 +117,11 @@ class AcquisitionDispatcher:
             if not self._source_ready(source):
                 continue
             service = (
-                self._get_spotiflac_service()
-                if source == "spotiflac"
+                self._get_mornye_service()
+                if source == "mornye"
                 else self._get_download_service()
             )
-            kwargs = spotiflac_kwargs if source == "spotiflac" else native_kwargs
+            kwargs = mornye_kwargs if source == "mornye" else native_kwargs
             try:
                 return await getattr(service, method)(**kwargs)
             except Exception as exc:  # noqa: BLE001 - try the next configured source
@@ -218,7 +218,7 @@ class AcquisitionDispatcher:
         }
         return await self._request_with_fallback(
             "request_album",
-            spotiflac_kwargs={
+            mornye_kwargs={
                 "user_id": user_id,
                 "release_group_mbid": release_group_mbid,
                 "artist_name": artist_name,
@@ -281,7 +281,7 @@ class AcquisitionDispatcher:
         }
         return await self._request_with_fallback(
             "request_track",
-            spotiflac_kwargs={
+            mornye_kwargs={
                 "user_id": user_id,
                 "recording_mbid": recording_mbid,
                 "artist_name": artist_name,

@@ -71,8 +71,8 @@ class SabnzbdTestResponse(AppStruct):
     mount_message: str | None = None
 
 
-class SpotiflacTestResponse(AppStruct):
-    """Result of checking the bundled SpotiFLAC command."""
+class MornyeTestResponse(AppStruct):
+    """Result of checking the bundled Mornye command."""
 
     valid: bool
     version: str | None = None

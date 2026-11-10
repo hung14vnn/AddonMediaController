@@ -82,7 +82,7 @@ services:
       PGID: "1000"
       SLSKD_DOWNLOADS_PATH: /slskd-downloads
       # Override in .env when using a private or additional registry.
-      SPOTIFLAC_REGISTRIES: ${SPOTIFLAC_REGISTRIES:-https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json}
+      MORNYE_REGISTRIES: ${MORNYE_REGISTRIES:-https://raw.githubusercontent.com/mornyeapp/Mornye-Extension/main/registry.json}
     volumes:
       - config:/app/config
       - cache:/app/cache
@@ -90,7 +90,7 @@ services:
       - imports:/app/imports   # drop-importer staging
       - ./downloads:/slskd-downloads:rw
       - ./music:/music         # final managed music library
-      - ./spotiflac-downloads:/spotiflac-downloads:rw  # SpotiFLAC output; persists on the host
+      - ./mornye-downloads:/mornye-downloads:rw  # Mornye output; persists on the host
 
 volumes:
   config:

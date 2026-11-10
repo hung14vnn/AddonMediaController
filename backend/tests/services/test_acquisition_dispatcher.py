@@ -16,8 +16,8 @@ def _dispatcher(
     *,
     builtin_ready: bool,
     free_music_ready: bool = True,
-    spotiflac_enabled: bool = False,
-    spotiflac_ready: bool = True,
+    mornye_enabled: bool = False,
+    mornye_ready: bool = True,
     album_service=None,
 ):
     download = MagicMock()
@@ -31,29 +31,29 @@ def _dispatcher(
         is_builtin_download_ready=lambda: builtin_ready,
         is_soulseek_ready=lambda: builtin_ready,
         is_usenet_ready=lambda: False,
-        get_source_priority=lambda: ["spotiflac", "soulseek", "usenet"],
-        get_spotiflac_connection=lambda: SimpleNamespace(enabled=spotiflac_enabled),
+        get_source_priority=lambda: ["mornye", "soulseek", "usenet"],
+        get_mornye_connection=lambda: SimpleNamespace(enabled=mornye_enabled),
     )
-    spotiflac = MagicMock()
-    spotiflac.is_ready = MagicMock(return_value=spotiflac_ready)
-    spotiflac.request_album = AsyncMock(return_value="spotiflac-album")
-    spotiflac.request_track = AsyncMock(return_value="spotiflac-track")
+    mornye = MagicMock()
+    mornye.is_ready = MagicMock(return_value=mornye_ready)
+    mornye.request_album = AsyncMock(return_value="mornye-album")
+    mornye.request_track = AsyncMock(return_value="mornye-track")
 
     dispatcher = AcquisitionDispatcher(
         get_download_service=lambda: download,
         get_free_music_service=lambda: free_music,
-        get_spotiflac_service=lambda: spotiflac,
+        get_mornye_service=lambda: mornye,
         preferences_service=prefs,
         get_album_service=(lambda: album_service)
         if album_service is not None
         else None,
     )
-    return dispatcher, download, free_music, spotiflac
+    return dispatcher, download, free_music, mornye
 
 
 @pytest.mark.asyncio
 async def test_album_goes_to_free_music_when_no_client_is_configured():
-    dispatcher, download, free_music, _spotiflac = _dispatcher(builtin_ready=False)
+    dispatcher, download, free_music, _mornye = _dispatcher(builtin_ready=False)
 
     task_id = await dispatcher.request_album(
         user_id="u1",
@@ -82,7 +82,7 @@ async def test_free_music_resolves_and_forwards_missing_album_track_count():
     album_service.get_album_tracks_info = AsyncMock(
         return_value=SimpleNamespace(total_tracks=10)
     )
-    dispatcher, download, free_music, _spotiflac = _dispatcher(
+    dispatcher, download, free_music, _mornye = _dispatcher(
         builtin_ready=False, album_service=album_service
     )
 
@@ -107,7 +107,7 @@ async def test_free_music_uses_the_selected_exact_edition_track_count():
     album_service.get_exact_edition_tracks_info = AsyncMock(
         return_value=SimpleNamespace(total_tracks=12)
     )
-    dispatcher, _download, free_music, _spotiflac = _dispatcher(
+    dispatcher, _download, free_music, _mornye = _dispatcher(
         builtin_ready=False, album_service=album_service
     )
 
@@ -129,7 +129,7 @@ async def test_free_music_uses_the_selected_exact_edition_track_count():
 async def test_free_music_keeps_supplied_track_count_without_provider_lookup():
     album_service = MagicMock()
     album_service.get_album_tracks_info = AsyncMock()
-    dispatcher, _download, free_music, _spotiflac = _dispatcher(
+    dispatcher, _download, free_music, _mornye = _dispatcher(
         builtin_ready=False, album_service=album_service
     )
 
@@ -149,7 +149,7 @@ async def test_free_music_keeps_supplied_track_count_without_provider_lookup():
 async def test_builtin_client_does_not_resolve_free_music_track_count():
     album_service = MagicMock()
     album_service.get_album_tracks_info = AsyncMock()
-    dispatcher, download, free_music, _spotiflac = _dispatcher(
+    dispatcher, download, free_music, _mornye = _dispatcher(
         builtin_ready=True, album_service=album_service
     )
 
@@ -164,7 +164,7 @@ async def test_builtin_client_does_not_resolve_free_music_track_count():
 
 @pytest.mark.asyncio
 async def test_builtin_track_forwards_provider_cover_url():
-    dispatcher, download, free_music, spotiflac = _dispatcher(builtin_ready=True)
+    dispatcher, download, free_music, mornye = _dispatcher(builtin_ready=True)
 
     task_id = await dispatcher.request_track(
         user_id="u1",
@@ -181,7 +181,7 @@ async def test_builtin_track_forwards_provider_cover_url():
         == "https://i.scdn.co/image/album-cover"
     )
     free_music.request_track.assert_not_awaited()
-    spotiflac.request_track.assert_not_awaited()
+    mornye.request_track.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -190,7 +190,7 @@ async def test_free_music_does_not_guess_when_track_count_lookup_fails():
     album_service.get_album_tracks_info = AsyncMock(
         side_effect=RuntimeError("MusicBrainz unavailable")
     )
-    dispatcher, download, free_music, _spotiflac = _dispatcher(
+    dispatcher, download, free_music, _mornye = _dispatcher(
         builtin_ready=False, album_service=album_service
     )
 
@@ -209,7 +209,7 @@ async def test_free_music_rejects_an_empty_provider_tracklist():
     album_service.get_album_tracks_info = AsyncMock(
         return_value=SimpleNamespace(total_tracks=0)
     )
-    dispatcher, download, free_music, _spotiflac = _dispatcher(
+    dispatcher, download, free_music, _mornye = _dispatcher(
         builtin_ready=False, album_service=album_service
     )
 
@@ -226,7 +226,7 @@ async def test_free_music_rejects_an_empty_provider_tracklist():
 
 @pytest.mark.asyncio
 async def test_album_goes_to_the_client_when_one_is_configured():
-    dispatcher, download, free_music, _spotiflac = _dispatcher(builtin_ready=True)
+    dispatcher, download, free_music, _mornye = _dispatcher(builtin_ready=True)
 
     task_id = await dispatcher.request_album(
         user_id="u1",
@@ -243,7 +243,7 @@ async def test_album_goes_to_the_client_when_one_is_configured():
 
 @pytest.mark.asyncio
 async def test_track_routes_the_same_way():
-    dispatcher, download, free_music, _spotiflac = _dispatcher(builtin_ready=False)
+    dispatcher, download, free_music, _mornye = _dispatcher(builtin_ready=False)
 
     task_id = await dispatcher.request_track(
         user_id="u1",
@@ -262,7 +262,7 @@ async def test_track_routes_the_same_way():
 
 @pytest.mark.asyncio
 async def test_falls_back_to_the_client_when_free_music_is_disabled():
-    dispatcher, download, free_music, _spotiflac = _dispatcher(
+    dispatcher, download, free_music, _mornye = _dispatcher(
         builtin_ready=False, free_music_ready=False
     )
 
@@ -276,7 +276,7 @@ async def test_falls_back_to_the_client_when_free_music_is_disabled():
 
 @pytest.mark.asyncio
 async def test_target_projection_rejects_local_only_track_before_free_music() -> None:
-    dispatcher, download, free_music, _spotiflac = _dispatcher(builtin_ready=False)
+    dispatcher, download, free_music, _mornye = _dispatcher(builtin_ready=False)
     ownership = AsyncMock()
     ownership.provider_track_id.side_effect = ProviderIdentityRequiredError(
         "This track only has local metadata."
@@ -296,9 +296,9 @@ async def test_target_projection_rejects_local_only_track_before_free_music() ->
 
 
 @pytest.mark.asyncio
-async def test_unready_spotiflac_falls_back_to_the_next_ready_source():
-    dispatcher, download, free_music, spotiflac = _dispatcher(
-        builtin_ready=True, spotiflac_enabled=True, spotiflac_ready=False
+async def test_unready_mornye_falls_back_to_the_next_ready_source():
+    dispatcher, download, free_music, mornye = _dispatcher(
+        builtin_ready=True, mornye_enabled=True, mornye_ready=False
     )
 
     task_id = await dispatcher.request_track(
@@ -311,17 +311,17 @@ async def test_unready_spotiflac_falls_back_to_the_next_ready_source():
     )
 
     assert task_id == "slskd-track"
-    spotiflac.request_track.assert_not_awaited()
+    mornye.request_track.assert_not_awaited()
     download.request_track.assert_awaited_once()
     free_music.request_track.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_spotiflac_start_failure_falls_back_to_the_next_source():
-    dispatcher, download, free_music, spotiflac = _dispatcher(
-        builtin_ready=True, spotiflac_enabled=True
+async def test_mornye_start_failure_falls_back_to_the_next_source():
+    dispatcher, download, free_music, mornye = _dispatcher(
+        builtin_ready=True, mornye_enabled=True
     )
-    spotiflac.request_track.side_effect = RuntimeError("provider unavailable")
+    mornye.request_track.side_effect = RuntimeError("provider unavailable")
 
     task_id = await dispatcher.request_track(
         user_id="u1",
@@ -332,6 +332,6 @@ async def test_spotiflac_start_failure_falls_back_to_the_next_source():
     )
 
     assert task_id == "slskd-track"
-    spotiflac.request_track.assert_awaited_once()
+    mornye.request_track.assert_awaited_once()
     download.request_track.assert_awaited_once()
     free_music.request_track.assert_not_awaited()
