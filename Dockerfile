@@ -47,6 +47,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HOME=/app \
     CHROME_PATH=/usr/bin/chromium \
     MORNYE_DATA_DIR=/app/cache/mornye \
+    MORNYE_EXT_LINKS=/app/mornye-extensions.links \
     PORT=8688 \
     DROPPEDNEEDLE_STATIC_DIR=/app/cache/frontend-static \
     COMMIT_TAG=${COMMIT_TAG} \

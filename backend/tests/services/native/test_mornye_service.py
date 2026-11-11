@@ -53,6 +53,53 @@ def test_lossless_quality_preserves_provider_output():
     ]
 
 
+def test_is_ready_requires_writable_download_folder(monkeypatch, tmp_path):
+    service = MornyeService(
+        drop_import=AsyncMock(),
+        preferences_service=SimpleNamespace(
+            get_mornye_connection=lambda: SimpleNamespace(
+                enabled=True, downloads_mount=str(tmp_path)
+            )
+        ),
+        download_store=AsyncMock(),
+        event_bus=AsyncMock(),
+    )
+    assert service.is_ready() is True
+
+    monkeypatch.setattr("services.native.mornye_service.os.access", lambda *_: False)
+
+    assert service.is_ready() is False
+
+
+@pytest.mark.asyncio
+async def test_download_reports_unwritable_download_folder(monkeypatch, tmp_path):
+    def deny_mkdir(_self, *_args, **_kwargs):
+        raise PermissionError(13, "Permission denied", str(_self))
+
+    _install_fake_mornye(monkeypatch, AsyncMock())
+    monkeypatch.setattr(Path, "mkdir", deny_mkdir)
+    store = AsyncMock()
+    service = MornyeService(
+        drop_import=AsyncMock(),
+        preferences_service=AsyncMock(),
+        download_store=store,
+        event_bus=AsyncMock(),
+    )
+
+    await service._download(
+        "task-1",
+        "user-1",
+        "https://open.spotify.com/track/1",
+        "LOSSLESS",
+        tmp_path,
+    )
+
+    store.update_status.assert_awaited_once()
+    args, kwargs = store.update_status.await_args
+    assert args == ("task-1", "failed")
+    assert "Cannot write to the Mornye download folder" in kwargs["error_message"]
+
+
 @pytest.mark.asyncio
 async def test_failed_provider_falls_through_to_next_extension(monkeypatch, tmp_path):
     attempted: list[str] = []

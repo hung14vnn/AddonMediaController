@@ -62,6 +62,28 @@ configure_static_base_path() {
     fi
 }
 
+# The public registry omits utilities.sflx even though the tidal/qobuz/deezer/
+# amazon providers import modules from it. MORNYE_EXT_LINKS points at the
+# bundled links file so both this bootstrap and Mornye's lazy loader can
+# install it; a missing file is fine because the registry alone may suffice.
+bootstrap_mornye_extensions() {
+    if [ -z "${MORNYE_REGISTRIES:-}" ] && [ -z "${MORNYE_EXT_LINKS:-}" ]; then
+        return 0
+    fi
+    echo "[init] Bootstrapping Mornye extensions."
+    if ! run_as_runtime python -c '
+from mornye.extensions.manager import ExtensionManager
+manager = ExtensionManager(auto_install_downloads=True)
+if manager.get_installed("utilities") is None:
+    try:
+        manager.install_from_links_file()
+    except FileNotFoundError:
+        pass
+' >/dev/null 2>&1; then
+        echo "[init] WARNING: Mornye extension bootstrap failed; downloads may be unavailable."
+    fi
+}
+
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "[init] Running as uid=$(id -u) gid=$(id -g) (non-root); skipping user/group setup."
@@ -74,7 +96,14 @@ if [ "$(id -u)" -ne 0 ]; then
             exit 1
         fi
     done
+    # Mornye output is normally a host bind mount. Warn instead of aborting so
+    # the rest of the app still starts when Mornye is disabled.
+    if [ -d /mornye-downloads ] && ! check_writable /mornye-downloads; then
+        echo "[init] WARNING: /mornye-downloads is not writable by uid=$(id -u); Mornye downloads will fail."
+        echo "[init]   Fix: chown $(id -u):$(id -g) the host folder mounted at /mornye-downloads."
+    fi
     configure_static_base_path
+    bootstrap_mornye_extensions
     exec "$@"
 fi
 
@@ -123,15 +152,24 @@ for dir in /app/cache /app/cache/mornye /app/config /app/imports; do
         exit 1
     fi
 done
-configure_static_base_path
 
-if [ -n "${MORNYE_REGISTRIES:-}" ]; then
-    echo "[init] Bootstrapping Mornye extensions."
-    if ! gosu droppedneedle:droppedneedle python -c \
-        'from mornye.extensions.manager import ExtensionManager; ExtensionManager(auto_install_downloads=True)' \
-        >/dev/null 2>&1; then
-        echo "[init] WARNING: Mornye extension bootstrap failed; downloads may be unavailable."
+# Docker creates a missing bind source as root:root, which leaves the runtime
+# user unable to create Mornye's staging directory. Repair it like the data
+# dirs above, but only warn on failure: Mornye may be disabled and other
+# download clients cannot run when the whole startup aborts.
+if [ -d /mornye-downloads ] && ! check_writable /mornye-downloads "$TARGET_UID:$TARGET_GID"; then
+    if chown droppedneedle:droppedneedle /mornye-downloads 2>/dev/null; then
+        echo "[init] Adjusted ownership of /mornye-downloads - verifying write access."
+    else
+        echo "[init] WARNING: Could not chown /mornye-downloads (mount may not support ownership changes)."
+    fi
+    if ! check_writable /mornye-downloads "$TARGET_UID:$TARGET_GID"; then
+        echo "[init] WARNING: /mornye-downloads is not writable by uid=$TARGET_UID gid=$TARGET_GID."
+        echo "[init]   Mornye downloads will fail; chown the host folder to $TARGET_UID:$TARGET_GID."
     fi
 fi
+configure_static_base_path
+
+bootstrap_mornye_extensions
 
 exec gosu droppedneedle:droppedneedle "$@"

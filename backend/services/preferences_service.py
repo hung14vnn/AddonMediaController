@@ -998,7 +998,10 @@ class PreferencesService:
         selection agree about whether a download client exists.
         """
         mornye = self.get_mornye_connection()
-        mornye_ready = mornye.enabled and Path(mornye.downloads_mount).is_dir()
+        mornye_path = Path(mornye.downloads_mount)
+        mornye_ready = (
+            mornye.enabled and mornye_path.is_dir() and os.access(mornye_path, os.W_OK)
+        )
         return self.is_soulseek_ready() or self.is_usenet_ready() or mornye_ready
 
     def is_download_source_ready(self) -> bool:

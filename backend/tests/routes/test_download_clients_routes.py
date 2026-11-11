@@ -98,11 +98,37 @@ def test_test_mornye_reports_installed_version(monkeypatch):
 
     monkeypatch.setattr(download_clients.subprocess, "run", fake_run)
     monkeypatch.setattr(download_clients.importlib.metadata, "version", lambda _: "1.4.9")
+    monkeypatch.setattr(download_clients, "_mornye_mount_problem", lambda _: None)
     app = _app()
     app.dependency_overrides[_get_current_admin] = mock_admin_user
     response = build_test_client(app).post("/download-clients/mornye/test")
     assert response.status_code == 200
     assert response.json() == {"valid": True, "version": "1.4.9", "message": "Mornye is installed"}
+
+
+def test_test_mornye_reports_unusable_mount(monkeypatch):
+    process = MagicMock(returncode=0, stdout=b"usage: mornye ...\n", stderr=b"")
+    monkeypatch.setattr(download_clients.subprocess, "run", lambda *a, **k: process)
+    monkeypatch.setattr(download_clients.importlib.metadata, "version", lambda _: "1.4.9")
+    problem = "Download folder /mornye-downloads is not writable by the container user."
+    monkeypatch.setattr(download_clients, "_mornye_mount_problem", lambda _: problem)
+
+    app = _app()
+    app.dependency_overrides[_get_current_admin] = mock_admin_user
+    response = build_test_client(app).post("/download-clients/mornye/test")
+
+    assert response.status_code == 200
+    assert response.json() == {"valid": False, "version": "1.4.9", "message": problem}
+
+
+def test_mornye_mount_problem_flags_missing_folder(tmp_path):
+    message = download_clients._mornye_mount_problem(str(tmp_path / "missing"))
+    assert message is not None
+    assert "missing" in message
+
+
+def test_mornye_mount_problem_accepts_writable_folder(tmp_path):
+    assert download_clients._mornye_mount_problem(str(tmp_path)) is None
 
 
 def test_get_policy_admin():

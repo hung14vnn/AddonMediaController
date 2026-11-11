@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -98,7 +99,7 @@ class MornyeService:
         settings = self._prefs.get_mornye_connection()
         path = Path(settings.downloads_mount)
 
-        return settings.enabled and path.is_dir() and path.exists()
+        return settings.enabled and path.is_dir() and os.access(path, os.W_OK)
 
     async def request_album(
         self,
@@ -433,10 +434,17 @@ class MornyeService:
         progress_task: asyncio.Task | None = None
 
         try:
-            staging.mkdir(
-                parents=True,
-                exist_ok=True,
-            )
+            try:
+                staging.mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
+            except PermissionError as exc:
+                raise RuntimeError(
+                    f"Cannot write to the Mornye download folder {output}. "
+                    "Make the host folder writable by the container user "
+                    "(match PUID/PGID or chown it)."
+                ) from exc
             progress_task = asyncio.create_task(
                 self._watch_progress(task_id, staging)
             )

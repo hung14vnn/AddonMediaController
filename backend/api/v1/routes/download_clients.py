@@ -8,7 +8,9 @@ reports SABnzbd's version + category list + completed dir (the mount hint).
 
 import asyncio
 import importlib.metadata
+import os
 import subprocess
+from pathlib import Path
 
 
 import msgspec
@@ -166,9 +168,28 @@ async def update_mornye(
     return preferences.get_mornye_connection()
 
 
+def _mornye_mount_problem(mount: str) -> str | None:
+    path = Path(mount)
+    if not path.is_dir():
+        return (
+            f"Download folder {mount} is missing inside the container. "
+            "Mount a host folder there, for example "
+            "./mornye-downloads:/mornye-downloads."
+        )
+    if not os.access(path, os.W_OK):
+        return (
+            f"Download folder {mount} is not writable by the container user. "
+            "Match PUID/PGID to the folder owner or chown the host folder."
+        )
+    return None
+
+
 @router.post("/mornye/test", response_model=MornyeTestResponse)
-async def test_mornye(_: CurrentAdminDep):
-    """Confirm the bundled local CLI is runnable without attempting a download."""
+async def test_mornye(
+    _: CurrentAdminDep, preferences=Depends(get_preferences_service)
+):
+    """Confirm the bundled local CLI and download folder are usable without
+    attempting a download."""
     try:
         # Uvicorn's Windows reload loop can be a SelectorEventLoop, which deliberately
         # does not implement asyncio subprocess transports. Run this short health check
@@ -191,6 +212,13 @@ async def test_mornye(_: CurrentAdminDep):
         version = importlib.metadata.version("mornye")
     except importlib.metadata.PackageNotFoundError:
         version = None
+    mount_problem = _mornye_mount_problem(
+        preferences.get_mornye_connection().downloads_mount
+    )
+    if mount_problem:
+        return MornyeTestResponse(
+            valid=False, version=version or None, message=mount_problem
+        )
     return MornyeTestResponse(valid=True, version=version or None, message="Mornye is installed")
 
 
