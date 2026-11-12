@@ -425,6 +425,27 @@ async def test_get_recently_played_songs_deduplicates(compat_env):
     m83_songs = [s for s in songs if s["title"] == "Midnight City" and s["artist"] == "M83"]
     assert len(m83_songs) == 1
 
+async def test_scrobble_then_recently_played_resolves_library_tracks_locally(compat_env):
+    # A play recorded by the compat adapter stores the bare library file id.
+    # Recently played must resolve it back to a library track (no provider search).
+    import time
+
+    from tests.compat.conftest import subsonic_query
+
+    q = subsonic_query(compat_env.secret, "alice")
+    now = int(time.time() * 1000)
+    for i, track in enumerate(compat_env.ids["tracks"]):
+        body = _sub(compat_env.client.post(
+            "/subsonic/rest/scrobble",
+            params={**q, "id": f"tr-{track}", "submission": "true", "time": now + i * 1000},
+        ))
+        assert body["status"] == "ok"
+
+    songs = _get(compat_env, "getRecentlyPlayedSongs", count=10)["recentlyPlayedSongs"]["song"]
+    assert [s["title"] for s in songs] == ["Paranoid Android", "Airbag"]
+    assert all(s["id"].startswith("tr-") for s in songs)
+
+
 async def test_get_album_list2_recent_includes_external_tracks(compat_env):
     await compat_env.phs.insert(
         "user-alice",

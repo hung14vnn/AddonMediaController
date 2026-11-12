@@ -112,7 +112,9 @@
 		[...songs].sort((a, b) => {
 			if (sort === 'artist') return (a.artist ?? '').localeCompare(b.artist ?? '');
 			if (sort === 'album') return (a.album ?? '').localeCompare(b.album ?? '');
-			if (sort === 'added' || sort === 'played') return String((b as any)[sort === 'added' ? 'created' : 'lastPlayed'] ?? '').localeCompare(String((a as any)[sort === 'added' ? 'created' : 'lastPlayed'] ?? ''));
+			if (sort === 'added') return String(b.created ?? '').localeCompare(String(a.created ?? ''));
+			// OpenSubsonic `played` is the last-played timestamp; unplayed songs sort last.
+			if (sort === 'played') return String(b.played ?? '').localeCompare(String(a.played ?? ''));
 			return a.title.localeCompare(b.title);
 		})
 	);

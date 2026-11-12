@@ -1130,13 +1130,21 @@ async def _resolve_recent_child(c: Ctx, r, play_store=None) -> m.SChild | None:
             else:
                 sid = None
         except Exception:  # noqa: BLE001
+            # Rows written by the compat scrobble adapters store the bare
+            # library file id, so there is no prefix to decode.
+            try:
+                local = await c.services.view.get_track(sid, user=c.user)
+            except Exception:  # noqa: BLE001
+                local = None
+            if local:
+                return c.child(local)
             sid = None
 
     # 2. Check if recording_mbid links to a local file
     if not sid and r.recording_mbid and hasattr(c.services.discover, "_db"):
         try:
             files = await c.services.discover._db.get_library_files_for_recording(r.recording_mbid)
-            if files and (fid := files[0].get("file_id")):
+            if files and (fid := files[0].get("id")):
                 local = await c.services.view.get_track(fid, user=c.user)
                 if local:
                     return c.child(local)
@@ -1147,7 +1155,7 @@ async def _resolve_recent_child(c: Ctx, r, play_store=None) -> m.SChild | None:
     if not sid and hasattr(c.services.view, "_db"):
         try:
             found = await c.services.view._db.search_tracks(f"{r.track_name} {r.artist_name}", limit=1)
-            if found and (fid := found[0].get("file_id")):
+            if found and (fid := found[0].get("id")):
                 local = await c.services.view.get_track(fid, user=c.user)
                 if local:
                     new_sid = encode("track", local.file_id)

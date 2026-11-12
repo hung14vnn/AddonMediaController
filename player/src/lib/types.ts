@@ -18,6 +18,9 @@ export interface Song {
 	contentType?: string;
 	starred?: string;
 	explicitStatus?: string;
+	created?: string;
+	/** OpenSubsonic: last time this song was played (ISO 8601). */
+	played?: string;
 	/** OpenSubsonic: zero or more ISRCs. */
 	isrc?: string[];
 	/** OpenSubsonic: gains in dB, peaks as linear amplitude. */
